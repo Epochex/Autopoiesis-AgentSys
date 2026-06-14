@@ -1,0 +1,126 @@
+{
+  "suite_id": "portable_work_items",
+  "description": "Domain-neutral work items replayed through selfevo-orchiter architecture profiles.",
+  "scenarios": [
+    {
+      "scenario_id": "office_launch_handoff",
+      "tags": ["office", "digital_employee"],
+      "work_item": {
+        "work_item_id": "office_launch_handoff",
+        "title": "Draft Launch Handoff",
+        "objective": "Prepare an internal launch handoff for a cross-functional product update.",
+        "domain": "office",
+        "payload": {
+          "brief": "Prepare an internal launch handoff for a cross-functional product update.",
+          "sections": ["Summary", "Risks", "Next Actions"],
+          "audience": "product and engineering"
+        },
+        "input_artifacts": [
+          {
+            "artifact_id": "brief:office_launch_handoff",
+            "kind": "document",
+            "role": "brief",
+            "media_type": "text/plain"
+          }
+        ],
+        "available_tools": ["document.compose"],
+        "context_refs": [],
+        "memory_scope": {
+          "scopes": ["session", "user", "domain"],
+          "query": "internal launch handoff",
+          "tags": ["office"]
+        },
+        "approval_policy": {
+          "mode": "none"
+        },
+        "constraints": [
+          "Produce a structured artifact that can be handed off asynchronously.",
+          "Keep assumptions explicit and avoid pretending external tools were updated."
+        ],
+        "success_criteria": [
+          "Draft contains all requested sections.",
+          "Draft includes owners or next actions when appropriate.",
+          "Output remains traceable to the task brief."
+        ],
+        "eval_contract": {
+          "metrics": ["section_coverage", "handoff_completeness", "assumption_clarity"],
+          "regression_tags": ["office", "digital_employee"]
+        }
+      }
+    },
+    {
+      "scenario_id": "decision_growth_budget_shift",
+      "tags": ["decision", "growth_simulation"],
+      "work_item": {
+        "work_item_id": "decision_growth_budget_shift",
+        "title": "Evaluate Growth Budget Shift",
+        "objective": "Choose a bounded growth optimization action under explicit budget and risk constraints.",
+        "domain": "decision",
+        "payload": {
+          "scenario_id": "growth_budget_shift",
+          "action_id": "increase_high_intent_segment",
+          "scenario": {
+            "scenario_id": "growth_budget_shift",
+            "objective": "Choose a bounded growth optimization action under explicit budget and risk constraints.",
+            "budget": 100,
+            "max_risk": 0.35,
+            "actions": [
+              {
+                "action_id": "increase_high_intent_segment",
+                "label": "Increase high-intent segment allocation by 10 percent",
+                "expected_reward": 18,
+                "cost": 40,
+                "risk": 0.2
+              },
+              {
+                "action_id": "double_broad_segment",
+                "label": "Double broad segment allocation immediately",
+                "expected_reward": 35,
+                "cost": 160,
+                "risk": 0.7
+              }
+            ]
+          }
+        },
+        "input_artifacts": [
+          {
+            "artifact_id": "scenario:growth_budget_shift",
+            "kind": "scenario",
+            "role": "simulator_case",
+            "metadata": {
+              "budget": 100,
+              "max_risk": 0.35
+            }
+          }
+        ],
+        "available_tools": ["decision.simulate"],
+        "context_refs": ["scenario:growth_budget_shift"],
+        "memory_scope": {
+          "scopes": ["domain", "session"],
+          "query": "growth budget shift",
+          "tags": ["decision"]
+        },
+        "approval_policy": {
+          "mode": "human_gate",
+          "required_permissions": ["external.action.execute"],
+          "reason": "Simulator evaluation is read-only; real-world action execution requires human approval."
+        },
+        "constraints": [
+          "Evaluate candidate decisions against explicit budget and risk constraints.",
+          "Report rejected decisions with simulator reasons rather than unsupported intuition."
+        ],
+        "success_criteria": [
+          "Return simulator-backed reward, cost, risk, and acceptance status.",
+          "Expose the decision trace for harness comparison."
+        ],
+        "eval_contract": {
+          "metrics": ["constraint_satisfaction", "reward", "risk", "simulator_trace_coverage"],
+          "success_thresholds": {
+            "constraint_satisfaction": 1
+          },
+          "regression_tags": ["decision", "ads_growth_simulation"]
+        }
+      }
+    }
+  ]
+}

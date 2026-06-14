@@ -1,0 +1,10 @@
+{
+  "min_completion_rate": 1,
+  "max_failed_runs": 0,
+  "max_approval_required": 0,
+  "max_step_failures": 0,
+  "max_repair_requests": 0,
+  "max_avg_duration_ms": 1000,
+  "require_profiles": ["static_default"],
+  "require_scenarios": ["office_launch_handoff", "decision_growth_budget_shift"]
+}
