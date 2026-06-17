@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
-import { FlowCanvas } from './components/FlowCanvas'
+import { TopologyCanvas } from './components/TopologyCanvas'
 import { CountUp, ConfidenceRing } from './components/Motion'
 
 type State =
@@ -38,6 +38,7 @@ function App() {
 
   const d = st.d
   const s = d.dataStats
+  const topo = d.topology
   const c: RcaCase | undefined = d.cases.find((x) => x.id === active) ?? d.cases[0]
   const withCtl = d.baselines.find((b) => b.name === 'selfevo_light_path')?.rootCauseAccuracy ?? 1
   const noCtl = d.baselines.find((b) => b.name === 'full_tools')?.rootCauseAccuracy ?? 0
@@ -55,7 +56,7 @@ function App() {
                 key={x.id}
                 className={`case ${x.id === c?.id ? 'on' : ''}`}
                 onClick={() => setActive(x.id)}
-                aria-label={x.title}
+                title={rc(x.diagnosis.rootCauseKey, lang)}
               >
                 <span className={`tick ${x.verifier.passed ? 'ok' : ''}`} />
               </button>
@@ -85,7 +86,10 @@ function App() {
       {d.datasetReady && s && c ? (
         <>
           <section className="canvas-wrap">
-            <FlowCanvas stats={s} activeKey={c.diagnosis.rootCauseKey} />
+            {topo ? <TopologyCanvas topo={topo} stats={s} activeKey={c.diagnosis.rootCauseKey} /> : null}
+          </section>
+
+          <section className="deck">
             <div className="verdict">
               <ConfidenceRing value={c.diagnosis.confidence} />
               <div className="verdict-text">
@@ -98,9 +102,7 @@ function App() {
                 </div>
               </div>
             </div>
-          </section>
 
-          <section className="ribbon">
             <div className="metric">
               <span className="big"><CountUp value={s.adminLoginFailed} /></span>
               <span className="lab">{t('failedLogins', lang)} · {s.distinctSrc} {t('sources', lang)} · {s.lockouts} {t('lockouts', lang)}</span>
@@ -109,7 +111,7 @@ function App() {
               <span className="big"><CountUp value={s.denyCount} /></span>
               <span className="lab">{t('denied', lang)}</span>
             </div>
-            <div className="metric acc">
+            <div className="metric">
               <div className="bars">
                 <div className="bar-row">
                   <span className="bar-num good">{Math.round(withCtl * 100)}<i>%</i></span>

@@ -63,6 +63,31 @@ export interface Readiness {
   syslogPortOpen: boolean
   manifestValid: boolean
 }
+export interface Interface {
+  name: string
+  role: string
+  flows: number
+  kind: string
+}
+export interface Subnet {
+  cidr: string
+  hosts: number
+  flows: number
+  accept: number
+  intf: string
+}
+export interface Anchor {
+  ip: string
+  name: string
+  role: string
+  intf: string
+}
+export interface Topology {
+  core: { name: string; ip: string; model: string }
+  interfaces: Interface[]
+  subnets: Subnet[]
+  anchors: Anchor[]
+}
 export interface RcaSnapshot {
   readiness: Readiness
   datasetReady: boolean
@@ -70,6 +95,7 @@ export interface RcaSnapshot {
   reasonerMode: string
   providers: Provider[]
   providerError: string | null
+  topology: Topology | null
   dataStats: DataStats | null
   cases: RcaCase[]
   baselines: Baseline[]

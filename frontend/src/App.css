@@ -182,16 +182,29 @@
 .m-port { fill: rgba(255, 192, 77, 0.1); stroke: var(--amber); stroke-width: 1; }
 .m-flow { fill: rgba(95, 228, 209, 0.16); stroke: var(--mint); stroke-width: 1; }
 .m-cons { fill: rgba(95, 228, 209, 0.2); stroke: var(--mint); stroke-width: 1.5; }
+.m-intf { fill: rgba(95, 228, 209, 0.05); stroke: rgba(95, 228, 209, 0.45); stroke-width: 1; }
+.n-intf { font-size: 12px; text-anchor: middle; fill: var(--text); letter-spacing: 0.04em; }
+.n-v.amber { fill: var(--amber); }
+.zone-tag { font-size: 10px; fill: var(--fog); letter-spacing: 0.1em; text-transform: uppercase; }
 
-/* verdict overlay */
+/* deck — verdict + metrics, hairline separated, no overlap */
+.deck {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1.3fr;
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+}
+.deck > * {
+  padding: 20px 24px 8px;
+  border-right: 1px solid var(--line);
+}
+.deck > *:last-child {
+  border-right: none;
+}
 .verdict {
-  position: absolute;
-  left: 0;
-  bottom: 4px;
   display: flex;
   align-items: center;
-  gap: 20px;
-  max-width: 60%;
+  gap: 18px;
 }
 .ring { flex: 0 0 auto; }
 .ring-track { fill: none; stroke: var(--line); stroke-width: 6; }
@@ -236,23 +249,10 @@
   padding-bottom: 2px;
 }
 
-/* ribbon — hairline separated, no cards */
-.ribbon {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.4fr;
-  gap: 0;
-  margin-top: 34px;
-  border-top: 1px solid var(--line);
-}
 .metric {
-  padding: 20px 24px 6px;
-  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-.metric:last-child {
-  border-right: none;
 }
 .big {
   font-size: clamp(28px, 4vw, 46px);

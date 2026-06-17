@@ -29,6 +29,14 @@ from domains.network_rca.real_dataset import (  # noqa: E402
 )
 
 _MANIFEST = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real" / "manifest.json"
+_TOPOLOGY = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real" / "real_topology.json"
+
+
+def _load_topology() -> dict[str, Any] | None:
+    try:
+        return json.loads(_TOPOLOGY.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def _data_stats(stats_path: Path) -> dict[str, Any]:
@@ -99,6 +107,7 @@ def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rul
         "reasonerMode": reasoner_mode,
         "providers": providers.list_providers(),
         "providerError": None,
+        "topology": _load_topology(),
         "cases": [],
         "baselines": [],
         "dataStats": None,
