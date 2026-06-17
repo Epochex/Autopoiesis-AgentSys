@@ -11,6 +11,9 @@ ROOT_CAUSES = {
     "fg_policy_missing": "Showroom to office reachability fails at FortiGate layer-3 policy or address-object matching, not at layer 2.",
     "security_subscription_expired_forwarding_ok": "Expired FortiGuard AV, IPS, and WebFilter subscriptions reduce security inspection coverage but do not block basic forwarding.",
     "vip_policy_mismatch": "The WAN VIP port mapping is inconsistent with the matching firewall policy or service object, so the specific published service is not reachable.",
+    "admin_bruteforce_lockout": "Repeated external admin login failures from many source IPs triggered FortiGate admin-login lockout; this is an exposure/attack pattern on the management interface, not a device fault.",
+    "internal_policy_deny_expected": "The high deny volume is internal hosts hitting blocked ports (NetBIOS and similar) and is expected firewall policy behaviour, not an outage or misconfiguration.",
+    "benign_session_clash": "Session-clash and update events are informational FortiGate housekeeping logs and do not indicate a fault.",
 }
 
 
@@ -108,6 +111,25 @@ def _infer_from_evidence(evidence: list[dict]) -> tuple[str, list[dict]]:
     if "ev-vip-map-8443" in by_id and "ev-vip-policy-service-mismatch" in by_id:
         return "vip_policy_mismatch", [by_id["ev-vip-map-8443"], by_id["ev-vip-policy-service-mismatch"]]
 
+    # Real FortiGate-syslog evidence (held-out network RCA).
+    failed = data.get("ev-admin-auth-failures", {})
+    lockout = data.get("ev-admin-lockout", {})
+    if failed.get("failed_login_count", 0) >= 1000 and lockout.get("lockout_events", 0) >= 1:
+        return "admin_bruteforce_lockout", [by_id["ev-admin-auth-failures"], by_id["ev-admin-lockout"]]
+
+    deny = data.get("ev-policy-deny-profile", {})
+    baseline = data.get("ev-traffic-baseline", {})
+    if (
+        deny.get("deny_count", 0) >= 10000
+        and deny.get("internal_src_ratio", 0) >= 0.5
+        and "ev-traffic-baseline" in by_id
+    ):
+        return "internal_policy_deny_expected", [by_id["ev-policy-deny-profile"], by_id["ev-traffic-baseline"]]
+
+    event_scan = data.get("ev-event-log-scan", {})
+    if event_scan.get("session_clash", 0) > 0 and not failed and not deny:
+        return "benign_session_clash", [by_id["ev-event-log-scan"]]
+
     return "unknown", []
 
 
@@ -118,4 +140,11 @@ def _actions(root_cause_key: str) -> list[str]:
         "fg_policy_missing": ["Review FortiGate policy and address objects with human approval before changes."],
         "security_subscription_expired_forwarding_ok": ["Renew security subscriptions if inspection coverage is required."],
         "vip_policy_mismatch": ["Review VIP and policy service mapping with human approval before changes."],
+        "admin_bruteforce_lockout": [
+            "Restrict admin access to trusted management hosts and review trusthost / GeoIP policy with human approval; do not treat as a device fault.",
+        ],
+        "internal_policy_deny_expected": [
+            "Confirm the denied internal flows are unwanted (NetBIOS and similar) and tune host/app behaviour; the firewall deny is working as intended.",
+        ],
+        "benign_session_clash": ["No action required; informational events only."],
     }.get(root_cause_key, ["Collect more readonly evidence."])

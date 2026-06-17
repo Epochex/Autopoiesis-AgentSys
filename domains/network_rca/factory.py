@@ -11,9 +11,11 @@ from core.skills.controller import SkillAttentionController
 from core.skills.registry import SkillRegistry
 from core.verifier.verifier import Verifier
 from domains.network_rca.adapters.mock_device import MockDeviceAdapter
+from domains.network_rca.adapters.real_syslog_adapter import RealSyslogAdapter
 from domains.network_rca.reasoner import LLMReasoner, build_diagnosis
 from domains.network_rca.schema import RCAGroundTruth, RCASeedCase
 from domains.network_rca.skills.network_skills import register_network_rca_skills
+from domains.network_rca.skills.real_skills import register_real_rca_skills
 
 
 ROOT = Path(__file__).resolve().parent
@@ -48,12 +50,21 @@ def build_network_rca_orchestrator(
     top_k: int = 3,
     reasoner_mode: str = "rule",
     llm_client=None,
+    data_source: str = "mock",
+    real_stats_path: str | Path | None = None,
 ) -> SingleAgentRCAOrchestrator:
-    adapter = MockDeviceAdapter(ROOT / "fixtures" / "mock_device_responses.json")
     memory = TieredMemoryStore(enabled=memory_enabled)
     memory.seed(load_memory_records())
     registry = SkillRegistry()
-    register_network_rca_skills(registry, adapter)
+    if data_source == "mock":
+        adapter = MockDeviceAdapter(ROOT / "fixtures" / "mock_device_responses.json")
+        register_network_rca_skills(registry, adapter)
+    elif data_source == "real":
+        if real_stats_path is None:
+            raise ValueError("data_source='real' requires real_stats_path")
+        register_real_rca_skills(registry, RealSyslogAdapter.from_path(real_stats_path))
+    else:
+        raise ValueError(f"unknown data_source: {data_source}")
     if reasoner_mode == "rule":
         diagnosis_builder = build_diagnosis
     elif reasoner_mode == "llm":

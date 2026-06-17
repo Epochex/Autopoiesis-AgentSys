@@ -5,40 +5,67 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from domains.network_rca.real_dataset import load_manifest, validate_real_dataset_manifest
+
+
+DEFAULT_MANIFEST = Path(__file__).resolve().parent / "fixtures" / "real" / "manifest.json"
+
 
 class RealDataReadiness(BaseModel):
     r230_host: str = "192.168.1.23"
     syslog_port_open: bool = False
-    http_port_open: bool = False
     ingestor_port_open: bool = False
-    local_real_syslog_files: list[str] = Field(default_factory=list)
+    manifest_path: str = ""
+    manifest_exists: bool = False
+    manifest_valid: bool = False
+    real_syslog_files: list[str] = Field(default_factory=list)
+    manifest_errors: list[str] = Field(default_factory=list)
     blocked: bool = True
-    reason: str
+    reason: str = ""
 
 
-def probe_r230_readiness(host: str = "192.168.1.23") -> RealDataReadiness:
+def probe_r230_readiness(
+    host: str = "192.168.1.23",
+    manifest_path: str | Path | None = None,
+) -> RealDataReadiness:
+    manifest = Path(manifest_path) if manifest_path else DEFAULT_MANIFEST
     syslog_open = _is_open(host, 514)
-    http_open = _is_open(host, 80)
     ingestor_open = any(_is_open(host, port) for port in (8000, 8026, 8080, 9090))
-    local_files = [
-        str(path)
-        for path in Path("/data").glob("**/*fortigate*.log")
-        if "selfevo-orchiter/domains/network_rca/fixtures" not in str(path)
-    ][:20]
-    blocked = not local_files or not ingestor_open
+
+    manifest_exists = manifest.exists()
+    validation = validate_real_dataset_manifest(manifest) if manifest_exists else None
+    manifest_valid = bool(validation and validation.ready)
+    errors = list(validation.errors) if validation else ["manifest.json does not exist"]
+
+    real_files: list[str] = []
+    if manifest_valid:
+        loaded = load_manifest(manifest)
+        base = manifest.parent
+        real_files = [
+            str(p if (p := Path(item)).is_absolute() else base / item) for item in loaded.syslog_paths
+        ]
+
+    # Readiness is gated on a real, validatable held-out dataset being present
+    # locally. The R230 ingestor is optional; a local export is sufficient.
+    blocked = not manifest_valid
     if blocked:
         reason = (
-            "R230 syslog port is reachable, but no readonly ingestor API was detected on 8000/8026/8080/9090 "
-            "and no local 3-7 day FortiGate syslog export exists under /data."
-        )
+            "No validated real held-out dataset is present. "
+            + ("manifest.json is missing; " if not manifest_exists else "manifest invalid; ")
+            + ("; ".join(errors[:3]) if errors else "")
+        ).strip()
     else:
-        reason = "readonly ingestor and local real syslog fixtures detected"
+        reason = "Validated real FortiGate held-out dataset is present; real held-out eval can run."
+
     return RealDataReadiness(
         r230_host=host,
         syslog_port_open=syslog_open,
-        http_port_open=http_open,
         ingestor_port_open=ingestor_open,
-        local_real_syslog_files=local_files,
+        manifest_path=str(manifest),
+        manifest_exists=manifest_exists,
+        manifest_valid=manifest_valid,
+        real_syslog_files=real_files,
+        manifest_errors=errors if not manifest_valid else [],
         blocked=blocked,
         reason=reason,
     )

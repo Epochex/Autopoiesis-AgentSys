@@ -2,12 +2,34 @@
 
 Phase 1 proves only that the pipeline is wired. Its 1.0 mock metrics are not RCA-quality evidence because both the rules and fixtures are handwritten.
 
-## Current Real-Data Status
+## Current Real-Data Status (2026-06-17: real data wired)
 
-- R230 `192.168.1.23:514` is reachable, so syslog receiving likely exists.
-- No readonly R230 ingestor API was detected on `8000`, `8026`, `8080`, or `9090`.
-- No 3-7 day real FortiGate syslog export was found locally under `/data`.
-- The current `domains/network_rca/fixtures/fortios_syslog_samples.log` is explicitly mock/sample data, not a real evaluation fixture.
+- R230 (`192.168.1.23`) receives real `DAHUA_FORTIGATE` (FG100E) syslog via rsyslog
+  (`/etc/rsyslog.d/30-fortigate.conf`, facility `local7` from `192.168.1.1`). The logs land at
+  `/data/fortigate-runtime/input/fortigate.log` (NOT `/var/log/fortigate/` — the earlier probe
+  looked in the wrong place, which is why it reported `blocked` for the wrong reason).
+- A real held-out dataset now exists locally at `domains/network_rca/fixtures/real/`
+  (manifest + train/heldout cases + authoritative `real_window_stats.json` computed over the full
+  R230 capture). These files are gitignored: they contain internal/external IPs and are not committed.
+- Readiness is no longer gated on a (nonexistent) ingestor port. `probe_r230_readiness` is
+  `blocked` iff no validated real dataset is present. The optional R230 ingestor is just one way to
+  fetch logs; a local export is sufficient.
+
+### Real held-out baseline result (rule reasoner, deterministic baseline)
+
+`python3 -m domains.network_rca.eval_real_heldout domains/network_rca/fixtures/real/manifest.json`
+
+| baseline | root-cause acc | evidence recall |
+|---|---|---|
+| selfevo_light_path | 1.00 | 1.00 |
+| full_context | 1.00 | 1.00 |
+| full_tools (no skill control) | **0.50** | **0.50** |
+| no_memory | 1.00 | 1.00 |
+
+The informative signal is the **full_tools degradation**: removing the skill controller exposes every
+skill, so the window's dominant brute-force evidence swamps the deny case and it is misdiagnosed. The
+1.00 rows are a deterministic rule baseline on real data — NOT a proof of RCA reasoning quality.
+Real reasoning-quality numbers require the LLM reasoner against a configured endpoint (pending).
 
 Run:
 

@@ -4,7 +4,11 @@ import argparse
 import json
 
 from domains.network_rca.eval import compare_baselines
-from domains.network_rca.real_dataset import load_real_case_bundle, validate_real_dataset_manifest
+from domains.network_rca.real_dataset import (
+    load_real_case_bundle,
+    resolve_stats_path,
+    validate_real_dataset_manifest,
+)
 
 
 def main() -> None:
@@ -19,7 +23,13 @@ def main() -> None:
         raise SystemExit(2)
 
     cases, ground_truth = load_real_case_bundle(args.manifest, split="heldout")
-    rows = compare_baselines(cases, ground_truth, reasoner_mode=args.reasoner_mode)
+    rows = compare_baselines(
+        cases,
+        ground_truth,
+        reasoner_mode=args.reasoner_mode,
+        data_source="real",
+        real_stats_path=resolve_stats_path(args.manifest),
+    )
     print(
         json.dumps(
             {
