@@ -1,0 +1,12 @@
+{
+  "dataset_id": "r230-fortigate-example",
+  "dataset_kind": "real",
+  "source_host": "192.168.1.23",
+  "captured_days": 7,
+  "syslog_paths": [
+    "syslog/fortigate-YYYYMMDD.log"
+  ],
+  "train_cases_path": "train_cases.json",
+  "heldout_cases_path": "heldout_cases.json",
+  "notes": "Template only. Do not treat this file as a real dataset manifest."
+}

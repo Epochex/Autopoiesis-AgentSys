@@ -17,6 +17,12 @@ python3 -m domains.network_rca.phase15
 
 The command prints `real_data_readiness.blocked=true` until real syslog fixtures and held-out ground truth exist.
 
+Validate a real dataset manifest with:
+
+```bash
+SELFEVO_REAL_DATASET_MANIFEST=/path/to/manifest.json python3 -m domains.network_rca.validate_real_dataset
+```
+
 ## What Counts As Real For Phase 1.5
 
 - 3-7 days of FortiGate syslog captured from R230 through a readonly export or ingestor.

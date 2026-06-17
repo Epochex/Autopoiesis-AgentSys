@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from pathlib import Path
+
 from core.context.compiler import ContextCompiler
 from core.llm import LLMConfigurationError, StaticJsonLLMClient
 from core.memory.store import MemoryRecord, TieredMemoryStore
@@ -11,6 +13,7 @@ from core.verifier.verifier import Verifier
 from domains.network_rca.eval import compare_baselines
 from domains.network_rca.factory import build_network_rca_orchestrator, load_ground_truth, load_seed_cases
 from domains.network_rca.real_data_readiness import probe_r230_readiness
+from domains.network_rca.real_dataset import validate_real_dataset_manifest
 from domains.network_rca.schema import DiagnosisEvidence, RCADiagnosis
 
 
@@ -140,3 +143,21 @@ def test_real_data_readiness_reports_blocked_without_ingestor_or_export():
 
     assert readiness.blocked
     assert "no readonly ingestor" in readiness.reason.lower() or "no local" in readiness.reason.lower()
+
+
+def test_real_dataset_manifest_validator_rejects_missing_and_template():
+    missing = validate_real_dataset_manifest("/tmp/does-not-exist-selfevo-real-manifest.json")
+    assert not missing.ready
+    assert "does not exist" in missing.errors[0]
+
+    template = validate_real_dataset_manifest("domains/network_rca/fixtures/real/manifest.example.json")
+    assert not template.ready
+    assert any("missing" in error for error in template.errors)
+
+
+def test_ci_workflow_is_prepared_outside_github_until_workflow_scope_exists():
+    workflow = Path("ci/github-workflows/python-phase15.yml")
+    assert workflow.exists()
+    text = workflow.read_text(encoding="utf-8")
+    assert 'python-version: "3.11"' in text
+    assert "pytest -p no:cacheprovider tests_py" in text
