@@ -158,7 +158,7 @@ function App() {
 
       {d.datasetReady && s && c ? (
         <>
-          <section className="canvas-wrap">
+          <section className={`canvas-wrap ${drillSub ? 'big' : ''}`}>
             {topo ? (
               <TopologyCanvas
                 topo={topo}
