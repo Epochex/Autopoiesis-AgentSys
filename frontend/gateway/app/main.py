@@ -9,8 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from .config import Settings
+from .live import assess_device, event_rate
 from .providers import list_providers
-from .rca_reader import load_rca_snapshot
+from .rca_reader import load_rca_snapshot, _load_topology
 
 settings = Settings.from_env()
 _CACHE_TTL_SEC = 5.0
@@ -65,6 +66,29 @@ async def _get_snapshot(provider: str = "rule", force: bool = False) -> dict[str
 @app.get("/api/rca/providers")
 def rca_providers() -> dict[str, Any]:
     return {"providers": list_providers()}
+
+
+@app.get("/api/rca/pulse")
+async def rca_pulse() -> dict[str, Any]:
+    return await asyncio.to_thread(event_rate)
+
+
+@app.get("/api/rca/threat")
+async def rca_threat(ip: str, cidr: str = "", lang: str = "zh") -> dict[str, Any]:
+    topo = _load_topology() or {}
+    device = None
+    for sub in topo.get("subnets", []):
+        if cidr and sub.get("cidr") != cidr:
+            continue
+        for dv in sub.get("devices", []) or []:
+            if dv.get("ip") == ip:
+                device, cidr = dv, sub.get("cidr", cidr)
+                break
+        if device:
+            break
+    if device is None:
+        return {"ok": False, "text": "device not found"}
+    return await asyncio.to_thread(assess_device, ip, cidr, device, lang)
 
 
 @app.get("/api/rca/snapshot")

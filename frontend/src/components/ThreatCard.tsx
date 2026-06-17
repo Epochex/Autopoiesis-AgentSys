@@ -1,0 +1,37 @@
+import type { Lang } from '../i18n'
+
+export type Threat = {
+  ip: string
+  loading: boolean
+  severity?: string
+  verdict?: string
+  analysis?: string
+  model?: string
+  error?: string
+}
+
+export function ThreatCard({ th, lang, onClose }: { th: Threat; lang: Lang; onClose: () => void }) {
+  return (
+    <aside className={`threat-card sev-${th.severity ?? 'pending'}`}>
+      <div className="tc-head">
+        <span className="tc-kicker">{lang === 'zh' ? 'DeepSeek 主动研判' : 'DeepSeek active analysis'} · {th.ip}</span>
+        <button className="tc-x" onClick={onClose} aria-label="close">✕</button>
+      </div>
+      {th.loading ? (
+        <div className="tc-loading"><span className="orbit" /> {lang === 'zh' ? '研判中…' : 'analyzing…'}</div>
+      ) : th.error ? (
+        <div className="tc-body err">{th.error}</div>
+      ) : (
+        <div className="tc-body">
+          <div className="tc-verdict">
+            <span className={`sev-dot ${th.severity}`} />
+            <strong>{th.verdict}</strong>
+            <span className="sev-tag">{th.severity}</span>
+          </div>
+          <p>{th.analysis}</p>
+          <span className="tc-model">{th.model}</span>
+        </div>
+      )}
+    </aside>
+  )
+}
