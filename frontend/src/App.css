@@ -147,11 +147,7 @@
   transition: margin 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .canvas-wrap.big {
-  margin-bottom: 36px;
-}
-.canvas-wrap.big .flow-canvas {
-  transform: scale(1.06);
-  transform-origin: 62% 50%;
+  margin-bottom: 12px;
 }
 .flow-canvas {
   width: 100%;
@@ -393,12 +389,23 @@
   animation: breathe 1.6s ease-in-out infinite;
 }
 
+/* analysis strip — below canvas, no occlusion */
+.analysis-strip {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.analysis-strip > * {
+  flex: 1 1 340px;
+  max-width: 560px;
+}
+.step-txt {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
 /* DeepSeek threat card */
 .threat-card {
-  position: absolute;
-  top: 8px;
-  right: 0;
-  width: 318px;
   background: rgba(10, 16, 15, 0.94);
   border: 1px solid var(--line);
   border-left: 2px solid var(--mint);
@@ -530,16 +537,13 @@
 
 /* subnet posture summary */
 .posture-card {
-  position: absolute;
-  top: 8px;
-  right: 0;
-  width: 320px;
   background: rgba(10, 16, 15, 0.94);
   border: 1px solid var(--line);
-  border-left: 2px solid var(--coral);
+  border-left: 2px solid var(--mint);
   backdrop-filter: blur(8px);
   animation: slidein 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+.posture-card.sev-high { border-left-color: var(--coral); }
 .posture-counts {
   display: flex;
   align-items: center;

@@ -3,7 +3,7 @@ import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
-import { ThreatCard, type Threat } from './components/ThreatCard'
+import { ThreatCard, Analyzing, type Threat } from './components/ThreatCard'
 import { CountUp, ConfidenceRing } from './components/Motion'
 import type { Device } from './types'
 
@@ -181,27 +181,32 @@ function App() {
             {rate !== null ? (
               <div className="live-rate"><span className="rate-dot" />{rate}/s · R230</div>
             ) : null}
-            {threat ? <ThreatCard th={threat} lang={lang} onClose={() => setThreat(null)} /> : null}
-            {posture ? (
-              <aside className="posture-card">
-                <div className="tc-head">
-                  <span className="tc-kicker">{lang === 'zh' ? '子网态势汇总' : 'subnet posture'} · {posture.cidr}</span>
-                  <button className="tc-x" onClick={() => setPosture(null)}>✕</button>
-                </div>
-                {posture.loading ? (
-                  <div className="tc-loading"><span className="orbit" /> {lang === 'zh' ? '批量研判中…' : 'batch analysis…'}</div>
-                ) : (
-                  <div className="tc-body">
-                    <div className="posture-counts">
-                      <span className="pc high">{posture.high ?? 0}</span> high
-                      <span className="pc watch">{posture.watch ?? 0}</span> watch
-                    </div>
-                    <p>{posture.summary}</p>
-                  </div>
-                )}
-              </aside>
-            ) : null}
           </section>
+
+          {threat || posture ? (
+            <section className="analysis-strip">
+              {threat ? <ThreatCard th={threat} lang={lang} onClose={() => setThreat(null)} /> : null}
+              {posture ? (
+                <aside className={`posture-card ${posture.high ? 'sev-high' : ''}`}>
+                  <div className="tc-head">
+                    <span className="tc-kicker">{lang === 'zh' ? '子网态势汇总' : 'subnet posture'} · {posture.cidr}</span>
+                    <button className="tc-x" onClick={() => setPosture(null)}>✕</button>
+                  </div>
+                  {posture.loading ? (
+                    <Analyzing lang={lang} />
+                  ) : (
+                    <div className="tc-body">
+                      <div className="posture-counts">
+                        <span className="pc high">{posture.high ?? 0}</span> high
+                        <span className="pc watch">{posture.watch ?? 0}</span> watch
+                      </div>
+                      <p>{posture.summary}</p>
+                    </div>
+                  )}
+                </aside>
+              ) : null}
+            </section>
+          ) : null}
 
           <section className="deck">
             <div className="verdict">
