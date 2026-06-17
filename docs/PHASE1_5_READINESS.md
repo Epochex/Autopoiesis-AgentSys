@@ -23,6 +23,20 @@ Validate a real dataset manifest with:
 SELFEVO_REAL_DATASET_MANIFEST=/path/to/manifest.json python3 -m domains.network_rca.validate_real_dataset
 ```
 
+Run real held-out baselines only after the manifest validates:
+
+```bash
+python3 -m domains.network_rca.eval_real_heldout /path/to/manifest.json
+```
+
+Run the optional R230 readonly ingestor on the log host with:
+
+```bash
+python3 -m pip install -e '.[ingestor]'
+R230_FORTIGATE_LOG_PATHS=/var/log/fortigate/fortigate.log \
+  uvicorn domains.network_rca.ingestor_app:app --host 0.0.0.0 --port 8000
+```
+
 ## What Counts As Real For Phase 1.5
 
 - 3-7 days of FortiGate syslog captured from R230 through a readonly export or ingestor.

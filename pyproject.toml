@@ -11,6 +11,10 @@ dependencies = [
 dev = [
   "pytest>=8.0",
 ]
+ingestor = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests_py"]

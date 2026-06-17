@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import sys
+from datetime import datetime
+from subprocess import run
+
 import pytest
 
 from pathlib import Path
@@ -10,10 +15,11 @@ from core.memory.store import MemoryRecord, TieredMemoryStore
 from core.skills.controller import SkillAttentionController
 from core.skills.spec import RegisteredSkill, SkillSpec
 from core.verifier.verifier import Verifier
+from domains.network_rca.adapters.fortios_syslog import LocalFixtureLogAdapter, parse_fortios_kv_line
 from domains.network_rca.eval import compare_baselines
 from domains.network_rca.factory import build_network_rca_orchestrator, load_ground_truth, load_seed_cases
 from domains.network_rca.real_data_readiness import probe_r230_readiness
-from domains.network_rca.real_dataset import validate_real_dataset_manifest
+from domains.network_rca.real_dataset import load_real_case_bundle, validate_real_dataset_manifest
 from domains.network_rca.schema import DiagnosisEvidence, RCADiagnosis
 
 
@@ -153,6 +159,92 @@ def test_real_dataset_manifest_validator_rejects_missing_and_template():
     template = validate_real_dataset_manifest("domains/network_rca/fixtures/real/manifest.example.json")
     assert not template.ready
     assert any("missing" in error for error in template.errors)
+
+
+def test_fortios_syslog_parser_preserves_fields_and_filters_time_window(tmp_path):
+    log_path = tmp_path / "fortigate.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                'date=2026-06-14 time=10:00:00 type=traffic subtype=forward level=notice srcip=192.168.1.23 dstip=192.168.16.10 action=deny policyid=0 msg="Denied by forward policy check"',
+                'date=2026-06-15 time=10:00:00 type=event subtype=system level=warning msg="other event"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = parse_fortios_kv_line(log_path.read_text(encoding="utf-8").splitlines()[0])
+    assert parsed.timestamp == "2026-06-14T10:00:00"
+    assert parsed.msg == "Denied by forward policy check"
+
+    events = LocalFixtureLogAdapter(log_path).query(
+        start=datetime.fromisoformat("2026-06-14T09:00:00"),
+        end=datetime.fromisoformat("2026-06-14T11:00:00"),
+        filters={"type": "traffic", "action": "deny"},
+    )
+
+    assert [event.policyid for event in events] == ["0"]
+
+
+def test_real_manifest_ready_requires_real_train_and_heldout_splits(tmp_path):
+    syslog = tmp_path / "fortigate.log"
+    syslog.write_text('date=2026-06-14 time=10:00:00 type=traffic action=deny msg="heldout"\n', encoding="utf-8")
+    seed = load_seed_cases()[0]
+    train_case = {
+        "case": seed.model_dump(),
+        "ground_truth": {
+            "expected_root_cause_key": "carrier_down",
+            "required_evidence": ["ev-eno1-oper-down"],
+            "split": "train",
+            "dataset_kind": "real",
+        },
+    }
+    heldout_case = {
+        "case": seed.model_copy(update={"id": "real-heldout-carrier"}).model_dump(),
+        "ground_truth": {
+            "expected_root_cause_key": "carrier_down",
+            "required_evidence": ["ev-eno1-oper-down"],
+            "split": "heldout",
+            "dataset_kind": "real",
+        },
+    }
+    (tmp_path / "train_cases.json").write_text(json.dumps([train_case]), encoding="utf-8")
+    (tmp_path / "heldout_cases.json").write_text(json.dumps([heldout_case]), encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "dataset_id": "unit-real",
+                "dataset_kind": "real",
+                "source_host": "192.168.1.23",
+                "captured_days": 3,
+                "syslog_paths": ["fortigate.log"],
+                "train_cases_path": "train_cases.json",
+                "heldout_cases_path": "heldout_cases.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    validation = validate_real_dataset_manifest(manifest)
+    cases, truth = load_real_case_bundle(manifest, split="heldout")
+
+    assert validation.ready
+    assert validation.warnings == ["captured_days is below the preferred 7-day upper target"]
+    assert [case.id for case in cases] == ["real-heldout-carrier"]
+    assert truth["real-heldout-carrier"].split == "heldout"
+
+
+def test_real_heldout_eval_command_refuses_missing_manifest():
+    result = run(
+        [sys.executable, "-m", "domains.network_rca.eval_real_heldout", "/tmp/missing-selfevo-real-manifest.json"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "manifest file does not exist" in result.stdout
 
 
 def test_ci_workflow_is_prepared_outside_github_until_workflow_scope_exists():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 import os
+import gzip
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -55,8 +56,9 @@ def parse_fortios_kv_line(line: str) -> FortiOSLogEvent:
 
 
 class LocalFixtureLogAdapter:
-    def __init__(self, path: str | Path):
-        self.path = Path(path)
+    def __init__(self, path: str | Path | list[str | Path]):
+        raw_paths = path if isinstance(path, list) else [path]
+        self.paths = [Path(item) for item in raw_paths]
 
     def query(
         self,
@@ -66,8 +68,13 @@ class LocalFixtureLogAdapter:
         filters: dict[str, str] | None = None,
     ) -> list[FortiOSLogEvent]:
         filters = filters or {}
-        events = [parse_fortios_kv_line(line) for line in self.path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        return [event for event in events if _matches(event, filters)]
+        events = [
+            parse_fortios_kv_line(line)
+            for path in self.paths
+            for line in _read_lines(path)
+            if line.strip()
+        ]
+        return [event for event in events if _matches(event, filters) and _within_time_window(event, start, end)]
 
 
 class R230IngestorLogAdapter:
@@ -95,4 +102,27 @@ def _matches(event: FortiOSLogEvent, filters: dict[str, str]) -> bool:
     for key, expected in filters.items():
         if event.fields.get(key) != expected:
             return False
+    return True
+
+
+def _read_lines(path: Path) -> list[str]:
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            return handle.read().splitlines()
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+def _within_time_window(event: FortiOSLogEvent, start: datetime | None, end: datetime | None) -> bool:
+    if not start and not end:
+        return True
+    if event.timestamp is None:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(event.timestamp)
+    except ValueError:
+        return False
+    if start and timestamp < start:
+        return False
+    if end and timestamp > end:
+        return False
     return True

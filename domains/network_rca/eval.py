@@ -21,7 +21,12 @@ class BaselineRow(BaseModel):
     notes: str = ""
 
 
-def compare_baselines(cases: list[RCASeedCase], ground_truth: dict[str, RCAGroundTruth]) -> list[BaselineRow]:
+def compare_baselines(
+    cases: list[RCASeedCase],
+    ground_truth: dict[str, RCAGroundTruth],
+    *,
+    reasoner_mode: str = "rule",
+) -> list[BaselineRow]:
     if not cases:
         return []
     kinds = sorted({ground_truth[case.id].dataset_kind for case in cases if case.id in ground_truth})
@@ -39,7 +44,7 @@ def compare_baselines(cases: list[RCASeedCase], ground_truth: dict[str, RCAGroun
     with TemporaryDirectory() as tmp_dir:
         for name, kwargs, notes in configs:
             ledger_path = Path(tmp_dir) / f"{name}.jsonl"
-            orchestrator = build_network_rca_orchestrator(ledger_path, **kwargs)
+            orchestrator = build_network_rca_orchestrator(ledger_path, reasoner_mode=reasoner_mode, **kwargs)
             metrics = run_and_evaluate_replay(orchestrator, cases, ground_truth)
             rows.append(_row(name, dataset_kind, split, metrics, notes))
     return rows

@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from domains.network_rca.schema import RCAGroundTruth, RCASeedCase
+
 
 class RealDatasetManifest(BaseModel):
     dataset_id: str
@@ -27,6 +29,28 @@ class RealDatasetValidation(BaseModel):
 
 def load_manifest(path: str | Path) -> RealDatasetManifest:
     return RealDatasetManifest.model_validate_json(Path(path).read_text(encoding="utf-8"))
+
+
+def load_real_case_bundle(
+    manifest_path: str | Path,
+    *,
+    split: Literal["train", "heldout"],
+) -> tuple[list[RCASeedCase], dict[str, RCAGroundTruth]]:
+    manifest_file = Path(manifest_path)
+    manifest = load_manifest(manifest_file)
+    case_path = _resolve(
+        manifest_file.parent,
+        manifest.train_cases_path if split == "train" else manifest.heldout_cases_path,
+    )
+    raw = json.loads(case_path.read_text(encoding="utf-8"))
+    cases: list[RCASeedCase] = []
+    truths: dict[str, RCAGroundTruth] = {}
+    for item in raw:
+        case = RCASeedCase.model_validate(item["case"])
+        truth = RCAGroundTruth.model_validate({"case_id": case.id, **item["ground_truth"]})
+        cases.append(case)
+        truths[truth.case_id] = truth
+    return cases, truths
 
 
 def validate_real_dataset_manifest(path: str | Path) -> RealDatasetValidation:
@@ -70,6 +94,9 @@ def validate_real_dataset_manifest(path: str | Path) -> RealDatasetValidation:
             truth = item.get("ground_truth", {}) if isinstance(item, dict) else {}
             if truth.get("dataset_kind") != "real":
                 errors.append(f"{case_path_name}[{index}] ground_truth.dataset_kind must be real")
+            expected_split = "train" if case_path_name == "train_cases_path" else "heldout"
+            if truth.get("split") != expected_split:
+                errors.append(f"{case_path_name}[{index}] ground_truth.split must be {expected_split}")
 
     if manifest.captured_days < 7:
         warnings.append("captured_days is below the preferred 7-day upper target")
