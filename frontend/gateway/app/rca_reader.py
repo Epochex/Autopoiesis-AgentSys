@@ -126,7 +126,16 @@ def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rul
 
     cases, ground_truth = load_real_case_bundle(manifest, split="heldout")
     try:
-        payload["cases"] = [_run_case(case, stats_path, reasoner_mode) for case in cases]
+        if reasoner_mode == "llm":
+            # Parallelize the per-case LLM diagnoses so the live request stays responsive.
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(6, len(cases) or 1)) as pool:
+                payload["cases"] = list(pool.map(lambda c: _run_case(c, stats_path, "llm"), cases))
+        else:
+            payload["cases"] = [_run_case(case, stats_path, "rule") for case in cases]
+        # The ablation is a skill-control property (engine-independent); run it with the
+        # instant rule reasoner so the live request never blocks on the LLM endpoint.
         payload["baselines"] = [
             {
                 "name": row.name,
@@ -138,7 +147,7 @@ def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rul
             }
             for row in compare_baselines(
                 cases, ground_truth, data_source="real", real_stats_path=stats_path,
-                reasoner_mode=reasoner_mode,
+                reasoner_mode="rule",
             )
         ]
     except Exception as exc:  # LLM endpoint unreachable / misconfigured — stay honest.
