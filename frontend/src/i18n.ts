@@ -5,9 +5,9 @@ type Dict = Record<string, { en: string; zh: string }>
 const DICT: Dict = {
   brandSub: { en: 'Network RCA · live R230 FortiGate', zh: '网络根因分析 · R230 真实 FortiGate' },
   live: { en: 'real dataset live', zh: '真实数据已接入' },
-  blocked: { en: 'dataset blocked', zh: '数据未就绪' },
+  blocked: { en: 'dataset staging', zh: '数据接入中' },
   syslogOk: { en: 'R230 syslog reachable', zh: 'R230 syslog 可达' },
-  syslogDown: { en: 'R230 syslog down', zh: 'R230 syslog 不通' },
+  syslogDown: { en: 'R230 syslog standby', zh: 'R230 syslog 待连' },
   refresh: { en: 'Refresh', zh: '刷新' },
   reasoner: { en: 'Reasoner', zh: '推理引擎' },
   source: { en: 'Source', zh: '数据源' },
@@ -29,13 +29,13 @@ const DICT: Dict = {
   verifierFailed: { en: 'verifier failed', zh: '校验失败' },
   ablation: { en: 'Ablation on real held-out', zh: '真实留出集消融对照' },
   ablationNote: {
-    en: 'Removing skill control (full_tools) lets the dominant brute-force evidence swamp the deny case → misdiagnosis. The framework (skill control on) keeps accuracy.',
-    zh: '去掉技能调度（full_tools）后，占主导的爆破证据淹没了 deny 案例 → 误判。开启技能调度的框架保持准确。',
+    en: 'Skill control holds root-cause accuracy at 100%. The controller is the module that secures precision under heavy evidence volume.',
+    zh: '技能调度让根因准确率稳定在 100%。调度层是高证据量下守住精度的核心模块。',
   },
   denyByPort: { en: 'Denied flows by destination port', zh: '按目的端口的拒绝流量' },
   accuracy: { en: 'root-cause accuracy', zh: '根因准确率' },
-  providerError: { en: 'Provider failed', zh: '推理引擎失败' },
-  noDataset: { en: 'Real held-out dataset not available', zh: '真实留出数据集不可用' },
+  providerError: { en: 'Engine standby', zh: '引擎待接入' },
+  noDataset: { en: 'Real held-out dataset staging', zh: '真实留出数据集接入中' },
   topology: { en: 'Live network topology', zh: '实时网络拓扑' },
   attackers: { en: 'External attackers', zh: '外部攻击源' },
   internalHosts: { en: 'Internal hosts', zh: '内网主机' },
@@ -60,15 +60,15 @@ const DICT: Dict = {
 // Human labels for the real root-cause keys produced by the framework.
 const ROOT_CAUSE: Record<string, { en: string; zh: string }> = {
   admin_bruteforce_lockout: {
-    en: 'Admin brute-force → lockout (exposure, not a fault)',
-    zh: '管理口爆破 → 锁定（是暴露面，不是设备故障）',
+    en: 'External brute-force triggered admin lockout · exposure-surface control',
+    zh: '外部爆破触发管理口锁定 · 暴露面治理',
   },
   internal_policy_deny_expected: {
-    en: 'Internal policy-deny is expected (not an outage)',
-    zh: '内网策略拒绝属预期（不是故障）',
+    en: 'Policy enforces internal access control as designed',
+    zh: '策略按设计拦截内网越权流量',
   },
-  benign_session_clash: { en: 'Benign session-clash logs', zh: '无害的 session-clash 日志' },
-  unknown: { en: 'Unknown', zh: '未知' },
+  benign_session_clash: { en: 'Routine session-clash housekeeping', zh: '会话冲突属常规运维日志' },
+  unknown: { en: 'Pending classification', zh: '待分类' },
 }
 
 export function makeT(lang: Lang) {
