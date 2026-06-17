@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from domains.network_rca.schema import DiagnosisEvidence, RCADiagnosis
 
 
@@ -31,6 +33,54 @@ def build_diagnosis(case, evidence: list[dict], context) -> RCADiagnosis:
         recommended_actions=_actions(root_cause_key),
         readonly=True,
     )
+
+
+class LLMReasoner:
+    def __init__(self, client):
+        self.client = client
+
+    def __call__(self, case, evidence: list[dict], context) -> RCADiagnosis:
+        payload = self.client.complete_json(
+            [
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "case": case.model_dump(),
+                            "context": context.model_dump(mode="json"),
+                            "evidence": evidence,
+                            "allowed_root_cause_keys": sorted(ROOT_CAUSES),
+                            "readonly_only": True,
+                        },
+                        sort_keys=True,
+                    ),
+                }
+            ],
+            schema_name="network_rca_diagnosis",
+        )
+        cited_ids = {item.get("evidence_id") for item in payload.get("evidence", []) if item.get("evidence_id")}
+        by_id = {item["evidence_id"]: item for item in evidence}
+        cited = [by_id[evidence_id] for evidence_id in cited_ids if evidence_id in by_id]
+        root_cause_key = payload.get("root_cause_key", "unknown")
+        if root_cause_key not in ROOT_CAUSES:
+            root_cause_key = "unknown"
+        return RCADiagnosis(
+            case_id=case.id,
+            root_cause_key=root_cause_key,
+            root_cause=payload.get("root_cause") or ROOT_CAUSES.get(root_cause_key, "Unknown root cause"),
+            confidence=float(payload.get("confidence", 0.0)),
+            evidence=[
+                DiagnosisEvidence(
+                    evidence_id=item["evidence_id"],
+                    source=item["source"],
+                    summary=item["summary"],
+                )
+                for item in cited
+            ],
+            missing_evidence=list(payload.get("missing_evidence", [])),
+            recommended_actions=list(payload.get("recommended_actions", [])),
+            readonly=bool(payload.get("readonly", True)),
+        )
 
 
 def _infer_from_evidence(evidence: list[dict]) -> tuple[str, list[dict]]:

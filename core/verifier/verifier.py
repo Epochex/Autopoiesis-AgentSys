@@ -30,6 +30,13 @@ class Verifier:
         missing_citations = cited_ids.difference(evidence_ids)
         if missing_citations:
             errors.append(f"cited evidence not observed: {sorted(missing_citations)}")
+        contradictions = [
+            item["evidence_id"]
+            for item in evidence
+            if item.get("contradicts") == diagnosis.root_cause_key and item["evidence_id"] in cited_ids
+        ]
+        if contradictions:
+            errors.append(f"diagnosis cites contradictory evidence: {sorted(contradictions)}")
         if required_evidence:
             matched = len(set(required_evidence).intersection(cited_ids))
             recall = matched / len(required_evidence)

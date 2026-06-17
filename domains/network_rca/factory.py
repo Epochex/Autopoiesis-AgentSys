@@ -4,13 +4,14 @@ import json
 from pathlib import Path
 
 from core.context.compiler import ContextCompiler
+from core.llm.provider import OpenAICompatibleClient
 from core.memory.store import MemoryRecord, TieredMemoryStore
 from core.orchestrator.orchestrator import SingleAgentRCAOrchestrator
 from core.skills.controller import SkillAttentionController
 from core.skills.registry import SkillRegistry
 from core.verifier.verifier import Verifier
 from domains.network_rca.adapters.mock_device import MockDeviceAdapter
-from domains.network_rca.reasoner import build_diagnosis
+from domains.network_rca.reasoner import LLMReasoner, build_diagnosis
 from domains.network_rca.schema import RCAGroundTruth, RCASeedCase
 from domains.network_rca.skills.network_skills import register_network_rca_skills
 
@@ -45,18 +46,27 @@ def build_network_rca_orchestrator(
     skill_controller_enabled: bool = True,
     verifier_enabled: bool = True,
     top_k: int = 3,
+    reasoner_mode: str = "rule",
+    llm_client=None,
 ) -> SingleAgentRCAOrchestrator:
     adapter = MockDeviceAdapter(ROOT / "fixtures" / "mock_device_responses.json")
     memory = TieredMemoryStore(enabled=memory_enabled)
     memory.seed(load_memory_records())
     registry = SkillRegistry()
     register_network_rca_skills(registry, adapter)
+    if reasoner_mode == "rule":
+        diagnosis_builder = build_diagnosis
+    elif reasoner_mode == "llm":
+        diagnosis_builder = LLMReasoner(llm_client or OpenAICompatibleClient())
+    else:
+        raise ValueError(f"unknown reasoner_mode: {reasoner_mode}")
+
     return SingleAgentRCAOrchestrator(
         memory=memory,
         context_compiler=ContextCompiler(token_budget=220, enabled=context_enabled),
         skills=registry,
         skill_controller=SkillAttentionController(enabled=skill_controller_enabled, top_k=top_k),
         verifier=Verifier(enabled=verifier_enabled),
-        diagnosis_builder=build_diagnosis,
+        diagnosis_builder=diagnosis_builder,
         ledger_path=ledger_path,
     )

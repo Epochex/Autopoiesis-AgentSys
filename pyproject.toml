@@ -2,7 +2,7 @@
 name = "selfevo-network-rca"
 version = "0.1.0"
 description = "Python Phase 0-1 implementation for a trace-backed self-evolving agent framework and network RCA seed domain."
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
   "pydantic>=2.0",
 ]

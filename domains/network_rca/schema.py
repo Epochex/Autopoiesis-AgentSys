@@ -16,6 +16,8 @@ class RCAGroundTruth(BaseModel):
     case_id: str
     expected_root_cause_key: str
     required_evidence: list[str]
+    split: str = "seed"
+    dataset_kind: str = "mock"
 
 
 class DiagnosisEvidence(BaseModel):

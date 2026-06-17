@@ -34,9 +34,13 @@ class ContextCompiler:
             for memory in memories_by_tier.get(tier, []):
                 memory_lines.append((memory.memory_id, f"{tier}: {memory.text}"))
 
+        required = set(required_evidence)
         evidence_lines = [
             (item["evidence_id"], f"{item['source']}: {item['summary']}")
-            for item in current_evidence
+            for item in sorted(
+                current_evidence,
+                key=lambda item: (item.get("evidence_id") not in required, item.get("evidence_id", "")),
+            )
         ]
         all_lines = [line for _, line in memory_lines + evidence_lines]
         before = self._estimate_tokens(query + " " + " ".join(all_lines))
@@ -55,7 +59,10 @@ class ContextCompiler:
         ]
 
         while self.enabled and self._estimate_tokens(" ".join(item["line"] for item in selected_items)) > self.token_budget and len(selected_items) > 1:
-            selected_items.pop(-1)
+            removable_index = self._last_removable_index(selected_items, required)
+            if removable_index is None:
+                break
+            selected_items.pop(removable_index)
 
         after = self._estimate_tokens(" ".join(item["line"] for item in selected_items))
         if before <= 0:
@@ -80,3 +87,12 @@ class ContextCompiler:
     @staticmethod
     def _estimate_tokens(text: str) -> int:
         return max(1, len(text.split()))
+
+    @staticmethod
+    def _last_removable_index(selected_items: list[dict], required: set[str]) -> int | None:
+        for index in range(len(selected_items) - 1, 0, -1):
+            item = selected_items[index]
+            if item["kind"] == "evidence" and item["id"] in required:
+                continue
+            return index
+        return None

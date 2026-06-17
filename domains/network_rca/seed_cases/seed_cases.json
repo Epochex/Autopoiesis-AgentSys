@@ -10,7 +10,9 @@
     },
     "ground_truth": {
       "required_evidence": ["ev-eno1-oper-down", "ev-eno1-no-phy"],
-      "expected_root_cause_key": "carrier_down"
+      "expected_root_cause_key": "carrier_down",
+      "split": "seed",
+      "dataset_kind": "mock"
     }
   },
   {
@@ -24,7 +26,9 @@
     },
     "ground_truth": {
       "required_evidence": ["ev-eno2-dropped", "ev-eno2-no-hw-errors"],
-      "expected_root_cause_key": "benign_rx_dropped"
+      "expected_root_cause_key": "benign_rx_dropped",
+      "split": "seed",
+      "dataset_kind": "mock"
     }
   },
   {
@@ -38,7 +42,9 @@
     },
     "ground_truth": {
       "required_evidence": ["ev-fg-connected-routes", "ev-fg-policy-deny"],
-      "expected_root_cause_key": "fg_policy_missing"
+      "expected_root_cause_key": "fg_policy_missing",
+      "split": "seed",
+      "dataset_kind": "mock"
     }
   },
   {
@@ -52,7 +58,9 @@
     },
     "ground_truth": {
       "required_evidence": ["ev-fortiguard-expired", "ev-forwarding-ok"],
-      "expected_root_cause_key": "security_subscription_expired_forwarding_ok"
+      "expected_root_cause_key": "security_subscription_expired_forwarding_ok",
+      "split": "seed",
+      "dataset_kind": "mock"
     }
   },
   {
@@ -66,7 +74,9 @@
     },
     "ground_truth": {
       "required_evidence": ["ev-vip-map-8443", "ev-vip-policy-service-mismatch"],
-      "expected_root_cause_key": "vip_policy_mismatch"
+      "expected_root_cause_key": "vip_policy_mismatch",
+      "split": "seed",
+      "dataset_kind": "mock"
     }
   }
 ]
