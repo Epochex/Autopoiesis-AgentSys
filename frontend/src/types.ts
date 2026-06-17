@@ -65,9 +65,22 @@ export interface Readiness {
   manifestValid: boolean
 }
 
+export interface Provider {
+  id: string
+  label: string
+  kind: string
+  model: string
+  reachable: boolean
+  note: string
+}
+
 export interface RcaSnapshot {
   readiness: Readiness
   datasetReady: boolean
+  provider: string
+  reasonerMode: string
+  providers: Provider[]
+  providerError: string | null
   dataStats: DataStats | null
   cases: RcaCase[]
   baselines: Baseline[]

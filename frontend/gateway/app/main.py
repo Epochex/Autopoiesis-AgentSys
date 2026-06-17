@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from .config import Settings
+from .providers import list_providers
 from .rca_reader import load_rca_snapshot
 
 settings = Settings.from_env()
@@ -40,24 +41,35 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def _get_snapshot(force: bool = False) -> dict[str, Any]:
-    global _cache_payload, _cache_loaded_at
+_cache_provider = "rule"
+
+
+async def _get_snapshot(provider: str = "rule", force: bool = False) -> dict[str, Any]:
+    global _cache_payload, _cache_loaded_at, _cache_provider
     now = time.monotonic()
-    if not force and _cache_payload is not None and now - _cache_loaded_at <= _CACHE_TTL_SEC:
+    fresh = _cache_payload is not None and now - _cache_loaded_at <= _CACHE_TTL_SEC
+    if not force and fresh and provider == _cache_provider:
         return _cache_payload
     async with _cache_lock:
         now = time.monotonic()
-        if not force and _cache_payload is not None and now - _cache_loaded_at <= _CACHE_TTL_SEC:
+        fresh = _cache_payload is not None and now - _cache_loaded_at <= _CACHE_TTL_SEC
+        if not force and fresh and provider == _cache_provider:
             return _cache_payload
-        payload = await asyncio.to_thread(load_rca_snapshot)
+        payload = await asyncio.to_thread(load_rca_snapshot, None, provider)
         _cache_payload = payload
         _cache_loaded_at = time.monotonic()
+        _cache_provider = provider
         return payload
 
 
+@app.get("/api/rca/providers")
+def rca_providers() -> dict[str, Any]:
+    return {"providers": list_providers()}
+
+
 @app.get("/api/rca/snapshot")
-async def rca_snapshot(refresh: bool = False) -> dict[str, Any]:
-    return await _get_snapshot(force=refresh)
+async def rca_snapshot(provider: str = "rule", refresh: bool = False) -> dict[str, Any]:
+    return await _get_snapshot(provider=provider, force=refresh)
 
 
 @app.get("/", include_in_schema=False)

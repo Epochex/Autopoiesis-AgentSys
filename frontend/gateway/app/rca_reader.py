@@ -47,11 +47,11 @@ def _data_stats(stats_path: Path) -> dict[str, Any]:
     }
 
 
-def _run_case(case, stats_path: Path) -> dict[str, Any]:
+def _run_case(case, stats_path: Path, reasoner_mode: str) -> dict[str, Any]:
     with TemporaryDirectory() as tmp:
         ledger = Path(tmp) / "trace.jsonl"
         orch = build_network_rca_orchestrator(
-            ledger, data_source="real", real_stats_path=stats_path
+            ledger, data_source="real", real_stats_path=stats_path, reasoner_mode=reasoner_mode
         )
         diagnosis, report = orch.diagnose(case)
         trace = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -76,8 +76,13 @@ def _run_case(case, stats_path: Path) -> dict[str, Any]:
     }
 
 
-def load_rca_snapshot(manifest_path: Path | None = None) -> dict[str, Any]:
+def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rule") -> dict[str, Any]:
+    from . import providers
+
     manifest = Path(manifest_path) if manifest_path else _MANIFEST
+    reasoner_mode, llm_env = providers.resolve_reasoner(provider_id)
+    if llm_env:
+        os.environ.update(llm_env)
     readiness = probe_r230_readiness(manifest_path=manifest)
     validation = validate_real_dataset_manifest(manifest)
 
@@ -89,12 +94,16 @@ def load_rca_snapshot(manifest_path: Path | None = None) -> dict[str, Any]:
             "manifestValid": readiness.manifest_valid,
         },
         "datasetReady": validation.ready,
+        "provider": provider_id,
+        "reasonerMode": reasoner_mode,
+        "providers": providers.list_providers(),
+        "providerError": None,
         "cases": [],
         "baselines": [],
         "dataStats": None,
         "note": (
-            "Live data from the real network_rca framework on the R230 FortiGate held-out set. "
-            "Baseline rows use the deterministic rule reasoner; full_tools removes skill control."
+            f"Live data from the real network_rca framework on the R230 FortiGate held-out set "
+            f"(reasoner: {reasoner_mode})."
         ),
     }
 
@@ -106,18 +115,26 @@ def load_rca_snapshot(manifest_path: Path | None = None) -> dict[str, Any]:
     payload["dataStats"] = _data_stats(stats_path)
 
     cases, ground_truth = load_real_case_bundle(manifest, split="heldout")
-    payload["cases"] = [_run_case(case, stats_path) for case in cases]
-    payload["baselines"] = [
-        {
-            "name": row.name,
-            "rootCauseAccuracy": row.root_cause_accuracy,
-            "evidenceRecall": row.evidence_recall,
-            "verifierPassRate": row.verifier_pass_rate,
-            "cases": row.cases,
-            "notes": row.notes,
-        }
-        for row in compare_baselines(
-            cases, ground_truth, data_source="real", real_stats_path=stats_path
+    try:
+        payload["cases"] = [_run_case(case, stats_path, reasoner_mode) for case in cases]
+        payload["baselines"] = [
+            {
+                "name": row.name,
+                "rootCauseAccuracy": row.root_cause_accuracy,
+                "evidenceRecall": row.evidence_recall,
+                "verifierPassRate": row.verifier_pass_rate,
+                "cases": row.cases,
+                "notes": row.notes,
+            }
+            for row in compare_baselines(
+                cases, ground_truth, data_source="real", real_stats_path=stats_path,
+                reasoner_mode=reasoner_mode,
+            )
+        ]
+    except Exception as exc:  # LLM endpoint unreachable / misconfigured — stay honest.
+        payload["providerError"] = f"{type(exc).__name__}: {exc}"
+        payload["note"] = (
+            f"Provider '{provider_id}' failed ({type(exc).__name__}). The endpoint is likely "
+            f"down or missing a key. Switch back to the rule baseline or open the GPU tunnel."
         )
-    ]
     return payload
