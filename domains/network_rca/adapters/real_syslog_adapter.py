@@ -121,10 +121,70 @@ def _ev_event_log_scan(s: dict) -> list[dict]:
     ]
 
 
+def _ev_dhcp_health(s: dict) -> list[dict]:
+    ack = int(s.get("dhcp_ack_count", 0))
+    stat = int(s.get("dhcp_statistics_count", 0))
+    return [
+        {
+            "evidence_id": "ev-dhcp-health",
+            "source": "fortigate_syslog:event/system logdesc=\"DHCP Ack log|DHCP statistics\"",
+            "summary": f"{ack} DHCP ACK events and {stat} DHCP statistics events — leases are being issued",
+            "data": {"dhcp_ack": ack, "dhcp_statistics": stat},
+        }
+    ]
+
+
+def _ev_security_posture(s: dict) -> list[dict]:
+    updates = int(s.get("fortigate_update_succeeded", 0))
+    rating = int(s.get("security_rating_count", 0))
+    return [
+        {
+            "evidence_id": "ev-security-posture",
+            "source": "fortigate_syslog:event/system logdesc=\"FortiGate update succeeded|Security Rating\"",
+            "summary": f"{updates} successful FortiGuard updates and {rating} security-rating summaries",
+            "data": {"updates": updates, "security_rating": rating},
+        }
+    ]
+
+
+def _ev_device_port_probe(s: dict) -> list[dict]:
+    total = int(s.get("device_service_port_deny", 0))
+    top = _top(s.get("device_service_port_top", []), 4)
+    ports = [p for p, _ in (s.get("device_service_port_top") or [])][:3]
+    return [
+        {
+            "evidence_id": "ev-device-port-probe",
+            "source": "fortigate_syslog:traffic action=\"deny\" dstport in {37777,37809,37810}",
+            "summary": f"{total} denied probes against camera/DVR service ports {ports}",
+            "data": {"device_port_deny": total, "top_ports": top},
+        }
+    ]
+
+
+def _ev_firewall_resource(s: dict) -> list[dict]:
+    p = s.get("performance_sample", {}) or {}
+    return [
+        {
+            "evidence_id": "ev-firewall-resource",
+            "source": "fortigate_syslog:event/system logdesc=\"System performance statistics\"",
+            "summary": f"CPU {p.get('cpu','?')}% · MEM {p.get('mem','?')}% · {p.get('totalsession','?')} sessions",
+            "data": {
+                "cpu": int(p.get("cpu", 0) or 0),
+                "mem": int(p.get("mem", 0) or 0),
+                "sessions": int(p.get("totalsession", 0) or 0),
+            },
+        }
+    ]
+
+
 _OPERATIONS = {
     "admin_auth_failures": _ev_admin_auth_failures,
     "admin_lockout": _ev_admin_lockout,
     "policy_deny_profile": _ev_policy_deny_profile,
     "traffic_baseline": _ev_traffic_baseline,
     "event_log_scan": _ev_event_log_scan,
+    "dhcp_health": _ev_dhcp_health,
+    "security_posture": _ev_security_posture,
+    "device_port_probe": _ev_device_port_probe,
+    "firewall_resource": _ev_firewall_resource,
 }
