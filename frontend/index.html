@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ContextHelix Control Console</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: #05080c;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top, rgba(31, 58, 79, 0.28), transparent 42%),
+          #05080c;
+        color: #eef5ff;
+      }
+
+      #root {
+        min-height: 100vh;
+      }
+
+      .boot-shell {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+
+      .boot-card {
+        width: min(680px, 100%);
+        padding: 28px;
+        border: 1px solid rgba(105, 249, 255, 0.18);
+        background: rgba(8, 12, 17, 0.92);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+      }
+
+      .boot-kicker {
+        margin: 0 0 10px;
+        color: #8ea3ba;
+        font: 500 11px/1.2 "IBM Plex Mono", "Consolas", monospace;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+      }
+
+      .boot-card h1 {
+        margin: 0 0 10px;
+        font: 600 clamp(28px, 6vw, 44px) / 1 "IBM Plex Sans", "Segoe UI", sans-serif;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .boot-card p {
+        margin: 0;
+        color: #b7c6d6;
+        font: 400 15px/1.65 "IBM Plex Sans", "Segoe UI", sans-serif;
+      }
+
+      .boot-status {
+        margin-top: 18px;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: #69f9ff;
+        font: 500 12px/1 "IBM Plex Mono", "Consolas", monospace;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .boot-status::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        background: #69f9ff;
+        box-shadow: 0 0 18px rgba(105, 249, 255, 0.7);
+        animation: bootPulse 1.4s linear infinite;
+      }
+
+      @keyframes bootPulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+
+        50% {
+          opacity: 0.28;
+        }
+      }
+
+      .app-shell {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .utility-rail,
+      .section,
+      .drawer,
+      .utility-item,
+      .incident-hero-card,
+      .incident-info-card,
+      .guided-stage-step,
+      .guided-stage-detail,
+      .drawer-card {
+        border: 1px solid rgba(157, 176, 196, 0.14);
+        background: rgba(8, 12, 17, 0.92);
+      }
+
+      .utility-rail {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 16px 20px;
+        border-bottom-color: rgba(157, 176, 196, 0.22);
+        backdrop-filter: blur(14px);
+      }
+
+      .rail-title-row,
+      .view-switch,
+      .story-badges,
+      .drawer-badges,
+      .guided-stage-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .rail-title-row h1,
+      .section-title,
+      .drawer-header h2,
+      .incident-title {
+        margin: 0;
+        color: #f2f7fb;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .rail-kicker,
+      .section-kicker,
+      .utility-label,
+      .guided-stage-index,
+      .guided-stage-status {
+        color: #7b8b9a;
+        font: 500 11px/1.2 "IBM Plex Mono", "Consolas", monospace;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .tab,
+      .signal-chip,
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 34px;
+        padding: 0 12px;
+        border: 1px solid rgba(157, 176, 196, 0.16);
+        background: rgba(10, 14, 19, 0.94);
+        color: #d7e3ef;
+        text-transform: uppercase;
+      }
+
+      .tab.is-active,
+      .signal-chip.tone-live,
+      .signal-chip.tone-suggestion {
+        border-color: rgba(105, 249, 255, 0.42);
+        color: #69f9ff;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+      }
+
+      .page,
+      .drawer-scroll {
+        padding: 16px 20px 20px;
+      }
+
+      .page {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .section {
+        overflow: hidden;
+      }
+
+      .section-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 16px 0;
+      }
+
+      .section-subtitle,
+      .incident-copy,
+      .drawer-copy,
+      .guided-stage-summary,
+      .guided-stage-detail-copy,
+      .incident-info-card p,
+      .incident-action-card p {
+        color: #b7c6d6;
+      }
+
+      .incident-overview-grid,
+      .drawer-summary-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 16px;
+        padding: 0 16px 16px;
+      }
+
+      .incident-hero-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 16px;
+      }
+
+      .locale-switch {
+        display: inline-flex;
+        gap: 8px;
+      }
+
+      .incident-hero-card,
+      .incident-info-card,
+      .guided-stage-detail,
+      .drawer-card {
+        padding: 16px;
+      }
+
+      .incident-scene {
+        position: relative;
+        min-height: 280px;
+        overflow: hidden;
+        border: 1px solid rgba(105, 249, 255, 0.18);
+        background:
+          radial-gradient(circle at center, rgba(105, 249, 255, 0.14), transparent 34%),
+          repeating-linear-gradient(
+            90deg,
+            rgba(105, 249, 255, 0.035) 0,
+            rgba(105, 249, 255, 0.035) 1px,
+            transparent 1px,
+            transparent 18px
+          ),
+          rgba(7, 11, 16, 0.92);
+        clip-path: polygon(0 0, calc(100% - 26px) 0, 100% 26px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
+      }
+
+      .scene-core {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 182px;
+        min-height: 144px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid rgba(105, 249, 255, 0.22);
+        transform: translate(-50%, -50%);
+        text-align: center;
+        background: rgba(8, 12, 17, 0.94);
+        clip-path: polygon(12% 0, 88% 0, 100% 18%, 100% 82%, 88% 100%, 12% 100%, 0 82%, 0 18%);
+      }
+
+      .scene-core strong,
+      .scene-stage span {
+        color: #f2f7fb;
+        text-transform: uppercase;
+      }
+
+      .scene-core p,
+      .scene-stage small {
+        margin: 0;
+        color: #9aacbd;
+        text-transform: uppercase;
+      }
+
+      .scene-path {
+        position: absolute;
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .scene-stage {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        text-align: center;
+      }
+
+      .scene-node {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(157, 176, 196, 0.22);
+        background: rgba(8, 12, 17, 0.96);
+        clip-path: polygon(18% 0, 82% 0, 100% 18%, 100% 82%, 82% 100%, 18% 100%, 0 82%, 0 18%);
+      }
+
+      .scene-node i {
+        display: block;
+        width: 10px;
+        height: 10px;
+        background: #69f9ff;
+        clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+      }
+
+      .story-theater-grid,
+      .story-theater-stack {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 16px;
+        padding: 0 16px 16px;
+      }
+
+      .guided-stage-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+        padding: 0 16px;
+      }
+
+      .guided-stage-detail {
+        margin: 16px;
+      }
+
+      .utility-track,
+      .micro-metric-rail {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .micro-metric-rail {
+        padding: 0 16px 16px;
+      }
+
+      .utility-value,
+      .incident-action-card strong,
+      .incident-info-card strong,
+      .guided-stage-step strong,
+      .guided-stage-detail-head h3,
+      .micro-metric strong,
+      .evidence-list strong {
+        color: #f2f7fb;
+      }
+
+      .drawer-scroll {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .evidence-list,
+      .prose-list {
+        margin: 0;
+      }
+
+      @media (max-width: 1180px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .utility-track,
+        .micro-metric-rail,
+        .guided-stage-strip,
+        .scene-path {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot-shell">
+        <div class="boot-card">
+          <p class="boot-kicker">ContextHelix / Enterprise Context Control</p>
+          <h1>Loading Control Loop Console</h1>
+          <p>
+            Preparing the current incident story, evidence summary, and live runtime
+            stream. If this screen stays here for too long, the transport path is
+            stalling before the app bundle finishes loading.
+          </p>
+          <div class="boot-status">Booting UI shell</div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

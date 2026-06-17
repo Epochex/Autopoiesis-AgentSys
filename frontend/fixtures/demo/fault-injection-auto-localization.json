@@ -1,0 +1,121 @@
+{
+  "id": "fault-injection-auto-localization",
+  "label": "Fault Injection -> Automatic Localization",
+  "summary": "A compressed presentation packet built from real control-loop artifacts. It shows one injected deny storm moving from deterministic detection to operator-readable localization.",
+  "source": {
+    "kind": "control-loop-derived-curated",
+    "note": "Absolute timestamps are compressed for demo clarity. The underlying alert, suggestion, and replay stats come from repository control-loop history.",
+    "artifacts": [
+      {
+        "type": "alert",
+        "path": "/data/netops-runtime/alerts/alerts-20260325-11.jsonl",
+        "id": "8daf1f7935555d30ec5b5de23cbd15ad467dccde",
+        "timestamp": "2026-03-25T11:31:43+00:00"
+      },
+      {
+        "type": "suggestion",
+        "path": "/data/netops-runtime/aiops/suggestions-20260329-11.jsonl",
+        "id": "c7443287ce5d6881d6f34b86a100ee2e0d352fa9",
+        "timestamp": "2026-03-29T11:01:00.597865+00:00"
+      },
+      {
+        "type": "replay-validation",
+        "path": "/data/netops-runtime/observability/aiops-replay-validation-20260322-window600.json"
+      }
+    ]
+  },
+  "currentSlice": {
+    "title": "Repeated denied udp/3702 traffic is localized to Dahua camera 8L10584PAJ33778",
+    "ruleId": "deny_burst_v1",
+    "service": "udp/3702",
+    "deviceKey": "3c:e3:6b:77:82:89",
+    "deviceName": "8L10584PAJ33778",
+    "vendor": "Dahua",
+    "deviceRole": "IP Camera",
+    "srcIp": "192.168.1.24",
+    "dstIp": "192.168.2.108",
+    "zone": "lan",
+    "focus": "The operator does not have to decode a raw rule string. The output already identifies the affected device class, the exact path, the recurrence level, and the next checks to run."
+  },
+  "metrics": {
+    "denyCount": 3256,
+    "threshold": 200,
+    "windowSec": 60,
+    "recentSimilar1h": 284,
+    "changeScore": 30,
+    "changeLevel": "high",
+    "confidence": 0.78,
+    "confidenceLabel": "medium",
+    "clusterGate": {
+      "progress": 1,
+      "target": 3,
+      "windowSec": 600
+    }
+  },
+  "timeline": [
+    {
+      "stamp": "T+00:00",
+      "title": "Fault injected on camera discovery path",
+      "detail": "A short deny storm is intentionally created on udp/3702 from the Dahua camera to produce a visible incident without touching the inference path."
+    },
+    {
+      "stamp": "T+00:08",
+      "title": "Deterministic rule crosses threshold",
+      "detail": "core/correlator emits alert 8daf1f79... after observing 3256 denies in 60 seconds against a 200 deny threshold."
+    },
+    {
+      "stamp": "T+00:09",
+      "title": "Automatic localization assembles the incident surface",
+      "detail": "The evidence bundle ties the alert to device 8L10584PAJ33778, vendor Dahua, role IP Camera, source 192.168.1.24, destination 192.168.2.108, and zone lan."
+    },
+    {
+      "stamp": "T+00:11",
+      "title": "Change and recurrence signals strengthen the case",
+      "detail": "recent_similar_1h=284 and suspected_change=true make the alert more actionable than a bare threshold breach."
+    },
+    {
+      "stamp": "T+00:13",
+      "title": "Suggested operator response is ready",
+      "detail": "The UI can immediately show session-trace inspection, recent deny history, and service/path validation as the first response options."
+    }
+  ],
+  "evidence": {
+    "topology": {
+      "service": "udp/3702",
+      "src_device_key": "3c:e3:6b:77:82:89",
+      "srcip": "192.168.1.24",
+      "dstip": "192.168.2.108",
+      "zone": "lan"
+    },
+    "device": {
+      "device_name": "8L10584PAJ33778",
+      "vendor": "Dahua",
+      "device_role": "IP Camera",
+      "family": "IP Camera",
+      "version": "DHI-TPC-BF5641-",
+      "known_services": [
+        "udp/3702"
+      ]
+    },
+    "change": {
+      "suspected_change": true,
+      "score": 30,
+      "level": "high",
+      "refs": [
+        "crscore:30",
+        "craction:131072",
+        "crlevel:high"
+      ]
+    }
+  },
+  "recommendedActions": [
+    "Inspect the source device session trace and recent deny history in ClickHouse.",
+    "Check whether the affected service is expected for this device profile and interface path.",
+    "If this repeats, compare it with the cluster-level suggestion stream before tuning thresholds."
+  ],
+  "presenterNotes": [
+    "Lead with the fact that the anomaly proof is deterministic, not model-generated.",
+    "Then point out that the model stage adds localization and operator guidance, not existence proof.",
+    "If you need a second beat, mention that the replay validator saw 12751 cluster triggers and udp/3702 was the top repeated service."
+  ]
+}

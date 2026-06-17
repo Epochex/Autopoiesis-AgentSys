@@ -1,0 +1,20 @@
+[Unit]
+Description=ContextHelix Console Backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/data/selfevo-orchiter/frontend
+Environment=PYTHONUNBUFFERED=1
+Environment=CONTEXTHELIX_ARTIFACT_ROOT=/data/netops-runtime
+Environment=CONTEXTHELIX_REPO_ROOT=/data/selfevo-orchiter
+Environment=CONTEXTHELIX_FRONTEND_DIST=/data/selfevo-orchiter/frontend/dist
+ExecStart=/data/selfevo-orchiter/frontend/.venv/bin/uvicorn gateway.app.main:app --app-dir /data/selfevo-orchiter/frontend --host 127.0.0.1 --port 8026
+Restart=always
+RestartSec=3
+TimeoutStopSec=8
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

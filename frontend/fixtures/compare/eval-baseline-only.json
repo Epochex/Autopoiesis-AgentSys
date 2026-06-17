@@ -1,0 +1,481 @@
+{
+  "id": "baseline-template-only",
+  "label": "Baseline Only / LLM Slot Reserved",
+  "kind": "baseline-only",
+  "source": "fixture",
+  "description": "Current-stage fixture where baseline template outputs exist and the LLM side remains reserved.",
+  "defaultReplayId": "replay-20260323-window600",
+  "samples": [
+    {
+      "id": "cmp-b-001",
+      "bundleId": "bundle-b-001",
+      "alertId": "alert-b-001",
+      "ruleId": "deny_burst_v1",
+      "severity": "warning",
+      "service": "udp/3702",
+      "device": "3c:e3:6b:77:82:89",
+      "path": "192.168.1.24 -> 192.168.2.108",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "not connected",
+      "replay": {
+        "replayId": "replay-20260323-window600",
+        "replayLabel": "Replay 2026-03-23 / 600s",
+        "runId": "run-b-01",
+        "runCount": 2,
+        "window": {
+          "start": "2026-03-23T10:40:00+00:00",
+          "end": "2026-03-23T10:50:00+00:00",
+          "label": "2026-03-23 10:40-10:50 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "baseline only validation"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "udp/3702",
+          "srcip": "192.168.1.24",
+          "dstip": "192.168.2.108",
+          "zone": "lan",
+          "site": "south-floor",
+          "neighbor_refs": [
+            "sw-core-02"
+          ]
+        },
+        "device": {
+          "src_device_key": "3c:e3:6b:77:82:89",
+          "device_name": "8L10584PAJ33778",
+          "device_role": "IP Camera",
+          "vendor": "Dahua",
+          "known_services": [
+            "udp/3702"
+          ]
+        },
+        "change": {
+          "suspected_change": true,
+          "score": 30,
+          "level": "high",
+          "change_refs": [
+            "crscore:30"
+          ]
+        },
+        "historical": {
+          "recent_similar_1h": 284,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.64,
+          "actionability": 0.58,
+          "evidenceBinding": 0.89,
+          "stability": 0.98,
+          "auditability": 0.93,
+          "hallucinationRate": 0.0,
+          "latencyMs": 182,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.0
+        },
+        "outputText": "deny_burst_v1 triggered for service=udp/3702 device=3c:e3:6b:77:82:89.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The alert is attached to the camera path."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Inspect recent deny history in ClickHouse."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "b-ref-001",
+            "claim": "device vendor is Dahua",
+            "sourceSection": "device",
+            "sourceField": "vendor",
+            "sourceValue": "Dahua",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 182,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 1.0,
+          "auditTrailCoverage": 0.93
+        },
+        "notes": []
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "llm-slot",
+        "status": "placeholder",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": null,
+          "actionability": null,
+          "evidenceBinding": null,
+          "stability": null,
+          "auditability": null,
+          "hallucinationRate": null,
+          "latencyMs": null,
+          "estimatedCostUsd": null,
+          "failureRate": null
+        },
+        "outputText": "",
+        "outputBlocks": [
+          {
+            "kind": "notes",
+            "title": "Reserved",
+            "lines": [
+              "The LLM path is not connected for this dataset."
+            ]
+          }
+        ],
+        "recommendedActions": [],
+        "evidenceReferences": [],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": null,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": null,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": null,
+          "auditTrailCoverage": null
+        },
+        "notes": [
+          "reserved slot"
+        ]
+      },
+      "reviewNotes": [
+        "llm slot should render as planned"
+      ]
+    },
+    {
+      "id": "cmp-b-002",
+      "bundleId": "bundle-b-002",
+      "alertId": "alert-b-002",
+      "ruleId": "deny_burst_v1",
+      "severity": "warning",
+      "service": "tcp/3472",
+      "device": "5.188.206.46",
+      "path": "5.188.206.46 -> 77.236.99.125",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "not connected",
+      "replay": {
+        "replayId": "replay-20260323-window600",
+        "replayLabel": "Replay 2026-03-23 / 600s",
+        "runId": "run-b-02",
+        "runCount": 2,
+        "window": {
+          "start": "2026-03-23T10:40:00+00:00",
+          "end": "2026-03-23T10:50:00+00:00",
+          "label": "2026-03-23 10:40-10:50 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "wan path row"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "tcp/3472",
+          "srcip": "5.188.206.46",
+          "dstip": "77.236.99.125",
+          "zone": "wan",
+          "site": "edge-wan",
+          "neighbor_refs": [
+            "wan1"
+          ]
+        },
+        "device": {
+          "src_device_key": "5.188.206.46",
+          "device_name": "",
+          "device_role": "unknown",
+          "vendor": "",
+          "known_services": [
+            "tcp/3472"
+          ]
+        },
+        "change": {
+          "suspected_change": false,
+          "score": null,
+          "level": "",
+          "change_refs": []
+        },
+        "historical": {
+          "recent_similar_1h": 0,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.62,
+          "actionability": 0.55,
+          "evidenceBinding": 0.86,
+          "stability": 0.99,
+          "auditability": 0.92,
+          "hallucinationRate": 0.0,
+          "latencyMs": 160,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.0
+        },
+        "outputText": "deny_burst_v1 triggered for service=tcp/3472 device=5.188.206.46.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The path is on the wan edge."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Inspect recent deny history for the same service."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "b-ref-002",
+            "claim": "zone is wan",
+            "sourceSection": "topology",
+            "sourceField": "zone",
+            "sourceValue": "wan",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 160,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.99,
+          "auditTrailCoverage": 0.92
+        },
+        "notes": []
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "llm-slot",
+        "status": "placeholder",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": null,
+          "actionability": null,
+          "evidenceBinding": null,
+          "stability": null,
+          "auditability": null,
+          "hallucinationRate": null,
+          "latencyMs": null,
+          "estimatedCostUsd": null,
+          "failureRate": null
+        },
+        "outputText": "",
+        "outputBlocks": [
+          {
+            "kind": "notes",
+            "title": "Reserved",
+            "lines": [
+              "The LLM path is not connected for this dataset."
+            ]
+          }
+        ],
+        "recommendedActions": [],
+        "evidenceReferences": [],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": null,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": null,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": null,
+          "auditTrailCoverage": null
+        },
+        "notes": [
+          "reserved slot"
+        ]
+      },
+      "reviewNotes": []
+    },
+    {
+      "id": "cmp-b-003",
+      "bundleId": "bundle-b-003",
+      "alertId": "alert-b-003",
+      "ruleId": "bytes_spike_v1",
+      "severity": "critical",
+      "service": "tcp/443",
+      "device": "srv-edge-02",
+      "path": "10.20.4.8 -> 172.16.2.15",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "not connected",
+      "replay": {
+        "replayId": "replay-20260324-window300",
+        "replayLabel": "Replay 2026-03-24 / 300s",
+        "runId": "run-b-03",
+        "runCount": 2,
+        "window": {
+          "start": "2026-03-24T08:00:00+00:00",
+          "end": "2026-03-24T08:05:00+00:00",
+          "label": "2026-03-24 08:00-08:05 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "critical row"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "tcp/443",
+          "srcip": "10.20.4.8",
+          "dstip": "172.16.2.15",
+          "zone": "server",
+          "site": "dc-east",
+          "neighbor_refs": [
+            "tor-1a"
+          ]
+        },
+        "device": {
+          "src_device_key": "srv-edge-02",
+          "device_name": "srv-edge-02",
+          "device_role": "Edge Server",
+          "vendor": "Dell",
+          "known_services": [
+            "tcp/443"
+          ]
+        },
+        "change": {
+          "suspected_change": true,
+          "score": 22,
+          "level": "medium",
+          "change_refs": [
+            "crscore:22"
+          ]
+        },
+        "historical": {
+          "recent_similar_1h": 12,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.71,
+          "actionability": 0.66,
+          "evidenceBinding": 0.9,
+          "stability": 0.97,
+          "auditability": 0.94,
+          "hallucinationRate": 0.0,
+          "latencyMs": 210,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.0
+        },
+        "outputText": "bytes_spike_v1 triggered for service=tcp/443 device=srv-edge-02.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The byte spike is localized to srv-edge-02."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Inspect recent byte totals for the same source."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "b-ref-003",
+            "claim": "change score is 22",
+            "sourceSection": "change",
+            "sourceField": "score",
+            "sourceValue": "22",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 210,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.97,
+          "auditTrailCoverage": 0.94
+        },
+        "notes": []
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "llm-slot",
+        "status": "placeholder",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": null,
+          "actionability": null,
+          "evidenceBinding": null,
+          "stability": null,
+          "auditability": null,
+          "hallucinationRate": null,
+          "latencyMs": null,
+          "estimatedCostUsd": null,
+          "failureRate": null
+        },
+        "outputText": "",
+        "outputBlocks": [
+          {
+            "kind": "notes",
+            "title": "Reserved",
+            "lines": [
+              "The LLM path is not connected for this dataset."
+            ]
+          }
+        ],
+        "recommendedActions": [],
+        "evidenceReferences": [],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": null,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": null,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": null,
+          "auditTrailCoverage": null
+        },
+        "notes": [
+          "reserved slot"
+        ]
+      },
+      "reviewNotes": []
+    }
+  ]
+}

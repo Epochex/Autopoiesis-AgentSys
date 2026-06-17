@@ -1,0 +1,1331 @@
+{
+  "id": "paired-eval-fixture",
+  "label": "Paired Evaluation Fixture",
+  "kind": "paired-fixture",
+  "source": "fixture",
+  "description": "Development fixture for the compare workbench. Each row binds the same alert and evidence bundle to a baseline template output and an LLM-enhanced output.",
+  "defaultReplayId": "replay-20260323-window600",
+  "samples": [
+    {
+      "id": "cmp-001",
+      "bundleId": "bundle-001",
+      "alertId": "alert-001",
+      "ruleId": "deny_burst_v1",
+      "severity": "warning",
+      "service": "udp/3702",
+      "device": "3c:e3:6b:77:82:89",
+      "path": "192.168.1.24 -> 192.168.2.108",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "suggestion emitted",
+      "replay": {
+        "replayId": "replay-20260323-window600",
+        "replayLabel": "Replay 2026-03-23 / 600s",
+        "runId": "run-01",
+        "runCount": 4,
+        "window": {
+          "start": "2026-03-23T10:40:00+00:00",
+          "end": "2026-03-23T10:50:00+00:00",
+          "label": "2026-03-23 10:40-10:50 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "same alert window across both providers",
+          "cluster gate remained below trigger"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "udp/3702",
+          "srcip": "192.168.1.24",
+          "dstip": "192.168.2.108",
+          "zone": "lan",
+          "site": "south-floor",
+          "neighbor_refs": [
+            "sw-core-02",
+            "fortigate-lan2"
+          ]
+        },
+        "device": {
+          "src_device_key": "3c:e3:6b:77:82:89",
+          "device_name": "8L10584PAJ33778",
+          "device_role": "IP Camera",
+          "vendor": "Dahua",
+          "known_services": [
+            "udp/3702",
+            "tcp/80"
+          ]
+        },
+        "change": {
+          "suspected_change": true,
+          "score": 30,
+          "level": "high",
+          "change_refs": [
+            "crscore:30",
+            "crlevel:high"
+          ]
+        },
+        "historical": {
+          "recent_similar_1h": 284,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.64,
+          "actionability": 0.58,
+          "evidenceBinding": 0.89,
+          "stability": 0.98,
+          "auditability": 0.93,
+          "hallucinationRate": 0.0,
+          "latencyMs": 182,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.0
+        },
+        "outputText": "deny_burst_v1 triggered for service=udp/3702 device=3c:e3:6b:77:82:89. Inspect recent deny history and verify whether the service is expected for this device profile.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "Rule threshold crossed inside the 60 second window.",
+              "The affected service is udp/3702 on a Dahua camera path."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Inspect recent deny history in ClickHouse.",
+              "Check whether udp/3702 is expected on this camera path."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Inspect recent deny history in ClickHouse.",
+          "Check whether udp/3702 is expected on this camera path."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-001-a",
+            "claim": "service is udp/3702",
+            "sourceSection": "topology",
+            "sourceField": "service",
+            "sourceValue": "udp/3702",
+            "supported": true
+          },
+          {
+            "id": "ref-001-b",
+            "claim": "device vendor is Dahua",
+            "sourceSection": "device",
+            "sourceField": "vendor",
+            "sourceValue": "Dahua",
+            "supported": true
+          },
+          {
+            "id": "ref-001-c",
+            "claim": "change score is 30",
+            "sourceSection": "change",
+            "sourceField": "score",
+            "sourceValue": "30",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 182,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 1.0,
+          "auditTrailCoverage": 0.93
+        },
+        "notes": [
+          "summary covers device and service",
+          "change signal is present but not expanded into a separate hypothesis"
+        ]
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "gpt-5.4-eval",
+        "status": "ready",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": 0.88,
+          "actionability": 0.86,
+          "evidenceBinding": 0.82,
+          "stability": 0.91,
+          "auditability": 0.84,
+          "hallucinationRate": 0.04,
+          "latencyMs": 1240,
+          "estimatedCostUsd": 0.018,
+          "failureRate": 0.02
+        },
+        "outputText": "The deny burst is localized to Dahua camera 8L10584PAJ33778 on path 192.168.1.24 to 192.168.2.108. The evidence also shows a high change score, so session trace review and baseline verification should be completed before threshold tuning.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The burst is localized to camera 8L10584PAJ33778 on the lan path.",
+              "The evidence includes a high change score and repeated recent history."
+            ]
+          },
+          {
+            "kind": "hypotheses",
+            "title": "Hypotheses",
+            "lines": [
+              "The device behavior may have shifted after a recent change.",
+              "The deny burst may reflect service drift rather than a broad site failure."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Review session trace for udp/3702 during the replay window.",
+              "Check whether this camera profile is still allowed to reach 192.168.2.108.",
+              "Hold threshold changes until the change marker is explained."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Review session trace for udp/3702 during the replay window.",
+          "Check whether this camera profile is still allowed to reach 192.168.2.108.",
+          "Hold threshold changes until the change marker is explained."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-001-l-a",
+            "claim": "path is 192.168.1.24 to 192.168.2.108",
+            "sourceSection": "topology",
+            "sourceField": "srcip,dstip",
+            "sourceValue": "192.168.1.24 -> 192.168.2.108",
+            "supported": true
+          },
+          {
+            "id": "ref-001-l-b",
+            "claim": "device name is 8L10584PAJ33778",
+            "sourceSection": "device",
+            "sourceField": "device_name",
+            "sourceValue": "8L10584PAJ33778",
+            "supported": true
+          },
+          {
+            "id": "ref-001-l-c",
+            "claim": "recent similar alerts in 1h are high",
+            "sourceSection": "historical",
+            "sourceField": "recent_similar_1h",
+            "sourceValue": "284",
+            "supported": true
+          },
+          {
+            "id": "ref-001-l-d",
+            "claim": "change marker exists",
+            "sourceSection": "change",
+            "sourceField": "level",
+            "sourceValue": "high",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [
+          {
+            "id": "uc-001",
+            "claim": "camera firmware drift was confirmed",
+            "reason": "evidence bundle has vendor and device name but no confirmed firmware drift event",
+            "severity": "low"
+          }
+        ],
+        "timing": {
+          "latencyMs": 1240,
+          "inputTokens": 812,
+          "outputTokens": 244,
+          "estimatedCostUsd": 0.018,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.91,
+          "auditTrailCoverage": 0.84
+        },
+        "notes": [
+          "better path localization than baseline",
+          "one unsupported firmware drift phrase remains"
+        ]
+      },
+      "reviewNotes": [
+        "baseline is concise and strongly evidence bound",
+        "llm output adds device and path detail"
+      ]
+    },
+    {
+      "id": "cmp-002",
+      "bundleId": "bundle-002",
+      "alertId": "alert-002",
+      "ruleId": "deny_burst_v1",
+      "severity": "warning",
+      "service": "tcp/3472",
+      "device": "5.188.206.46",
+      "path": "5.188.206.46 -> 77.236.99.125",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "suggestion emitted",
+      "replay": {
+        "replayId": "replay-20260323-window600",
+        "replayLabel": "Replay 2026-03-23 / 600s",
+        "runId": "run-02",
+        "runCount": 4,
+        "window": {
+          "start": "2026-03-23T10:40:00+00:00",
+          "end": "2026-03-23T10:50:00+00:00",
+          "label": "2026-03-23 10:40-10:50 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "same replay packet as cmp-001",
+          "wan path with no device profile name"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "tcp/3472",
+          "srcip": "5.188.206.46",
+          "dstip": "77.236.99.125",
+          "zone": "wan",
+          "site": "edge-wan",
+          "neighbor_refs": [
+            "wan1"
+          ]
+        },
+        "device": {
+          "src_device_key": "5.188.206.46",
+          "device_name": "",
+          "device_role": "unknown",
+          "vendor": "",
+          "known_services": [
+            "tcp/3472"
+          ]
+        },
+        "change": {
+          "suspected_change": false,
+          "score": null,
+          "level": "",
+          "change_refs": []
+        },
+        "historical": {
+          "recent_similar_1h": 0,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.62,
+          "actionability": 0.55,
+          "evidenceBinding": 0.86,
+          "stability": 0.99,
+          "auditability": 0.92,
+          "hallucinationRate": 0.0,
+          "latencyMs": 160,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.0
+        },
+        "outputText": "deny_burst_v1 triggered for service=tcp/3472 device=5.188.206.46. Inspect recent deny history and compare with expected wan traffic.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The alert is tied to tcp/3472 on a wan source path."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Inspect recent deny history for the same service.",
+              "Verify whether tcp/3472 is expected on the wan path."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Inspect recent deny history for the same service.",
+          "Verify whether tcp/3472 is expected on the wan path."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-002-a",
+            "claim": "zone is wan",
+            "sourceSection": "topology",
+            "sourceField": "zone",
+            "sourceValue": "wan",
+            "supported": true
+          },
+          {
+            "id": "ref-002-b",
+            "claim": "service is tcp/3472",
+            "sourceSection": "topology",
+            "sourceField": "service",
+            "sourceValue": "tcp/3472",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 160,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.99,
+          "auditTrailCoverage": 0.92
+        },
+        "notes": [
+          "device context is sparse",
+          "baseline remains tightly bound to available fields"
+        ]
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "gpt-5.4-eval",
+        "status": "ready",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": 0.84,
+          "actionability": 0.83,
+          "evidenceBinding": 0.78,
+          "stability": 0.87,
+          "auditability": 0.81,
+          "hallucinationRate": 0.08,
+          "latencyMs": 1488,
+          "estimatedCostUsd": 0.022,
+          "failureRate": 0.06
+        },
+        "outputText": "The deny burst points to abnormal tcp/3472 scanning behavior on the wan edge. The source may belong to an automated scanner, so perimeter blocking and recurrence review should be prioritized.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The path is a wan source toward 77.236.99.125.",
+              "The event pattern is described as likely scanning behavior."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Review repeated tcp/3472 denies for the same source.",
+              "Check whether a perimeter block is already active.",
+              "Compare with other wan scanner patterns in the replay window."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Review repeated tcp/3472 denies for the same source.",
+          "Check whether a perimeter block is already active.",
+          "Compare with other wan scanner patterns in the replay window."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-002-l-a",
+            "claim": "destination is 77.236.99.125",
+            "sourceSection": "topology",
+            "sourceField": "dstip",
+            "sourceValue": "77.236.99.125",
+            "supported": true
+          },
+          {
+            "id": "ref-002-l-b",
+            "claim": "service is tcp/3472",
+            "sourceSection": "topology",
+            "sourceField": "service",
+            "sourceValue": "tcp/3472",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [
+          {
+            "id": "uc-002",
+            "claim": "source belongs to a confirmed automated scanner",
+            "reason": "evidence bundle has path and service only; scanner identity is not confirmed",
+            "severity": "medium"
+          }
+        ],
+        "timing": {
+          "latencyMs": 1488,
+          "inputTokens": 744,
+          "outputTokens": 268,
+          "estimatedCostUsd": 0.022,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.87,
+          "auditTrailCoverage": 0.81
+        },
+        "notes": [
+          "better action detail than baseline",
+          "unsupported scanner identity claim lowers evidence binding"
+        ]
+      },
+      "reviewNotes": [
+        "llm path adds perimeter-response language",
+        "baseline path remains more conservative"
+      ]
+    },
+    {
+      "id": "cmp-003",
+      "bundleId": "bundle-003",
+      "alertId": "alert-003",
+      "ruleId": "bytes_spike_v1",
+      "severity": "critical",
+      "service": "tcp/443",
+      "device": "srv-edge-02",
+      "path": "10.20.4.8 -> 172.16.2.15",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "suggestion emitted",
+      "replay": {
+        "replayId": "replay-20260324-window300",
+        "replayLabel": "Replay 2026-03-24 / 300s",
+        "runId": "run-01",
+        "runCount": 3,
+        "window": {
+          "start": "2026-03-24T08:00:00+00:00",
+          "end": "2026-03-24T08:05:00+00:00",
+          "label": "2026-03-24 08:00-08:05 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "critical byte spike replay",
+          "device profile available"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "tcp/443",
+          "srcip": "10.20.4.8",
+          "dstip": "172.16.2.15",
+          "zone": "server",
+          "site": "dc-east",
+          "neighbor_refs": [
+            "tor-1a",
+            "agg-core-01"
+          ]
+        },
+        "device": {
+          "src_device_key": "srv-edge-02",
+          "device_name": "srv-edge-02",
+          "device_role": "Edge Server",
+          "vendor": "Dell",
+          "known_services": [
+            "tcp/443",
+            "tcp/22"
+          ]
+        },
+        "change": {
+          "suspected_change": true,
+          "score": 22,
+          "level": "medium",
+          "change_refs": [
+            "crscore:22"
+          ]
+        },
+        "historical": {
+          "recent_similar_1h": 12,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.71,
+          "actionability": 0.66,
+          "evidenceBinding": 0.9,
+          "stability": 0.97,
+          "auditability": 0.94,
+          "hallucinationRate": 0.0,
+          "latencyMs": 210,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.0
+        },
+        "outputText": "bytes_spike_v1 triggered for service=tcp/443 device=srv-edge-02. Inspect recent traffic volume and verify whether the service burst matches expected server activity.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "A traffic spike was observed on tcp/443 from srv-edge-02."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Inspect recent byte totals for the same source.",
+              "Verify whether the spike aligns with expected server traffic."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Inspect recent byte totals for the same source.",
+          "Verify whether the spike aligns with expected server traffic."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-003-a",
+            "claim": "device is srv-edge-02",
+            "sourceSection": "device",
+            "sourceField": "device_name",
+            "sourceValue": "srv-edge-02",
+            "supported": true
+          },
+          {
+            "id": "ref-003-b",
+            "claim": "change score is 22",
+            "sourceSection": "change",
+            "sourceField": "score",
+            "sourceValue": "22",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 210,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.97,
+          "auditTrailCoverage": 0.94
+        },
+        "notes": [
+          "baseline covers topology and basic action path"
+        ]
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "gpt-5.4-eval",
+        "status": "ready",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": 0.89,
+          "actionability": 0.9,
+          "evidenceBinding": 0.85,
+          "stability": 0.9,
+          "auditability": 0.86,
+          "hallucinationRate": 0.03,
+          "latencyMs": 1690,
+          "estimatedCostUsd": 0.041,
+          "failureRate": 0.04
+        },
+        "outputText": "The byte spike is concentrated on srv-edge-02 over tcp/443 inside the server zone. The change score suggests a recent configuration movement, so traffic attribution, deployment review, and a check against expected service growth should be completed before escalation.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The spike is localized to srv-edge-02 in the server zone.",
+              "The replay includes a medium change signal."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Check byte growth against deployment and release activity.",
+              "Review whether 172.16.2.15 is a normal tcp/443 peer for this host.",
+              "Inspect recent volume recurrence before suppressing the alert."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Check byte growth against deployment and release activity.",
+          "Review whether 172.16.2.15 is a normal tcp/443 peer for this host.",
+          "Inspect recent volume recurrence before suppressing the alert."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-003-l-a",
+            "claim": "zone is server",
+            "sourceSection": "topology",
+            "sourceField": "zone",
+            "sourceValue": "server",
+            "supported": true
+          },
+          {
+            "id": "ref-003-l-b",
+            "claim": "recent similar count is 12",
+            "sourceSection": "historical",
+            "sourceField": "recent_similar_1h",
+            "sourceValue": "12",
+            "supported": true
+          },
+          {
+            "id": "ref-003-l-c",
+            "claim": "change score is 22",
+            "sourceSection": "change",
+            "sourceField": "score",
+            "sourceValue": "22",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 1690,
+          "inputTokens": 1098,
+          "outputTokens": 352,
+          "estimatedCostUsd": 0.041,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.9,
+          "auditTrailCoverage": 0.86
+        },
+        "notes": [
+          "high action specificity",
+          "timing cost is the highest among paired rows"
+        ]
+      },
+      "reviewNotes": [
+        "critical byte spike benefits from richer action ordering",
+        "binding remains acceptable on both sides"
+      ]
+    },
+    {
+      "id": "cmp-004",
+      "bundleId": "bundle-004",
+      "alertId": "alert-004",
+      "ruleId": "deny_burst_v1",
+      "severity": "warning",
+      "service": "udp/10004",
+      "device": "4c:7b:02:a2:c7:af",
+      "path": "192.168.8.15 -> 192.168.8.1",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "suggestion emitted",
+      "replay": {
+        "replayId": "replay-20260323-window600",
+        "replayLabel": "Replay 2026-03-23 / 600s",
+        "runId": "run-03",
+        "runCount": 4,
+        "window": {
+          "start": "2026-03-23T10:40:00+00:00",
+          "end": "2026-03-23T10:50:00+00:00",
+          "label": "2026-03-23 10:40-10:50 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "same-key repeat with local device profile",
+          "operator reviewed twice"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "udp/10004",
+          "srcip": "192.168.8.15",
+          "dstip": "192.168.8.1",
+          "zone": "lan",
+          "site": "office-west",
+          "neighbor_refs": [
+            "sw-edge-04"
+          ]
+        },
+        "device": {
+          "src_device_key": "4c:7b:02:a2:c7:af",
+          "device_name": "meeting-bar-07",
+          "device_role": "Conference Device",
+          "vendor": "Logitech",
+          "known_services": [
+            "udp/10004",
+            "tcp/443"
+          ]
+        },
+        "change": {
+          "suspected_change": false,
+          "score": null,
+          "level": "",
+          "change_refs": []
+        },
+        "historical": {
+          "recent_similar_1h": 6,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.68,
+          "actionability": 0.61,
+          "evidenceBinding": 0.88,
+          "stability": 0.98,
+          "auditability": 0.95,
+          "hallucinationRate": 0.0,
+          "latencyMs": 174,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.0
+        },
+        "outputText": "deny_burst_v1 triggered for service=udp/10004 device=4c:7b:02:a2:c7:af. Review whether the conference device is expected to reach 192.168.8.1 on this service.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The alert is bound to a conference device in the office-west site."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Verify whether udp/10004 is still expected for meeting-bar-07.",
+              "Inspect repeated denies in the same hour."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Verify whether udp/10004 is still expected for meeting-bar-07.",
+          "Inspect repeated denies in the same hour."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-004-a",
+            "claim": "device name is meeting-bar-07",
+            "sourceSection": "device",
+            "sourceField": "device_name",
+            "sourceValue": "meeting-bar-07",
+            "supported": true
+          },
+          {
+            "id": "ref-004-b",
+            "claim": "recent similar count is 6",
+            "sourceSection": "historical",
+            "sourceField": "recent_similar_1h",
+            "sourceValue": "6",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 174,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.98,
+          "auditTrailCoverage": 0.95
+        },
+        "notes": [
+          "baseline keeps claims bounded to known fields"
+        ]
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "gpt-5.4-eval",
+        "status": "ready",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": 0.87,
+          "actionability": 0.82,
+          "evidenceBinding": 0.79,
+          "stability": 0.86,
+          "auditability": 0.8,
+          "hallucinationRate": 0.11,
+          "latencyMs": 1312,
+          "estimatedCostUsd": 0.017,
+          "failureRate": 0.08
+        },
+        "outputText": "The deny burst suggests the conference device may be trying to reconnect to an outdated controller path after a room software update. Review the endpoint configuration and verify whether this destination is still authoritative.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The path involves meeting-bar-07 and destination 192.168.8.1.",
+              "The output attributes the burst to a possible outdated controller path."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Review the conference endpoint configuration state.",
+              "Verify whether 192.168.8.1 is still the expected controller target.",
+              "Check if the repeated denies started after a room software change."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Review the conference endpoint configuration state.",
+          "Verify whether 192.168.8.1 is still the expected controller target.",
+          "Check if the repeated denies started after a room software change."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-004-l-a",
+            "claim": "device is meeting-bar-07",
+            "sourceSection": "device",
+            "sourceField": "device_name",
+            "sourceValue": "meeting-bar-07",
+            "supported": true
+          },
+          {
+            "id": "ref-004-l-b",
+            "claim": "destination is 192.168.8.1",
+            "sourceSection": "topology",
+            "sourceField": "dstip",
+            "sourceValue": "192.168.8.1",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [
+          {
+            "id": "uc-004-a",
+            "claim": "a room software update happened",
+            "reason": "no change marker or software update record exists in the evidence bundle",
+            "severity": "high"
+          },
+          {
+            "id": "uc-004-b",
+            "claim": "192.168.8.1 is a controller path",
+            "reason": "topology shows the destination address only; controller role is not present",
+            "severity": "medium"
+          }
+        ],
+        "timing": {
+          "latencyMs": 1312,
+          "inputTokens": 706,
+          "outputTokens": 291,
+          "estimatedCostUsd": 0.017,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.86,
+          "auditTrailCoverage": 0.8
+        },
+        "notes": [
+          "better action specificity",
+          "unsupported causal wording increases hallucination rate"
+        ]
+      },
+      "reviewNotes": [
+        "this row is useful for unsupported-claim review",
+        "baseline path is shorter but safer"
+      ]
+    },
+    {
+      "id": "cmp-005",
+      "bundleId": "bundle-005",
+      "alertId": "alert-005",
+      "ruleId": "bytes_spike_v1",
+      "severity": "critical",
+      "service": "udp/4500",
+      "device": "vpn-gw-01",
+      "path": "172.18.0.5 -> 203.0.113.9",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "suggestion emitted",
+      "replay": {
+        "replayId": "replay-20260324-window300",
+        "replayLabel": "Replay 2026-03-24 / 300s",
+        "runId": "run-02",
+        "runCount": 3,
+        "window": {
+          "start": "2026-03-24T08:00:00+00:00",
+          "end": "2026-03-24T08:05:00+00:00",
+          "label": "2026-03-24 08:00-08:05 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "vpn gateway byte spike",
+          "one provider retry recorded"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "udp/4500",
+          "srcip": "172.18.0.5",
+          "dstip": "203.0.113.9",
+          "zone": "edge",
+          "site": "dc-west",
+          "neighbor_refs": [
+            "vpn-edge",
+            "firewall-ha"
+          ]
+        },
+        "device": {
+          "src_device_key": "vpn-gw-01",
+          "device_name": "vpn-gw-01",
+          "device_role": "VPN Gateway",
+          "vendor": "Fortinet",
+          "known_services": [
+            "udp/4500",
+            "udp/500"
+          ]
+        },
+        "change": {
+          "suspected_change": true,
+          "score": 16,
+          "level": "medium",
+          "change_refs": [
+            "crscore:16"
+          ]
+        },
+        "historical": {
+          "recent_similar_1h": 21,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.66,
+          "actionability": 0.59,
+          "evidenceBinding": 0.87,
+          "stability": 0.97,
+          "auditability": 0.93,
+          "hallucinationRate": 0.0,
+          "latencyMs": 196,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.01
+        },
+        "outputText": "bytes_spike_v1 triggered for service=udp/4500 device=vpn-gw-01. Check whether the observed traffic volume matches expected VPN tunnel activity.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The spike is centered on vpn-gw-01 over udp/4500."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Review recent udp/4500 byte totals.",
+              "Check expected VPN tunnel growth during the replay window."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Review recent udp/4500 byte totals.",
+          "Check expected VPN tunnel growth during the replay window."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-005-a",
+            "claim": "device is vpn-gw-01",
+            "sourceSection": "device",
+            "sourceField": "device_name",
+            "sourceValue": "vpn-gw-01",
+            "supported": true
+          },
+          {
+            "id": "ref-005-b",
+            "claim": "recent similar count is 21",
+            "sourceSection": "historical",
+            "sourceField": "recent_similar_1h",
+            "sourceValue": "21",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 196,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.97,
+          "auditTrailCoverage": 0.93
+        },
+        "notes": [
+          "baseline remains stable under repeated replay"
+        ]
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "gpt-5.4-eval",
+        "status": "ready",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": 0.83,
+          "actionability": 0.78,
+          "evidenceBinding": 0.76,
+          "stability": 0.84,
+          "auditability": 0.79,
+          "hallucinationRate": 0.06,
+          "latencyMs": 1104,
+          "estimatedCostUsd": 0.015,
+          "failureRate": 0.05
+        },
+        "outputText": "The byte spike is centered on vpn-gw-01 and likely reflects elevated tunnel renegotiation or expanded remote access load. Review active tunnel counts, tunnel policy changes, and whether the remote peer 203.0.113.9 was expected to carry the burst.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The path is vpn-gw-01 to 203.0.113.9.",
+              "The output proposes tunnel renegotiation as one possible explanation."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Inspect active tunnel counts for the replay window.",
+              "Review recent tunnel policy changes.",
+              "Verify whether 203.0.113.9 was an expected high-volume peer."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Inspect active tunnel counts for the replay window.",
+          "Review recent tunnel policy changes.",
+          "Verify whether 203.0.113.9 was an expected high-volume peer."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-005-l-a",
+            "claim": "remote peer is 203.0.113.9",
+            "sourceSection": "topology",
+            "sourceField": "dstip",
+            "sourceValue": "203.0.113.9",
+            "supported": true
+          },
+          {
+            "id": "ref-005-l-b",
+            "claim": "change score is 16",
+            "sourceSection": "change",
+            "sourceField": "score",
+            "sourceValue": "16",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [
+          {
+            "id": "uc-005",
+            "claim": "tunnel renegotiation occurred",
+            "reason": "the evidence bundle has volume, peer, and change signal but no confirmed renegotiation event",
+            "severity": "medium"
+          }
+        ],
+        "timing": {
+          "latencyMs": 1104,
+          "inputTokens": 652,
+          "outputTokens": 233,
+          "estimatedCostUsd": 0.015,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.84,
+          "auditTrailCoverage": 0.79
+        },
+        "notes": [
+          "timing cost is moderate",
+          "unsupported tunnel explanation should be marked in review"
+        ]
+      },
+      "reviewNotes": [
+        "good row for cost and timing tab",
+        "same evidence bundle produces more speculative language on llm side"
+      ]
+    },
+    {
+      "id": "cmp-006",
+      "bundleId": "bundle-006",
+      "alertId": "alert-006",
+      "ruleId": "deny_burst_v1",
+      "severity": "warning",
+      "service": "mqtt/8883",
+      "device": "sensor-gw-19",
+      "path": "10.99.8.14 -> 10.99.0.5",
+      "baselineStatus": "suggestion emitted",
+      "llmStatus": "provider failure",
+      "replay": {
+        "replayId": "replay-20260324-window300",
+        "replayLabel": "Replay 2026-03-24 / 300s",
+        "runId": "run-03",
+        "runCount": 3,
+        "window": {
+          "start": "2026-03-24T08:00:00+00:00",
+          "end": "2026-03-24T08:05:00+00:00",
+          "label": "2026-03-24 08:00-08:05 UTC"
+        },
+        "source": "fixture-replay",
+        "notes": [
+          "provider timeout row",
+          "useful for failure-state validation"
+        ]
+      },
+      "evidenceBundle": {
+        "topology": {
+          "service": "mqtt/8883",
+          "srcip": "10.99.8.14",
+          "dstip": "10.99.0.5",
+          "zone": "iot",
+          "site": "plant-a",
+          "neighbor_refs": [
+            "iot-edge-01"
+          ]
+        },
+        "device": {
+          "src_device_key": "sensor-gw-19",
+          "device_name": "sensor-gw-19",
+          "device_role": "IoT Gateway",
+          "vendor": "Advantech",
+          "known_services": [
+            "mqtt/8883",
+            "https/443"
+          ]
+        },
+        "change": {
+          "suspected_change": false,
+          "score": null,
+          "level": "",
+          "change_refs": []
+        },
+        "historical": {
+          "recent_similar_1h": 4,
+          "cluster_size": 1,
+          "cluster_window_sec": 0
+        }
+      },
+      "baseline": {
+        "providerType": "template",
+        "providerName": "template-provider",
+        "status": "ready",
+        "availability": "available",
+        "metrics": {
+          "explanationCompleteness": 0.63,
+          "actionability": 0.56,
+          "evidenceBinding": 0.91,
+          "stability": 0.99,
+          "auditability": 0.96,
+          "hallucinationRate": 0.0,
+          "latencyMs": 158,
+          "estimatedCostUsd": 0.0,
+          "failureRate": 0.0
+        },
+        "outputText": "deny_burst_v1 triggered for service=mqtt/8883 device=sensor-gw-19. Verify whether the gateway is expected to contact 10.99.0.5 on this path.",
+        "outputBlocks": [
+          {
+            "kind": "summary",
+            "title": "Summary",
+            "lines": [
+              "The alert is attached to sensor-gw-19 in the iot zone."
+            ]
+          },
+          {
+            "kind": "actions",
+            "title": "Actions",
+            "lines": [
+              "Verify whether mqtt/8883 is expected between the gateway and 10.99.0.5.",
+              "Review repeated deny history for the same path."
+            ]
+          }
+        ],
+        "recommendedActions": [
+          "Verify whether mqtt/8883 is expected between the gateway and 10.99.0.5.",
+          "Review repeated deny history for the same path."
+        ],
+        "evidenceReferences": [
+          {
+            "id": "ref-006-a",
+            "claim": "zone is iot",
+            "sourceSection": "topology",
+            "sourceField": "zone",
+            "sourceValue": "iot",
+            "supported": true
+          },
+          {
+            "id": "ref-006-b",
+            "claim": "device role is IoT Gateway",
+            "sourceSection": "device",
+            "sourceField": "device_role",
+            "sourceValue": "IoT Gateway",
+            "supported": true
+          }
+        ],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 158,
+          "inputTokens": null,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.0,
+          "failure": false,
+          "failureReason": null,
+          "replayConsistency": 0.99,
+          "auditTrailCoverage": 0.96
+        },
+        "notes": [
+          "this row should remain reviewable even if llm side fails"
+        ]
+      },
+      "llm": {
+        "providerType": "llm",
+        "providerName": "gpt-5.4-eval",
+        "status": "failed",
+        "availability": "planned",
+        "metrics": {
+          "explanationCompleteness": null,
+          "actionability": null,
+          "evidenceBinding": null,
+          "stability": null,
+          "auditability": 0.0,
+          "hallucinationRate": null,
+          "latencyMs": 2200,
+          "estimatedCostUsd": 0.008,
+          "failureRate": 1.0
+        },
+        "outputText": "",
+        "outputBlocks": [
+          {
+            "kind": "notes",
+            "title": "Failure",
+            "lines": [
+              "Provider timed out before any structured output was returned."
+            ]
+          }
+        ],
+        "recommendedActions": [],
+        "evidenceReferences": [],
+        "unsupportedClaims": [],
+        "timing": {
+          "latencyMs": 2200,
+          "inputTokens": 618,
+          "outputTokens": null,
+          "estimatedCostUsd": 0.008,
+          "failure": true,
+          "failureReason": "provider timeout",
+          "replayConsistency": 0.0,
+          "auditTrailCoverage": 0.0
+        },
+        "notes": [
+          "used for failure-state checks",
+          "no output contract was produced"
+        ]
+      },
+      "reviewNotes": [
+        "failure row keeps baseline side visible",
+        "detail panel should expose timeout metadata"
+      ]
+    }
+  ]
+}
