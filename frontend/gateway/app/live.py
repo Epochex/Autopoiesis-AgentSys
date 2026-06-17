@@ -56,7 +56,7 @@ def _probe_rate() -> dict[str, Any]:
 
 
 # ---- on-demand DeepSeek threat analysis for one device ----
-def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh") -> dict[str, Any]:
+def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh", peers: list | None = None) -> dict[str, Any]:
     from . import providers
     from core.llm.provider import OpenAICompatibleClient
 
@@ -64,14 +64,24 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh") -> dict[st
     if not cfg["api_key"]:
         return {"ok": False, "text": "DeepSeek key not configured."}
     client = OpenAICompatibleClient(
-        base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=40
+        base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=45
     )
     want_lang = "Chinese" if lang == "zh" else "English"
+    candidates = [
+        {"ip": p["ip"], "ports": p.get("top_ports"), "deny": p.get("deny"), "threat": p.get("threat")}
+        for p in (peers or [])
+        if p.get("ip") != ip
+    ][:8]
     instr = (
         f"You are a network threat analyst. Assess this internal host from real FortiGate "
-        f"firewall telemetry. Respond in {want_lang}, 2-3 sentences, affirmative and concrete: "
-        f'what the host is most likely doing, the threat level, and one readonly next step. '
-        f'Return JSON {{"verdict": <short label>, "severity": "high|medium|low", "analysis": <text>}}.'
+        f"telemetry and predict its blast radius. Respond in {want_lang}, concrete and affirmative. "
+        f"Pick impact_peers ONLY from candidate_hosts that share ports / behaviour with this host. "
+        f"Return JSON {{"
+        f'"verdict": <short label>, "severity": "high|medium|low", '
+        f'"analysis": <2 sentences>, '
+        f'"impact_peers": [{{"ip": <candidate ip>, "relation": <very short>}}], '
+        f'"most_likely": <1 sentence outcome>, "worst_case": <1 sentence>, '
+        f'"recovery": {{"action": <short>, "eta": <e.g. 2-4h>}}}}.'
     )
     payload = {
         "host": ip,
@@ -81,6 +91,7 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh") -> dict[st
         "total_flows": device.get("flows"),
         "top_target_ports": device.get("top_ports"),
         "prior_threat_score": device.get("threat"),
+        "candidate_hosts": candidates,
     }
     try:
         out = client.complete_json(
@@ -89,12 +100,18 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh") -> dict[st
         )
     except Exception as exc:
         return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
+    rec = out.get("recovery") or {}
+    valid = {c["ip"] for c in candidates}
     return {
         "ok": True,
         "ip": ip,
         "verdict": out.get("verdict") or out.get("label") or "",
         "severity": out.get("severity", device.get("threat", "")),
         "analysis": out.get("analysis") or out.get("text") or "",
+        "impactPeers": [p for p in (out.get("impact_peers") or []) if p.get("ip") in valid][:6],
+        "mostLikely": out.get("most_likely", ""),
+        "worstCase": out.get("worst_case", ""),
+        "recovery": {"action": rec.get("action", ""), "eta": rec.get("eta", "")},
         "model": cfg["model"],
     }
 

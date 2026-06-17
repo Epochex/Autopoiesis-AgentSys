@@ -1,10 +1,12 @@
 import { useMemo, useRef, useState } from 'react'
 import type { DataStats, Device, Subnet, Topology } from '../types'
 import { Scramble } from './Motion'
+import { Analyzing, type Threat } from './ThreatCard'
+import type { Lang } from '../i18n'
 
 type Pt = { x: number; y: number }
 const VBW = 1360
-const VBH = 680
+const VBH = 1000
 const bez = (a: Pt, b: Pt) => `M${a.x} ${a.y} C ${(a.x + b.x) / 2} ${a.y}, ${(a.x + b.x) / 2} ${b.y}, ${b.x} ${b.y}`
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
 const weight = (f: number) => Math.max(1, Math.min(5.5, 1 + Math.log10(f + 1) * 0.7))
@@ -57,6 +59,9 @@ export function TopologyCanvas({
   drillDev,
   tempo,
   marks,
+  threat,
+  lang,
+  onCloseThreat,
   onSub,
   onDev,
   onBatch,
@@ -68,6 +73,9 @@ export function TopologyCanvas({
   drillDev: string | null
   tempo: number
   marks: Record<string, { severity: string; verdict: string }>
+  threat: Threat | null
+  lang: Lang
+  onCloseThreat: () => void
   onSub: (s: Subnet | null) => void
   onDev: (d: Device | null, cidr: string) => void
   onBatch: (cidr: string) => void
@@ -103,6 +111,15 @@ export function TopologyCanvas({
     })
     return { atk, ifs }
   }, [topo, stats])
+
+  const openSub = layout.ifs.find((f) => f.sub && drillSub === f.sub.cidr)?.sub ?? null
+  const devPos: Record<string, Pt> = {}
+  if (openSub) {
+    ;(openSub.devices ?? []).slice(0, 7).forEach((dv, j) => {
+      devPos[dv.ip] = { x: 1066 + (THREAT_DX[dv.threat] ?? 40), y: 90 + j * 80 }
+    })
+  }
+  const anchor = threat ? devPos[threat.ip] : undefined
 
   return (
     <svg
@@ -240,6 +257,76 @@ export function TopologyCanvas({
             </g>
           )
         })}
+
+        {/* in-canvas analysis layer: leader line + panel + impact subgraph */}
+        {threat && anchor ? (
+          (() => {
+            const panelTop: Pt = { x: 360, y: 706 }
+            const cx = 980
+            const cy = 824
+            const peers = threat.impactPeers ?? []
+            return (
+              <g className="analysis-layer">
+                <path d={bez(anchor, panelTop)} className="leader" />
+                <path d={bez(anchor, { x: cx, y: cy - 30 })} className="leader" />
+                {threat.loading ? (
+                  <foreignObject x={40} y={690} width={560} height={120}>
+                    <div className="an-panel">
+                      <div className="an-head"><span className="an-kicker">DEEPSEEK · {threat.ip}</span></div>
+                      <Analyzing lang={lang} />
+                    </div>
+                  </foreignObject>
+                ) : threat.error ? (
+                  <foreignObject x={40} y={690} width={560} height={90}>
+                    <div className="an-panel"><div className="an-body err">{threat.error}</div></div>
+                  </foreignObject>
+                ) : (
+                  <>
+                    <foreignObject x={40} y={680} width={600} height={300}>
+                      <div className={`an-panel sev-${threat.severity}`}>
+                        <div className="an-head">
+                          <span className="an-kicker">DEEPSEEK · {threat.ip}</span>
+                          <button className="an-x" onClick={onCloseThreat}>✕</button>
+                        </div>
+                        <div className="an-verdict">
+                          <span className={`sev-dot ${threat.severity}`} />
+                          <Scramble className="an-vtxt" text={threat.verdict ?? ''} />
+                          <span className="sev-tag">{threat.severity}</span>
+                        </div>
+                        <p className="an-analysis">{threat.analysis}</p>
+                        <div className="an-pred">
+                          <div><span className="pl">{lang === 'zh' ? '最可能' : 'likely'}</span>{threat.mostLikely}</div>
+                          <div><span className="pl bad">{lang === 'zh' ? '最坏' : 'worst'}</span>{threat.worstCase}</div>
+                          <div><span className="pl ok">{lang === 'zh' ? '恢复' : 'recovery'}</span>{threat.recovery?.action} <b>· {threat.recovery?.eta}</b></div>
+                        </div>
+                      </div>
+                    </foreignObject>
+
+                    <text x={cx} y={cy - 96} className="impact-tag" textAnchor="middle">
+                      {lang === 'zh' ? '影响面关系网络' : 'blast-radius graph'}
+                    </text>
+                    <circle cx={cx} cy={cy} r="11" className="m-dev alert sel" />
+                    <text x={cx} y={cy + 26} className="n-ip" textAnchor="middle">{threat.ip}</text>
+                    {peers.map((p, i) => {
+                      const py = cy + (i - (peers.length - 1) / 2) * 70
+                      const px = cx + 200
+                      const real = devPos[p.ip]
+                      return (
+                        <g key={p.ip} className="branch-in">
+                          <path d={bez({ x: cx, y: cy }, { x: px, y: py })} className="branch alert flow-alert" />
+                          {real ? <path d={bez({ x: px, y: py }, real)} className="link-up" /> : null}
+                          <circle cx={px} cy={py} r="7" className="m-dev high" />
+                          <text x={px + 14} y={py - 1} className="n-ip" textAnchor="start">{p.ip}</text>
+                          <text x={px + 14} y={py + 12} className="n-verdict alert" textAnchor="start">{p.relation}</text>
+                        </g>
+                      )
+                    })}
+                  </>
+                )}
+              </g>
+            )
+          })()
+        ) : null}
       </g>
     </svg>
   )

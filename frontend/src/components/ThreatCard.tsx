@@ -21,12 +21,17 @@ export function Analyzing({ lang }: { lang: Lang }) {
   )
 }
 
+export type Peer = { ip: string; relation: string }
 export type Threat = {
   ip: string
   loading: boolean
   severity?: string
   verdict?: string
   analysis?: string
+  impactPeers?: Peer[]
+  mostLikely?: string
+  worstCase?: string
+  recovery?: { action: string; eta: string }
   model?: string
   error?: string
 }

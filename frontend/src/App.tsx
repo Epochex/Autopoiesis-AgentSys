@@ -3,7 +3,7 @@ import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
-import { ThreatCard, Analyzing, type Threat } from './components/ThreatCard'
+import { Analyzing, type Threat } from './components/ThreatCard'
 import { CountUp, ConfidenceRing } from './components/Motion'
 import type { Device } from './types'
 
@@ -76,7 +76,10 @@ function App() {
       const r = await fetch(`/api/rca/threat?ip=${dev.ip}&cidr=${encodeURIComponent(cidr)}&lang=${lang}`)
       const j = await r.json()
       if (j.ok) {
-        setThreat({ ip: dev.ip, loading: false, severity: j.severity, verdict: j.verdict, analysis: j.analysis, model: j.model })
+        setThreat({
+          ip: dev.ip, loading: false, severity: j.severity, verdict: j.verdict, analysis: j.analysis,
+          impactPeers: j.impactPeers, mostLikely: j.mostLikely, worstCase: j.worstCase, recovery: j.recovery, model: j.model,
+        })
         setMarks((m) => ({ ...m, [dev.ip]: { severity: j.severity, verdict: j.verdict } }))
       } else {
         setThreat({ ip: dev.ip, loading: false, error: j.text || 'failed' })
@@ -158,7 +161,7 @@ function App() {
 
       {d.datasetReady && s && c ? (
         <>
-          <section className={`canvas-wrap ${drillSub ? 'big' : ''}`}>
+          <section className={`canvas-wrap ${threat ? 'tall' : drillSub ? 'mid' : ''}`}>
             {topo ? (
               <TopologyCanvas
                 topo={topo}
@@ -168,6 +171,9 @@ function App() {
                 drillDev={drillDev}
                 tempo={tempo}
                 marks={marks}
+                threat={threat}
+                lang={lang}
+                onCloseThreat={() => setThreat(null)}
                 onSub={(sub) => {
                   setDrillSub(sub?.cidr ?? null)
                   setDrillDev(null)
@@ -183,9 +189,8 @@ function App() {
             ) : null}
           </section>
 
-          {threat || posture ? (
+          {posture ? (
             <section className="analysis-strip">
-              {threat ? <ThreatCard th={threat} lang={lang} onClose={() => setThreat(null)} /> : null}
               {posture ? (
                 <aside className={`posture-card ${posture.high ? 'sev-high' : ''}`}>
                   <div className="tc-head">

@@ -76,19 +76,19 @@ async def rca_pulse() -> dict[str, Any]:
 @app.get("/api/rca/threat")
 async def rca_threat(ip: str, cidr: str = "", lang: str = "zh") -> dict[str, Any]:
     topo = _load_topology() or {}
-    device = None
+    device, peers = None, []
     for sub in topo.get("subnets", []):
         if cidr and sub.get("cidr") != cidr:
             continue
         for dv in sub.get("devices", []) or []:
             if dv.get("ip") == ip:
-                device, cidr = dv, sub.get("cidr", cidr)
+                device, cidr, peers = dv, sub.get("cidr", cidr), (sub.get("devices") or [])
                 break
         if device:
             break
     if device is None:
         return {"ok": False, "text": "device not found"}
-    return await asyncio.to_thread(assess_device, ip, cidr, device, lang)
+    return await asyncio.to_thread(assess_device, ip, cidr, device, lang, peers)
 
 
 @app.get("/api/rca/threat_subnet")
