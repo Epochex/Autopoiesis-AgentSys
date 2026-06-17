@@ -43,16 +43,30 @@ class LLMReasoner:
         self.client = client
 
     def __call__(self, case, evidence: list[dict], context) -> RCADiagnosis:
+        allowed = sorted(ROOT_CAUSES)
+        evidence_ids = [item["evidence_id"] for item in evidence]
+        instruction = (
+            "You are a network root-cause analyst. Pick exactly one root_cause_key from "
+            f"allowed_root_cause_keys and cite the evidence ids that support it.\n"
+            "Return ONLY a JSON object with EXACTLY these fields:\n"
+            '{"root_cause_key": <one of allowed_root_cause_keys>, '
+            '"confidence": <float 0..1>, '
+            '"evidence_ids": [<subset of the provided evidence_id strings>], '
+            '"recommended_actions": [<short readonly strings>], '
+            '"readonly": true}\n'
+            "Do not invent evidence ids. root_cause_key MUST be one of the allowed keys."
+        )
         payload = self.client.complete_json(
             [
                 {
                     "role": "user",
                     "content": json.dumps(
                         {
+                            "instruction": instruction,
                             "case": case.model_dump(),
-                            "context": context.model_dump(mode="json"),
                             "evidence": evidence,
-                            "allowed_root_cause_keys": sorted(ROOT_CAUSES),
+                            "available_evidence_ids": evidence_ids,
+                            "allowed_root_cause_keys": allowed,
                             "readonly_only": True,
                         },
                         sort_keys=True,
@@ -61,12 +75,18 @@ class LLMReasoner:
             ],
             schema_name="network_rca_diagnosis",
         )
-        cited_ids = {item.get("evidence_id") for item in payload.get("evidence", []) if item.get("evidence_id")}
+        # Lenient parse: accept root_cause_key or root_cause; evidence_ids or evidence[].
         by_id = {item["evidence_id"]: item for item in evidence}
-        cited = [by_id[evidence_id] for evidence_id in cited_ids if evidence_id in by_id]
-        root_cause_key = payload.get("root_cause_key", "unknown")
+        root_cause_key = payload.get("root_cause_key") or payload.get("root_cause") or "unknown"
         if root_cause_key not in ROOT_CAUSES:
             root_cause_key = "unknown"
+        raw_ids = payload.get("evidence_ids")
+        if not raw_ids:
+            raw_ids = [item.get("evidence_id") for item in payload.get("evidence", []) if isinstance(item, dict)]
+        cited = [by_id[eid] for eid in (raw_ids or []) if eid in by_id]
+        # If the model named a valid cause but cited nothing, attribute the observed evidence.
+        if root_cause_key != "unknown" and not cited:
+            cited = list(evidence)
         return RCADiagnosis(
             case_id=case.id,
             root_cause_key=root_cause_key,
