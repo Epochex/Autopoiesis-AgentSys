@@ -69,12 +69,21 @@ export interface Interface {
   flows: number
   kind: string
 }
+export interface Device {
+  ip: string
+  flows: number
+  deny: number
+  accept: number
+  threat: 'high' | 'watch' | 'ok'
+  top_ports: string[]
+}
 export interface Subnet {
   cidr: string
   hosts: number
   flows: number
   accept: number
   intf: string
+  devices?: Device[]
 }
 export interface Anchor {
   ip: string
