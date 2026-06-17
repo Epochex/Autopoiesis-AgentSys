@@ -5,7 +5,8 @@ import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, type Threat } from './components/ThreatCard'
 import { MeshView } from './components/MeshView'
-import { CountUp, ConfidenceRing } from './components/Motion'
+import { TraceTrajectory } from './components/TraceTrajectory'
+import { ConfidenceRing } from './components/Motion'
 import type { Device } from './types'
 
 type State =
@@ -229,14 +230,7 @@ function App() {
               </div>
             </div>
 
-            <div className="metric">
-              <span className="big"><CountUp value={s.adminLoginFailed} /></span>
-              <span className="lab">{t('failedLogins', lang)} · {s.distinctSrc} {t('sources', lang)} · {s.lockouts} {t('lockouts', lang)}</span>
-            </div>
-            <div className="metric">
-              <span className="big"><CountUp value={s.denyCount} /></span>
-              <span className="lab">{t('denied', lang)}</span>
-            </div>
+            {c ? <TraceTrajectory rcaCase={c} lang={lang} reasoner={d.reasonerMode} /> : <div />}
             <div className="metric">
               <div className="bars">
                 <div className="bar-row">
