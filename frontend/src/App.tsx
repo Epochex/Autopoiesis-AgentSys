@@ -4,6 +4,7 @@ import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, type Threat } from './components/ThreatCard'
+import { MeshView } from './components/MeshView'
 import { CountUp, ConfidenceRing } from './components/Motion'
 import type { Device } from './types'
 
@@ -24,6 +25,7 @@ function App() {
   const [threat, setThreat] = useState<Threat | null>(null)
   const [marks, setMarks] = useState<Record<string, { severity: string; verdict: string }>>({})
   const [posture, setPosture] = useState<{ cidr: string; loading: boolean; high?: number; watch?: number; summary?: string } | null>(null)
+  const [meshOpen, setMeshOpen] = useState<string | null>(null)
 
   const load = useCallback(async (p: string) => {
     setSt({ s: 'load' })
@@ -251,6 +253,17 @@ function App() {
               <span className="lab">{t('accuracy', lang)}</span>
             </div>
           </section>
+
+          {drillSub && d.meshes?.[drillSub]?.length ? (
+            <div className="mesh-toggle-row">
+              <button className="mesh-toggle" onClick={() => setMeshOpen(meshOpen === drillSub ? null : drillSub)}>
+                🌐 {meshOpen === drillSub ? (lang === 'zh' ? '收起设备网格' : 'hide mesh') : (lang === 'zh' ? '展开全设备行为网格' : 'expand device mesh')} · {d.meshes[drillSub].length}
+              </button>
+            </div>
+          ) : null}
+          {meshOpen && d.meshes?.[meshOpen]?.length ? (
+            <MeshView nodes={d.meshes[meshOpen]} cidr={meshOpen} lang={lang} onClose={() => setMeshOpen(null)} />
+          ) : null}
         </>
       ) : (
         <div className="boot err">{d.note}</div>

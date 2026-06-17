@@ -97,6 +97,15 @@ export interface Topology {
   subnets: Subnet[]
   anchors: Anchor[]
 }
+export interface MeshNode {
+  ip: string
+  out: number
+  deny: number
+  accept: number
+  ports: string[]
+  role: string
+  threat: 'high' | 'watch' | 'ok'
+}
 export interface RcaSnapshot {
   readiness: Readiness
   datasetReady: boolean
@@ -105,6 +114,7 @@ export interface RcaSnapshot {
   providers: Provider[]
   providerError: string | null
   topology: Topology | null
+  meshes: Record<string, MeshNode[]>
   dataStats: DataStats | null
   cases: RcaCase[]
   baselines: Baseline[]
