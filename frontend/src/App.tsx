@@ -1,89 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
-import { makeT, rootCauseLabel, type Lang } from './i18n'
-import { RcaFlow } from './components/RcaFlow'
-import { NetworkTopology } from './components/NetworkTopology'
-import { AblationChart, DenyPortChart } from './components/Charts'
-import { ProviderSwitch } from './components/ProviderSwitch'
+import { rc, t, type Lang } from './i18n'
+import { FlowCanvas } from './components/FlowCanvas'
+import { CountUp, ConfidenceRing } from './components/Motion'
 
-type View = 'overview' | 'topology' | 'pipeline' | 'compare'
-type LoadState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; snapshot: RcaSnapshot }
-
-const fmt = (n: number) => n.toLocaleString('en-US')
-
-const TRACE_LABELS: Record<string, { en: string; zh: string }> = {
-  alert_received: { en: 'Alert received', zh: '收到告警' },
-  memory_read: { en: 'Memory retrieved', zh: '检索记忆' },
-  skills_exposed: { en: 'Skills selected', zh: '选择技能' },
-  tool_called: { en: 'Readonly probe', zh: '只读取证' },
-  context_compiled: { en: 'Context compiled', zh: '压缩上下文' },
-  verifier_result: { en: 'Verifier checked', zh: '校验结论' },
-  cost_observed: { en: 'Cost recorded', zh: '记录成本' },
-  diagnosis_completed: { en: 'Diagnosis produced', zh: '产出诊断' },
-}
-
-function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="stat">
-      <div className="stat-label">{label}</div>
-      <div className="stat-value">{value}</div>
-      {sub ? <div className="stat-sub">{sub}</div> : null}
-    </div>
-  )
-}
-
-function Verdict({ rcaCase, lang }: { rcaCase: RcaCase; lang: Lang }) {
-  const t = makeT(lang)
-  const d = rcaCase.diagnosis
-  return (
-    <div className="verdict">
-      <div className="verdict-main">
-        <span className="kicker">
-          {t('diagnosis')} · {d.readonly ? t('readonly') : 'WRITE'} ·{' '}
-          {rcaCase.verifier.passed ? t('verifierPassed') : t('verifierFailed')}
-        </span>
-        <div className="verdict-title">{rootCauseLabel(d.rootCauseKey, lang)}</div>
-        <div className="evidence-chips">
-          {d.evidence.map((e) => (
-            <span className="evidence-chip" key={e.evidenceId} title={e.source}>
-              <code>{e.evidenceId}</code>
-              {e.summary}
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className="gauge">
-        <div className="gauge-num">{d.confidence.toFixed(2)}</div>
-        <div className="gauge-label">{t('confidence')}</div>
-      </div>
-    </div>
-  )
-}
+type State =
+  | { s: 'load' }
+  | { s: 'err'; m: string }
+  | { s: 'ok'; d: RcaSnapshot }
 
 function App() {
   const [lang, setLang] = useState<Lang>('zh')
   const [provider, setProvider] = useState('rule')
-  const [view, setView] = useState<View>('overview')
-  const [state, setState] = useState<LoadState>({ status: 'loading' })
-  const [activeId, setActiveId] = useState('')
-  const t = makeT(lang)
+  const [st, setSt] = useState<State>({ s: 'load' })
+  const [active, setActive] = useState('')
 
-  const load = useCallback(async (prov: string, refresh = false) => {
-    setState({ status: 'loading' })
+  const load = useCallback(async (p: string) => {
+    setSt({ s: 'load' })
     try {
-      const res = await fetch(`/api/rca/snapshot?provider=${prov}${refresh ? '&refresh=true' : ''}`, {
-        headers: { Accept: 'application/json' },
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const snapshot = (await res.json()) as RcaSnapshot
-      setState({ status: 'ready', snapshot })
-      setActiveId((prev) => (snapshot.cases.some((c) => c.id === prev) ? prev : snapshot.cases[0]?.id ?? ''))
-    } catch (err) {
-      setState({ status: 'error', message: err instanceof Error ? err.message : String(err) })
+      const r = await fetch(`/api/rca/snapshot?provider=${p}`, { headers: { Accept: 'application/json' } })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const d = (await r.json()) as RcaSnapshot
+      setSt({ s: 'ok', d })
+      setActive((prev) => (d.cases.some((c) => c.id === prev) ? prev : d.cases[0]?.id ?? ''))
+    } catch (e) {
+      setSt({ s: 'err', m: e instanceof Error ? e.message : String(e) })
     }
   }, [])
 
@@ -91,151 +33,102 @@ function App() {
     void load(provider)
   }, [provider, load])
 
-  if (state.status === 'loading') {
-    return <div className="centered"><span className="spinner" /> {provider} · {t('refresh')}…</div>
-  }
-  if (state.status === 'error') {
-    return (
-      <div className="centered error">
-        <p>gateway: {state.message}</p>
-        <button className="btn" onClick={() => void load(provider)}>{t('refresh')}</button>
-      </div>
-    )
-  }
+  if (st.s === 'load') return <div className="boot"><span className="orbit" /></div>
+  if (st.s === 'err') return <div className="boot err">gateway · {st.m}</div>
 
-  const { snapshot } = state
-  const r = snapshot.readiness
-  const s = snapshot.dataStats
-  const activeCase = snapshot.cases.find((c) => c.id === activeId) ?? snapshot.cases[0]
-  const views: View[] = ['overview', 'topology', 'pipeline', 'compare']
-  const viewLabel: Record<View, { en: string; zh: string }> = {
-    overview: { en: 'Overview', zh: '总览' },
-    topology: { en: 'Topology', zh: '拓扑' },
-    pipeline: { en: 'Pipeline', zh: '推理管道' },
-    compare: { en: 'Compare', zh: '消融对照' },
-  }
+  const d = st.d
+  const s = d.dataStats
+  const c: RcaCase | undefined = d.cases.find((x) => x.id === active) ?? d.cases[0]
+  const withCtl = d.baselines.find((b) => b.name === 'selfevo_light_path')?.rootCauseAccuracy ?? 1
+  const noCtl = d.baselines.find((b) => b.name === 'full_tools')?.rootCauseAccuracy ?? 0
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-mark">selfevo</span>
-          <span className="brand-sub">{t('brandSub')}</span>
+    <div className="stage">
+      <header className="top">
+        <div className="mark">
+          selfevo<span className="mark-dot" />
         </div>
-        <div className="header-right">
-          <ProviderSwitch providers={snapshot.providers} active={snapshot.provider} lang={lang} onChange={setProvider} />
-          <div className="lang-toggle">
-            <button className={lang === 'zh' ? 'active' : ''} onClick={() => setLang('zh')}>中</button>
-            <button className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')}>EN</button>
+        <div className="top-right">
+          <div className="cases">
+            {d.cases.map((x) => (
+              <button
+                key={x.id}
+                className={`case ${x.id === c?.id ? 'on' : ''}`}
+                onClick={() => setActive(x.id)}
+                aria-label={x.title}
+              >
+                <span className={`tick ${x.verifier.passed ? 'ok' : ''}`} />
+              </button>
+            ))}
           </div>
-          <span className={`pill ${r.blocked ? 'pill-bad' : 'pill-ok'}`}>{r.blocked ? t('blocked') : t('live')}</span>
-          <button className="btn" onClick={() => void load(provider, true)} title={t('refresh')}>↻</button>
+          <div className="engines">
+            {d.providers.map((p) => (
+              <button
+                key={p.id}
+                className={`eng ${p.id === d.provider ? 'on' : ''}`}
+                disabled={!p.reachable && p.id !== 'rule'}
+                onClick={() => setProvider(p.id)}
+                title={`${p.label} · ${p.model}`}
+              >
+                <span className={`gem ${p.reachable ? 'live' : ''}`} />
+                {p.label.split(' ')[0]}
+              </button>
+            ))}
+          </div>
+          <div className="lang">
+            <button className={lang === 'zh' ? 'on' : ''} onClick={() => setLang('zh')}>中</button>
+            <button className={lang === 'en' ? 'on' : ''} onClick={() => setLang('en')}>EN</button>
+          </div>
         </div>
       </header>
 
-      {snapshot.providerError ? (
-        <div className="provider-error">⚠ {t('providerError')}: {snapshot.providerError}</div>
-      ) : null}
-
-      {!snapshot.datasetReady || !s ? (
-        <div className="blocked-banner">
-          <h2>{t('noDataset')}</h2>
-          <p>{snapshot.note}</p>
-        </div>
-      ) : (
+      {d.datasetReady && s && c ? (
         <>
-          <nav className="tabs">
-            {views.map((v) => (
-              <button key={v} className={`tab ${view === v ? 'active' : ''}`} onClick={() => setView(v)}>
-                {viewLabel[v][lang]}
-              </button>
-            ))}
-            <span className="reasoner-flag">{t('reasoner')}: {snapshot.reasonerMode}</span>
-          </nav>
-
-          {view === 'overview' && (
-            <>
-              <section className="data-strip">
-                <StatTile label={t('source')} value={s.source} />
-                <StatTile label={t('window')} value={s.windowDays.join(' → ') || 'n/a'} />
-                <StatTile label={t('failedLogins')} value={fmt(s.adminLoginFailed)} sub={`${s.distinctSrc} ${t('srcIps')} · ${s.lockouts} ${t('lockouts')}`} />
-                <StatTile label={t('deniedFlows')} value={fmt(s.denyCount)} sub={`accept ${fmt(s.acceptPermit)}`} />
-                <StatTile label={t('topPort')} value={s.topDenyPorts[0]?.[0] ?? 'n/a'} sub={s.topDenyPorts[0] ? `${fmt(s.topDenyPorts[0][1])} ${t('hits')}` : ''} />
-              </section>
-              <div className="overview-grid">
-                <aside className="case-list">
-                  <div className="panel-title">{t('cases')} ({snapshot.cases.length})</div>
-                  {snapshot.cases.map((c) => (
-                    <button key={c.id} className={`case-item ${c.id === activeCase?.id ? 'active' : ''}`} onClick={() => setActiveId(c.id)}>
-                      <span className={`dot ${c.verifier.passed ? 'dot-ok' : 'dot-bad'}`} />
-                      <span className="case-item-title">{rootCauseLabel(c.diagnosis.rootCauseKey, lang)}</span>
-                    </button>
+          <section className="canvas-wrap">
+            <FlowCanvas stats={s} activeKey={c.diagnosis.rootCauseKey} />
+            <div className="verdict">
+              <ConfidenceRing value={c.diagnosis.confidence} />
+              <div className="verdict-text">
+                <span className="vk">{t('engine', lang)} · {d.reasonerMode}{c.verifier.passed ? ` · ${t('verified', lang)}` : ''}</span>
+                <h1>{rc(c.diagnosis.rootCauseKey, lang)}</h1>
+                <div className="ev-ids">
+                  {c.diagnosis.evidence.map((e) => (
+                    <code key={e.evidenceId}>{e.evidenceId}</code>
                   ))}
-                </aside>
-                <div className="stage">
-                  {activeCase ? (
-                    <>
-                      <Verdict rcaCase={activeCase} lang={lang} />
-                      <div className="panel-title">{t('pipeline')}</div>
-                      <RcaFlow rcaCase={activeCase} lang={lang} />
-                    </>
-                  ) : null}
                 </div>
               </div>
-            </>
-          )}
+            </div>
+          </section>
 
-          {view === 'topology' && (
-            <section className="full-panel">
-              <div className="panel-title">{t('topology')}</div>
-              <NetworkTopology stats={s} lang={lang} />
-              <div className="legend">
-                <span><i className="lg-red" /> {t('attackers')} → FortiGate</span>
-                <span><i className="lg-amber" /> {t('internalHosts')} → {t('deniedPorts')}</span>
-                <span><i className="lg-blue" /> FortiGate → {t('syslogSink')}</span>
-                <span><i className="lg-green" /> → {t('consoleNode')}</span>
+          <section className="ribbon">
+            <div className="metric">
+              <span className="big"><CountUp value={s.adminLoginFailed} /></span>
+              <span className="lab">{t('failedLogins', lang)} · {s.distinctSrc} {t('sources', lang)} · {s.lockouts} {t('lockouts', lang)}</span>
+            </div>
+            <div className="metric">
+              <span className="big"><CountUp value={s.denyCount} /></span>
+              <span className="lab">{t('denied', lang)}</span>
+            </div>
+            <div className="metric acc">
+              <div className="bars">
+                <div className="bar-row">
+                  <span className="bar-num good">{Math.round(withCtl * 100)}<i>%</i></span>
+                  <span className="bar"><b style={{ width: `${withCtl * 100}%` }} className="good" /></span>
+                  <span className="bar-lab">{t('withControl', lang)}</span>
+                </div>
+                <div className="bar-row">
+                  <span className="bar-num bad">{Math.round(noCtl * 100)}<i>%</i></span>
+                  <span className="bar"><b style={{ width: `${noCtl * 100}%` }} className="bad" /></span>
+                  <span className="bar-lab">{t('withoutControl', lang)}</span>
+                </div>
               </div>
-            </section>
-          )}
-
-          {view === 'pipeline' && activeCase && (
-            <section className="full-panel">
-              <div className="case-tabs">
-                {snapshot.cases.map((c) => (
-                  <button key={c.id} className={`case-tab ${c.id === activeCase.id ? 'active' : ''}`} onClick={() => setActiveId(c.id)}>
-                    {rootCauseLabel(c.diagnosis.rootCauseKey, lang)}
-                  </button>
-                ))}
-              </div>
-              <RcaFlow rcaCase={activeCase} lang={lang} />
-              <Verdict rcaCase={activeCase} lang={lang} />
-              <div className="trace-card">
-                <div className="subsection-title">{t('inspect')} · {activeCase.trace.length}</div>
-                <ol className="trace">
-                  {activeCase.trace.map((ev, i) => (
-                    <li key={i} className="trace-step">
-                      <span className="trace-kind">{TRACE_LABELS[ev.kind]?.[lang] ?? ev.kind}</span>
-                      <span className="trace-detail">
-                        {ev.kind === 'skills_exposed' && Array.isArray(ev.payload.skills) ? (ev.payload.skills as string[]).join(' · ') : ''}
-                        {ev.kind === 'tool_called' ? String(ev.payload.skill ?? '') : ''}
-                        {ev.kind === 'diagnosis_completed' ? String(ev.payload.root_cause_key ?? '') : ''}
-                      </span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            </section>
-          )}
-
-          {view === 'compare' && (
-            <section className="charts">
-              <AblationChart baselines={snapshot.baselines} lang={lang} />
-              <DenyPortChart stats={s} lang={lang} />
-            </section>
-          )}
+              <span className="lab">{t('accuracy', lang)}</span>
+            </div>
+          </section>
         </>
+      ) : (
+        <div className="boot err">{d.note}</div>
       )}
-      <footer className="app-footer">{snapshot.note}</footer>
     </div>
   )
 }
