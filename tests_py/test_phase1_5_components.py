@@ -253,3 +253,12 @@ def test_ci_workflow_is_prepared_outside_github_until_workflow_scope_exists():
     text = workflow.read_text(encoding="utf-8")
     assert 'python-version: "3.11"' in text
     assert "pytest -p no:cacheprovider tests_py" in text
+
+
+def test_python_version_config_targets_stable_311_series():
+    version = Path(".python-version").read_text(encoding="utf-8").strip()
+    assert version.startswith("3.11.")
+    assert "rc" not in version.lower()
+
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert 'requires-python = ">=3.11,<3.12"' in pyproject

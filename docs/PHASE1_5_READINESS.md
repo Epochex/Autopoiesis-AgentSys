@@ -52,4 +52,6 @@ This repository started as a TypeScript self-evolution kernel. The Python `core/
 
 ## CI Boundary
 
-A Python CI workflow should run on stable Python 3.11.x. It is not currently committed because the available GitHub token previously lacked `workflow` scope and GitHub rejected pushes containing `.github/workflows/*`.
+A Python CI workflow should run on stable Python 3.11.x. The repo includes `.python-version` with a concrete stable 3.11.x patch version and `pyproject.toml` restricts Python to the 3.11 series. The local `/usr/bin/python3.11` on this host is still `3.11.0rc1`, so local 3.11 verification is useful but does not satisfy the stable-runtime requirement by itself.
+
+The GitHub Actions workflow is prepared at `ci/github-workflows/python-phase15.yml`, but it is not currently committed under `.github/workflows/` because the available GitHub token previously lacked `workflow` scope and GitHub rejected pushes touching workflow files.
