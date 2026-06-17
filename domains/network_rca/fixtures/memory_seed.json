@@ -1,0 +1,42 @@
+[
+  {
+    "memory_id": "asset-r230-profile",
+    "tier": "asset_profile",
+    "text": "Dell R230 runs Ubuntu 22.04 on 192.168.1.23. BCM5720 eno1 is spare and eno2 is the primary interface on the showroom/device network.",
+    "tags": ["r230", "ubuntu", "eno1", "eno2", "showroom"],
+    "asset_ids": ["r230", "eno1", "eno2", "192.168.1.23"],
+    "confidence": 1.0
+  },
+  {
+    "memory_id": "semantic-local-topology",
+    "tier": "semantic",
+    "text": "FortiGate 100E has office network 192.168.16.0/20 on LACP port3 and port4, showroom/device network 192.168.1.0/24 on fortilink port11 and port12, AP management VLAN32 on port5, and showroom server network 192.168.48.0/24.",
+    "tags": ["fortigate", "topology", "office", "showroom", "lacp"],
+    "asset_ids": ["fortigate", "office", "showroom"],
+    "confidence": 1.0
+  },
+  {
+    "memory_id": "procedural-carrier-first",
+    "tier": "procedural",
+    "text": "When an interface reports no-carrier but the NIC is enumerated, first check cable and peer switch port state before diagnosing hardware failure.",
+    "tags": ["carrier", "interface", "hardware"],
+    "asset_ids": ["eno1", "eno2"],
+    "confidence": 0.95
+  },
+  {
+    "memory_id": "procedural-policy-before-vlan",
+    "tier": "procedural",
+    "text": "When two routed FortiGate connected networks cannot reach each other, verify route visibility and firewall policy before blaming switch VLAN state.",
+    "tags": ["policy", "route", "vlan", "fortigate"],
+    "asset_ids": ["fortigate", "office", "showroom"],
+    "confidence": 0.95
+  },
+  {
+    "memory_id": "procedural-vip-policy-pair",
+    "tier": "procedural",
+    "text": "For WAN VIP publishing issues, inspect both the VIP mapping and the inbound firewall policy service match; either side can break the port forward.",
+    "tags": ["vip", "policy", "wan", "nat"],
+    "asset_ids": ["fortigate", "wan1"],
+    "confidence": 0.95
+  }
+]

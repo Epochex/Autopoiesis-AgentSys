@@ -1,0 +1,17 @@
+[project]
+name = "selfevo-network-rca"
+version = "0.1.0"
+description = "Python Phase 0-1 implementation for a trace-backed self-evolving agent framework and network RCA seed domain."
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_py"]
+pythonpath = ["."]

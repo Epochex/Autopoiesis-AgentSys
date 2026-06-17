@@ -1,0 +1,72 @@
+[
+  {
+    "case": {
+      "id": "case_eno1_no_carrier",
+      "title": "eno1 no carrier is cabling or peer-port state",
+      "query": "Dell R230 eno1 reports no carrier; determine whether this is a NIC fault.",
+      "query_terms": ["r230", "eno1", "carrier", "interface"],
+      "assets": ["r230", "eno1", "192.168.1.23"],
+      "relevant_skills": ["check_interface_status", "check_link_carrier"]
+    },
+    "ground_truth": {
+      "required_evidence": ["ev-eno1-oper-down", "ev-eno1-no-phy"],
+      "expected_root_cause_key": "carrier_down"
+    }
+  },
+  {
+    "case": {
+      "id": "case_eno2_rx_dropped",
+      "title": "eno2 high RX dropped with zero hardware errors",
+      "query": "Dell R230 eno2 has high cumulative RX dropped; decide if this is hardware failure.",
+      "query_terms": ["r230", "eno2", "rx", "dropped", "hardware"],
+      "assets": ["r230", "eno2", "192.168.1.23"],
+      "relevant_skills": ["check_interface_status"]
+    },
+    "ground_truth": {
+      "required_evidence": ["ev-eno2-dropped", "ev-eno2-no-hw-errors"],
+      "expected_root_cause_key": "benign_rx_dropped"
+    }
+  },
+  {
+    "case": {
+      "id": "case_showroom_office_unreachable",
+      "title": "showroom to office unreachable",
+      "query": "Traffic from 192.168.1.0/24 showroom to 192.168.16.0/20 office is unreachable.",
+      "query_terms": ["showroom", "office", "route", "policy", "vlan"],
+      "assets": ["fortigate", "showroom", "office"],
+      "relevant_skills": ["route_between_segments", "check_fw_policy", "check_switch_vlan"]
+    },
+    "ground_truth": {
+      "required_evidence": ["ev-fg-connected-routes", "ev-fg-policy-deny"],
+      "expected_root_cause_key": "fg_policy_missing"
+    }
+  },
+  {
+    "case": {
+      "id": "case_fortiguard_expired",
+      "title": "FortiGuard subscriptions expired",
+      "query": "FortiGate shows AV IPS WebFilter expired; determine forwarding impact.",
+      "query_terms": ["fortiguard", "av", "ips", "webfilter", "forwarding"],
+      "assets": ["fortigate", "wan1"],
+      "relevant_skills": ["check_security_subscription", "check_wan_health"]
+    },
+    "ground_truth": {
+      "required_evidence": ["ev-fortiguard-expired", "ev-forwarding-ok"],
+      "expected_root_cause_key": "security_subscription_expired_forwarding_ok"
+    }
+  },
+  {
+    "case": {
+      "id": "case_wan_vip_port_mapping",
+      "title": "WAN VIP port mapping abnormal",
+      "query": "A WAN VIP published service on TCP 8443 is unreachable.",
+      "query_terms": ["wan", "vip", "port", "policy", "nat"],
+      "assets": ["fortigate", "wan1", "showroom-server"],
+      "relevant_skills": ["check_vip_mapping", "check_fw_policy"]
+    },
+    "ground_truth": {
+      "required_evidence": ["ev-vip-map-8443", "ev-vip-policy-service-mismatch"],
+      "expected_root_cause_key": "vip_policy_mismatch"
+    }
+  }
+]

@@ -1,0 +1,98 @@
+{
+  "case_eno1_no_carrier": {
+    "interface_status": [
+      {
+        "evidence_id": "ev-eno1-oper-down",
+        "source": "mock:ip-link",
+        "summary": "eno1 is present but state DOWN with NO-CARRIER; eno2 is UP on 192.168.1.23.",
+        "data": {"interface": "eno1", "admin": "up", "oper": "down", "carrier": false, "peer_seen": false}
+      }
+    ],
+    "link_carrier": [
+      {
+        "evidence_id": "ev-eno1-no-phy",
+        "source": "mock:ethtool",
+        "summary": "eno1 reports Link detected: no; driver and firmware are loaded.",
+        "data": {"interface": "eno1", "link_detected": false, "driver_loaded": true}
+      }
+    ]
+  },
+  "case_eno2_rx_dropped": {
+    "interface_status": [
+      {
+        "evidence_id": "ev-eno2-dropped",
+        "source": "mock:ip-stats",
+        "summary": "eno2 RX dropped counter is high but link remains UP.",
+        "data": {"interface": "eno2", "rx_dropped": 284901, "oper": "up"}
+      },
+      {
+        "evidence_id": "ev-eno2-no-hw-errors",
+        "source": "mock:ethtool-S",
+        "summary": "eno2 reports zero rx_errors, crc_errors, frame_errors, and fifo_errors.",
+        "data": {"rx_errors": 0, "crc_errors": 0, "frame_errors": 0, "fifo_errors": 0}
+      }
+    ]
+  },
+  "case_showroom_office_unreachable": {
+    "route": [
+      {
+        "evidence_id": "ev-fg-connected-routes",
+        "source": "mock:fortigate-router",
+        "summary": "FortiGate has connected routes for 192.168.1.0/24 and 192.168.16.0/20.",
+        "data": {"routes": ["192.168.1.0/24 connected", "192.168.16.0/20 connected"]}
+      }
+    ],
+    "fw_policy": [
+      {
+        "evidence_id": "ev-fg-policy-deny",
+        "source": "mock:fortigate-policy",
+        "summary": "No enabled allow policy matches showroom 192.168.1.0/24 to office 192.168.16.0/20; implicit deny applies.",
+        "data": {"src": "192.168.1.0/24", "dst": "192.168.16.0/20", "matched_policy": null, "action": "deny"}
+      }
+    ],
+    "switch_vlan": [
+      {
+        "evidence_id": "ev-switch-vlan-present",
+        "source": "mock:huawei-vlan",
+        "summary": "Huawei access VLAN and Eth-Trunk membership are present for the involved ports.",
+        "data": {"vlan_state": "present", "eth_trunk": "up"}
+      }
+    ]
+  },
+  "case_fortiguard_expired": {
+    "security_subscription": [
+      {
+        "evidence_id": "ev-fortiguard-expired",
+        "source": "mock:fortigate-license",
+        "summary": "FortiGuard AV, IPS, and WebFilter subscriptions are expired.",
+        "data": {"av": "expired", "ips": "expired", "webfilter": "expired"}
+      }
+    ],
+    "wan_health": [
+      {
+        "evidence_id": "ev-forwarding-ok",
+        "source": "mock:fortigate-session",
+        "summary": "Basic routing and existing firewall sessions continue to forward traffic.",
+        "data": {"default_route": true, "sessions_forwarding": true}
+      }
+    ]
+  },
+  "case_wan_vip_port_mapping": {
+    "vip": [
+      {
+        "evidence_id": "ev-vip-map-8443",
+        "source": "mock:fortigate-vip",
+        "summary": "VIP maps WAN TCP 8443 to 192.168.48.10:443.",
+        "data": {"extport": 8443, "mapped_ip": "192.168.48.10", "mapped_port": 443}
+      }
+    ],
+    "fw_policy": [
+      {
+        "evidence_id": "ev-vip-policy-service-mismatch",
+        "source": "mock:fortigate-policy",
+        "summary": "Inbound policy for the VIP allows service TCP 443 only, not external TCP 8443.",
+        "data": {"vip": "showroom-https", "allowed_service": "TCP/443", "incoming_port": 8443}
+      }
+    ]
+  }
+}

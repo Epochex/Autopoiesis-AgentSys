@@ -5,4 +5,9 @@ dist/
 !.env.example
 coverage/
 *.log
+!domains/network_rca/fixtures/*.log
 tmp/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+artifacts/
