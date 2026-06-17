@@ -638,6 +638,104 @@
 .an-pred .pl.ok { color: var(--amber); }
 .an-pred b { color: var(--mint); }
 .an-body.err { color: var(--amber); font-size: 12px; padding: 6px 0; }
+
+/* device behavioral mesh */
+.mesh-toggle-row {
+  margin-top: 14px;
+}
+.mesh-toggle {
+  background: rgba(95, 228, 209, 0.06);
+  border: 1px solid rgba(95, 228, 209, 0.4);
+  color: var(--mint);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.mesh-toggle:hover {
+  background: rgba(95, 228, 209, 0.14);
+}
+.mesh-section {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  background: rgba(8, 13, 12, 0.6);
+  animation: floatin 0.4s ease-out both;
+}
+.mesh-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.mesh-kicker {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mint);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.mesh-note {
+  font-size: 11px;
+  color: var(--fog);
+  flex: 1;
+  min-width: 240px;
+}
+.mesh-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.mesh-edge {
+  stroke: rgba(124, 143, 138, 0.28);
+}
+.mesh-edge.hot {
+  stroke: var(--mint);
+  opacity: 0.8;
+}
+.mesh-pulse {
+  fill: var(--mint);
+  filter: drop-shadow(0 0 5px var(--mint));
+}
+.mesh-role {
+  font-size: 12px;
+  fill: var(--fog);
+  font-family: 'IBM Plex Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.mesh-node circle {
+  transition: stroke-width 0.2s ease;
+}
+.mesh-ip {
+  font-size: 11px;
+  fill: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.mesh-profile {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+.mesh-profile strong {
+  font-size: 14px;
+}
+.mp-role {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+.mp-ports {
+  color: var(--fog);
+}
 .posture-counts {
   display: flex;
   align-items: center;

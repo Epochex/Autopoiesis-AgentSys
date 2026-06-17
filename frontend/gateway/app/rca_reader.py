@@ -32,11 +32,21 @@ _MANIFEST = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real" / "mani
 _TOPOLOGY = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real" / "real_topology.json"
 
 
+_MESH = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real" / "real_mesh.json"
+
+
 def _load_topology() -> dict[str, Any] | None:
     try:
         return json.loads(_TOPOLOGY.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def _load_meshes() -> dict[str, Any]:
+    try:
+        return json.loads(_MESH.read_text(encoding="utf-8")).get("meshes", {})
+    except Exception:
+        return {}
 
 
 def _data_stats(stats_path: Path) -> dict[str, Any]:
@@ -108,6 +118,7 @@ def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rul
         "providers": providers.list_providers(),
         "providerError": None,
         "topology": _load_topology(),
+        "meshes": _load_meshes(),
         "cases": [],
         "baselines": [],
         "dataStats": None,
