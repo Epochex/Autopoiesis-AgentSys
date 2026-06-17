@@ -3,7 +3,9 @@ import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
+import { DevicePanel } from './components/DevicePanel'
 import { CountUp, ConfidenceRing } from './components/Motion'
+import type { Subnet } from './types'
 
 type State =
   | { s: 'load' }
@@ -15,6 +17,7 @@ function App() {
   const [provider, setProvider] = useState('rule')
   const [st, setSt] = useState<State>({ s: 'load' })
   const [active, setActive] = useState('')
+  const [drill, setDrill] = useState<Subnet | null>(null)
 
   const load = useCallback(async (p: string) => {
     setSt({ s: 'load' })
@@ -86,7 +89,16 @@ function App() {
       {d.datasetReady && s && c ? (
         <>
           <section className="canvas-wrap">
-            {topo ? <TopologyCanvas topo={topo} stats={s} activeKey={c.diagnosis.rootCauseKey} /> : null}
+            {topo ? (
+              <TopologyCanvas
+                topo={topo}
+                stats={s}
+                activeKey={c.diagnosis.rootCauseKey}
+                drill={drill?.cidr ?? null}
+                onDrill={setDrill}
+              />
+            ) : null}
+            {drill ? <DevicePanel subnet={drill} lang={lang} onClose={() => setDrill(null)} /> : null}
           </section>
 
           <section className="deck">
