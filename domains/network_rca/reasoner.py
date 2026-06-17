@@ -14,6 +14,10 @@ ROOT_CAUSES = {
     "admin_bruteforce_lockout": "Repeated external admin login failures from many source IPs triggered FortiGate admin-login lockout; this is an exposure/attack pattern on the management interface, not a device fault.",
     "internal_policy_deny_expected": "The high deny volume is internal hosts hitting blocked ports (NetBIOS and similar) and is expected firewall policy behaviour, not an outage or misconfiguration.",
     "benign_session_clash": "Session-clash and update events are informational FortiGate housekeeping logs and do not indicate a fault.",
+    "dhcp_service_healthy": "DHCP ACK and statistics events confirm the FortiGate is issuing leases normally; address allocation is healthy.",
+    "security_posture_current": "Successful FortiGuard updates and security-rating summaries confirm the security posture is current.",
+    "device_service_port_probe_contained": "Denied probes against camera/DVR service ports (37777/37809/37810) confirm firewall policy is containing device-service exposure.",
+    "firewall_resource_healthy": "Low CPU, low memory and a small session table confirm the firewall has ample headroom.",
 }
 
 
@@ -146,6 +150,19 @@ def _infer_from_evidence(evidence: list[dict]) -> tuple[str, list[dict]]:
     ):
         return "internal_policy_deny_expected", [by_id["ev-policy-deny-profile"], by_id["ev-traffic-baseline"]]
 
+    if data.get("ev-dhcp-health", {}).get("dhcp_ack", 0) > 0:
+        return "dhcp_service_healthy", [by_id["ev-dhcp-health"]]
+
+    if data.get("ev-security-posture", {}).get("updates", 0) > 0:
+        return "security_posture_current", [by_id["ev-security-posture"]]
+
+    if data.get("ev-device-port-probe", {}).get("device_port_deny", 0) > 0:
+        return "device_service_port_probe_contained", [by_id["ev-device-port-probe"]]
+
+    resource = data.get("ev-firewall-resource", {})
+    if "ev-firewall-resource" in by_id and resource.get("cpu", 100) < 60 and resource.get("mem", 100) < 80:
+        return "firewall_resource_healthy", [by_id["ev-firewall-resource"]]
+
     event_scan = data.get("ev-event-log-scan", {})
     if event_scan.get("session_clash", 0) > 0 and not failed and not deny:
         return "benign_session_clash", [by_id["ev-event-log-scan"]]
@@ -167,4 +184,10 @@ def _actions(root_cause_key: str) -> list[str]:
             "Confirm the denied internal flows are unwanted (NetBIOS and similar) and tune host/app behaviour; the firewall deny is working as intended.",
         ],
         "benign_session_clash": ["No action required; informational events only."],
+        "dhcp_service_healthy": ["Confirm scope utilization stays within range during peak hours; service is healthy."],
+        "security_posture_current": ["Keep the FortiGuard update schedule; posture is current."],
+        "device_service_port_probe_contained": [
+            "Confirm camera/DVR service ports stay closed at the WAN edge and keep the containing policy; exposure is controlled.",
+        ],
+        "firewall_resource_healthy": ["Continue monitoring; resource headroom is ample."],
     }.get(root_cause_key, ["Collect more readonly evidence."])

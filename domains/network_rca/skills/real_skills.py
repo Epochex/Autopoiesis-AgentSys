@@ -10,7 +10,11 @@ REAL_SKILL_OPERATIONS = {
     "check_admin_lockout": ("admin_lockout", ["admin", "lockout", "disabled", "login"]),
     "check_policy_deny_profile": ("policy_deny_profile", ["deny", "policy", "port", "netbios", "traffic"]),
     "check_traffic_baseline": ("traffic_baseline", ["traffic", "accept", "baseline", "forwarding"]),
-    "check_event_log": ("event_log_scan", ["event", "session", "clash", "update"]),
+    "check_event_log": ("event_log_scan", ["event", "session", "clash"]),
+    "check_dhcp_service": ("dhcp_health", ["dhcp", "lease", "address", "allocation"]),
+    "check_security_posture": ("security_posture", ["fortiguard", "update", "security", "rating", "posture"]),
+    "check_device_port_probe": ("device_port_probe", ["camera", "dvr", "device", "probe", "37777"]),
+    "check_firewall_resource": ("firewall_resource", ["cpu", "memory", "resource", "headroom", "performance"]),
 }
 
 
