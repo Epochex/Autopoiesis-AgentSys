@@ -1,11 +1,8 @@
-// Shape of /api/rca/snapshot — served from the real network_rca framework.
-
 export interface Evidence {
   evidenceId: string
   source: string
   summary: string
 }
-
 export interface Diagnosis {
   rootCauseKey: string
   rootCause: string
@@ -14,17 +11,14 @@ export interface Diagnosis {
   evidence: Evidence[]
   recommendedActions: string[]
 }
-
 export interface TraceEvent {
   kind: string
   payload: Record<string, unknown>
 }
-
 export interface VerifierResult {
   passed: boolean
   errors: string[]
 }
-
 export interface RcaCase {
   id: string
   title: string
@@ -34,7 +28,6 @@ export interface RcaCase {
   verifier: VerifierResult
   trace: TraceEvent[]
 }
-
 export interface Baseline {
   name: string
   rootCauseAccuracy: number
@@ -43,7 +36,6 @@ export interface Baseline {
   cases: number
   notes: string
 }
-
 export interface DataStats {
   source: string
   windowDays: string[]
@@ -57,14 +49,6 @@ export interface DataStats {
   acceptPermit: number
   sessionClash: number
 }
-
-export interface Readiness {
-  blocked: boolean
-  reason: string
-  syslogPortOpen: boolean
-  manifestValid: boolean
-}
-
 export interface Provider {
   id: string
   label: string
@@ -73,7 +57,12 @@ export interface Provider {
   reachable: boolean
   note: string
 }
-
+export interface Readiness {
+  blocked: boolean
+  reason: string
+  syslogPortOpen: boolean
+  manifestValid: boolean
+}
 export interface RcaSnapshot {
   readiness: Readiness
   datasetReady: boolean

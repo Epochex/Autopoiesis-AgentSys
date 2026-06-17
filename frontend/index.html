@@ -4,36 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>selfevo · Network RCA Console</title>
+    <title>selfevo</title>
     <style>
-      :root {
-        color-scheme: dark;
-        font-family: 'IBM Plex Sans Condensed', system-ui, sans-serif;
-        background: #0c0e12;
-      }
-      html,
-      body {
-        margin: 0;
-        min-height: 100%;
-        background: #0c0e12;
-        color: #e6e9ef;
-      }
-      #root {
-        min-height: 100vh;
-      }
-      .boot-shell {
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        color: #8b93a3;
-        font-size: 14px;
-      }
+      html, body { margin: 0; background: #0a0f0e; }
+      #root { min-height: 100vh; }
     </style>
   </head>
   <body>
-    <div id="root">
-      <div class="boot-shell">Loading real RCA snapshot…</div>
-    </div>
+    <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

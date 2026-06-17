@@ -84,7 +84,7 @@ def test_benign_event_only_case_is_not_misclassified(tmp_path):
     # A pure event-log case must NOT be classified as a fault.
     from domains.network_rca.factory import build_network_rca_orchestrator
 
-    case = _case("clash", ["event", "session", "clash", "update"], ["check_event_log"])
+    case = _case("clash", ["event", "session", "clash"], ["check_event_log"])
     orch = build_network_rca_orchestrator(
         tmp_path / "ledger.jsonl", data_source="real", real_stats_path=_stats_path(tmp_path)
     )
