@@ -97,3 +97,48 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh") -> dict[st
         "analysis": out.get("analysis") or out.get("text") or "",
         "model": cfg["model"],
     }
+
+
+def assess_subnet(cidr: str, lang: str = "zh") -> dict[str, Any]:
+    """Batch-research every flagged device in a subnet, then synthesize the posture."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .rca_reader import _load_topology
+
+    topo = _load_topology() or {}
+    sub = next((s for s in topo.get("subnets", []) if s.get("cidr") == cidr), None)
+    if sub is None:
+        return {"ok": False, "text": "subnet not found"}
+    targets = [d for d in (sub.get("devices") or []) if d.get("threat") in ("high", "watch")]
+    if not targets:
+        return {"ok": True, "cidr": cidr, "devices": [], "posture": {"high": 0, "watch": 0, "summary": ""}}
+
+    with ThreadPoolExecutor(max_workers=min(6, len(targets))) as pool:
+        results = list(pool.map(lambda d: assess_device(d["ip"], cidr, d, lang), targets))
+    results = [r for r in results if r.get("ok")]
+    high = sum(1 for r in results if r.get("severity") == "high")
+    watch = len(results) - high
+    summary = _synthesize_posture(cidr, results, lang)
+    return {"ok": True, "cidr": cidr, "devices": results, "posture": {"high": high, "watch": watch, "summary": summary}}
+
+
+def _synthesize_posture(cidr: str, results: list[dict], lang: str) -> str:
+    from . import providers
+    from core.llm.provider import OpenAICompatibleClient
+
+    cfg = providers._deepseek_cfg()
+    if not cfg["api_key"] or not results:
+        return ""
+    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=40)
+    want = "Chinese" if lang == "zh" else "English"
+    brief = [{"ip": r["ip"], "severity": r["severity"], "verdict": r["verdict"]} for r in results]
+    instr = (
+        f"You are a SOC lead. Given per-host findings on subnet {cidr}, write a 2-sentence "
+        f"situational summary in {want}: overall posture and the single highest-priority action. "
+        f'Return JSON {{"summary": <text>}}.'
+    )
+    try:
+        out = client.complete_json([{"role": "user", "content": instr + "\n" + json.dumps(brief)}], schema_name="posture")
+        return out.get("summary", "")
+    except Exception:
+        return ""

@@ -22,6 +22,8 @@ function App() {
   const [tempo, setTempo] = useState(1)
   const [rate, setRate] = useState<number | null>(null)
   const [threat, setThreat] = useState<Threat | null>(null)
+  const [marks, setMarks] = useState<Record<string, { severity: string; verdict: string }>>({})
+  const [posture, setPosture] = useState<{ cidr: string; loading: boolean; high?: number; watch?: number; summary?: string } | null>(null)
 
   const load = useCallback(async (p: string) => {
     setSt({ s: 'load' })
@@ -73,13 +75,34 @@ function App() {
     try {
       const r = await fetch(`/api/rca/threat?ip=${dev.ip}&cidr=${encodeURIComponent(cidr)}&lang=${lang}`)
       const j = await r.json()
-      setThreat(
-        j.ok
-          ? { ip: dev.ip, loading: false, severity: j.severity, verdict: j.verdict, analysis: j.analysis, model: j.model }
-          : { ip: dev.ip, loading: false, error: j.text || 'failed' },
-      )
+      if (j.ok) {
+        setThreat({ ip: dev.ip, loading: false, severity: j.severity, verdict: j.verdict, analysis: j.analysis, model: j.model })
+        setMarks((m) => ({ ...m, [dev.ip]: { severity: j.severity, verdict: j.verdict } }))
+      } else {
+        setThreat({ ip: dev.ip, loading: false, error: j.text || 'failed' })
+      }
     } catch (e) {
       setThreat({ ip: dev.ip, loading: false, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  const researchSubnet = async (cidr: string) => {
+    setPosture({ cidr, loading: true })
+    try {
+      const r = await fetch(`/api/rca/threat_subnet?cidr=${encodeURIComponent(cidr)}&lang=${lang}`)
+      const j = await r.json()
+      if (j.ok) {
+        setMarks((m) => {
+          const next = { ...m }
+          for (const dv of j.devices) next[dv.ip] = { severity: dv.severity, verdict: dv.verdict }
+          return next
+        })
+        setPosture({ cidr, loading: false, high: j.posture.high, watch: j.posture.watch, summary: j.posture.summary })
+      } else {
+        setPosture({ cidr, loading: false, summary: j.text || 'failed' })
+      }
+    } catch (e) {
+      setPosture({ cidr, loading: false, summary: e instanceof Error ? e.message : String(e) })
     }
   }
 
@@ -144,18 +167,40 @@ function App() {
                 drillSub={drillSub}
                 drillDev={drillDev}
                 tempo={tempo}
+                marks={marks}
                 onSub={(sub) => {
                   setDrillSub(sub?.cidr ?? null)
                   setDrillDev(null)
                   setThreat(null)
+                  setPosture(null)
                 }}
                 onDev={researchDevice}
+                onBatch={researchSubnet}
               />
             ) : null}
             {rate !== null ? (
               <div className="live-rate"><span className="rate-dot" />{rate}/s · R230</div>
             ) : null}
             {threat ? <ThreatCard th={threat} lang={lang} onClose={() => setThreat(null)} /> : null}
+            {posture ? (
+              <aside className="posture-card">
+                <div className="tc-head">
+                  <span className="tc-kicker">{lang === 'zh' ? '子网态势汇总' : 'subnet posture'} · {posture.cidr}</span>
+                  <button className="tc-x" onClick={() => setPosture(null)}>✕</button>
+                </div>
+                {posture.loading ? (
+                  <div className="tc-loading"><span className="orbit" /> {lang === 'zh' ? '批量研判中…' : 'batch analysis…'}</div>
+                ) : (
+                  <div className="tc-body">
+                    <div className="posture-counts">
+                      <span className="pc high">{posture.high ?? 0}</span> high
+                      <span className="pc watch">{posture.watch ?? 0}</span> watch
+                    </div>
+                    <p>{posture.summary}</p>
+                  </div>
+                )}
+              </aside>
+            ) : null}
           </section>
 
           <section className="deck">

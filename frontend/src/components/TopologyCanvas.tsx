@@ -38,8 +38,10 @@ export function TopologyCanvas({
   drillSub,
   drillDev,
   tempo,
+  marks,
   onSub,
   onDev,
+  onBatch,
 }: {
   topo: Topology
   stats: DataStats
@@ -47,8 +49,10 @@ export function TopologyCanvas({
   drillSub: string | null
   drillDev: string | null
   tempo: number
+  marks: Record<string, { severity: string; verdict: string }>
   onSub: (s: Subnet | null) => void
   onDev: (d: Device | null, cidr: string) => void
+  onBatch: (cidr: string) => void
 }) {
   const g = group(activeKey)
   const core: Pt = { x: 452, y: 236 }
@@ -131,26 +135,39 @@ export function TopologyCanvas({
         const subNode: Pt = { x: f.subP.x, y: f.subP.y }
         return (
           <g key={`tree-${f.sub.cidr}`}>
+            {/* batch-research trigger on the open subnet */}
+            <g className="batch-trig" onClick={() => onBatch(f.sub!.cidr)} style={{ cursor: 'pointer' }}>
+              <rect x={subNode.x - 8} y={subNode.y + 22} width="120" height="20" />
+              <text x={subNode.x + 52} y={subNode.y + 36}>⚡ {f.sub.cidr.startsWith('192') ? '批量研判' : 'batch'}</text>
+            </g>
             {devs.map((dv, j) => {
               const dy = clamp(baseY + (j - (devs.length - 1) / 2) * 44, 26, 444)
               const dp: Pt = { x: 1066 + (THREAT_DX[dv.threat] ?? 40), y: dy }
               const open = drillDev === dv.ip
+              const mark = marks[dv.ip]
+              const alert = !!mark && (mark.severity === 'high' || mark.severity === 'medium')
+              const tone = alert ? 'alert' : dv.threat
+              const showPorts = open || alert
               const rad = dv.threat === 'high' ? 8 : dv.threat === 'watch' ? 6 : 5
               return (
                 <g key={dv.ip} className="branch-in">
-                  <path d={bez(subNode, dp)} className={`branch ${dv.threat}`} />
+                  <path d={bez(subNode, dp)} className={`branch ${tone}`} />
                   <g className="dev-node" onClick={() => onDev(open ? null : dv, f.sub!.cidr)} style={{ cursor: 'pointer' }}>
-                    <circle cx={dp.x} cy={dp.y} r={rad} className={`m-dev ${dv.threat} ${open ? 'sel' : ''}`} />
+                    <circle cx={dp.x} cy={dp.y} r={rad} className={`m-dev ${tone} ${open ? 'sel' : ''}`} />
                     <text x={dp.x + 14} y={dp.y - 1} className="n-ip" textAnchor="start">{dv.ip}</text>
-                    <text x={dp.x + 14} y={dp.y + 12} className={`n-v ${dv.threat === 'high' ? '' : 'amber'}`} textAnchor="start">{short(dv.deny)} deny</text>
+                    {mark ? (
+                      <text x={dp.x + 14} y={dp.y + 12} className={`n-verdict ${alert ? 'alert' : ''}`} textAnchor="start">{mark.verdict}</text>
+                    ) : (
+                      <text x={dp.x + 14} y={dp.y + 12} className={`n-v ${dv.threat === 'high' ? '' : 'amber'}`} textAnchor="start">{short(dv.deny)} deny</text>
+                    )}
                   </g>
-                  {open
+                  {showPorts
                     ? dv.top_ports.slice(0, 3).map((pt, k) => {
-                        const lp: Pt = { x: dp.x + 150, y: clamp(dp.y + (k - (dv.top_ports.length - 1) / 2) * 26, 20, 450) }
+                        const lp: Pt = { x: dp.x + 156, y: clamp(dp.y + (k - (dv.top_ports.length - 1) / 2) * 24, 18, 452) }
                         return (
                           <g key={pt} className="branch-in leaf">
-                            <path d={bez(dp, lp)} className={`branch ${dv.threat}`} />
-                            <rect x={lp.x - 4} y={lp.y - 4} width="8" height="8" className={`m-leaf ${dv.threat}`} />
+                            <path d={bez(dp, lp)} className={`branch ${tone} ${alert ? 'flow-alert' : ''}`} />
+                            <rect x={lp.x - 4} y={lp.y - 4} width="8" height="8" className={`m-leaf ${tone}`} />
                             <text x={lp.x + 12} y={lp.y + 3} className="n-leaf" textAnchor="start">:{pt}</text>
                           </g>
                         )
