@@ -1,7 +1,7 @@
 .stage {
-  max-width: 1240px;
+  max-width: 1420px;
   margin: 0 auto;
-  padding: 26px 30px 60px;
+  padding: 24px 28px 60px;
 }
 
 /* boot */
@@ -143,13 +143,65 @@
 .canvas-wrap {
   position: relative;
   margin-top: 4px;
+  overflow: visible;
+  transition: margin 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.canvas-wrap.big {
+  margin-bottom: 36px;
+}
+.canvas-wrap.big .flow-canvas {
+  transform: scale(1.06);
+  transform-origin: 62% 50%;
 }
 .flow-canvas {
   width: 100%;
   height: auto;
   display: block;
   transform-origin: 28% 50%;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
   animation: settle 1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.flow-line.hot {
+  opacity: 0.95;
+}
+
+/* floating decode panel above a node */
+.float-fo {
+  overflow: visible;
+  pointer-events: none;
+}
+.float-panel {
+  background: rgba(8, 13, 12, 0.92);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--mint);
+  padding: 6px 9px;
+  backdrop-filter: blur(6px);
+  animation: floatin 0.3s ease-out both;
+}
+.float-panel.alert { border-left-color: var(--coral); }
+.float-panel.high { border-left-color: var(--coral); }
+.float-panel.watch { border-left-color: var(--amber); }
+@keyframes floatin {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.float-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.5;
+}
+.float-k {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--fog);
+  font-family: 'IBM Plex Mono', monospace;
+  min-width: 48px;
+}
+.float-v {
+  font-size: 12px;
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
 }
 @keyframes settle {
   from { transform: scale(1.08); opacity: 0.25; }
