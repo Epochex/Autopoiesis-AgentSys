@@ -800,7 +800,7 @@
 /* deck — verdict + metrics, hairline separated, no overlap */
 .deck {
   display: grid;
-  grid-template-columns: 1.6fr 1fr 1fr 1.3fr;
+  grid-template-columns: 1.25fr 2fr 1.15fr;
   margin-top: 22px;
   border-top: 1px solid var(--line);
 }
@@ -918,6 +918,86 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--fog);
+}
+
+/* eval trace trajectory */
+.trace-traj {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.tt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.tt-kicker {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mint);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.tt-meta {
+  font-size: 10px;
+  color: var(--fog);
+  font-family: 'IBM Plex Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.tt-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.tt-rail {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 2;
+}
+.tt-rail-lit {
+  fill: none;
+  stroke: var(--mint);
+  stroke-width: 2;
+  opacity: 0.5;
+  stroke-dasharray: 700;
+  animation: traildraw 2.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes traildraw {
+  from { stroke-dashoffset: 700; }
+  to { stroke-dashoffset: 0; }
+}
+.tt-head-dot {
+  fill: var(--mint);
+  filter: drop-shadow(0 0 6px var(--mint));
+}
+.tt-node {
+  opacity: 0;
+  animation: fadein 0.4s ease-out forwards;
+  animation-delay: var(--d);
+}
+.tt-dot {
+  fill: rgba(95, 228, 209, 0.18);
+  stroke: var(--mint);
+  stroke-width: 1.5;
+}
+.tt-dot.ok { stroke: var(--good); fill: rgba(52, 224, 168, 0.2); }
+.tt-dot.bad { stroke: var(--coral); }
+.tt-dot.fin {
+  fill: rgba(95, 228, 209, 0.28);
+  filter: drop-shadow(0 0 6px var(--mint));
+}
+.tt-lab {
+  font-size: 10px;
+  fill: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.tt-det {
+  font-size: 9px;
+  fill: var(--fog);
+  font-family: 'IBM Plex Mono', monospace;
 }
 
 @media (max-width: 860px) {
