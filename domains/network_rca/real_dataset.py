@@ -15,6 +15,7 @@ class RealDatasetManifest(BaseModel):
     source_host: str = "192.168.1.23"
     captured_days: int
     syslog_paths: list[str] = Field(default_factory=list)
+    stats_path: str = "real_window_stats.json"
     train_cases_path: str
     heldout_cases_path: str
     notes: str = ""
@@ -77,6 +78,8 @@ def validate_real_dataset_manifest(path: str | Path) -> RealDatasetValidation:
     for item in manifest.syslog_paths:
         if not _resolve(base, item).exists():
             errors.append(f"syslog file missing: {item}")
+    if not _resolve(base, manifest.stats_path).exists():
+        errors.append(f"stats_path missing: {manifest.stats_path}")
     for case_path_name in ("train_cases_path", "heldout_cases_path"):
         case_path = _resolve(base, getattr(manifest, case_path_name))
         if not case_path.exists():
@@ -102,6 +105,12 @@ def validate_real_dataset_manifest(path: str | Path) -> RealDatasetValidation:
         warnings.append("captured_days is below the preferred 7-day upper target")
 
     return RealDatasetValidation(manifest_path=str(manifest_path), ready=not errors, errors=errors, warnings=warnings)
+
+
+def resolve_stats_path(manifest_path: str | Path) -> Path:
+    manifest_file = Path(manifest_path)
+    manifest = load_manifest(manifest_file)
+    return _resolve(manifest_file.parent, manifest.stats_path)
 
 
 def _resolve(base: Path, value: str) -> Path:

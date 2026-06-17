@@ -26,6 +26,8 @@ def compare_baselines(
     ground_truth: dict[str, RCAGroundTruth],
     *,
     reasoner_mode: str = "rule",
+    data_source: str = "mock",
+    real_stats_path: str | Path | None = None,
 ) -> list[BaselineRow]:
     if not cases:
         return []
@@ -44,7 +46,13 @@ def compare_baselines(
     with TemporaryDirectory() as tmp_dir:
         for name, kwargs, notes in configs:
             ledger_path = Path(tmp_dir) / f"{name}.jsonl"
-            orchestrator = build_network_rca_orchestrator(ledger_path, reasoner_mode=reasoner_mode, **kwargs)
+            orchestrator = build_network_rca_orchestrator(
+                ledger_path,
+                reasoner_mode=reasoner_mode,
+                data_source=data_source,
+                real_stats_path=real_stats_path,
+                **kwargs,
+            )
             metrics = run_and_evaluate_replay(orchestrator, cases, ground_truth)
             rows.append(_row(name, dataset_kind, split, metrics, notes))
     return rows

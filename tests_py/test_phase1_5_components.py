@@ -144,11 +144,12 @@ def test_phase15_mock_baselines_are_labeled_mock_not_real():
     assert {row.split for row in rows} == {"seed"}
 
 
-def test_real_data_readiness_reports_blocked_without_ingestor_or_export():
-    readiness = probe_r230_readiness()
+def test_real_data_readiness_reports_blocked_without_dataset(tmp_path):
+    readiness = probe_r230_readiness(manifest_path=tmp_path / "missing-manifest.json")
 
     assert readiness.blocked
-    assert "no readonly ingestor" in readiness.reason.lower() or "no local" in readiness.reason.lower()
+    assert readiness.manifest_valid is False
+    assert "no validated real held-out dataset" in readiness.reason.lower()
 
 
 def test_real_dataset_manifest_validator_rejects_missing_and_template():
@@ -210,6 +211,7 @@ def test_real_manifest_ready_requires_real_train_and_heldout_splits(tmp_path):
     }
     (tmp_path / "train_cases.json").write_text(json.dumps([train_case]), encoding="utf-8")
     (tmp_path / "heldout_cases.json").write_text(json.dumps([heldout_case]), encoding="utf-8")
+    (tmp_path / "real_window_stats.json").write_text("{}", encoding="utf-8")
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
