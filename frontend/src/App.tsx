@@ -3,9 +3,9 @@ import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
-import { DevicePanel } from './components/DevicePanel'
+import { ThreatCard, type Threat } from './components/ThreatCard'
 import { CountUp, ConfidenceRing } from './components/Motion'
-import type { Subnet } from './types'
+import type { Device } from './types'
 
 type State =
   | { s: 'load' }
@@ -17,7 +17,11 @@ function App() {
   const [provider, setProvider] = useState('rule')
   const [st, setSt] = useState<State>({ s: 'load' })
   const [active, setActive] = useState('')
-  const [drill, setDrill] = useState<Subnet | null>(null)
+  const [drillSub, setDrillSub] = useState<string | null>(null)
+  const [drillDev, setDrillDev] = useState<string | null>(null)
+  const [tempo, setTempo] = useState(1)
+  const [rate, setRate] = useState<number | null>(null)
+  const [threat, setThreat] = useState<Threat | null>(null)
 
   const load = useCallback(async (p: string) => {
     setSt({ s: 'load' })
@@ -35,6 +39,49 @@ function App() {
   useEffect(() => {
     void load(provider)
   }, [provider, load])
+
+  // poll R230 live event-rate → pulse tempo
+  useEffect(() => {
+    let alive = true
+    const tick = async () => {
+      try {
+        const r = await fetch('/api/rca/pulse')
+        const j = await r.json()
+        if (alive && j.live && typeof j.eventsPerSec === 'number') {
+          setRate(j.eventsPerSec)
+          setTempo(Math.max(0.6, Math.min(3, j.eventsPerSec / 12)))
+        }
+      } catch {
+        /* keep last */
+      }
+    }
+    void tick()
+    const id = setInterval(tick, 4500)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [])
+
+  const researchDevice = async (dev: Device | null, cidr: string) => {
+    setDrillDev(dev?.ip ?? null)
+    if (!dev || dev.threat === 'ok') {
+      setThreat(null)
+      return
+    }
+    setThreat({ ip: dev.ip, loading: true })
+    try {
+      const r = await fetch(`/api/rca/threat?ip=${dev.ip}&cidr=${encodeURIComponent(cidr)}&lang=${lang}`)
+      const j = await r.json()
+      setThreat(
+        j.ok
+          ? { ip: dev.ip, loading: false, severity: j.severity, verdict: j.verdict, analysis: j.analysis, model: j.model }
+          : { ip: dev.ip, loading: false, error: j.text || 'failed' },
+      )
+    } catch (e) {
+      setThreat({ ip: dev.ip, loading: false, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
 
   if (st.s === 'load') return <div className="boot"><span className="orbit" /></div>
   if (st.s === 'err') return <div className="boot err">gateway · {st.m}</div>
@@ -94,11 +141,21 @@ function App() {
                 topo={topo}
                 stats={s}
                 activeKey={c.diagnosis.rootCauseKey}
-                drill={drill?.cidr ?? null}
-                onDrill={setDrill}
+                drillSub={drillSub}
+                drillDev={drillDev}
+                tempo={tempo}
+                onSub={(sub) => {
+                  setDrillSub(sub?.cidr ?? null)
+                  setDrillDev(null)
+                  setThreat(null)
+                }}
+                onDev={researchDevice}
               />
             ) : null}
-            {drill ? <DevicePanel subnet={drill} lang={lang} onClose={() => setDrill(null)} /> : null}
+            {rate !== null ? (
+              <div className="live-rate"><span className="rate-dot" />{rate}/s · R230</div>
+            ) : null}
+            {threat ? <ThreatCard th={threat} lang={lang} onClose={() => setThreat(null)} /> : null}
           </section>
 
           <section className="deck">
