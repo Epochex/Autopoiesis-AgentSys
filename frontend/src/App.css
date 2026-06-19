@@ -687,72 +687,117 @@
   filter: drop-shadow(0 0 4px var(--coral));
 }
 
-/* 3D constellation overlay */
-.c3d-overlay {
-  position: fixed;
-  inset: 56px 32px 32px;
-  z-index: 60;
-  border: 1px solid rgba(95, 228, 209, 0.3);
-  background: #05080a;
-  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.7), inset 0 0 80px rgba(95, 228, 209, 0.04);
+/* 3D constellation portal on the topology */
+.portal-link {
+  fill: none;
+  stroke: rgba(95, 228, 209, 0.22);
+  stroke-width: 1;
+  stroke-dasharray: 2 6;
+  animation: march 1.3s linear infinite;
+}
+.portal-halo {
+  fill: rgba(95, 228, 209, 0.06);
+  stroke: none;
+  animation: aura 3s ease-in-out infinite;
+}
+.portal-ring {
+  fill: rgba(8, 13, 12, 0.6);
+  stroke: var(--mint);
+  stroke-width: 1.4;
+}
+.portal3d:hover .portal-ring {
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 8px var(--mint));
+}
+.portal-glyph {
+  fill: var(--mint);
+  font-size: 22px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.portal-label {
+  fill: var(--mint);
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.portal-sub {
+  fill: var(--fog);
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* inline 3D layer — right side of the topology frame, fade-blended */
+.c3d-inline {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 56%;
+  z-index: 20;
   display: flex;
   flex-direction: column;
-  animation: c3din 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
-  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 14%);
+  animation: c3din 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.c3d-booting {
+  align-items: center;
+  justify-content: center;
+  color: var(--fog);
 }
 @keyframes c3din {
-  from { opacity: 0; transform: scale(0.97); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-.c3d-head {
+.c3d-bar {
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 12px 18px;
-  border-bottom: 1px solid rgba(95, 228, 209, 0.16);
-  z-index: 2;
+  gap: 14px;
+  padding: 8px 14px;
+  align-self: flex-end;
 }
 .c3d-kicker {
-  font-size: 12px;
-  letter-spacing: 0.14em;
+  font-size: 11px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--mint);
   font-family: 'IBM Plex Mono', monospace;
 }
 .c3d-hint {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--fog);
   font-family: 'IBM Plex Mono', monospace;
-  margin-left: auto;
 }
-.c3d-head .tc-x {
+.c3d-bar .tc-x {
   background: none;
   border: none;
   color: var(--fog);
   cursor: pointer;
-  font-size: 15px;
+  font-size: 14px;
 }
-.c3d-overlay canvas {
+.c3d-inline canvas {
   flex: 1;
   display: block;
 }
-.c3d-label {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
+.c3d-card {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
+  font-size: 10px;
   white-space: nowrap;
-  padding: 2px 7px;
-  background: rgba(5, 8, 10, 0.82);
+  padding: 5px 8px;
+  background: rgba(5, 8, 10, 0.9);
   border: 1px solid;
   border-radius: 2px;
-  transform: translateY(-4px);
+  line-height: 1.5;
 }
-.c3d-label-ip {
-  color: var(--fog);
-  font-size: 9px;
+.c3d-card-top { display: flex; gap: 10px; justify-content: space-between; }
+.c3d-card-top b { color: var(--text); font-size: 11px; }
+.c3d-card-role { font-size: 11px; }
+.c3d-card-meta, .c3d-card-ports { color: var(--fog); }
+.c3d-tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  white-space: nowrap;
 }
 .mesh-section {
   margin-top: 14px;

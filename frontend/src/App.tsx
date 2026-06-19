@@ -215,8 +215,9 @@ function App() {
                 marks={marks}
                 threat={threat}
                 lang={lang}
-                meshes={d.meshes}
-                meshModel={meshModel}
+                meshCount={Object.values(d.meshes ?? {}).reduce((a, l) => a + l.length, 0)}
+                meshLoading={meshLoading}
+                onOpen3D={() => void analyzeMesh()}
                 onCloseThreat={() => setThreat(null)}
                 onSub={(sub) => {
                   setDrillSub(sub?.cidr ?? null)
@@ -230,6 +231,11 @@ function App() {
             ) : null}
             {rate !== null ? (
               <div className="live-rate"><span className="rate-dot" />{rate}/s · R230</div>
+            ) : null}
+            {show3D && d.meshes ? (
+              <Suspense fallback={<div className="c3d-inline c3d-booting">3D…</div>}>
+                <Constellation3D meshes={d.meshes} model={meshModel} lang={lang} onClose={() => setShow3D(false)} />
+              </Suspense>
             ) : null}
           </section>
 
@@ -289,19 +295,6 @@ function App() {
             </div>
           </section>
 
-          {d.meshes && Object.keys(d.meshes).length ? (
-            <div className="mesh-toggle-row">
-              <button className="mesh-toggle" onClick={() => void analyzeMesh()} disabled={meshLoading}>
-                ✦ {meshLoading ? (lang === 'zh' ? 'DeepSeek 建模中…' : 'modeling…') : meshModel ? (lang === 'zh' ? '打开 3D 关系星座' : 'open 3D constellation') : (lang === 'zh' ? 'DeepSeek 建模 · 3D 全网星座' : 'DeepSeek model · 3D constellation')}
-              </button>
-              <span className="mesh-hint">{lang === 'zh' ? '右键拖拽主画布 → 右侧平面网格；按钮进入 3D 立体星座' : 'right-drag canvas → flat mesh; button → 3D constellation'}</span>
-            </div>
-          ) : null}
-          {show3D && d.meshes ? (
-            <Suspense fallback={null}>
-              <Constellation3D meshes={d.meshes} model={meshModel} lang={lang} onClose={() => setShow3D(false)} />
-            </Suspense>
-          ) : null}
         </>
       ) : (
         <div className="boot err">{d.note}</div>
