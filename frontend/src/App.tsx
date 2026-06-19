@@ -203,7 +203,7 @@ function App() {
 
       {d.datasetReady && s && c ? (
         <>
-          <section className={`canvas-wrap ${threat ? 'tall' : drillSub ? 'mid' : ''}`}>
+          <section className={`canvas-wrap ${show3D ? 'split' : threat ? 'tall' : drillSub ? 'mid' : ''}`}>
             {topo ? (
               <TopologyCanvas
                 topo={topo}
@@ -217,7 +217,7 @@ function App() {
                 lang={lang}
                 meshCount={Object.values(d.meshes ?? {}).reduce((a, l) => a + l.length, 0)}
                 meshLoading={meshLoading}
-                onOpen3D={() => void analyzeMesh()}
+                onOpen3D={() => { setDrillSub(null); setDrillDev(null); setThreat(null); void analyzeMesh() }}
                 onCloseThreat={() => setThreat(null)}
                 onSub={(sub) => {
                   setDrillSub(sub?.cidr ?? null)

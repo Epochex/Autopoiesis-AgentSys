@@ -153,6 +153,29 @@
 .canvas-wrap.tall {
   aspect-ratio: 1360 / 1000;
 }
+/* split: topology left, 3D right, no overlap */
+.canvas-wrap.split {
+  aspect-ratio: auto;
+  height: 64vh;
+  display: flex;
+  align-items: stretch;
+  overflow: visible;
+}
+.canvas-wrap.split .flow-canvas {
+  flex: 0 0 44%;
+  width: 44%;
+  height: 100%;
+}
+.canvas-wrap.split .c3d-inline {
+  position: relative;
+  inset: auto;
+  width: auto;
+  flex: 1;
+  border-left: 1px solid rgba(95, 228, 209, 0.25);
+  -webkit-mask-image: none;
+  mask-image: none;
+  background: radial-gradient(70% 70% at 60% 45%, rgba(10, 22, 24, 0.55), rgba(6, 10, 11, 0.92));
+}
 .flow-canvas {
   width: 100%;
   height: auto;
