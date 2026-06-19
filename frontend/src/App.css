@@ -843,6 +843,37 @@
   fill: rgba(95, 228, 209, 0.3);
   stroke: var(--mint);
 }
+.alert-ring {
+  fill: none;
+  stroke: var(--coral);
+  stroke-width: 1.6;
+  animation: pip 1s ease-in-out infinite;
+}
+.alert-verdict {
+  fill: var(--coral);
+  font-size: 11px;
+  font-family: 'IBM Plex Sans Condensed', sans-serif;
+}
+.c3d-anchor {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: var(--mint);
+  white-space: nowrap;
+  background: rgba(5, 8, 10, 0.7);
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+.c3d-threat {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 42%;
+  z-index: 30;
+  padding: 12px;
+}
+.c3d-threat .threat-card {
+  background: rgba(7, 11, 12, 0.96);
+}
 .c3d-tag {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 10px;

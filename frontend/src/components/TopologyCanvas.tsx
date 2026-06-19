@@ -65,6 +65,7 @@ export function TopologyCanvas({
   meshLoading,
   hover3D,
   hover3DCidr,
+  topoAlert,
   onHoverSubnet,
   onOpen3D,
   onCloseThreat,
@@ -85,6 +86,7 @@ export function TopologyCanvas({
   meshLoading: boolean
   hover3D: string | null
   hover3DCidr: string | null
+  topoAlert: { cidr: string; ip: string; verdict: string; severity: string } | null
   onHoverSubnet?: (cidr: string | null) => void
   onOpen3D: () => void
   onCloseThreat: () => void
@@ -212,6 +214,14 @@ export function TopologyCanvas({
                   <text x={f.subP.x + 18} y={f.subP.y + 12} className="n-v amber" textAnchor="start">{f.sub.hosts} hosts {focused ? '▾' : '▸'}</text>
                   {hover3DCidr === f.sub.cidr && hover3D ? (
                     <text x={f.subP.x + 18} y={f.subP.y + 26} className="map-ip" textAnchor="start">◂ {hover3D}</text>
+                  ) : null}
+                  {topoAlert && topoAlert.cidr === f.sub.cidr ? (
+                    <g>
+                      <circle cx={f.subP.x} cy={f.subP.y} r="21" className="alert-ring" />
+                      <text x={f.subP.x + 18} y={f.subP.y + (hover3DCidr === f.sub.cidr ? 40 : 26)} className="alert-verdict" textAnchor="start">
+                        ⚠ {topoAlert.ip} · {topoAlert.verdict || '研判中…'}
+                      </text>
+                    </g>
                   ) : null}
                 </g>
               ) : null}

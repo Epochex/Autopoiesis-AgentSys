@@ -3,7 +3,7 @@ import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
-import { Analyzing, type Threat } from './components/ThreatCard'
+import { Analyzing, ThreatCard, type Threat } from './components/ThreatCard'
 import { TraceTrajectory } from './components/TraceTrajectory'
 import { lazy, Suspense } from 'react'
 
@@ -38,6 +38,25 @@ function App() {
   const [show3D, setShow3D] = useState(false)
   const [hover3D, setHover3D] = useState<string | null>(null)
   const [focusCidr, setFocusCidr] = useState<string | null>(null)
+  const [topoAlert, setTopoAlert] = useState<{ cidr: string; ip: string; verdict: string; severity: string } | null>(null)
+
+  const research3D = async (ip: string, cidr: string) => {
+    setThreat({ ip, loading: true })
+    setTopoAlert({ cidr, ip, verdict: '', severity: '' })
+    try {
+      const r = await fetch(`/api/rca/threat?ip=${ip}&cidr=${encodeURIComponent(cidr)}&lang=${lang}`)
+      const j = await r.json()
+      if (j.ok) {
+        setThreat({ ip, loading: false, severity: j.severity, verdict: j.verdict, analysis: j.analysis, impactPeers: j.impactPeers, mostLikely: j.mostLikely, worstCase: j.worstCase, recovery: j.recovery, model: j.model })
+        setMarks((m) => ({ ...m, [ip]: { severity: j.severity, verdict: j.verdict } }))
+        setTopoAlert({ cidr, ip, verdict: j.verdict, severity: j.severity })
+      } else {
+        setThreat({ ip, loading: false, error: j.text })
+      }
+    } catch (e) {
+      setThreat({ ip, loading: false, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
 
   const analyzeMesh = async () => {
     const ds0 = st.s === 'ok' ? st.d : null
@@ -221,6 +240,7 @@ function App() {
                 meshLoading={meshLoading}
                 hover3D={hover3D}
                 hover3DCidr={hover3D ? Object.entries(d.meshes ?? {}).find(([, l]) => l.some((n) => n.ip === hover3D))?.[0] ?? null : null}
+                topoAlert={topoAlert}
                 onHoverSubnet={show3D ? setFocusCidr : undefined}
                 onOpen3D={() => { setDrillSub(null); setDrillDev(null); setThreat(null); void analyzeMesh() }}
                 onCloseThreat={() => setThreat(null)}
@@ -238,9 +258,24 @@ function App() {
               <div className="live-rate"><span className="rate-dot" />{rate}/s · R230</div>
             ) : null}
             {show3D && d.meshes ? (
-              <Suspense fallback={<div className="c3d-inline c3d-booting">3D…</div>}>
-                <Constellation3D meshes={d.meshes} model={meshModel} lang={lang} onClose={() => { setShow3D(false); setHover3D(null); setFocusCidr(null) }} onHoverIp={setHover3D} focusCidr={focusCidr} />
-              </Suspense>
+              <>
+                <Suspense fallback={<div className="c3d-inline c3d-booting">3D…</div>}>
+                  <Constellation3D
+                    meshes={d.meshes}
+                    model={meshModel}
+                    lang={lang}
+                    onClose={() => { setShow3D(false); setHover3D(null); setFocusCidr(null); setThreat(null); setTopoAlert(null) }}
+                    onHoverIp={setHover3D}
+                    onClickIp={research3D}
+                    focusCidr={focusCidr}
+                  />
+                </Suspense>
+                {threat ? (
+                  <div className="c3d-threat">
+                    <ThreatCard th={threat} lang={lang} onClose={() => { setThreat(null); setTopoAlert(null) }} />
+                  </div>
+                ) : null}
+              </>
             ) : null}
           </section>
 
