@@ -36,6 +36,8 @@ function App() {
   const [meshModel, setMeshModel] = useState<MeshModel | null>(null)
   const [meshLoading, setMeshLoading] = useState(false)
   const [show3D, setShow3D] = useState(false)
+  const [hover3D, setHover3D] = useState<string | null>(null)
+  const [focusCidr, setFocusCidr] = useState<string | null>(null)
 
   const analyzeMesh = async () => {
     const ds0 = st.s === 'ok' ? st.d : null
@@ -217,6 +219,9 @@ function App() {
                 lang={lang}
                 meshCount={Object.values(d.meshes ?? {}).reduce((a, l) => a + l.length, 0)}
                 meshLoading={meshLoading}
+                hover3D={hover3D}
+                hover3DCidr={hover3D ? Object.entries(d.meshes ?? {}).find(([, l]) => l.some((n) => n.ip === hover3D))?.[0] ?? null : null}
+                onHoverSubnet={show3D ? setFocusCidr : undefined}
                 onOpen3D={() => { setDrillSub(null); setDrillDev(null); setThreat(null); void analyzeMesh() }}
                 onCloseThreat={() => setThreat(null)}
                 onSub={(sub) => {
@@ -234,7 +239,7 @@ function App() {
             ) : null}
             {show3D && d.meshes ? (
               <Suspense fallback={<div className="c3d-inline c3d-booting">3D…</div>}>
-                <Constellation3D meshes={d.meshes} model={meshModel} lang={lang} onClose={() => setShow3D(false)} />
+                <Constellation3D meshes={d.meshes} model={meshModel} lang={lang} onClose={() => { setShow3D(false); setHover3D(null); setFocusCidr(null) }} onHoverIp={setHover3D} focusCidr={focusCidr} />
               </Suspense>
             ) : null}
           </section>
