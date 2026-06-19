@@ -224,8 +224,8 @@ function App() {
 
       {d.datasetReady && s && c ? (
         <>
-          <section className={`canvas-wrap ${show3D ? 'split' : threat ? 'tall' : drillSub ? 'mid' : ''}`}>
-            {topo ? (
+          <section className={`canvas-wrap ${show3D ? 'full3d' : threat ? 'tall' : drillSub ? 'mid' : ''}`}>
+            {topo && !show3D ? (
               <TopologyCanvas
                 topo={topo}
                 stats={s}
@@ -257,10 +257,12 @@ function App() {
             {rate !== null ? (
               <div className="live-rate"><span className="rate-dot" />{rate}/s · R230</div>
             ) : null}
-            {show3D && d.meshes ? (
+            {show3D && d.meshes && topo ? (
               <>
                 <Suspense fallback={<div className="c3d-inline c3d-booting">3D…</div>}>
                   <Constellation3D
+                    topo={topo}
+                    stats={s}
                     meshes={d.meshes}
                     model={meshModel}
                     lang={lang}

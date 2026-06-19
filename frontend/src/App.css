@@ -153,6 +153,41 @@
 .canvas-wrap.tall {
   aspect-ratio: 1360 / 1000;
 }
+.canvas-wrap.full3d {
+  aspect-ratio: auto;
+  height: 76vh;
+  overflow: visible;
+}
+.c3d-full {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  border-left: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  background: transparent;
+}
+.c3d-bb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  text-shadow: 0 0 6px #05080a, 0 0 6px #05080a;
+}
+.c3d-bb span { color: var(--fog); font-size: 9px; }
+.c3d-bb.k-attacker { color: var(--coral); }
+.c3d-bb.k-subnet { color: var(--amber); }
+.c3d-plane {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(124, 143, 138, 0.7);
+  white-space: nowrap;
+}
 /* split: topology left, 3D right, no overlap */
 .canvas-wrap.split {
   aspect-ratio: auto;
