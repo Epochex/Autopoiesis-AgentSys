@@ -5,6 +5,9 @@ import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, type Threat } from './components/ThreatCard'
 import { TraceTrajectory } from './components/TraceTrajectory'
+import { lazy, Suspense } from 'react'
+
+const Constellation3D = lazy(() => import('./components/Constellation3D').then((m) => ({ default: m.Constellation3D })))
 
 type MeshModel = {
   links: { src: string; dst: string; relation: string; strength: number }[]
@@ -32,13 +35,15 @@ function App() {
   const [posture, setPosture] = useState<{ cidr: string; loading: boolean; high?: number; watch?: number; summary?: string } | null>(null)
   const [meshModel, setMeshModel] = useState<MeshModel | null>(null)
   const [meshLoading, setMeshLoading] = useState(false)
+  const [show3D, setShow3D] = useState(false)
 
   const analyzeMesh = async () => {
+    const ds0 = st.s === 'ok' ? st.d : null
     if (meshModel) {
-      setMeshModel(null)
+      setShow3D(true)
       return
     }
-    const ds = st.s === 'ok' ? st.d : null
+    const ds = ds0
     const cidrs = ds ? Object.keys(ds.meshes ?? {}) : []
     if (!cidrs.length) return
     setMeshLoading(true)
@@ -54,6 +59,7 @@ function App() {
         for (const n of j.nodes ?? []) nodes[n.ip] = { severity: n.severity, label: n.label, summary: n.summary }
       }
       setMeshModel({ links, nodes })
+      setShow3D(true)
     } catch {
       setMeshModel(null)
     } finally {
@@ -286,10 +292,15 @@ function App() {
           {d.meshes && Object.keys(d.meshes).length ? (
             <div className="mesh-toggle-row">
               <button className="mesh-toggle" onClick={() => void analyzeMesh()} disabled={meshLoading}>
-                ✦ {meshLoading ? (lang === 'zh' ? 'DeepSeek 建模中…' : 'modeling…') : meshModel ? (lang === 'zh' ? '清除关系建模' : 'clear model') : (lang === 'zh' ? 'DeepSeek 建模全网设备关系' : 'DeepSeek model all devices')}
+                ✦ {meshLoading ? (lang === 'zh' ? 'DeepSeek 建模中…' : 'modeling…') : meshModel ? (lang === 'zh' ? '打开 3D 关系星座' : 'open 3D constellation') : (lang === 'zh' ? 'DeepSeek 建模 · 3D 全网星座' : 'DeepSeek model · 3D constellation')}
               </button>
-              <span className="mesh-hint">{lang === 'zh' ? '右键拖拽画布 → 右侧查看全设备网状结构' : 'right-drag the canvas → device mesh on the right'}</span>
+              <span className="mesh-hint">{lang === 'zh' ? '右键拖拽主画布 → 右侧平面网格；按钮进入 3D 立体星座' : 'right-drag canvas → flat mesh; button → 3D constellation'}</span>
             </div>
+          ) : null}
+          {show3D && d.meshes ? (
+            <Suspense fallback={null}>
+              <Constellation3D meshes={d.meshes} model={meshModel} lang={lang} onClose={() => setShow3D(false)} />
+            </Suspense>
           ) : null}
         </>
       ) : (
