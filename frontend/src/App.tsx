@@ -4,8 +4,12 @@ import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, type Threat } from './components/ThreatCard'
-import { Constellation, type ConstData } from './components/Constellation'
 import { TraceTrajectory } from './components/TraceTrajectory'
+
+type MeshModel = {
+  links: { src: string; dst: string; relation: string; strength: number }[]
+  nodes: Record<string, { severity: string; label: string; summary: string }>
+}
 import { ConfidenceRing } from './components/Motion'
 import type { Device } from './types'
 
@@ -26,21 +30,34 @@ function App() {
   const [threat, setThreat] = useState<Threat | null>(null)
   const [marks, setMarks] = useState<Record<string, { severity: string; verdict: string }>>({})
   const [posture, setPosture] = useState<{ cidr: string; loading: boolean; high?: number; watch?: number; summary?: string } | null>(null)
-  const [constell, setConstell] = useState<{ cidr: string; loading: boolean; data?: ConstData } | null>(null)
+  const [meshModel, setMeshModel] = useState<MeshModel | null>(null)
+  const [meshLoading, setMeshLoading] = useState(false)
 
-  const analyzeMesh = async (cidr: string) => {
-    if (constell?.cidr === cidr) {
-      setConstell(null)
+  const analyzeMesh = async () => {
+    if (meshModel) {
+      setMeshModel(null)
       return
     }
-    setConstell({ cidr, loading: true })
+    const ds = st.s === 'ok' ? st.d : null
+    const cidrs = ds ? Object.keys(ds.meshes ?? {}) : []
+    if (!cidrs.length) return
+    setMeshLoading(true)
     try {
-      const r = await fetch(`/api/rca/mesh_analyze?cidr=${encodeURIComponent(cidr)}&lang=${lang}`)
-      const j = await r.json()
-      if (j.ok) setConstell({ cidr, loading: false, data: j as ConstData })
-      else setConstell(null)
+      const all = await Promise.all(
+        cidrs.map((c) => fetch(`/api/rca/mesh_analyze?cidr=${encodeURIComponent(c)}&lang=${lang}`).then((r) => r.json())),
+      )
+      const links: MeshModel['links'] = []
+      const nodes: MeshModel['nodes'] = {}
+      for (const j of all) {
+        if (!j.ok) continue
+        for (const l of j.links ?? []) links.push(l)
+        for (const n of j.nodes ?? []) nodes[n.ip] = { severity: n.severity, label: n.label, summary: n.summary }
+      }
+      setMeshModel({ links, nodes })
     } catch {
-      setConstell(null)
+      setMeshModel(null)
+    } finally {
+      setMeshLoading(false)
     }
   }
 
@@ -192,6 +209,8 @@ function App() {
                 marks={marks}
                 threat={threat}
                 lang={lang}
+                meshes={d.meshes}
+                meshModel={meshModel}
                 onCloseThreat={() => setThreat(null)}
                 onSub={(sub) => {
                   setDrillSub(sub?.cidr ?? null)
@@ -264,17 +283,13 @@ function App() {
             </div>
           </section>
 
-          {drillSub && d.meshes?.[drillSub]?.length ? (
+          {d.meshes && Object.keys(d.meshes).length ? (
             <div className="mesh-toggle-row">
-              <button className="mesh-toggle" onClick={() => void analyzeMesh(drillSub)} disabled={constell?.loading}>
-                ✦ {constell?.cidr === drillSub ? (lang === 'zh' ? '收起子网建模' : 'hide model') : (lang === 'zh' ? 'DeepSeek 建模全子网关系' : 'DeepSeek model subnet')} · {d.meshes[drillSub].length}
+              <button className="mesh-toggle" onClick={() => void analyzeMesh()} disabled={meshLoading}>
+                ✦ {meshLoading ? (lang === 'zh' ? 'DeepSeek 建模中…' : 'modeling…') : meshModel ? (lang === 'zh' ? '清除关系建模' : 'clear model') : (lang === 'zh' ? 'DeepSeek 建模全网设备关系' : 'DeepSeek model all devices')}
               </button>
+              <span className="mesh-hint">{lang === 'zh' ? '右键拖拽画布 → 右侧查看全设备网状结构' : 'right-drag the canvas → device mesh on the right'}</span>
             </div>
-          ) : null}
-          {constell?.loading ? (
-            <section className="const-section"><div className="const-loading"><Analyzing lang={lang} /></div></section>
-          ) : constell?.data ? (
-            <Constellation data={constell.data} lang={lang} onClose={() => setConstell(null)} />
           ) : null}
         </>
       ) : (
