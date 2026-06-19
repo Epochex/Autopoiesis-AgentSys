@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from .config import Settings
-from .live import assess_device, assess_subnet, event_rate
+from .live import assess_device, assess_mesh, assess_subnet, event_rate
 from .providers import list_providers
 from .rca_reader import load_rca_snapshot, _load_topology
 
@@ -94,6 +94,11 @@ async def rca_threat(ip: str, cidr: str = "", lang: str = "zh") -> dict[str, Any
 @app.get("/api/rca/threat_subnet")
 async def rca_threat_subnet(cidr: str, lang: str = "zh") -> dict[str, Any]:
     return await asyncio.to_thread(assess_subnet, cidr, lang)
+
+
+@app.get("/api/rca/mesh_analyze")
+async def rca_mesh_analyze(cidr: str, lang: str = "zh") -> dict[str, Any]:
+    return await asyncio.to_thread(assess_mesh, cidr, lang)
 
 
 @app.get("/api/rca/snapshot")
