@@ -158,10 +158,11 @@
   height: 76vh;
   overflow: visible;
 }
-.c3d-full {
+.c3d-inline.c3d-full {
   position: fixed;
   inset: 0;
   width: auto;
+  height: auto;
   z-index: 50;
   border-left: none;
   -webkit-mask-image: none;
