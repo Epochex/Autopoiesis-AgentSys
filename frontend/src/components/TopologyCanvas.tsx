@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import type { DataStats, Device, Subnet, Topology } from '../types'
+import type { DataStats, Device, MeshNode, Subnet, Topology } from '../types'
 import { Scramble } from './Motion'
 import { Analyzing, type Threat } from './ThreatCard'
 import type { Lang } from '../i18n'
@@ -61,6 +61,8 @@ export function TopologyCanvas({
   marks,
   threat,
   lang,
+  meshes,
+  meshModel,
   onCloseThreat,
   onSub,
   onDev,
@@ -75,6 +77,8 @@ export function TopologyCanvas({
   marks: Record<string, { severity: string; verdict: string }>
   threat: Threat | null
   lang: Lang
+  meshes: Record<string, MeshNode[]>
+  meshModel: { links: { src: string; dst: string; relation: string; strength: number }[]; nodes: Record<string, { severity: string; label: string; summary: string }> } | null
   onCloseThreat: () => void
   onSub: (s: Subnet | null) => void
   onDev: (d: Device | null, cidr: string) => void
@@ -121,6 +125,28 @@ export function TopologyCanvas({
   }
   const anchor = threat ? devPos[threat.ip] : undefined
 
+  // rightward full-device mesh, anchored to each subnet's topology node
+  const mesh = useMemo(() => {
+    const subP: Record<string, Pt> = {}
+    layout.ifs.forEach((f) => { if (f.sub) subP[f.sub.cidr] = f.subP })
+    const cls = Object.entries(meshes).filter(([c]) => subP[c])
+    const pos: Record<string, Pt> = {}
+    const groups: { cidr: string; c: Pt; nodes: MeshNode[]; anchor: Pt }[] = []
+    cls.forEach(([cidr, nodes], ci) => {
+      const c: Pt = { x: 1640 + ci * 440, y: 310 }
+      const ring = 44 + nodes.length * 8
+      nodes.forEach((n, i) => {
+        const a = (i / nodes.length) * Math.PI * 2 + ci * 1.3
+        const jr = ring * (0.58 + 0.42 * ((i * 37) % 10) / 10)
+        pos[n.ip] = { x: c.x + Math.cos(a) * jr, y: c.y + Math.sin(a) * jr }
+      })
+      groups.push({ cidr, c, nodes, anchor: subP[cidr] })
+    })
+    return { pos, groups }
+  }, [meshes, layout])
+  const sevColor = (s: string) => (s === 'high' ? '#ff5a6a' : s === 'medium' || s === 'watch' ? '#ffb347' : '#5fe4d1')
+  const mradius = (out: number) => Math.max(6, Math.min(22, 5 + Math.log10(out + 1) * 4.5))
+
   return (
     <svg
       ref={ref}
@@ -139,6 +165,10 @@ export function TopologyCanvas({
           <stop offset="0%" stopColor="rgba(95,228,209,0.32)" />
           <stop offset="100%" stopColor="rgba(95,228,209,0)" />
         </radialGradient>
+        <filter id="mglow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="3.5" result="b" />
+          <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
       </defs>
 
       <g transform={`translate(${pan.x} ${pan.y})`}>
@@ -257,6 +287,52 @@ export function TopologyCanvas({
             </g>
           )
         })}
+
+        {/* rightward full-device mesh — reconstruction of every subnet's devices (pan right) */}
+        {mesh.groups.length ? (
+          <g className="mesh-region">
+            <text x={1500} y={42} className="zone-tag">→ {lang === 'zh' ? '全设备网状结构' : 'all-device mesh'}{meshModel ? '' : lang === 'zh' ? ' · 点击建模加关系' : ' · model for relations'}</text>
+            {mesh.groups.map((gp) =>
+              gp.nodes.map((n) => {
+                const p = mesh.pos[n.ip]
+                return p ? <path key={`ml${n.ip}`} d={bez(gp.anchor, p)} className="mesh-anchor-link" /> : null
+              }),
+            )}
+            {(meshModel?.links ?? []).map((l, i) => {
+              const a = mesh.pos[l.src]
+              const b = mesh.pos[l.dst]
+              if (!a || !b) return null
+              const d = bez(a, b)
+              return (
+                <g key={`rel${i}`} className="branch-in">
+                  <path d={d} className="mesh-rel" style={{ strokeWidth: 0.6 + l.strength * 0.7 }} />
+                  <circle r="2.2" className="mesh-rel-particle">
+                    <animateMotion dur={`${2.8 - l.strength * 0.4}s`} repeatCount="indefinite" path={d} />
+                  </circle>
+                </g>
+              )
+            })}
+            {mesh.groups.map((gp) => (
+              <g key={`g${gp.cidr}`}>
+                <text x={gp.c.x} y={gp.c.y - (44 + gp.nodes.length * 8) - 12} className="cl-name" textAnchor="middle">{gp.cidr}</text>
+                {gp.nodes.map((n, i) => {
+                  const p = mesh.pos[n.ip]
+                  if (!p) return null
+                  const m = meshModel?.nodes[n.ip]
+                  const sev = m?.severity ?? n.threat
+                  const r = mradius(n.out)
+                  return (
+                    <g key={n.ip} className={`cl-node ${sev}`} style={{ ['--d' as string]: `${i * 0.03}s`, transformOrigin: `${p.x}px ${p.y}px` }}>
+                      <circle cx={p.x} cy={p.y} r={r + 5} className="cl-aura" fill={sevColor(sev)} />
+                      <circle cx={p.x} cy={p.y} r={r} className="cl-core" fill={sevColor(sev)} fillOpacity={0.2} stroke={sevColor(sev)} filter="url(#mglow)" />
+                      <text x={p.x} y={p.y + r + 12} className="cl-ip" textAnchor="middle">{m?.label ?? n.role}</text>
+                    </g>
+                  )
+                })}
+              </g>
+            ))}
+          </g>
+        ) : null}
 
         {/* in-canvas analysis layer: leader line + panel + impact subgraph */}
         {threat && anchor ? (

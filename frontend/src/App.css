@@ -656,6 +656,36 @@
 .mesh-toggle:hover {
   background: rgba(95, 228, 209, 0.14);
 }
+.mesh-toggle:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.mesh-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.mesh-hint {
+  font-size: 11px;
+  color: var(--fog);
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.04em;
+}
+.mesh-anchor-link {
+  fill: none;
+  stroke: rgba(95, 228, 209, 0.14);
+  stroke-width: 1;
+  stroke-dasharray: 2 7;
+}
+.mesh-rel {
+  fill: none;
+  stroke: rgba(255, 90, 106, 0.5);
+}
+.mesh-rel-particle {
+  fill: var(--coral);
+  filter: drop-shadow(0 0 4px var(--coral));
+}
 .mesh-section {
   margin-top: 14px;
   border: 1px solid var(--line);
