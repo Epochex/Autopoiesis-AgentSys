@@ -686,6 +686,74 @@
   fill: var(--coral);
   filter: drop-shadow(0 0 4px var(--coral));
 }
+
+/* 3D constellation overlay */
+.c3d-overlay {
+  position: fixed;
+  inset: 56px 32px 32px;
+  z-index: 60;
+  border: 1px solid rgba(95, 228, 209, 0.3);
+  background: #05080a;
+  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.7), inset 0 0 80px rgba(95, 228, 209, 0.04);
+  display: flex;
+  flex-direction: column;
+  animation: c3din 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  overflow: hidden;
+}
+@keyframes c3din {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+.c3d-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(95, 228, 209, 0.16);
+  z-index: 2;
+}
+.c3d-kicker {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mint);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.c3d-hint {
+  font-size: 11px;
+  color: var(--fog);
+  font-family: 'IBM Plex Mono', monospace;
+  margin-left: auto;
+}
+.c3d-head .tc-x {
+  background: none;
+  border: none;
+  color: var(--fog);
+  cursor: pointer;
+  font-size: 15px;
+}
+.c3d-overlay canvas {
+  flex: 1;
+  display: block;
+}
+.c3d-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  padding: 2px 7px;
+  background: rgba(5, 8, 10, 0.82);
+  border: 1px solid;
+  border-radius: 2px;
+  transform: translateY(-4px);
+}
+.c3d-label-ip {
+  color: var(--fog);
+  font-size: 9px;
+}
 .mesh-section {
   margin-top: 14px;
   border: 1px solid var(--line);
