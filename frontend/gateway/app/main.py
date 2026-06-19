@@ -37,6 +37,24 @@ if settings.cors_origins:
     )
 
 
+@app.on_event("startup")
+async def _prewarm() -> None:
+    # Warm the DeepSeek subnet models in the background so the UI gets instant cached hits.
+    import threading
+
+    from .rca_reader import _load_meshes
+
+    def warm() -> None:
+        for cidr in (_load_meshes() or {}):
+            for lang in ("zh", "en"):
+                try:
+                    assess_mesh(cidr, lang)
+                except Exception:
+                    pass
+
+    threading.Thread(target=warm, daemon=True).start()
+
+
 @app.get("/api/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
