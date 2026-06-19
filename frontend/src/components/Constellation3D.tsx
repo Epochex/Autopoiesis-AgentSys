@@ -51,15 +51,16 @@ function layout(meshes: Record<string, MeshNode[]>, model: Model | null): { node
   return { nodes, links }
 }
 
-function Node({ n, onHover, dim }: { n: N3; onHover: (ip: string | null) => void; dim: boolean }) {
+function Node({ n, onHover, onClick, dim }: { n: N3; onHover: (ip: string | null) => void; onClick: (ip: string, cidr: string) => void; dim: boolean }) {
   const [hov, setHov] = useState(false)
   const c = SEV(n.sev)
   const k = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`)
   return (
     <group position={n.pos}>
       <mesh
-        onPointerOver={(e) => { e.stopPropagation(); setHov(true); onHover(n.ip) }}
-        onPointerOut={() => { setHov(false); onHover(null) }}
+        onPointerOver={(e) => { e.stopPropagation(); setHov(true); onHover(n.ip); document.body.style.cursor = 'pointer' }}
+        onPointerOut={() => { setHov(false); onHover(null); document.body.style.cursor = '' }}
+        onClick={(e) => { e.stopPropagation(); onClick(n.ip, n.cidr) }}
       >
         <sphereGeometry args={[n.size, 24, 24]} />
         <meshStandardMaterial color={c} emissive={c} emissiveIntensity={hov ? 2.6 : dim ? 0.4 : 1.3} roughness={0.3} metalness={0.1} transparent opacity={dim ? 0.4 : 1} />
@@ -86,7 +87,49 @@ function Node({ n, onHover, dim }: { n: N3; onHover: (ip: string | null) => void
   )
 }
 
-function Scene({ meshes, model, onHoverIp, focusCidr }: { meshes: Record<string, MeshNode[]>; model: Model | null; onHoverIp: (ip: string | null) => void; focusCidr: string | null }) {
+// subnet anchors on the left seam → lines that track the rotating clusters (topology↔3D bridge)
+function SubnetBridges({ nodes, grp, focusCidr }: { nodes: N3[]; grp: React.RefObject<THREE.Group | null>; focusCidr: string | null }) {
+  const cidrs = useMemo(() => {
+    const m = new Map<string, [number, number, number][]>()
+    nodes.forEach((n) => { if (!m.has(n.cidr)) m.set(n.cidr, []); m.get(n.cidr)!.push(n.pos) })
+    const arr = [...m.entries()]
+    return arr.map(([cidr, ps], i) => {
+      const c = ps.reduce((a, p) => [a[0] + p[0], a[1] + p[1], a[2] + p[2]], [0, 0, 0]).map((v) => v / ps.length)
+      return { cidr, centroid: new THREE.Vector3(c[0], c[1], c[2]), anchor: new THREE.Vector3(-46, (i - (arr.length - 1) / 2) * 18, 0) }
+    })
+  }, [nodes])
+  return (
+    <>
+      {cidrs.map((cl) => (
+        <Bridge key={cl.cidr} cl={cl} grp={grp} dim={!!focusCidr && focusCidr !== cl.cidr} />
+      ))}
+    </>
+  )
+}
+
+function Bridge({ cl, grp, dim }: { cl: { cidr: string; centroid: THREE.Vector3; anchor: THREE.Vector3 }; grp: React.RefObject<THREE.Group | null>; dim: boolean }) {
+  const ref = useRef<{ geometry: { setPositions: (a: number[]) => void } }>(null)
+  const v = useRef(new THREE.Vector3())
+  useFrame(() => {
+    if (!ref.current || !grp.current) return
+    v.current.copy(cl.centroid).applyQuaternion(grp.current.quaternion)
+    ref.current.geometry.setPositions([cl.anchor.x, cl.anchor.y, cl.anchor.z, v.current.x, v.current.y, v.current.z])
+  })
+  return (
+    <>
+      <Line ref={ref as never} points={[[cl.anchor.x, cl.anchor.y, cl.anchor.z], [0, 0, 0]]} color="#5fe4d1" lineWidth={1} transparent opacity={dim ? 0.06 : 0.34} dashed dashScale={3} />
+      <mesh position={cl.anchor}>
+        <sphereGeometry args={[0.7, 12, 12]} />
+        <meshBasicMaterial color="#5fe4d1" />
+      </mesh>
+      <Html position={[cl.anchor.x, cl.anchor.y + 2, 0]} center distanceFactor={50} pointerEvents="none">
+        <div className="c3d-anchor" style={{ opacity: dim ? 0.3 : 1 }}>{cl.cidr}</div>
+      </Html>
+    </>
+  )
+}
+
+function Scene({ meshes, model, onHoverIp, onClickIp, focusCidr }: { meshes: Record<string, MeshNode[]>; model: Model | null; onHoverIp: (ip: string | null) => void; onClickIp: (ip: string, cidr: string) => void; focusCidr: string | null }) {
   const { nodes, links } = useMemo(() => layout(meshes, model), [meshes, model])
   const grp = useRef<THREE.Group>(null)
   useFrame((_, dt) => { if (grp.current) grp.current.rotation.y += dt * 0.04 })
@@ -95,6 +138,7 @@ function Scene({ meshes, model, onHoverIp, focusCidr }: { meshes: Record<string,
       <ambientLight intensity={0.6} />
       <pointLight position={[40, 40, 40]} intensity={1.4} />
       <fog attach="fog" args={['#05080a', 60, 130]} />
+      <SubnetBridges nodes={nodes} grp={grp} focusCidr={focusCidr} />
       <group ref={grp}>
         {links.map(([a, b, w], i) => {
           const dim = !!focusCidr && a.cidr !== focusCidr && b.cidr !== focusCidr
@@ -103,14 +147,14 @@ function Scene({ meshes, model, onHoverIp, focusCidr }: { meshes: Record<string,
           )
         })}
         {nodes.map((n) => (
-          <Node key={n.ip} n={n} onHover={onHoverIp} dim={!!focusCidr && n.cidr !== focusCidr} />
+          <Node key={n.ip} n={n} onHover={onHoverIp} onClick={onClickIp} dim={!!focusCidr && n.cidr !== focusCidr} />
         ))}
       </group>
     </>
   )
 }
 
-export function Constellation3D({ meshes, model, lang, onClose, onHoverIp, focusCidr }: { meshes: Record<string, MeshNode[]>; model: Model | null; lang: Lang; onClose: () => void; onHoverIp: (ip: string | null) => void; focusCidr: string | null }) {
+export function Constellation3D({ meshes, model, lang, onClose, onHoverIp, onClickIp, focusCidr }: { meshes: Record<string, MeshNode[]>; model: Model | null; lang: Lang; onClose: () => void; onHoverIp: (ip: string | null) => void; onClickIp: (ip: string, cidr: string) => void; focusCidr: string | null }) {
   const count = Object.values(meshes).reduce((a, l) => a + l.length, 0)
   return (
     <div className="c3d-inline">
@@ -120,7 +164,7 @@ export function Constellation3D({ meshes, model, lang, onClose, onHoverIp, focus
         <button className="tc-x" onClick={onClose}>✕</button>
       </div>
       <Canvas camera={{ position: [0, 0, 74], fov: 46 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }} style={{ background: 'transparent' }}>
-        <Scene meshes={meshes} model={model} onHoverIp={onHoverIp} focusCidr={focusCidr} />
+        <Scene meshes={meshes} model={model} onHoverIp={onHoverIp} onClickIp={onClickIp} focusCidr={focusCidr} />
         <OrbitControls enablePan={false} autoRotate autoRotateSpeed={0.3} minDistance={34} maxDistance={120} />
       </Canvas>
     </div>
