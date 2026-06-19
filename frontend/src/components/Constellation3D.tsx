@@ -17,7 +17,7 @@ type GEdge = { a: Vec; b: Vec; kind: 'flow' | 'rel'; sev: string }
 
 const SEV = (s: string) => (s === 'high' ? '#ff4d5e' : s === 'medium' || s === 'watch' ? '#ffb347' : '#5fe4d1')
 // flow layers along X (data flows WAN -> device)
-const LX = { attacker: -68, fg: -38, intf: -8, subnet: 24, device: 64 }
+const LX = { attacker: -58, fg: -32, intf: -8, subnet: 20, device: 52 }
 
 function build(topo: Topology, stats: DataStats, meshes: Record<string, MeshNode[]>, model: Model | null): { nodes: GNode[]; edges: GEdge[] } {
   const nodes: GNode[] = []
@@ -42,7 +42,7 @@ function build(topo: Topology, stats: DataStats, meshes: Record<string, MeshNode
       const a = (i / Math.max(1, list.length)) * Math.PI * 2
       const rr = 5 + list.length * 0.55
       const m = model?.nodes[n.ip]
-      const pos: Vec = [LX.device + (i % 3) * 7, cy + Math.cos(a) * rr, Math.sin(a) * rr]
+      const pos: Vec = [LX.device + (i % 3) * 4, cy + Math.cos(a) * rr, Math.sin(a) * rr]
       nodes.push({ id: `d-${n.ip}`, kind: 'device', label: m?.label ?? n.role, cidr, ip: n.ip, sev: m?.severity ?? n.threat, summary: m?.summary, out: n.out, deny: n.deny, ports: n.ports, size: 0.5 + Math.log10(n.out + 1) * 0.3, pos })
     })
   }
@@ -155,9 +155,9 @@ export function Constellation3D({ topo, stats, meshes, model, lang, onClose, onH
         <span className="c3d-hint">{lang === 'zh' ? 'WAN→网关→接口→子网→设备 · 拖拽旋转 · 点设备研判' : 'WAN→gw→intf→subnet→device · orbit · click device'}</span>
         <button className="tc-x" onClick={onClose}>✕</button>
       </div>
-      <Canvas camera={{ position: [10, 16, 120], fov: 46 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }} style={{ background: 'radial-gradient(70% 70% at 50% 45%, #0a1417 0%, #05080a 72%)' }}>
+      <Canvas camera={{ position: [0, 6, 150], fov: 48 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }} style={{ background: 'radial-gradient(70% 70% at 50% 45%, #0a1417 0%, #05080a 72%)' }}>
         <Scene topo={topo} stats={stats} meshes={meshes} model={model} onHoverIp={onHoverIp} onClickIp={onClickIp} focusCidr={focusCidr} lang={lang} />
-        <OrbitControls enablePan autoRotate autoRotateSpeed={0.25} minDistance={50} maxDistance={220} />
+        <OrbitControls enablePan autoRotate autoRotateSpeed={0.25} minDistance={60} maxDistance={260} />
       </Canvas>
     </div>
   )
