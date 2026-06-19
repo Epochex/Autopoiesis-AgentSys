@@ -736,6 +736,117 @@
 .mp-ports {
   color: var(--fog);
 }
+
+/* DeepSeek constellation — high-end subnet model */
+.const-section {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  background: radial-gradient(120% 120% at 50% 30%, rgba(15, 26, 24, 0.6), rgba(8, 13, 12, 0.85));
+  animation: floatin 0.45s ease-out both;
+  overflow: hidden;
+}
+.const-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.const-kicker {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mint);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.const-loading {
+  padding: 60px;
+  display: grid;
+  place-items: center;
+}
+.const-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.cl-halo {
+  opacity: 0;
+  animation: fadein 0.7s ease-out forwards;
+  animation-delay: var(--d);
+}
+.cl-name {
+  font-size: 12px;
+  fill: var(--fog);
+  font-family: 'IBM Plex Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.cl-link { transition: opacity 0.3s ease; }
+.cl-link.dim { opacity: 0.12; }
+.cl-edge {
+  fill: none;
+  stroke: rgba(124, 143, 138, 0.4);
+}
+.cl-edge.lit {
+  stroke: var(--mint);
+  stroke-dasharray: 6 5;
+  animation: march 0.7s linear infinite;
+  opacity: 0.9;
+}
+.cl-particle {
+  fill: var(--mint);
+  filter: drop-shadow(0 0 5px var(--mint));
+}
+.cl-node {
+  opacity: 0;
+  animation: nodein 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: var(--d);
+  transition: opacity 0.3s ease;
+}
+.cl-node.dim { opacity: 0.22 !important; }
+@keyframes nodein {
+  from { opacity: 0; transform: scale(0.1); }
+  to { opacity: 1; transform: scale(1); }
+}
+.cl-aura {
+  opacity: 0.16;
+  animation: aura 3.4s ease-in-out infinite;
+}
+@keyframes aura {
+  0%, 100% { opacity: 0.1; }
+  50% { opacity: 0.26; }
+}
+.cl-core {
+  stroke-width: 1.6;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cl-node:hover .cl-core,
+.cl-node.sel .cl-core { transform: scale(1.32); stroke-width: 2.4; }
+.cl-node.high .cl-aura { animation-duration: 1.8s; }
+.cl-ip {
+  font-size: 10px;
+  fill: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  opacity: 0.85;
+}
+.const-profile {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 16px;
+  border-top: 1px solid var(--line);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+  flex-wrap: wrap;
+  min-height: 42px;
+}
+.const-profile.hint { color: var(--fog); }
+.const-profile strong { font-size: 14px; }
+.cp-label { text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+.cp-meta { color: var(--fog); }
 .posture-counts {
   display: flex;
   align-items: center;

@@ -139,6 +139,61 @@ def assess_subnet(cidr: str, lang: str = "zh") -> dict[str, Any]:
     return {"ok": True, "cidr": cidr, "devices": results, "posture": {"high": high, "watch": watch, "summary": summary}}
 
 
+_mesh_cache: dict[str, Any] = {}
+
+
+def assess_mesh(cidr: str, lang: str = "zh") -> dict[str, Any]:
+    """DeepSeek models the whole subnet: enriched device profiles + relationship links + clusters."""
+    from . import providers
+    from .rca_reader import _load_meshes
+    from core.llm.provider import OpenAICompatibleClient
+
+    ck = f"{cidr}:{lang}"
+    if ck in _mesh_cache:
+        return _mesh_cache[ck]
+    nodes_in = (_load_meshes() or {}).get(cidr, [])
+    if not nodes_in:
+        return {"ok": False, "text": "no mesh for subnet"}
+    cfg = providers._deepseek_cfg()
+    if not cfg["api_key"]:
+        return {"ok": False, "text": "DeepSeek key not configured."}
+    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=60)
+    want = "Chinese" if lang == "zh" else "English"
+    devs = [{"ip": n["ip"], "role": n["role"], "ports": n["ports"], "deny": n["deny"], "out": n["out"], "threat": n["threat"]} for n in nodes_in]
+    instr = (
+        f"You are a SOC analyst modeling subnet {cidr} from real FortiGate device profiles. "
+        f"Respond in {want}. Build a relationship model. Use ONLY the given IPs. "
+        f"Return JSON {{"
+        f'"nodes": [{{"ip": <ip>, "label": <2-4 word role/function>, "severity": "high|medium|low", "summary": <<=10 words>}}], '
+        f'"links": [{{"src": <ip>, "dst": <ip>, "relation": <<=6 words>, "strength": 1-3}}], '
+        f'"clusters": [{{"name": <short>, "members": [<ip>], "note": <<=12 words>}}]}}. '
+        f"Link devices that share scan-target ports or form a campaign; cluster by behaviour/role. "
+        f"Keep links to the most meaningful <=24."
+    )
+    try:
+        out = client.complete_json([{"role": "user", "content": instr + "\n" + json.dumps(devs)}], schema_name="mesh_model")
+    except Exception as exc:
+        return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
+    valid = {d["ip"] for d in devs}
+    nodes = [n for n in (out.get("nodes") or []) if n.get("ip") in valid]
+    links = [l for l in (out.get("links") or []) if l.get("src") in valid and l.get("dst") in valid and l.get("src") != l.get("dst")][:24]
+    clusters = [
+        {**c, "members": [m for m in (c.get("members") or []) if m in valid]}
+        for c in (out.get("clusters") or [])
+    ]
+    # carry the raw metrics for sizing/colour
+    raw = {n["ip"]: n for n in nodes_in}
+    for n in nodes:
+        r = raw.get(n["ip"], {})
+        n["out"] = r.get("out", 0)
+        n["deny"] = r.get("deny", 0)
+        n["ports"] = r.get("ports", [])
+        n["role"] = r.get("role", n.get("label", ""))
+    result = {"ok": True, "cidr": cidr, "nodes": nodes, "links": links, "clusters": clusters, "model": cfg["model"]}
+    _mesh_cache[ck] = result
+    return result
+
+
 def _synthesize_posture(cidr: str, results: list[dict], lang: str) -> str:
     from . import providers
     from core.llm.provider import OpenAICompatibleClient

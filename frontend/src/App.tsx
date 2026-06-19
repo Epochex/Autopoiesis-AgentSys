@@ -4,7 +4,7 @@ import type { RcaCase, RcaSnapshot } from './types'
 import { rc, t, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, type Threat } from './components/ThreatCard'
-import { MeshView } from './components/MeshView'
+import { Constellation, type ConstData } from './components/Constellation'
 import { TraceTrajectory } from './components/TraceTrajectory'
 import { ConfidenceRing } from './components/Motion'
 import type { Device } from './types'
@@ -26,7 +26,23 @@ function App() {
   const [threat, setThreat] = useState<Threat | null>(null)
   const [marks, setMarks] = useState<Record<string, { severity: string; verdict: string }>>({})
   const [posture, setPosture] = useState<{ cidr: string; loading: boolean; high?: number; watch?: number; summary?: string } | null>(null)
-  const [meshOpen, setMeshOpen] = useState<string | null>(null)
+  const [constell, setConstell] = useState<{ cidr: string; loading: boolean; data?: ConstData } | null>(null)
+
+  const analyzeMesh = async (cidr: string) => {
+    if (constell?.cidr === cidr) {
+      setConstell(null)
+      return
+    }
+    setConstell({ cidr, loading: true })
+    try {
+      const r = await fetch(`/api/rca/mesh_analyze?cidr=${encodeURIComponent(cidr)}&lang=${lang}`)
+      const j = await r.json()
+      if (j.ok) setConstell({ cidr, loading: false, data: j as ConstData })
+      else setConstell(null)
+    } catch {
+      setConstell(null)
+    }
+  }
 
   const load = useCallback(async (p: string) => {
     setSt({ s: 'load' })
@@ -250,13 +266,15 @@ function App() {
 
           {drillSub && d.meshes?.[drillSub]?.length ? (
             <div className="mesh-toggle-row">
-              <button className="mesh-toggle" onClick={() => setMeshOpen(meshOpen === drillSub ? null : drillSub)}>
-                🌐 {meshOpen === drillSub ? (lang === 'zh' ? '收起设备网格' : 'hide mesh') : (lang === 'zh' ? '展开全设备行为网格' : 'expand device mesh')} · {d.meshes[drillSub].length}
+              <button className="mesh-toggle" onClick={() => void analyzeMesh(drillSub)} disabled={constell?.loading}>
+                ✦ {constell?.cidr === drillSub ? (lang === 'zh' ? '收起子网建模' : 'hide model') : (lang === 'zh' ? 'DeepSeek 建模全子网关系' : 'DeepSeek model subnet')} · {d.meshes[drillSub].length}
               </button>
             </div>
           ) : null}
-          {meshOpen && d.meshes?.[meshOpen]?.length ? (
-            <MeshView nodes={d.meshes[meshOpen]} cidr={meshOpen} lang={lang} onClose={() => setMeshOpen(null)} />
+          {constell?.loading ? (
+            <section className="const-section"><div className="const-loading"><Analyzing lang={lang} /></div></section>
+          ) : constell?.data ? (
+            <Constellation data={constell.data} lang={lang} onClose={() => setConstell(null)} />
           ) : null}
         </>
       ) : (
