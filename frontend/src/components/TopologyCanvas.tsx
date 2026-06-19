@@ -63,6 +63,9 @@ export function TopologyCanvas({
   lang,
   meshCount,
   meshLoading,
+  hover3D,
+  hover3DCidr,
+  onHoverSubnet,
   onOpen3D,
   onCloseThreat,
   onSub,
@@ -80,6 +83,9 @@ export function TopologyCanvas({
   lang: Lang
   meshCount: number
   meshLoading: boolean
+  hover3D: string | null
+  hover3DCidr: string | null
+  onHoverSubnet?: (cidr: string | null) => void
   onOpen3D: () => void
   onCloseThreat: () => void
   onSub: (s: Subnet | null) => void
@@ -192,11 +198,21 @@ export function TopologyCanvas({
               <text x={f.p.x} y={f.p.y - 1} className="n-intf">{f.it.name}</text>
               <text x={f.p.x} y={f.p.y + 12} className="n-sub">{short(f.it.flows)} flows</text>
               {f.sub ? (
-                <g className={`subnet ${focused ? 'open' : ''}`} onClick={() => onSub(focused ? null : f.sub!)} style={{ cursor: 'pointer' }}>
+                <g
+                  className={`subnet ${focused ? 'open' : ''} ${hover3DCidr === f.sub.cidr ? 'mapped' : ''}`}
+                  onClick={() => onSub(focused ? null : f.sub!)}
+                  onMouseEnter={() => onHoverSubnet?.(f.sub!.cidr)}
+                  onMouseLeave={() => onHoverSubnet?.(null)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {hover3DCidr === f.sub.cidr ? <circle cx={f.subP.x} cy={f.subP.y} r="18" className="map-ring" /> : null}
                   <rect x={f.subP.x - 9} y={f.subP.y - 9} width="18" height="18" className="m-host" />
                   {highThreat ? <circle cx={f.subP.x + 9} cy={f.subP.y - 9} r="3.5" className="threat-pip" /> : null}
                   <text x={f.subP.x + 18} y={f.subP.y - 1} className="n-ip" textAnchor="start">{f.sub.cidr}</text>
                   <text x={f.subP.x + 18} y={f.subP.y + 12} className="n-v amber" textAnchor="start">{f.sub.hosts} hosts {focused ? '▾' : '▸'}</text>
+                  {hover3DCidr === f.sub.cidr && hover3D ? (
+                    <text x={f.subP.x + 18} y={f.subP.y + 26} className="map-ip" textAnchor="start">◂ {hover3D}</text>
+                  ) : null}
                 </g>
               ) : null}
             </g>

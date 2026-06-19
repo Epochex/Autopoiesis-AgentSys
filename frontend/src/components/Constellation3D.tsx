@@ -5,9 +5,10 @@ import { useRef } from 'react'
 import * as THREE from 'three'
 import type { MeshNode } from '../types'
 import type { Lang } from '../i18n'
+import { Scramble } from './Motion'
 
 type Model = { links: { src: string; dst: string; relation: string; strength: number }[]; nodes: Record<string, { severity: string; label: string; summary: string }> }
-type N3 = { ip: string; label: string; role: string; sev: string; out: number; deny: number; ports: string[]; size: number; pos: [number, number, number] }
+type N3 = { ip: string; cidr: string; label: string; role: string; sev: string; summary: string; out: number; deny: number; ports: string[]; size: number; pos: [number, number, number] }
 
 const SEV = (s: string) => (s === 'high' ? '#ff4d5e' : s === 'medium' || s === 'watch' ? '#ffb347' : '#5fe4d1')
 
@@ -37,7 +38,7 @@ function layout(meshes: Record<string, MeshNode[]>, model: Model | null): { node
       const p: [number, number, number] = [cx + Math.cos(a) * rr, cy + (i % 2 ? rr * 0.4 : -rr * 0.4), cz + Math.sin(a) * rr]
       pos[n.ip] = p
       const m = model?.nodes[n.ip]
-      nodes.push({ ip: n.ip, label: m?.label ?? n.role, role: n.role, sev: m?.severity ?? n.threat, out: n.out, deny: n.deny, ports: n.ports, size: 0.32 + Math.log10(n.out + 1) * 0.3, pos: p })
+      nodes.push({ ip: n.ip, cidr: g.cidr, label: m?.label ?? n.role, role: n.role, sev: m?.severity ?? n.threat, summary: m?.summary ?? '', out: n.out, deny: n.deny, ports: n.ports, size: 0.32 + Math.log10(n.out + 1) * 0.3, pos: p })
     })
   })
   const byIp = new Map(nodes.map((n) => [n.ip, n]))
@@ -50,9 +51,10 @@ function layout(meshes: Record<string, MeshNode[]>, model: Model | null): { node
   return { nodes, links }
 }
 
-function Node({ n, onHover }: { n: N3; onHover: (ip: string | null) => void }) {
+function Node({ n, onHover, dim }: { n: N3; onHover: (ip: string | null) => void; dim: boolean }) {
   const [hov, setHov] = useState(false)
   const c = SEV(n.sev)
+  const k = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`)
   return (
     <group position={n.pos}>
       <mesh
@@ -60,23 +62,23 @@ function Node({ n, onHover }: { n: N3; onHover: (ip: string | null) => void }) {
         onPointerOut={() => { setHov(false); onHover(null) }}
       >
         <sphereGeometry args={[n.size, 24, 24]} />
-        <meshStandardMaterial color={c} emissive={c} emissiveIntensity={hov ? 2.4 : 1.3} roughness={0.3} metalness={0.1} />
+        <meshStandardMaterial color={c} emissive={c} emissiveIntensity={hov ? 2.6 : dim ? 0.4 : 1.3} roughness={0.3} metalness={0.1} transparent opacity={dim ? 0.4 : 1} />
       </mesh>
-      <mesh scale={hov ? 2.2 : 1.7}>
+      <mesh scale={hov ? 2.3 : 1.7}>
         <sphereGeometry args={[n.size, 16, 16]} />
-        <meshBasicMaterial color={c} transparent opacity={hov ? 0.26 : 0.09} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <meshBasicMaterial color={c} transparent opacity={hov ? 0.28 : dim ? 0.03 : 0.09} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
       {hov ? (
-        <Html position={[0, n.size + 0.8, 0]} center distanceFactor={40} zIndexRange={[20, 0]} pointerEvents="none">
+        <Html position={[0, n.size + 0.8, 0]} center distanceFactor={34} zIndexRange={[40, 0]} pointerEvents="none">
           <div className="c3d-card" style={{ borderColor: c }}>
-            <div className="c3d-card-top"><b>{n.ip}</b><span style={{ color: c }}>{n.sev}</span></div>
-            <div className="c3d-card-role" style={{ color: c }}>{n.label}</div>
-            <div className="c3d-card-meta">out {n.out >= 1000 ? `${Math.round(n.out / 1000)}k` : n.out} · deny {n.deny >= 1000 ? `${Math.round(n.deny / 1000)}k` : n.deny}</div>
-            <div className="c3d-card-ports">{n.ports.map((p) => `:${p}`).join(' ')}</div>
+            <div className="c3d-card-top"><b><Scramble text={n.ip} /></b><span style={{ color: c }}>{n.sev}</span></div>
+            <div className="c3d-card-role" style={{ color: c }}><Scramble text={n.label} /> · {n.cidr}</div>
+            <div className="c3d-card-meta">out {k(n.out)} · deny {k(n.deny)} · {n.ports.map((p) => `:${p}`).join(' ')}</div>
+            {n.summary ? <div className="c3d-card-sum">{n.summary}</div> : null}
           </div>
         </Html>
-      ) : n.sev === 'high' ? (
-        <Html position={[0, n.size + 0.6, 0]} center distanceFactor={52} zIndexRange={[10, 0]} pointerEvents="none">
+      ) : n.sev === 'high' && !dim ? (
+        <Html position={[0, n.size + 0.6, 0]} center distanceFactor={48} zIndexRange={[10, 0]} pointerEvents="none">
           <div className="c3d-tag" style={{ color: c }}>{n.ip}</div>
         </Html>
       ) : null}
@@ -84,29 +86,31 @@ function Node({ n, onHover }: { n: N3; onHover: (ip: string | null) => void }) {
   )
 }
 
-function Scene({ meshes, model }: { meshes: Record<string, MeshNode[]>; model: Model | null }) {
+function Scene({ meshes, model, onHoverIp, focusCidr }: { meshes: Record<string, MeshNode[]>; model: Model | null; onHoverIp: (ip: string | null) => void; focusCidr: string | null }) {
   const { nodes, links } = useMemo(() => layout(meshes, model), [meshes, model])
   const grp = useRef<THREE.Group>(null)
   useFrame((_, dt) => { if (grp.current) grp.current.rotation.y += dt * 0.04 })
-  const [, setHov] = useState<string | null>(null)
   return (
     <>
       <ambientLight intensity={0.6} />
       <pointLight position={[40, 40, 40]} intensity={1.4} />
       <fog attach="fog" args={['#05080a', 60, 130]} />
       <group ref={grp}>
-        {links.map(([a, b, w], i) => (
-          <Line key={i} points={[a.pos, b.pos]} color={a.sev === 'high' || b.sev === 'high' ? '#ff4d5e' : '#5fe4d1'} lineWidth={0.4 + w * 0.5} transparent opacity={0.35} />
-        ))}
+        {links.map(([a, b, w], i) => {
+          const dim = !!focusCidr && a.cidr !== focusCidr && b.cidr !== focusCidr
+          return (
+            <Line key={i} points={[a.pos, b.pos]} color={a.sev === 'high' || b.sev === 'high' ? '#ff4d5e' : '#5fe4d1'} lineWidth={0.4 + w * 0.5} transparent opacity={dim ? 0.05 : 0.35} />
+          )
+        })}
         {nodes.map((n) => (
-          <Node key={n.ip} n={n} onHover={setHov} />
+          <Node key={n.ip} n={n} onHover={onHoverIp} dim={!!focusCidr && n.cidr !== focusCidr} />
         ))}
       </group>
     </>
   )
 }
 
-export function Constellation3D({ meshes, model, lang, onClose }: { meshes: Record<string, MeshNode[]>; model: Model | null; lang: Lang; onClose: () => void }) {
+export function Constellation3D({ meshes, model, lang, onClose, onHoverIp, focusCidr }: { meshes: Record<string, MeshNode[]>; model: Model | null; lang: Lang; onClose: () => void; onHoverIp: (ip: string | null) => void; focusCidr: string | null }) {
   const count = Object.values(meshes).reduce((a, l) => a + l.length, 0)
   return (
     <div className="c3d-inline">
@@ -116,7 +120,7 @@ export function Constellation3D({ meshes, model, lang, onClose }: { meshes: Reco
         <button className="tc-x" onClick={onClose}>✕</button>
       </div>
       <Canvas camera={{ position: [0, 0, 74], fov: 46 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }} style={{ background: 'transparent' }}>
-        <Scene meshes={meshes} model={model} />
+        <Scene meshes={meshes} model={model} onHoverIp={onHoverIp} focusCidr={focusCidr} />
         <OrbitControls enablePan={false} autoRotate autoRotateSpeed={0.3} minDistance={34} maxDistance={120} />
       </Canvas>
     </div>
