@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { DataStats, Device, Subnet, Topology } from '../types'
 import { Scramble } from './Motion'
-import { Analyzing, type Threat } from './ThreatCard'
+import { Analyzing, type Threat, type WanThreat } from './ThreatCard'
 import type { Lang } from '../i18n'
 
 type Pt = { x: number; y: number }
@@ -50,6 +50,12 @@ function Float({ x, y, w, lines, tone }: { x: number; y: number; w: number; line
 }
 
 const THREAT_DX: Record<string, number> = { high: 0, watch: 30, ok: 56 }
+const KILLCHAIN: { k: string; zh: string; en: string }[] = [
+  { k: 'recon', zh: '侦察', en: 'recon' },
+  { k: 'credential-access', zh: '凭证攻击', en: 'cred-access' },
+  { k: 'lateral-movement', zh: '横向移动', en: 'lateral' },
+  { k: 'impact', zh: '影响', en: 'impact' },
+]
 
 export function TopologyCanvas({
   topo,
@@ -66,6 +72,9 @@ export function TopologyCanvas({
   hover3D,
   hover3DCidr,
   topoAlert,
+  wan,
+  onWan,
+  onCloseWan,
   onHoverSubnet,
   onOpen3D,
   onCloseThreat,
@@ -87,6 +96,9 @@ export function TopologyCanvas({
   hover3D: string | null
   hover3DCidr: string | null
   topoAlert: { cidr: string; ip: string; verdict: string; severity: string } | null
+  wan: WanThreat | null
+  onWan: (ip: string) => void
+  onCloseWan: () => void
   onHoverSubnet?: (cidr: string | null) => void
   onOpen3D: () => void
   onCloseThreat: () => void
@@ -165,7 +177,7 @@ export function TopologyCanvas({
         ))}
         {layout.ifs.map((f, i) => {
           const focused = drillSub === f.sub?.cidr
-          const fade = g === 'attack' || (drillSub && !focused)
+          const fade = g === 'attack' || (drillSub && !focused) || !!wan
           return (
             <g key={`if${i}`}>
               <Edge a={core} b={f.p} tone="t-flow" flows={f.it.flows} dim={!!fade} hot={focused} delay={0.4 + i * 0.06} tempo={tempo} />
@@ -181,18 +193,27 @@ export function TopologyCanvas({
           <text x={core.x} y={core.y + 13} className="n-sub">{topo.core.ip}</text>
         </g>
 
-        {layout.atk.map((a, i) => (
-          <g key={`an${i}`} className={`node appear ${g === 'attack' ? '' : 'node-dim'}`} style={{ animationDelay: `${i * 0.05}s` }}>
-            <rect x={a.p.x - 7} y={a.p.y - 7} width="14" height="14" className="m-attack" transform={`rotate(45 ${a.p.x} ${a.p.y})`} />
-            <text x={a.p.x + 16} y={a.p.y - 1} className="n-ip" textAnchor="start">{a.ip}</text>
-            <text x={a.p.x + 16} y={a.p.y + 12} className="n-v" textAnchor="start">{short(a.v)}</text>
-          </g>
-        ))}
-        <text x={70} y={120} className="zone-tag appear">WAN1 · {short(stats.distinctSrc)} src</text>
+        {layout.atk.map((a, i) => {
+          const sel = wan?.ip === a.ip
+          return (
+            <g
+              key={`an${i}`}
+              className={`node appear atk-node ${g === 'attack' ? '' : 'node-dim'} ${sel ? 'sel' : ''}`}
+              style={{ animationDelay: `${i * 0.05}s`, cursor: 'pointer' }}
+              onClick={() => onWan(a.ip)}
+            >
+              {sel ? <circle cx={a.p.x} cy={a.p.y} r="15" className="atk-halo" /> : null}
+              <rect x={a.p.x - 7} y={a.p.y - 7} width="14" height="14" className="m-attack" transform={`rotate(45 ${a.p.x} ${a.p.y})`} />
+              <text x={a.p.x + 16} y={a.p.y - 1} className="n-ip" textAnchor="start">{a.ip}</text>
+              <text x={a.p.x + 16} y={a.p.y + 12} className="n-v" textAnchor="start">{short(a.v)}<tspan className="probe-hint"> ▸ 研判</tspan></text>
+            </g>
+          )
+        })}
+        <text x={70} y={120} className="zone-tag appear">WAN1 · {short(stats.distinctSrc)} src · {stats.lockouts ?? ''} lockout</text>
 
         {layout.ifs.map((f, i) => {
           const focused = drillSub === f.sub?.cidr
-          const dimIf = g === 'attack' || (drillSub && !focused)
+          const dimIf = g === 'attack' || (drillSub && !focused) || !!wan
           const highThreat = f.sub?.devices?.some((dv) => dv.threat === 'high')
           return (
             <g key={`ifn${i}`} className={`node appear ${dimIf ? 'node-dim' : ''}`} style={{ animationDelay: `${0.5 + i * 0.06}s` }}>
@@ -370,6 +391,113 @@ export function TopologyCanvas({
                       )
                     })}
                   </>
+                )}
+              </g>
+            )
+          })()
+        ) : null}
+
+        {/* WAN intrusion deep-analysis: campaign lockstep → admin target → cross-canvas pivots */}
+        {wan ? (
+          (() => {
+            const wa = layout.atk.find((a) => a.ip === wan.ip)
+            const anchorP: Pt = wa ? wa.p : { x: 70, y: 280 }
+            const fg = core
+            const sibs = wan.siblings ?? []
+            const inter = wan.internalCorrelation ?? []
+            const stage = wan.killChain ?? ''
+            return (
+              <g className="wan-layer">
+                <path d={bez(anchorP, fg)} className="wan-spine appear" />
+                <text x={(anchorP.x + fg.x) / 2 - 6} y={(anchorP.y + fg.y) / 2 - 10} className="wan-spine-tag" textAnchor="middle">
+                  {short(wan.attempts ?? 0)} · admin login
+                </text>
+
+                {/* /24 lockstep sibling cluster */}
+                <text x={anchorP.x} y={anchorP.y - 26} className="wan-netblock" textAnchor="start">
+                  ◇ {wan.netblock} · {short(wan.netblockAttempts ?? 0)} · lockstep
+                </text>
+                {sibs.map((s, k) => {
+                  const sp: Pt = { x: anchorP.x + 78, y: clamp(anchorP.y - 44 + k * 30, 20, VBH - 20) }
+                  return (
+                    <g key={s.ip} className="branch-in">
+                      <path d={bez(anchorP, sp)} className="wan-sib-link" />
+                      <rect x={sp.x - 5} y={sp.y - 5} width="10" height="10" className="m-attack sib" transform={`rotate(45 ${sp.x} ${sp.y})`} />
+                      <text x={sp.x + 12} y={sp.y + 3} className="wan-sib-ip" textAnchor="start">{s.ip} · {short(s.attempts ?? 0)}</text>
+                    </g>
+                  )
+                })}
+
+                {/* FortiGate admin target + lockout impact */}
+                {!wan.loading && !wan.error ? (
+                  <>
+                    <circle cx={fg.x} cy={fg.y} r="34" className="wan-lockring" />
+                    <text x={fg.x} y={fg.y + 54} className="wan-lock" textAnchor="middle">⊘ {wan.lockouts ?? 0} admin lockouts</text>
+                  </>
+                ) : null}
+
+                {/* cross-canvas post-compromise pivots */}
+                {inter.length ? (
+                  <text x={1132} y={112} className="impact-tag" textAnchor="start">
+                    {lang === 'zh' ? '内网横移关联' : 'internal pivots'}
+                  </text>
+                ) : null}
+                {inter.map((c, k) => {
+                  const span = inter.length > 1 ? (VBH - 320) / (inter.length - 1) : 0
+                  const ip_: Pt = { x: 1132, y: clamp(150 + k * span, 130, VBH - 90) }
+                  return (
+                    <g key={c.ip} className="branch-in wan-pivot">
+                      <path d={bez(fg, ip_)} className="wan-pivot-link" />
+                      <circle cx={ip_.x} cy={ip_.y} r="6" className="m-dev high" />
+                      <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip}</text>
+                      <text x={ip_.x + 12} y={ip_.y + 12} className="wan-rel" textAnchor="start">{c.relation} · {short(c.deny ?? 0)} deny</text>
+                    </g>
+                  )
+                })}
+
+                {/* deep-analysis panel */}
+                {wan.loading ? (
+                  <foreignObject x={36} y={678} width={580} height={130}>
+                    <div className="an-panel wan-panel">
+                      <div className="an-head"><span className="an-kicker">DEEPSEEK · WAN · {wan.ip}</span></div>
+                      <Analyzing lang={lang} />
+                    </div>
+                  </foreignObject>
+                ) : wan.error ? (
+                  <foreignObject x={36} y={690} width={560} height={90}>
+                    <div className="an-panel wan-panel"><div className="an-body err">{wan.error}</div></div>
+                  </foreignObject>
+                ) : (
+                  <foreignObject x={28} y={628} width={660} height={364}>
+                    <div className={`an-panel wan-panel sev-${wan.severity}`}>
+                      <div className="an-head">
+                        <span className="an-kicker">DEEPSEEK · WAN 入侵研判 · {wan.ip}</span>
+                        <button className="an-x" onClick={onCloseWan}>✕</button>
+                      </div>
+                      <div className="an-verdict">
+                        <span className={`sev-dot ${wan.severity}`} />
+                        <Scramble className="an-vtxt" text={wan.verdict ?? ''} />
+                        <span className="sev-tag">{wan.severity}</span>
+                        {typeof wan.confidence === 'number' ? <span className="wan-conf">{Math.round(wan.confidence * 100)}%</span> : null}
+                      </div>
+                      <div className="kc-rail">
+                        {KILLCHAIN.map((s) => (
+                          <span key={s.k} className={`kc-step ${s.k === stage ? 'on' : ''}`}>{lang === 'zh' ? s.zh : s.en}</span>
+                        ))}
+                      </div>
+                      <p className="an-analysis">{wan.campaign}</p>
+                      <div className="wan-meta">
+                        <span><i>{lang === 'zh' ? '归因' : 'attribution'}</i>{wan.attribution}</span>
+                        <span><i className="bad">{lang === 'zh' ? '影响' : 'blast'}</i>{wan.blast}</span>
+                      </div>
+                      {wan.actions && wan.actions.length ? (
+                        <ol className="wan-actions">
+                          {wan.actions.map((a, i) => (<li key={i}>{a}</li>))}
+                        </ol>
+                      ) : null}
+                      <span className="tc-model">{wan.model} · {wan.distinctSrc} src</span>
+                    </div>
+                  </foreignObject>
                 )}
               </g>
             )

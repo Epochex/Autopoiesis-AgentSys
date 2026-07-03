@@ -194,6 +194,135 @@ def assess_mesh(cidr: str, lang: str = "zh") -> dict[str, Any]:
     return result
 
 
+def _wan_evidence() -> dict[str, Any]:
+    """Full real WAN attack evidence from the held-out window stats, clustered by /24."""
+    from collections import defaultdict
+    from pathlib import Path
+
+    from .rca_reader import _MANIFEST
+    from domains.network_rca.real_dataset import resolve_stats_path
+
+    s = json.loads(Path(resolve_stats_path(_MANIFEST)).read_text(encoding="utf-8"))
+    top = s.get("admin_login_failed_top_src", [])
+    blocks: dict[str, dict] = defaultdict(lambda: {"count": 0, "ips": []})
+    for row in top:
+        ip, n = row[0], row[1]
+        net = ".".join(ip.split(".")[:3]) + ".0/24"
+        blocks[net]["count"] += n
+        blocks[net]["ips"].append([ip, n])
+    netblocks = sorted(
+        [{"cidr": k, "count": v["count"], "ips": v["ips"]} for k, v in blocks.items()],
+        key=lambda b: -b["count"],
+    )
+    return {
+        "adminLoginFailed": s.get("admin_login_failed", 0),
+        "distinctSrc": s.get("admin_login_failed_distinct_src", 0),
+        "lockouts": s.get("admin_login_disabled_lockouts", 0),
+        "topAttackers": top,
+        "netblocks": netblocks,
+        "internalDenySrc": s.get("deny_top_src", []),
+        "denyPorts": s.get("deny_top_dstports", []),
+        "denyCount": s.get("deny_count", 0),
+    }
+
+
+_wan_cache: dict[str, Any] = {}
+
+
+def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
+    """DeepSeek deep-analysis of one WAN attacker: campaign correlation + cross-side blast radius.
+
+    Grounded entirely in the real held-out FortiGate window: the coordinated brute-force
+    campaign (netblock lockstep), the admin lockouts it caused, and whether the internal
+    deny-heavy hosts represent post-compromise pivot activity.
+    """
+    ck = f"{ip}:{lang}"
+    if ck in _wan_cache:
+        return _wan_cache[ck]
+    from . import providers
+    from core.llm.provider import OpenAICompatibleClient
+
+    ev = _wan_evidence()
+    attacker = next((a for a in ev["topAttackers"] if a[0] == ip), None)
+    if attacker is None:
+        return {"ok": False, "text": "attacker not in held-out top sources"}
+    net = ".".join(ip.split(".")[:3]) + ".0/24"
+    block = next((b for b in ev["netblocks"] if b["cidr"] == net), None) or {"cidr": net, "count": attacker[1], "ips": [attacker]}
+    siblings_ev = [[i, n] for i, n in block["ips"] if i != ip]
+    internal = ev["internalDenySrc"][:6]
+
+    cfg = providers._deepseek_cfg()
+    if not cfg["api_key"]:
+        return {"ok": False, "text": "DeepSeek key not configured."}
+    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=50)
+    want = "Chinese" if lang == "zh" else "English"
+    instr = (
+        f"You are a SOC threat analyst. Assess this external WAN source that is hammering the "
+        f"FortiGate admin login, using ONLY the real evidence provided. Respond in {want}, concise "
+        f"and affirmative. Judge whether this is part of a COORDINATED campaign (identical attempt "
+        f"counts across sibling IPs in the same /24 = botnet lockstep). Then judge whether the "
+        f"internal_deny_hosts are plausibly POST-COMPROMISE pivots (heavy internal scanning) tied to "
+        f"this credential attack, and pick only the ones that fit. Return JSON {{"
+        f'"verdict": <short label>, "severity": "critical|high|medium", '
+        f'"campaign": <1 sentence: coordinated or isolated + the signal>, '
+        f'"kill_chain": <one of: recon|credential-access|lateral-movement|impact>, '
+        f'"attribution": <short: botnet/netblock signal>, '
+        f'"siblings": [{{"ip": <sibling ip from same_netblock>, "note": <<=6 words>}}], '
+        f'"internal_correlation": [{{"ip": <ip from internal_deny_hosts>, "relation": <why linked, <=8 words>}}], '
+        f'"blast": <1 sentence: lockout DoS / compromise risk>, '
+        f'"actions": [<concrete action>, <concrete action>, <concrete action>], '
+        f'"confidence": <0-1 number>}}.'
+    )
+    payload = {
+        "wan_source": ip,
+        "attempts": attacker[1],
+        "same_netblock": {"cidr": block["cidr"], "total_attempts": block["count"], "sibling_ips": siblings_ev},
+        "campaign_totals": {
+            "distinct_sources": ev["distinctSrc"],
+            "total_admin_failures": ev["adminLoginFailed"],
+            "admin_lockouts_triggered": ev["lockouts"],
+        },
+        "internal_deny_hosts": [{"ip": i, "denied_flows": n} for i, n in internal],
+        "top_denied_ports": ev["denyPorts"][:6],
+    }
+    try:
+        out = client.complete_json(
+            [{"role": "user", "content": instr + "\n" + json.dumps(payload)}],
+            schema_name="wan_threat",
+        )
+    except Exception as exc:
+        return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
+
+    sib_valid = {i for i, _ in siblings_ev}
+    int_valid = {i for i, _ in internal}
+    return {
+        "ok": True,
+        "ip": ip,
+        "attempts": attacker[1],
+        "netblock": block["cidr"],
+        "netblockAttempts": block["count"],
+        "verdict": out.get("verdict", ""),
+        "severity": out.get("severity", "high"),
+        "campaign": out.get("campaign", ""),
+        "killChain": out.get("kill_chain", ""),
+        "attribution": out.get("attribution", ""),
+        "siblings": [
+            {"ip": x.get("ip"), "note": x.get("note", ""), "attempts": dict(siblings_ev).get(x.get("ip"))}
+            for x in (out.get("siblings") or []) if x.get("ip") in sib_valid
+        ][:6],
+        "internalCorrelation": [
+            {"ip": x.get("ip"), "relation": x.get("relation", ""), "deny": dict(internal).get(x.get("ip"))}
+            for x in (out.get("internal_correlation") or []) if x.get("ip") in int_valid
+        ][:6],
+        "blast": out.get("blast", ""),
+        "actions": [a for a in (out.get("actions") or []) if a][:4],
+        "confidence": out.get("confidence"),
+        "lockouts": ev["lockouts"],
+        "distinctSrc": ev["distinctSrc"],
+        "model": cfg["model"],
+    }
+
+
 def _synthesize_posture(cidr: str, results: list[dict], lang: str) -> str:
     from . import providers
     from core.llm.provider import OpenAICompatibleClient

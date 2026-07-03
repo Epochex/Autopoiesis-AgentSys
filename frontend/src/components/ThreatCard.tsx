@@ -21,6 +21,28 @@ export function Analyzing({ lang }: { lang: Lang }) {
   )
 }
 
+export type WanThreat = {
+  ip: string
+  loading: boolean
+  attempts?: number
+  netblock?: string
+  netblockAttempts?: number
+  verdict?: string
+  severity?: string
+  campaign?: string
+  killChain?: string
+  attribution?: string
+  siblings?: { ip: string; note: string; attempts?: number }[]
+  internalCorrelation?: { ip: string; relation: string; deny?: number }[]
+  blast?: string
+  actions?: string[]
+  confidence?: number
+  lockouts?: number
+  distinctSrc?: number
+  model?: string
+  error?: string
+}
+
 export type Peer = { ip: string; relation: string }
 export type Threat = {
   ip: string
