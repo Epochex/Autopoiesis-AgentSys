@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
-import { rc, t, type Lang } from './i18n'
+import { rc, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
-import { Analyzing, ThreatCard, type Threat } from './components/ThreatCard'
-import { TraceTrajectory } from './components/TraceTrajectory'
+import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
+import { TrajectoryPage } from './components/TrajectoryPage'
 import { lazy, Suspense } from 'react'
 
 const Constellation3D = lazy(() => import('./components/Constellation3D').then((m) => ({ default: m.Constellation3D })))
@@ -13,8 +13,9 @@ type MeshModel = {
   links: { src: string; dst: string; relation: string; strength: number }[]
   nodes: Record<string, { severity: string; label: string; summary: string }>
 }
-import { ConfidenceRing } from './components/Motion'
 import type { Device } from './types'
+
+type View = 'console' | 'trajectory'
 
 type State =
   | { s: 'load' }
@@ -23,6 +24,7 @@ type State =
 
 function App() {
   const [lang, setLang] = useState<Lang>('zh')
+  const [view, setView] = useState<View>('console')
   const [provider, setProvider] = useState('rule')
   const [st, setSt] = useState<State>({ s: 'load' })
   const [active, setActive] = useState('')
@@ -31,6 +33,7 @@ function App() {
   const [tempo, setTempo] = useState(1)
   const [rate, setRate] = useState<number | null>(null)
   const [threat, setThreat] = useState<Threat | null>(null)
+  const [wan, setWan] = useState<WanThreat | null>(null)
   const [marks, setMarks] = useState<Record<string, { severity: string; verdict: string }>>({})
   const [posture, setPosture] = useState<{ cidr: string; loading: boolean; high?: number; watch?: number; summary?: string } | null>(null)
   const [meshModel, setMeshModel] = useState<MeshModel | null>(null)
@@ -55,6 +58,25 @@ function App() {
       }
     } catch (e) {
       setThreat({ ip, loading: false, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  const researchWan = async (ip: string) => {
+    setWan({ ip, loading: true })
+    setDrillSub(null)
+    setDrillDev(null)
+    setThreat(null)
+    setPosture(null)
+    try {
+      const r = await fetch(`/api/rca/wan_threat?ip=${encodeURIComponent(ip)}&lang=${lang}`)
+      const j = await r.json()
+      if (j.ok) {
+        setWan({ ...j, loading: false })
+      } else {
+        setWan({ ip, loading: false, error: j.text || 'failed' })
+      }
+    } catch (e) {
+      setWan({ ip, loading: false, error: e instanceof Error ? e.message : String(e) })
     }
   }
 
@@ -129,6 +151,7 @@ function App() {
   }, [])
 
   const researchDevice = async (dev: Device | null, cidr: string) => {
+    setWan(null)
     setDrillDev(dev?.ip ?? null)
     if (!dev || dev.threat === 'ok') {
       setThreat(null)
@@ -179,8 +202,6 @@ function App() {
   const s = d.dataStats
   const topo = d.topology
   const c: RcaCase | undefined = d.cases.find((x) => x.id === active) ?? d.cases[0]
-  const withCtl = d.baselines.find((b) => b.name === 'selfevo_light_path')?.rootCauseAccuracy ?? 1
-  const noCtl = d.baselines.find((b) => b.name === 'full_tools')?.rootCauseAccuracy ?? 0
 
   return (
     <div className="stage">
@@ -189,18 +210,24 @@ function App() {
           selfevo<span className="mark-dot" />
         </div>
         <div className="top-right">
-          <div className="cases">
-            {d.cases.map((x) => (
-              <button
-                key={x.id}
-                className={`case ${x.id === c?.id ? 'on' : ''}`}
-                onClick={() => setActive(x.id)}
-                title={rc(x.diagnosis.rootCauseKey, lang)}
-              >
-                <span className={`tick ${x.verifier.passed ? 'ok' : ''}`} />
-              </button>
-            ))}
+          <div className="pager">
+            <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '态势' : 'CONSOLE'}</button>
+            <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
           </div>
+          {view === 'console' ? (
+            <div className="cases">
+              {d.cases.map((x) => (
+                <button
+                  key={x.id}
+                  className={`case ${x.id === c?.id ? 'on' : ''}`}
+                  onClick={() => setActive(x.id)}
+                  title={rc(x.diagnosis.rootCauseKey, lang)}
+                >
+                  <span className={`tick ${x.verifier.passed ? 'ok' : ''}`} />
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="engines">
             {d.providers.map((p) => (
               <button
@@ -222,9 +249,18 @@ function App() {
         </div>
       </header>
 
-      {d.datasetReady && s && c ? (
+      {view === 'trajectory' && d.datasetReady && c ? (
+        <TrajectoryPage
+          cases={d.cases}
+          baselines={d.baselines}
+          reasoner={d.reasonerMode}
+          lang={lang}
+          activeId={active}
+          onPick={setActive}
+        />
+      ) : d.datasetReady && s && c ? (
         <>
-          <section className={`canvas-wrap ${show3D ? 'full3d' : threat ? 'tall' : drillSub ? 'mid' : ''}`}>
+          <section className={`canvas-wrap ${show3D ? 'full3d' : threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>
             {topo && !show3D ? (
               <TopologyCanvas
                 topo={topo}
@@ -241,13 +277,17 @@ function App() {
                 hover3D={hover3D}
                 hover3DCidr={hover3D ? Object.entries(d.meshes ?? {}).find(([, l]) => l.some((n) => n.ip === hover3D))?.[0] ?? null : null}
                 topoAlert={topoAlert}
+                wan={wan}
+                onWan={researchWan}
+                onCloseWan={() => setWan(null)}
                 onHoverSubnet={show3D ? setFocusCidr : undefined}
-                onOpen3D={() => { setDrillSub(null); setDrillDev(null); setThreat(null); void analyzeMesh() }}
+                onOpen3D={() => { setDrillSub(null); setDrillDev(null); setThreat(null); setWan(null); void analyzeMesh() }}
                 onCloseThreat={() => setThreat(null)}
                 onSub={(sub) => {
                   setDrillSub(sub?.cidr ?? null)
                   setDrillDev(null)
                   setThreat(null)
+                  setWan(null)
                   setPosture(null)
                 }}
                 onDev={researchDevice}
@@ -304,38 +344,6 @@ function App() {
               ) : null}
             </section>
           ) : null}
-
-          <section className="deck">
-            <div className="verdict">
-              <ConfidenceRing value={c.diagnosis.confidence} />
-              <div className="verdict-text">
-                <span className="vk">{t('engine', lang)} · {d.reasonerMode}{c.verifier.passed ? ` · ${t('verified', lang)}` : ''}</span>
-                <h1>{rc(c.diagnosis.rootCauseKey, lang)}</h1>
-                <div className="ev-ids">
-                  {c.diagnosis.evidence.map((e) => (
-                    <code key={e.evidenceId}>{e.evidenceId}</code>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {c ? <TraceTrajectory rcaCase={c} lang={lang} reasoner={d.reasonerMode} /> : <div />}
-            <div className="metric">
-              <div className="bars">
-                <div className="bar-row">
-                  <span className="bar-num good">{Math.round(withCtl * 100)}<i>%</i></span>
-                  <span className="bar"><b style={{ width: `${withCtl * 100}%` }} className="good" /></span>
-                  <span className="bar-lab">{t('withControl', lang)}</span>
-                </div>
-                <div className="bar-row">
-                  <span className="bar-num bad">{Math.round(noCtl * 100)}<i>%</i></span>
-                  <span className="bar"><b style={{ width: `${noCtl * 100}%` }} className="bad" /></span>
-                  <span className="bar-lab">{t('withoutControl', lang)}</span>
-                </div>
-              </div>
-              <span className="lab">{t('accuracy', lang)}</span>
-            </div>
-          </section>
 
         </>
       ) : (
