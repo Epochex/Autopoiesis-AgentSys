@@ -1,6 +1,18 @@
 # selfevo-orchiter
 
-`selfevo-orchiter` is a TypeScript-first self-evolution kernel for long-running agents. Its core problem is not generic orchestration. It focuses on the failure mode that appears after agents run for weeks: memory becomes stale or polluted, context grows without discipline, too many skills distract the model, and useful experience never becomes a stable policy.
+> **Read this first — which layer is measured.** The **current, measured system is the
+> Python kernel** in [`core/`](./core) + [`domains/`](./domains): a self-evolving
+> long-horizon agent whose first domain is internal-network root-cause analysis on real
+> FortiGate syslog. Its **real, reproducible numbers** (−75% probes @ 100% accuracy,
+> ablation 100%→16.7%, managed 3-tier memory) and the commands to reproduce them live in
+> **[docs/BENCHMARKS.md](./docs/BENCHMARKS.md)**; résumé-ready bullets in
+> **[docs/RESUME.md](./docs/RESUME.md)**. Run `python3 examples/benchmarks.py` and
+> `python3 -m pytest tests_py/ -q` (40 tests).
+>
+> The TypeScript `src/` tree and the `npm` commands described below are an **earlier
+> prototype**, kept for history — they are not the system the benchmarks measure.
+
+`selfevo-orchiter` is a self-evolution kernel for long-running agents. Its core problem is not generic orchestration. It focuses on the failure mode that appears after agents run for weeks: memory becomes stale or polluted, context grows without discipline, too many skills distract the model, and useful experience never becomes a stable policy.
 
 The online path stays small. The background path learns.
 
@@ -75,12 +87,18 @@ SELFEVO_RUN_PROVIDER_SMOKE=1 npm run test:provider
 
 ## Research Backbone
 
-The implementation follows a practical synthesis of A-MEM-style dynamic memory organization, EvolveR-style experience lifecycle learning, SkillEvolver-style deployed-skill auditing, and GEPA / GRPO-style trace-level policy optimization.
+The **measured Python system** follows a practical synthesis of CoALA tiered memory,
+Mem0 write-routing, A-MEM associative organization, Generative-Agents reflection,
+Ebbinghaus forgetting, StreamBench online improvement, and LongMemEval-style memory
+evaluation; GRPO trace-level policy optimization is roadmap. The authoritative citation
+list (with verified arXiv IDs) is in [docs/BENCHMARKS.md](./docs/BENCHMARKS.md).
 
+- CoALA: https://arxiv.org/abs/2309.02427
+- Mem0: https://arxiv.org/abs/2504.19413
 - A-MEM: https://arxiv.org/abs/2502.12110
-- EvolveR: https://arxiv.org/abs/2510.16079
-- SkillEvolver: https://arxiv.org/abs/2605.10500
-- GEPA: https://arxiv.org/abs/2507.19457
+- Generative Agents: https://arxiv.org/abs/2304.03442
+- StreamBench: https://arxiv.org/abs/2406.08747
+- LongMemEval: https://arxiv.org/abs/2410.10813
 
 ## Package Map
 

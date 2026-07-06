@@ -28,12 +28,12 @@ export function Scramble({ text, className, dur = 500 }: { text: string; classNa
   return <span className={className}>{out}</span>
 }
 
-export function CountUp({ value, dur = 1100 }: { value: number; dur?: number }) {
-  const [n, setN] = useState(0)
-  const from = useRef(0)
+export function CountUp({ value, from: fromProp, dur = 1100 }: { value: number; from?: number; dur?: number }) {
+  const [n, setN] = useState(fromProp ?? 0)
+  const from = useRef(fromProp ?? 0)
   useEffect(() => {
     const start = performance.now()
-    const a = from.current
+    const a = fromProp != null ? fromProp : from.current
     let raf = 0
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / dur)
@@ -43,20 +43,22 @@ export function CountUp({ value, dur = 1100 }: { value: number; dur?: number }) 
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [value, dur])
+  }, [value, fromProp, dur])
   return <>{n.toLocaleString('en-US')}</>
 }
 
-export function ConfidenceRing({ value, size = 92 }: { value: number; size?: number }) {
-  const r = size / 2 - 7
+// Ring fills only when `active` flips true — lets the replay "reach" the diagnosis
+// before the confidence resolves, so the motion carries meaning.
+export function ConfidenceRing({ value, size = 104, active = true }: { value: number; size?: number; active?: boolean }) {
+  const r = size / 2 - 8
   const circ = 2 * Math.PI * r
   const [dash, setDash] = useState(circ)
   useEffect(() => {
-    const id = requestAnimationFrame(() => setDash(circ * (1 - value)))
+    const id = requestAnimationFrame(() => setDash(active ? circ * (1 - value) : circ))
     return () => cancelAnimationFrame(id)
-  }, [value, circ])
+  }, [value, circ, active])
   return (
-    <svg width={size} height={size} className="ring">
+    <svg width={size} height={size} className={`ring ${active ? 'on' : ''}`}>
       <circle cx={size / 2} cy={size / 2} r={r} className="ring-track" />
       <circle
         cx={size / 2}
@@ -68,7 +70,7 @@ export function ConfidenceRing({ value, size = 92 }: { value: number; size?: num
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
       />
       <text x="50%" y="52%" className="ring-num">
-        {value.toFixed(2)}
+        {active ? value.toFixed(2) : '· ·'}
       </text>
     </svg>
   )

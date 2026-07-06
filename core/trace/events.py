@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 TraceKind = Literal[
     "alert_received",
     "memory_read",
+    "memory_shortcut",
+    "memory_resolved",
     "context_compiled",
     "skills_exposed",
     "tool_called",

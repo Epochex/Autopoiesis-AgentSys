@@ -1,0 +1,76 @@
+{
+  "_synthetic": true,
+  "_note": "SYNTHETIC LongMemEval-schema fixture — NOT real LongMemEval data. Ships only to prove core/eval/longmemeval.py runs and scores the five ability types. Real numbers require longmemeval_s.json from https://github.com/xiaowu0162/LongMemEval.",
+  "items": [
+    {
+      "question_id": "syn-ie-1",
+      "question_type": "single-session-user",
+      "question": "What breed is my dog Rufus?",
+      "answer": "border collie",
+      "question_date": "2026/03/01",
+      "haystack_session_ids": ["s0", "s1", "s2"],
+      "answer_session_ids": ["s1"],
+      "haystack_sessions": [
+        [{"role": "user", "content": "I booked a flight to Osaka for the sales conference next month."}],
+        [{"role": "user", "content": "My dog Rufus is a border collie and he just turned three years old."}],
+        [{"role": "user", "content": "The espresso machine at the office broke again this morning."}]
+      ]
+    },
+    {
+      "question_id": "syn-ms-1",
+      "question_type": "multi-session",
+      "question": "Which city should I ship the standing desk to given where I now work?",
+      "answer": "Kyoto",
+      "question_date": "2026/03/02",
+      "haystack_session_ids": ["s0", "s1", "s2", "s3"],
+      "answer_session_ids": ["s1", "s3"],
+      "haystack_sessions": [
+        [{"role": "user", "content": "I really want to buy an adjustable standing desk for productivity."}],
+        [{"role": "user", "content": "I accepted the offer and relocated for the new job last week."}],
+        [{"role": "user", "content": "The weather has been rainy all season, terrible for cycling."}],
+        [{"role": "user", "content": "My new office and apartment are both in Kyoto near the river."}]
+      ]
+    },
+    {
+      "question_id": "syn-temporal-1",
+      "question_type": "temporal-reasoning",
+      "question": "What did I do the weekend before my birthday in April?",
+      "answer": "hiking trip",
+      "question_date": "2026/05/01",
+      "haystack_session_ids": ["s0", "s1", "s2"],
+      "answer_session_ids": ["s2"],
+      "haystack_sessions": [
+        [{"role": "user", "content": "In February I started learning to play the cello."}],
+        [{"role": "user", "content": "My birthday is on April 20th and I am planning a small dinner."}],
+        [{"role": "user", "content": "The weekend before my April birthday I went on a two-day hiking trip in the mountains."}]
+      ]
+    },
+    {
+      "question_id": "syn-update-1",
+      "question_type": "knowledge-update",
+      "question": "What phone do I currently use?",
+      "answer": "pixel",
+      "question_date": "2026/06/01",
+      "haystack_session_ids": ["s0", "s1", "s2"],
+      "answer_session_ids": ["s2"],
+      "haystack_sessions": [
+        [{"role": "user", "content": "I have used an iphone for the last five years and love it."}],
+        [{"role": "user", "content": "Thinking about switching phones, my iphone battery is dying."}],
+        [{"role": "user", "content": "Update: I switched and now use a pixel as my daily phone."}]
+      ]
+    },
+    {
+      "question_id": "syn-abstain-1",
+      "question_type": "abstention",
+      "question": "What is my sister's favorite restaurant?",
+      "answer": "",
+      "question_date": "2026/06/02",
+      "haystack_session_ids": ["s0", "s1"],
+      "answer_session_ids": [],
+      "haystack_sessions": [
+        [{"role": "user", "content": "I went running along the canal this morning before work."}],
+        [{"role": "user", "content": "The quarterly budget review is scheduled for next Thursday."}]
+      ]
+    }
+  ]
+}

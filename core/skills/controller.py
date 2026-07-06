@@ -21,15 +21,20 @@ class SkillAttentionController:
         query = {term.lower() for term in query_terms}
         preferred = set(preferred_skill_names)
 
+        def topical_relevance(skill: RegisteredSkill) -> float:
+            # a skill is only *eligible* if it is topically relevant to this query
+            # (preferred or tag-matched) — a globally high success_rate must never pull
+            # an off-topic skill into scope. Learning ranks the relevant set; it can't widen it.
+            preferred_hit = 5.0 if skill.spec.name in preferred else 0.0
+            tag_hits = len(query.intersection({tag.lower() for tag in skill.spec.tags}))
+            return preferred_hit + tag_hits
+
         def score(skill: RegisteredSkill) -> float:
             spec = skill.spec
-            relevance = 5.0 if spec.name in preferred else 0.0
-            tag_hits = len(query.intersection({tag.lower() for tag in spec.tags}))
             attempts = spec.success_count + spec.misuse_count
             success_rate = spec.success_count / attempts if attempts else 0.5
             misuse_rate = spec.misuse_count / attempts if attempts else 0.0
-            return relevance + tag_hits + success_rate - (2.0 * misuse_rate) - (0.05 * spec.cost)
+            return topical_relevance(skill) + success_rate - (2.0 * misuse_rate) - (0.05 * spec.cost)
 
-        scored = [(score(skill), skill) for skill in available]
-        relevant = [(value, skill) for value, skill in scored if value > 0.5]
-        return [skill for _, skill in sorted(relevant, key=lambda item: item[0], reverse=True)[: self.top_k]]
+        candidates = [(score(skill), skill) for skill in available if topical_relevance(skill) > 0.0]
+        return [skill for _, skill in sorted(candidates, key=lambda item: item[0], reverse=True)[: self.top_k]]

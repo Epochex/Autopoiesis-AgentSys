@@ -129,6 +129,12 @@ async def rca_snapshot(provider: str = "rule", refresh: bool = False) -> dict[st
     return await _get_snapshot(provider=provider, force=refresh)
 
 
+@app.get("/api/rca/evolution")
+async def rca_evolution(passes: int = 4) -> dict[str, Any]:
+    from .rca_reader import load_evolution
+    return await asyncio.to_thread(load_evolution, None, passes)
+
+
 @app.get("/", include_in_schema=False)
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_frontend(full_path: str = ""):

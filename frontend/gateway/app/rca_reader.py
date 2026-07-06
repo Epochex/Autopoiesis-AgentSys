@@ -168,3 +168,41 @@ def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rul
             f"down or missing a key. Switch back to the rule baseline or open the GPU tunnel."
         )
     return payload
+
+
+def load_evolution(manifest_path: Path | None = None, passes: int = 4) -> dict[str, Any]:
+    """Real self-evolution on the held-out stream (cold-vs-warm, StreamBench-style).
+
+    Recurring incidents get resolved from provenance-linked memory instead of
+    re-investigation — probes/cost fall to zero at unchanged accuracy. All real data.
+    """
+    from core.evolve import compare_cold_vs_warm
+
+    manifest = Path(manifest_path) if manifest_path else _MANIFEST
+    validation = validate_real_dataset_manifest(manifest)
+    if not validation.ready:
+        return {"ready": False, "reason": "No validated real held-out dataset present."}
+    stats_path = resolve_stats_path(manifest)
+    cases, ground_truth = load_real_case_bundle(manifest, split="heldout")
+    res = compare_cold_vs_warm(
+        cases, ground_truth, passes=passes,
+        data_source="real", real_stats_path=stats_path, reasoner_mode="rule",
+    )
+    return {
+        "ready": True,
+        "passes": passes,
+        "nCases": len(cases),
+        "cases": [
+            {
+                "id": c.id,
+                "query": c.query,
+                "assets": list(c.assets),
+                "rootCauseKey": ground_truth[c.id].expected_root_cause_key if c.id in ground_truth else "",
+            }
+            for c in cases
+        ],
+        "warm": res["warm"],
+        "cold": res["cold"],
+        "delta": res["delta"],
+        "memory": res.get("memory", {}),
+    }

@@ -52,9 +52,11 @@ def build_network_rca_orchestrator(
     llm_client=None,
     data_source: str = "mock",
     real_stats_path: str | Path | None = None,
+    seed_memory: bool = True,
 ) -> SingleAgentRCAOrchestrator:
     memory = TieredMemoryStore(enabled=memory_enabled)
-    memory.seed(load_memory_records())
+    if seed_memory:
+        memory.seed(load_memory_records())
     registry = SkillRegistry()
     if data_source == "mock":
         adapter = MockDeviceAdapter(ROOT / "fixtures" / "mock_device_responses.json")

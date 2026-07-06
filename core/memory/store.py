@@ -18,6 +18,16 @@ class MemoryRecord(BaseModel):
     confidence: float = 1.0
     quarantined: bool = False
     source_trace_ids: list[str] = Field(default_factory=list)
+    # provenance-linked snapshot of the evidence observed when this memory was written,
+    # so a recurring incident can be resolved by recall instead of re-investigation.
+    evidence_snapshot: list[dict] = Field(default_factory=list)
+    # Phase B memory dynamics (see core/evolve/memory_ops.py):
+    #   links      — A-MEM associative links to same-family memory_ids (Xu+ 2025)
+    #   importance — Generative-Agents salience, gates reflection (Park+ 2023)
+    #   strength   — Ebbinghaus retrievability; decays over time, reset on reuse (1885)
+    links: list[str] = Field(default_factory=list)
+    importance: float = 1.0
+    strength: float = 1.0
 
 
 class TieredMemoryStore:
@@ -30,6 +40,15 @@ class TieredMemoryStore:
 
     def add(self, record: MemoryRecord) -> None:
         self._records.append(record)
+
+    def get(self, memory_id: str) -> MemoryRecord | None:
+        for record in self._records:
+            if record.memory_id == memory_id:
+                return record
+        return None
+
+    def active(self) -> list[MemoryRecord]:
+        return [r for r in self._records if not r.quarantined]
 
     def quarantine(self, memory_id: str, reason: str) -> None:
         for record in self._records:

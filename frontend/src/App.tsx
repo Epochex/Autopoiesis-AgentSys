@@ -204,7 +204,7 @@ function App() {
   const c: RcaCase | undefined = d.cases.find((x) => x.id === active) ?? d.cases[0]
 
   return (
-    <div className="stage">
+    <div className="stage" data-view={view}>
       <header className="top">
         <div className="mark">
           selfevo<span className="mark-dot" />
@@ -251,6 +251,7 @@ function App() {
 
       {view === 'trajectory' && d.datasetReady && c ? (
         <TrajectoryPage
+          key={`${active}:${lang}`}
           cases={d.cases}
           baselines={d.baselines}
           reasoner={d.reasonerMode}

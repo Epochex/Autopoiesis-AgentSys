@@ -20,6 +20,7 @@
     "@xyflow/react": "^12.10.1",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
+    "motion": "^12.42.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "three": "^0.171.0",
