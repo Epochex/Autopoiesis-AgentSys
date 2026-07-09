@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import re
-from typing import Any
-
+from core.orchestrator.agents import CriticAgent, ExecutorAgent, PlannerAgent
 from core.orchestrator.orchestrator import SingleAgentRCAOrchestrator
 from core.trace.events import TraceEvent
 
@@ -33,8 +31,21 @@ class AdaptiveOrchestrator:
         self._run_events = base_orchestrator._run_events
         self._last_evidence = base_orchestrator._last_evidence
         self.last_run_id = base_orchestrator.last_run_id
+        self.planner = PlannerAgent(
+            self.skills,
+            batch_size=self.planner_batch_size,
+            record=self._record_agent_event,
+        )
+        self.executor = ExecutorAgent(record=self._record_agent_event)
+        self.critic = CriticAgent(
+            confidence_threshold=self.confidence_threshold,
+            record=self._record_agent_event,
+        )
 
     def diagnose(self, case) -> tuple[object, object]:
+        self.planner.batch_size = max(1, self.planner_batch_size)
+        self.critic.confidence_threshold = self.confidence_threshold
+
         diagnosis, report = self.base.diagnose(case)
         self._sync_from_base()
 
@@ -49,7 +60,7 @@ class AdaptiveOrchestrator:
         rounds_used = 0
 
         for round_number in range(1, self.max_rounds + 1):
-            proposed = self._plan_next_skills(case, diagnosis, executed)
+            proposed = self.planner.propose(case, diagnosis, executed)
             self._record(
                 run_id,
                 case.id,
@@ -64,31 +75,26 @@ class AdaptiveOrchestrator:
                 break
 
             rounds_used = round_number
-            added, cost = self._execute_readonly_skills(case, proposed, run_id)
+            added, cost = self.executor.run(case, proposed, self.skills)
             evidence.extend(added)
             executed.update(proposed)
 
-            context = self.context_compiler.compile(
-                case_id=case.id,
-                query=case.query,
-                memories_by_tier=memories,
-                current_evidence=evidence,
-                required_evidence=[],
+            diagnosis, report, verdict = self.critic.review(
+                case,
+                evidence,
+                self.context_compiler,
+                self.diagnosis_builder,
+                self.verifier,
+                memories,
             )
-            self._record(run_id, case.id, "context_compiled", context.model_dump(mode="json"))
-
-            diagnosis = self.diagnosis_builder(case=case, evidence=evidence, context=context)
-            report = self.verifier.verify(diagnosis, evidence, [])
-            self._record(run_id, case.id, "verifier_result", report.model_dump(mode="json"))
             self._record(
                 run_id,
                 case.id,
                 "cost_observed",
                 {"tool_cost": cost, "tool_calls": len(proposed), "escalation_round": round_number},
             )
-            self._record(run_id, case.id, "diagnosis_completed", diagnosis.model_dump(mode="json"))
 
-            if report.passed and float(getattr(diagnosis, "confidence", 0.0)) >= self.confidence_threshold:
+            if verdict["passed"]:
                 break
             reasons = self._escalation_reasons(case, diagnosis, report) or ["unresolved_after_escalation_round"]
 
@@ -105,73 +111,6 @@ class AdaptiveOrchestrator:
             },
         )
         return diagnosis, report
-
-    def _execute_readonly_skills(self, case, skill_names: list[str], run_id: str) -> tuple[list[dict], float]:
-        evidence: list[dict] = []
-        total_cost = 0.0
-        for name in skill_names:
-            skill = self.skills.get(name)
-            if skill.spec.risk != "read_only":
-                raise PermissionError(f"non-readonly skill blocked: {skill.spec.name}")
-            result = self.skills.execute(skill.spec.name, case=case)
-            if not result.readonly:
-                self._record(
-                    run_id,
-                    case.id,
-                    "tool_called",
-                    {
-                        "skill": skill.spec.name,
-                        "readonly": result.readonly,
-                        "evidence_ids": [item["evidence_id"] for item in result.evidence],
-                        "cost": result.cost,
-                        "blocked": True,
-                        "escalation": True,
-                    },
-                )
-                raise PermissionError(f"non-readonly tool result blocked: {skill.spec.name}")
-            total_cost += result.cost
-            evidence.extend(result.evidence)
-            self._record(
-                run_id,
-                case.id,
-                "tool_called",
-                {
-                    "skill": skill.spec.name,
-                    "readonly": result.readonly,
-                    "evidence_ids": [item["evidence_id"] for item in result.evidence],
-                    "cost": result.cost,
-                    "escalation": True,
-                },
-            )
-        return evidence, total_cost
-
-    def _plan_next_skills(self, case, diagnosis, executed: set[str]) -> list[str]:
-        missing_tokens = self._tokens(getattr(diagnosis, "missing_evidence", []))
-        query_tokens = self._tokens(getattr(case, "query_terms", []))
-        preferred = set(getattr(case, "relevant_skills", []))
-
-        scored: list[tuple[float, float, str]] = []
-        fallback: list[tuple[float, str]] = []
-        for skill in self.skills.all():
-            spec = skill.spec
-            if spec.name in executed or spec.frozen or spec.risk != "read_only":
-                continue
-            skill_tokens = self._tokens([spec.name, spec.description, *spec.tags])
-            score = 0.0
-            score += 3.0 * len(missing_tokens & skill_tokens)
-            score += 1.0 * len(query_tokens & skill_tokens)
-            if spec.name in preferred:
-                score += 2.0
-            if score > 0:
-                scored.append((score, spec.cost, spec.name))
-            else:
-                fallback.append((spec.cost, spec.name))
-
-        if scored:
-            ordered = [name for _, _, name in sorted(scored, key=lambda item: (-item[0], item[1], item[2]))]
-        else:
-            ordered = [name for _, name in sorted(fallback, key=lambda item: (item[0], item[1]))]
-        return ordered[: self.planner_batch_size]
 
     def _escalation_reasons(self, case, diagnosis, report) -> list[str]:
         reasons: list[str] = []
@@ -199,21 +138,14 @@ class AdaptiveOrchestrator:
             if event.kind == "tool_called" and event.payload.get("skill") and not event.payload.get("blocked")
         }
 
-    @staticmethod
-    def _tokens(values: Any) -> set[str]:
-        if isinstance(values, str):
-            values = [values]
-        return {
-            token.lower()
-            for value in values or []
-            for token in re.findall(r"[A-Za-z0-9]+", str(value).replace("_", " "))
-        }
-
     def _record(self, run_id: str, case_id: str, kind: str, payload: dict) -> None:
         event = TraceEvent(run_id=run_id, case_id=case_id, kind=kind, payload=payload)
         self.base.ledger.append(event)
         self.base._run_events.append(event)
         self._sync_from_base()
+
+    def _record_agent_event(self, case_id: str, kind: str, payload: dict) -> None:
+        self._record(self.base.last_run_id, case_id, kind, payload)
 
     def _sync_from_base(self) -> None:
         self._run_events = self.base._run_events

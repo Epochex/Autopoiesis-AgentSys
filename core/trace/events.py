@@ -20,6 +20,9 @@ TraceKind = Literal[
     "cost_observed",
     "topology_escalated",
     "escalation_resolved",
+    "planner_proposed",
+    "executor_ran",
+    "critic_reviewed",
     "skill_chain_planned",
     "step_verified",
 ]
