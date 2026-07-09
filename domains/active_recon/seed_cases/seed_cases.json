@@ -1,0 +1,82 @@
+[
+  {
+    "case": {
+      "id": "recon_public_web_critical",
+      "query": "Build a readonly situational picture for public-web-01 and identify critical exposed web risk.",
+      "query_terms": ["public-web", "web", "banner", "cve", "exposed"],
+      "assets": ["public-web-01", "203.0.113.10"],
+      "relevant_skills": ["scan_ports", "grab_banner", "match_cve"]
+    },
+    "ground_truth": {
+      "exposed_services": ["203.0.113.10:80/http"],
+      "top_risk": "critical_cve_exposed",
+      "expected_evidence_ids": ["ev-recon-web-cve-struts"],
+      "split": "seed",
+      "dataset_kind": "mock"
+    }
+  },
+  {
+    "case": {
+      "id": "recon_admin_surface",
+      "query": "Assess the exposed management surface on the mock admin edge host.",
+      "query_terms": ["admin", "management", "ssh", "service", "exposed"],
+      "assets": ["admin-edge", "198.51.100.20"],
+      "relevant_skills": ["scan_ports", "enum_services"]
+    },
+    "ground_truth": {
+      "exposed_services": ["198.51.100.20:22/ssh", "198.51.100.20:8443/admin-https"],
+      "top_risk": "internet_exposed_admin",
+      "expected_evidence_ids": ["ev-recon-admin-port-22", "ev-recon-admin-port-8443"],
+      "split": "seed",
+      "dataset_kind": "mock"
+    }
+  },
+  {
+    "case": {
+      "id": "recon_public_database",
+      "query": "Build situational awareness for a possible public database exposure.",
+      "query_terms": ["database", "postgres", "service", "open"],
+      "assets": ["db-edge", "203.0.113.30"],
+      "relevant_skills": ["scan_ports", "enum_services"]
+    },
+    "ground_truth": {
+      "exposed_services": ["203.0.113.30:5432/postgres"],
+      "top_risk": "public_database_exposure",
+      "expected_evidence_ids": ["ev-recon-db-port-5432"],
+      "split": "seed",
+      "dataset_kind": "mock"
+    }
+  },
+  {
+    "case": {
+      "id": "recon_legacy_tls",
+      "query": "Check whether the legacy portal has risky HTTPS exposure.",
+      "query_terms": ["legacy", "https", "tls", "certificate"],
+      "assets": ["legacy-portal", "198.51.100.40"],
+      "relevant_skills": ["scan_ports", "enum_services", "check_tls"]
+    },
+    "ground_truth": {
+      "exposed_services": ["198.51.100.40:443/https"],
+      "top_risk": "weak_tls_exposed",
+      "expected_evidence_ids": ["ev-recon-tls-expired-cert"],
+      "split": "seed",
+      "dataset_kind": "mock"
+    }
+  },
+  {
+    "case": {
+      "id": "recon_static_site_low",
+      "query": "Summarize exposure for a static HTTPS site with no known CVE or weak TLS evidence.",
+      "query_terms": ["static", "https", "tls", "service"],
+      "assets": ["static-site", "203.0.113.50"],
+      "relevant_skills": ["scan_ports", "enum_services", "check_tls"]
+    },
+    "ground_truth": {
+      "exposed_services": ["203.0.113.50:443/https"],
+      "top_risk": "informational_exposure",
+      "expected_evidence_ids": ["ev-recon-static-port-443"],
+      "split": "seed",
+      "dataset_kind": "mock"
+    }
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "memory_id": "asset-public-web-profile",
+    "tier": "asset_profile",
+    "text": "public-web-01 is an internet-facing mock web asset where HTTP and HTTPS exposure should be prioritized for readonly banner, TLS and CVE checks.",
+    "tags": ["public-web", "http", "https", "cve", "tls"],
+    "asset_ids": ["public-web-01", "203.0.113.10"],
+    "confidence": 1.0
+  },
+  {
+    "memory_id": "procedural-recon-cve",
+    "tier": "procedural",
+    "text": "For exposed web services, collect ports, banners and CVE matches before ranking situational risk.",
+    "tags": ["skill:scan_ports", "skill:grab_banner", "skill:match_cve", "web", "cve", "banner"],
+    "asset_ids": ["public-web-01"],
+    "confidence": 0.95
+  },
+  {
+    "memory_id": "procedural-recon-tls",
+    "tier": "procedural",
+    "text": "For HTTPS exposure questions, collect service enumeration and TLS posture with readonly checks.",
+    "tags": ["skill:enum_services", "skill:check_tls", "https", "tls"],
+    "asset_ids": ["legacy-portal"],
+    "confidence": 0.95
+  }
+]

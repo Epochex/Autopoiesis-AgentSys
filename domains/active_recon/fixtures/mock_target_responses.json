@@ -1,0 +1,222 @@
+{
+  "recon_public_web_critical": {
+    "port_scan": [
+      {
+        "evidence_id": "ev-recon-web-port-80",
+        "source": "mock:port-scan",
+        "summary": "203.0.113.10 has TCP 80 open for HTTP.",
+        "host": "203.0.113.10",
+        "port": 80,
+        "service": "http",
+        "data": {"host": "203.0.113.10", "port": 80, "service": "http", "state": "open"}
+      }
+    ],
+    "banner_grab": [
+      {
+        "evidence_id": "ev-recon-web-banner-struts",
+        "source": "mock:banner-grab",
+        "summary": "HTTP banner identifies Apache Struts 2.3.31 on the mock public web service.",
+        "host": "203.0.113.10",
+        "port": 80,
+        "service": "http",
+        "banner": "Apache-Coyote/1.1 Struts/2.3.31",
+        "data": {"host": "203.0.113.10", "port": 80, "service": "http", "product": "Apache Struts", "version": "2.3.31"}
+      }
+    ],
+    "cve_match": [
+      {
+        "evidence_id": "ev-recon-web-cve-struts",
+        "source": "mock:cve-match",
+        "summary": "Apache Struts 2.3.31 matches CVE-2017-5638 with critical severity in the mock CVE table.",
+        "host": "203.0.113.10",
+        "port": 80,
+        "service": "http",
+        "cve": "CVE-2017-5638",
+        "data": {"host": "203.0.113.10", "port": 80, "service": "http", "cve": "CVE-2017-5638", "severity": 10.0}
+      }
+    ],
+    "weak_cred_check": [
+      {
+        "evidence_id": "ev-recon-web-weak-cred-skipped",
+        "source": "mock:weak-cred-check",
+        "summary": "Mock weak-credential evidence is present in fixtures but requires approval and is not used by the read-only path.",
+        "host": "203.0.113.10",
+        "port": 80,
+        "service": "http",
+        "data": {"host": "203.0.113.10", "port": 80, "service": "http", "weak_credential": false}
+      }
+    ],
+    "exploit_probe": [
+      {
+        "evidence_id": "ev-recon-web-exploit-skipped",
+        "source": "mock:exploit-probe",
+        "summary": "Mock exploit probe fixture exists only to prove approval-required gating.",
+        "host": "203.0.113.10",
+        "port": 80,
+        "service": "http",
+        "data": {"host": "203.0.113.10", "port": 80, "service": "http", "would_probe": "CVE-2017-5638"}
+      }
+    ]
+  },
+  "recon_admin_surface": {
+    "port_scan": [
+      {
+        "evidence_id": "ev-recon-admin-port-22",
+        "source": "mock:port-scan",
+        "summary": "198.51.100.20 has TCP 22 open.",
+        "host": "198.51.100.20",
+        "port": 22,
+        "service": "ssh",
+        "data": {"host": "198.51.100.20", "port": 22, "service": "ssh", "state": "open"}
+      },
+      {
+        "evidence_id": "ev-recon-admin-port-8443",
+        "source": "mock:port-scan",
+        "summary": "198.51.100.20 has TCP 8443 open for an administrative HTTPS UI.",
+        "host": "198.51.100.20",
+        "port": 8443,
+        "service": "admin-https",
+        "data": {"host": "198.51.100.20", "port": 8443, "service": "admin-https", "state": "open"}
+      }
+    ],
+    "service_enum": [
+      {
+        "evidence_id": "ev-recon-admin-service-ssh",
+        "source": "mock:service-enum",
+        "summary": "TCP 22 is identified as OpenSSH management access on the mock edge host.",
+        "host": "198.51.100.20",
+        "port": 22,
+        "service": "ssh",
+        "data": {"host": "198.51.100.20", "port": 22, "service": "ssh", "product": "OpenSSH"}
+      },
+      {
+        "evidence_id": "ev-recon-admin-service-ui",
+        "source": "mock:service-enum",
+        "summary": "TCP 8443 is identified as a firewall administrative HTTPS interface.",
+        "host": "198.51.100.20",
+        "port": 8443,
+        "service": "admin-https",
+        "data": {"host": "198.51.100.20", "port": 8443, "service": "admin-https", "product": "Mock Firewall Admin"}
+      }
+    ],
+    "weak_cred_check": [
+      {
+        "evidence_id": "ev-recon-admin-weak-cred-skipped",
+        "source": "mock:weak-cred-check",
+        "summary": "Mock weak credential check is approval-required and not part of read-only situational awareness.",
+        "host": "198.51.100.20",
+        "port": 8443,
+        "service": "admin-https",
+        "data": {"host": "198.51.100.20", "port": 8443, "service": "admin-https", "weak_credential": true}
+      }
+    ]
+  },
+  "recon_public_database": {
+    "port_scan": [
+      {
+        "evidence_id": "ev-recon-db-port-5432",
+        "source": "mock:port-scan",
+        "summary": "203.0.113.30 has TCP 5432 open.",
+        "host": "203.0.113.30",
+        "port": 5432,
+        "service": "postgres",
+        "data": {"host": "203.0.113.30", "port": 5432, "service": "postgres", "state": "open"}
+      }
+    ],
+    "service_enum": [
+      {
+        "evidence_id": "ev-recon-db-service-postgres",
+        "source": "mock:service-enum",
+        "summary": "TCP 5432 is identified as PostgreSQL on the mock database host.",
+        "host": "203.0.113.30",
+        "port": 5432,
+        "service": "postgres",
+        "data": {"host": "203.0.113.30", "port": 5432, "service": "postgres", "product": "PostgreSQL", "version": "13.6"}
+      }
+    ],
+    "banner_grab": [
+      {
+        "evidence_id": "ev-recon-db-banner-postgres",
+        "source": "mock:banner-grab",
+        "summary": "PostgreSQL startup banner is visible in the mock fixture.",
+        "host": "203.0.113.30",
+        "port": 5432,
+        "service": "postgres",
+        "banner": "PostgreSQL 13.6",
+        "data": {"host": "203.0.113.30", "port": 5432, "service": "postgres", "product": "PostgreSQL", "version": "13.6"}
+      }
+    ]
+  },
+  "recon_legacy_tls": {
+    "port_scan": [
+      {
+        "evidence_id": "ev-recon-tls-port-443",
+        "source": "mock:port-scan",
+        "summary": "198.51.100.40 has TCP 443 open.",
+        "host": "198.51.100.40",
+        "port": 443,
+        "service": "https",
+        "data": {"host": "198.51.100.40", "port": 443, "service": "https", "state": "open"}
+      }
+    ],
+    "service_enum": [
+      {
+        "evidence_id": "ev-recon-tls-service-https",
+        "source": "mock:service-enum",
+        "summary": "TCP 443 is identified as HTTPS on the legacy portal.",
+        "host": "198.51.100.40",
+        "port": 443,
+        "service": "https",
+        "data": {"host": "198.51.100.40", "port": 443, "service": "https", "product": "Legacy Portal"}
+      }
+    ],
+    "tls_check": [
+      {
+        "evidence_id": "ev-recon-tls-expired-cert",
+        "source": "mock:tls-check",
+        "summary": "The HTTPS certificate for the mock legacy portal is expired and offers a weak TLS policy.",
+        "host": "198.51.100.40",
+        "port": 443,
+        "service": "https",
+        "tls_status": "expired",
+        "data": {"host": "198.51.100.40", "port": 443, "service": "https", "tls_status": "expired", "days_expired": 42}
+      }
+    ]
+  },
+  "recon_static_site_low": {
+    "port_scan": [
+      {
+        "evidence_id": "ev-recon-static-port-443",
+        "source": "mock:port-scan",
+        "summary": "203.0.113.50 has TCP 443 open.",
+        "host": "203.0.113.50",
+        "port": 443,
+        "service": "https",
+        "data": {"host": "203.0.113.50", "port": 443, "service": "https", "state": "open"}
+      }
+    ],
+    "service_enum": [
+      {
+        "evidence_id": "ev-recon-static-service-https",
+        "source": "mock:service-enum",
+        "summary": "TCP 443 is identified as a static HTTPS site.",
+        "host": "203.0.113.50",
+        "port": 443,
+        "service": "https",
+        "data": {"host": "203.0.113.50", "port": 443, "service": "https", "product": "Static Site"}
+      }
+    ],
+    "tls_check": [
+      {
+        "evidence_id": "ev-recon-static-tls-ok",
+        "source": "mock:tls-check",
+        "summary": "The static HTTPS site has a valid certificate and modern TLS policy.",
+        "host": "203.0.113.50",
+        "port": 443,
+        "service": "https",
+        "tls_status": "valid",
+        "data": {"host": "203.0.113.50", "port": 443, "service": "https", "tls_status": "valid"}
+      }
+    ]
+  }
+}

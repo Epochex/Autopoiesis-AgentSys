@@ -1,0 +1,196 @@
+{
+  "dataset_kind": "synthetic-topology-eval",
+  "note": "Synthetic fixture shaped like domains/network_rca/fixtures/real/real_topology.json. It is for deterministic retrieval-mechanism tests, not a real R230 benchmark number.",
+  "topology": {
+    "core": {"name": "FortiGate", "ip": "192.168.1.1", "model": "FG100E"},
+    "interfaces": [
+      {"name": "wan1", "role": "WAN uplink", "flows": 792751, "kind": "wan"},
+      {"name": "fortilink", "role": "device net · 192.168.1.0/24", "flows": 583528, "kind": "lan"},
+      {"name": "LACP", "role": "office · 192.168.16.0/20", "flows": 253717, "kind": "lan"}
+    ],
+    "subnets": [
+      {
+        "cidr": "192.168.1.0/24",
+        "hosts": 46,
+        "flows": 537646,
+        "accept": 63,
+        "intf": "fortilink",
+        "devices": [
+          {"ip": "192.168.1.23", "flows": 37478, "deny": 37152, "accept": 3, "threat": "watch", "top_ports": ["5351", "1900", "53"]},
+          {"ip": "192.168.1.27", "flows": 12220, "deny": 7711, "accept": 4509, "threat": "ok", "top_ports": ["443", "22"]}
+        ]
+      },
+      {
+        "cidr": "192.168.16.0/24",
+        "hosts": 103,
+        "flows": 431849,
+        "accept": 1405,
+        "intf": "LACP",
+        "devices": [
+          {"ip": "192.168.16.56", "flows": 199722, "deny": 199722, "accept": 0, "threat": "high", "top_ports": ["28689", "48689"]}
+        ]
+      }
+    ],
+    "anchors": [
+      {"ip": "192.168.1.23", "name": "R230", "role": "syslog sink", "intf": "fortilink"},
+      {"ip": "192.168.1.27", "name": "selfevo", "role": "console", "intf": "fortilink"}
+    ]
+  },
+  "records": [
+    {
+      "id": "dev-fortigate",
+      "entity": "FortiGate",
+      "entity_type": "device",
+      "relations": [
+        {"target": "wan1", "type": "topology"},
+        {"target": "fortilink", "type": "topology"},
+        {"target": "LACP", "type": "topology"}
+      ],
+      "attrs": {"ip": "192.168.1.1", "model": "FG100E", "role": "core firewall"},
+      "provenance": {"evidence_ids": ["topology-core"], "source": "fixture:real_topology_shape", "ts": "2026-07-09T00:00:00Z"}
+    },
+    {
+      "id": "link-fortilink",
+      "entity": "fortilink",
+      "entity_type": "link",
+      "relations": [
+        {"target": "FortiGate", "type": "topology"},
+        {"target": "R230", "type": "topology"},
+        {"target": "selfevo", "type": "topology"},
+        {"target": "192.168.1.0/24", "type": "topology"}
+      ],
+      "attrs": {"role": "device net", "flows": 583528},
+      "provenance": {"evidence_ids": ["topology-interface-fortilink"], "source": "fixture:real_topology_shape", "ts": "2026-07-09T00:01:00Z"}
+    },
+    {
+      "id": "link-lacp",
+      "entity": "LACP",
+      "entity_type": "link",
+      "relations": [
+        {"target": "FortiGate", "type": "topology"},
+        {"target": "192.168.16.0/24", "type": "topology"},
+        {"target": "192.168.16.56", "type": "topology"}
+      ],
+      "attrs": {"role": "office", "flows": 253717},
+      "provenance": {"evidence_ids": ["topology-interface-lacp"], "source": "fixture:real_topology_shape", "ts": "2026-07-09T00:02:00Z"}
+    },
+    {
+      "id": "dev-r230",
+      "entity": "R230",
+      "entity_type": "device",
+      "relations": [{"target": "fortilink", "type": "topology"}],
+      "attrs": {"ip": "192.168.1.23", "role": "syslog sink", "intf": "fortilink"},
+      "provenance": {"evidence_ids": ["topology-anchor-r230"], "source": "fixture:real_topology_shape", "ts": "2026-07-09T00:03:00Z"}
+    },
+    {
+      "id": "dev-office-192-168-16-56",
+      "entity": "192.168.16.56",
+      "entity_type": "device",
+      "relations": [{"target": "LACP", "type": "topology"}],
+      "attrs": {"flows": 199722, "deny": 199722, "threat": "high", "top_ports": ["28689", "48689"]},
+      "provenance": {"evidence_ids": ["topology-device-192.168.16.56"], "source": "fixture:real_topology_shape", "ts": "2026-07-09T00:04:00Z"}
+    },
+    {
+      "id": "alert-r230-syslog-lag",
+      "entity": "R230",
+      "entity_type": "alert",
+      "relations": [
+        {"target": "fortilink", "type": "topology"},
+        {"target": "inc-r230-syslog-lag", "type": "temporal"}
+      ],
+      "attrs": {"summary": "R230 syslog sink ingest lag and dropped messages", "severity": "high"},
+      "provenance": {"evidence_ids": ["evt-r230-lag"], "source": "syslog:synthetic", "ts": "2026-07-09T01:00:00Z"}
+    },
+    {
+      "id": "inc-r230-syslog-lag",
+      "entity": "r230-syslog-lag",
+      "entity_type": "incident",
+      "relations": [
+        {"target": "R230", "type": "topology"},
+        {"target": "rc-fortilink-broadcast-storm", "type": "causal"}
+      ],
+      "attrs": {"summary": "Syslog receiver lag observed on R230 while local host counters remain normal"},
+      "provenance": {"evidence_ids": ["evt-r230-lag", "obs-r230-local-ok"], "source": "syslog:synthetic", "ts": "2026-07-09T01:01:00Z"}
+    },
+    {
+      "id": "rc-fortilink-broadcast-storm",
+      "entity": "fortilink-broadcast-storm",
+      "entity_type": "root_cause",
+      "relations": [
+        {"target": "fortilink", "type": "topology"},
+        {"target": "inc-r230-syslog-lag", "type": "causal"}
+      ],
+      "attrs": {"summary": "Broadcast storm on fortilink device net saturates the path feeding R230 syslog", "fix": "isolate noisy FortiLink segment and rate-limit broadcast"},
+      "provenance": {"evidence_ids": ["obs-fortilink-broadcast", "evt-r230-lag"], "source": "syslog:synthetic", "ts": "2026-07-09T01:02:00Z"}
+    },
+    {
+      "id": "rc-r230-disk-full-unprovenanced",
+      "entity": "R230",
+      "entity_type": "root_cause",
+      "relations": [{"target": "R230", "type": "topology"}],
+      "attrs": {"summary": "R230 syslog lag root cause disk full dropped messages", "fix": "expand disk"},
+      "provenance": {"evidence_ids": [], "source": "operator-note:no-observed-evidence", "ts": "2026-07-09T01:03:00Z"}
+    },
+    {
+      "id": "alert-office-deny-spike",
+      "entity": "192.168.16.56",
+      "entity_type": "alert",
+      "relations": [
+        {"target": "LACP", "type": "topology"},
+        {"target": "inc-office-deny-spike", "type": "temporal"}
+      ],
+      "attrs": {"summary": "192.168.16.56 deny spike on office LACP path", "severity": "high"},
+      "provenance": {"evidence_ids": ["evt-192.168.16.56-deny"], "source": "syslog:synthetic", "ts": "2026-07-09T02:00:00Z"}
+    },
+    {
+      "id": "inc-office-deny-spike",
+      "entity": "office-deny-spike",
+      "entity_type": "incident",
+      "relations": [
+        {"target": "192.168.16.56", "type": "topology"},
+        {"target": "rc-fortigate-policy-shadow", "type": "causal"}
+      ],
+      "attrs": {"summary": "Deny surge observed on one office host after a firewall policy reorder"},
+      "provenance": {"evidence_ids": ["evt-192.168.16.56-deny", "change-policy-reorder"], "source": "syslog:synthetic", "ts": "2026-07-09T02:01:00Z"}
+    },
+    {
+      "id": "rc-fortigate-policy-shadow",
+      "entity": "fortigate-policy-shadow",
+      "entity_type": "root_cause",
+      "relations": [
+        {"target": "FortiGate", "type": "topology"},
+        {"target": "inc-office-deny-spike", "type": "causal"}
+      ],
+      "attrs": {"summary": "FortiGate policy reorder shadows the office allow rule behind a broad deny", "fix": "move office allow rule above broad deny"},
+      "provenance": {"evidence_ids": ["change-policy-reorder", "obs-policy-hitcount"], "source": "syslog:synthetic", "ts": "2026-07-09T02:02:00Z"}
+    },
+    {
+      "id": "rc-host-192-168-16-56-malware-distractor",
+      "entity": "192.168.16.56",
+      "entity_type": "root_cause",
+      "relations": [{"target": "192.168.16.56", "type": "topology"}],
+      "attrs": {"summary": "192.168.16.56 deny spike high threat ports 28689 48689 root cause malware scan"},
+      "provenance": {"evidence_ids": ["obs-port-distractor"], "source": "syslog:synthetic", "ts": "2026-07-09T02:03:00Z"}
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-r230-multihop-root-cause",
+      "k": 1,
+      "query": {"entities": ["R230"], "relation": "topology", "intent": "root cause for R230 syslog lag dropped messages"},
+      "relevant_ids": ["rc-fortilink-broadcast-storm"]
+    },
+    {
+      "id": "q-office-host-multihop-root-cause",
+      "k": 1,
+      "query": {"entities": ["192.168.16.56"], "relation": "topology", "intent": "root cause for deny spike after policy reorder"},
+      "relevant_ids": ["rc-fortigate-policy-shadow"]
+    },
+    {
+      "id": "q-r230-alert",
+      "k": 2,
+      "query": {"entities": ["R230"], "relation": "temporal", "intent": "alert incident syslog lag"},
+      "relevant_ids": ["alert-r230-syslog-lag", "inc-r230-syslog-lag"]
+    }
+  ]
+}

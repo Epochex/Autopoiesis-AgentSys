@@ -18,6 +18,10 @@ TraceKind = Literal[
     "verifier_result",
     "diagnosis_completed",
     "cost_observed",
+    "topology_escalated",
+    "escalation_resolved",
+    "skill_chain_planned",
+    "step_verified",
 ]
 
 

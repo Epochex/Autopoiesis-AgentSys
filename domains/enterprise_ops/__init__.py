@@ -1,0 +1,1 @@
+"""Mock enterprise operations domain."""

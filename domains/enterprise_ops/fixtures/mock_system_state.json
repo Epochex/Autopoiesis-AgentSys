@@ -1,0 +1,66 @@
+{
+  "ops_quote_then_approval": {
+    "asset": "order-1001",
+    "base_price": 120.0,
+    "policy": {
+      "name": "new_policy",
+      "multiplier": 0.9,
+      "discount": 8.0,
+      "min_price": 80.0,
+      "max_price": 150.0
+    },
+    "pricing_status": "unpriced",
+    "quote_price": null,
+    "approval_submitted": false,
+    "status": "draft",
+    "reminder_sent": false
+  },
+  "ops_status_only": {
+    "asset": "order-1002",
+    "base_price": 95.0,
+    "policy": {
+      "name": "standard",
+      "multiplier": 1.0,
+      "discount": 0.0,
+      "min_price": 60.0,
+      "max_price": 140.0
+    },
+    "pricing_status": "quoted",
+    "quote_price": 95.0,
+    "approval_submitted": true,
+    "status": "pending_approval",
+    "reminder_sent": false
+  },
+  "ops_bad_price": {
+    "asset": "order-1003",
+    "base_price": 500.0,
+    "policy": {
+      "name": "bad_policy",
+      "multiplier": 1.0,
+      "discount": 0.0,
+      "min_price": 50.0,
+      "max_price": 300.0
+    },
+    "pricing_status": "unpriced",
+    "quote_price": null,
+    "approval_submitted": false,
+    "status": "draft",
+    "reminder_sent": false
+  },
+  "ops_illegal_approved": {
+    "asset": "order-1004",
+    "base_price": 110.0,
+    "policy": {
+      "name": "standard",
+      "multiplier": 1.0,
+      "discount": 0.0,
+      "min_price": 50.0,
+      "max_price": 200.0
+    },
+    "pricing_status": "quoted",
+    "quote_price": 110.0,
+    "approval_submitted": false,
+    "status": "draft",
+    "reminder_sent": false
+  }
+}
