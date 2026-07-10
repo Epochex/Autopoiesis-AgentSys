@@ -1958,6 +1958,27 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .dev-dot.high,
 .stage[data-view='console'] .sev-dot.high { box-shadow: none; }
 .stage[data-view='console'] .c3d-bb { text-shadow: none; }
+/* ── 3D full-net stage: legible labels on the dark WebGL ground ──────────────
+   The 3D overlay is a DOM descendant of the light console stage, so its HTML
+   labels inherited --text/--fog (dark-on-paper) and went near-invisible on the
+   near-black scene. Restore the dark-theme label palette + a protective shadow
+   here, scoped to the dark stage only. The WebGL scene itself is unchanged. */
+.c3d-full {
+  --text:  #eef4f1;
+  --fog:   #9db3ad;
+  --mint:  #5fe4d1;
+  --coral: #ff6b5e;
+  --amber: #ffc04d;
+}
+.stage[data-view='console'] .c3d-full .c3d-bb {
+  color: var(--text);
+  text-shadow: 0 1px 2px #000, 0 0 8px rgba(5, 8, 10, 0.95);
+}
+.c3d-full .c3d-bb span { color: var(--fog); }
+.c3d-full .c3d-plane {
+  color: rgba(174, 196, 189, 0.9);
+  text-shadow: 0 1px 3px #000;
+}
 .stage[data-view='console'] .live-rate {
   background: var(--acid);
   color: var(--ink);

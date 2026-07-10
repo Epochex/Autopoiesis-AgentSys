@@ -28,12 +28,13 @@ export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
   ] : []
 
   const VW = 620, VH = 236
-  const X0 = 54, XW = 512, Y0 = 26, YH = 138
+  const X0 = 54, XW = 462, Y0 = 26, YH = 138
   const maxP = Math.max(1, ...cold.map((p) => p.probes), ...warm.map((p) => p.probes))
   const maxMem = Math.max(1, ...warm.map((p) => p.memory_end))
   const px = (i: number) => X0 + (P > 1 ? (i * XW) / (P - 1) : 0)
   const py = (v: number) => Y0 + YH - (v / maxP) * YH
-  const my = (v: number) => Y0 + YH - (v / maxMem) * (YH * 0.82)
+  // memory rides its OWN lower lane (0.5 scale) so it never crowds the flat cold line
+  const my = (v: number) => Y0 + YH - (v / maxMem) * (YH * 0.5)
   const coldPts = cold.map((p, i) => `${px(i)},${py(p.probes)}`).join(' ')
   const warmPts = warm.map((p, i) => `${px(i)},${py(p.probes)}`).join(' ')
   const memPts = warm.map((p, i) => `${px(i)},${my(p.memory_end)}`).join(' ')
@@ -60,14 +61,15 @@ export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
           <text className="fx-conv-axl" x={X0 - 40} y={Y0 + YH / 2} transform={`rotate(-90 ${X0 - 40} ${Y0 + YH / 2})`} textAnchor="middle">{zh ? '探针 / 事件' : 'PROBES / EVENT'}</text>
           {/* the savings gap between the two runs */}
           <polygon className="fx-conv-save" points={area} />
-          {/* cold: never learns — flat */}
+          {/* cold: never learns — flat high */}
           <polyline className="fx-conv-cold" points={coldPts} fill="none" />
-          <text className="fx-conv-tag cold" x={px(P - 1) + 12} y={py(cold[P - 1].probes) + 4}>{zh ? '不记忆' : 'COLD'}</text>
-          {/* memory growth (secondary rising trace) */}
+          <text className="fx-conv-tag cold" x={px(P - 1) + 12} y={py(cold[P - 1].probes) + 4}>{zh ? '冷 · 不记忆' : 'COLD · NO-MEM'}</text>
+          {/* memory growth — its own lower lane, clearly labelled */}
           <polyline className="fx-conv-mem" points={memPts} fill="none" />
+          <text className="fx-conv-tag mem" x={px(P - 1) + 12} y={my(warm[P - 1].memory_end) + 4}>{zh ? `记忆 →${d.memory_grown}` : `MEM →${d.memory_grown}`}</text>
           {/* warm: recalls → plunges to 0 */}
           <polyline className="fx-conv-warm" points={warmPts} fill="none" />
-          <text className="fx-conv-tag warm" x={px(P - 1) + 12} y={py(warm[P - 1].probes) + 4}>{zh ? '会记忆' : 'WARM'}</text>
+          <text className="fx-conv-tag warm" x={px(P - 1) + 12} y={py(warm[P - 1].probes) + 4}>{zh ? '暖 · 会记忆' : 'WARM · +MEM'}</text>
           {warm.map((p, i) => (
             <g key={i} className="fx-conv-node" style={{ animationDelay: `${i * 120}ms` }}>
               <circle className="fx-conv-dot" cx={px(i)} cy={py(p.probes)} r={4.5} />

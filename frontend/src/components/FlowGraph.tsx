@@ -153,7 +153,7 @@ export function FlowGraph({
 
   // ── module + card frames ──
   const memBox = { x: 40, y: 604, w: 300, h: 170 }        // 3-tier memory store (lower-left)
-  const skBox = { x: 258, y: 58, w: 322, h: 132 }          // skill-attention ctrl (top)
+  const skBox = { x: 258, y: 96, w: 322, h: 132 }          // skill-attention ctrl (top; dropped below the SCAN label band)
   const cards = evidence.slice(0, 2)
   const CARD_X = 986, CARD_W = 420, CARD_H = 152, CARD_GAP = 20
   const cardBox = (j: number) => ({ x: CARD_X, y: 604 + j * (CARD_H + CARD_GAP), w: CARD_W, h: CARD_H })

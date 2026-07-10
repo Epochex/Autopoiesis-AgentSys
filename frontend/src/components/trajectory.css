@@ -10,8 +10,8 @@
 
 /* ── HUD masthead ─────────────────────────────────────────────────────────── */
 .traj-page .fx-mast { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding: 12px 0 12px; border-bottom: 2px solid var(--ink); }
-.traj-page .fx-mast-kick { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gray); }
-.traj-page .fx-mast-title { margin: 8px 0 0 -2px; font-family: var(--font-display); font-weight: 600; text-transform: uppercase; font-size: clamp(34px, 4.4vw, 62px); line-height: 0.86; letter-spacing: -0.03em; color: var(--ink); }
+.traj-page .fx-mast-kick { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gray); margin-bottom: 4px; }
+.traj-page .fx-mast-title { margin: 26px 0 0 -2px; font-family: var(--font-display); font-weight: 600; text-transform: uppercase; font-size: clamp(34px, 4.4vw, 62px); line-height: 0.9; letter-spacing: -0.03em; color: var(--ink); }
 .traj-page .fx-mast-title mark { background: var(--acid); color: var(--acid-ink); padding: 0 0.04em; box-decoration-break: clone; }
 .traj-page .fx-mast-title em { font-style: normal; font-size: 0.19em; letter-spacing: 0.18em; color: var(--gray); margin-left: 12px; vertical-align: 0.5em; }
 .traj-page .fx-mast-mission { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
@@ -230,6 +230,7 @@
 .traj-page .fx-conv-mem { stroke: var(--gray); stroke-width: 1.4; stroke-dasharray: 2 3; }
 .traj-page .fx-conv-tag { font-family: var(--font-mono); font-weight: 600; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .traj-page .fx-conv-tag.cold { fill: var(--ink); }
+.traj-page .fx-conv-tag.mem { fill: var(--gray); paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
 .traj-page .fx-conv-tag.warm { fill: var(--acid-ink); paint-order: stroke; stroke: var(--acid); stroke-width: 5px; stroke-linejoin: round; }
 .traj-page .fx-conv-dot { fill: var(--acid); stroke: var(--ink); stroke-width: 1.5; }
 .traj-page .fx-conv-mdot { fill: var(--paper); stroke: var(--gray); stroke-width: 1.4; }
