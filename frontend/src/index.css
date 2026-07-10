@@ -23,9 +23,16 @@ body,
   margin: 0;
   min-height: 100%;
 }
+/* Global page ground is now the light editorial paper. Every view is light;
+   this retires the old dark radial-gradient so no dark margins bleed outside
+   the centered .stage at any viewport width. The full-screen 3D scene
+   (.c3d-full) paints its own dark background, so it is unaffected. */
+html,
 body {
-  background: radial-gradient(120% 80% at 50% -12%, #0f1a18 0%, var(--ink) 55%);
-  color: var(--text);
+  background: #e7e7e3;
+}
+body {
+  color: #0d0d0d;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   -webkit-font-smoothing: antialiased;
 }

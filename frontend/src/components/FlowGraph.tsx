@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react'
 
-/* ── ③ EXECUTION-LEDGER SCHEMATIC ─────────────────────────────────────────────
-   A bespoke architectural schematic (not a linear box-chain). The 7-station
-   read-only reasoning spine, with the real system architecture wired IN:
-     · 3-TIER MEMORY store  → side-module feeding the 记忆 station
-     · SKILL-ATTENTION ctrl → side-module feeding the 技能 station
-     · PROVENANCE LEDGER    → a real ledger row below, with actual evidence IDs,
-                              raw log lines and per-citation verify status
-     · CITATION VERIFIER    → an explicit gate on the 核验→判决 edge
-   Orthogonal schematic routing, data-pulses on live edges, and full provenance
-   cross-highlighting (station ⇄ evidence). All values are real trace payload. */
+/* ── ③ TACTICAL REPLAY CANVAS ─────────────────────────────────────────────────
+   A single connected spatial diagram (ctOS system-map / Division ISAC in spirit),
+   NOT a left-right strip. The 7-stage read-only reasoning chain is a deliberate
+   zig-zag constellation wired by drawn data-flow links. The real subsystems are
+   docked IN SPACE and connected to the stage they feed:
+     · 3-TIER MEMORY STORE  → feeds 记忆 (stage 02)
+     · SKILL-ATTENTION CTRL → feeds 技能 (stage 03)
+     · PROVENANCE evidence  → floating profiler cards, tethered to PROBE (pin),
+                              VERIFY (verify) and VERDICT (cite)
+     · VERIFIER GATE        → an explicit checkpoint on the 核验 → 判决 edge
+   The currently-active stage is reticle-LOCKED and pulled into a large acid HERO
+   PROFILER (the single focal point) showing its live computation. A replay scan
+   lights nodes + links in sequence. All values are real trace payload. */
 
 export type FxUnit = 'int' | 'pct' | 'x' | 'conf'
+export type FxReadout = { op: string; body: string }
 export type FxStation = {
   no: string
   name: string
@@ -19,6 +23,7 @@ export type FxStation = {
   kind: string
   cat: string
   metric: { value: number; unit: FxUnit; caption: string } | null
+  readout?: FxReadout[]
   loadBearing?: boolean
 }
 export type FxEvidence = { id: string; sum: string; raw: string; pinned: boolean; included: boolean; cited: boolean; verified: boolean }
@@ -26,15 +31,22 @@ export type FxMemTier = { code: string; label: string; count: number }
 export type FxSkills = { exposed: string[] }
 export type FxVerify = { passed: boolean; recall: number }
 
-/* ── geometry (fixed viewBox, scales to container) ── */
-const VW = 1240, VH = 662
-const START = 40, W = 150, H = 112, STEP = 168, GATE_GAP = 40
-const SP_Y = 262
-const CY = SP_Y + H / 2                 // spine connector line
-const RAIL_Y = 40, RAIL_H = 150         // top module band (memory / skills)
-const LED_Y = 470, LED_H = 158          // provenance ledger band
-const xOf = (i: number) => START + i * STEP + (i === 6 ? GATE_GAP : 0)
-const cxOf = (i: number) => xOf(i) + W / 2
+/* ── geometry (fixed viewBox, scales uniformly to container) ── */
+const VW = 1440, VH = 900
+const NW = 154, NH = 94
+type XY = [number, number]
+// deliberate constellation: intake drops in (01→02 vertical), then a rising
+// serpentine core, terminating at the lifted verdict, top-right.
+const POS: XY[] = [
+  [152, 250], // 01 alert
+  [152, 476], // 02 memory
+  [388, 366], // 03 skills
+  [620, 476], // 04 probe
+  [852, 366], // 05 context
+  [1064, 476], // 06 verify
+  [1300, 288], // 07 verdict
+]
+const posOf = (i: number): XY => POS[i] ?? [150 + i * 176, i % 2 ? 476 : 288]
 
 const CAT_COLOR: Record<string, string> = {
   alert: '#d6335a', memory: '#4c9d94', skill: '#ff7a6b', probe: '#2b3d38',
@@ -42,17 +54,19 @@ const CAT_COLOR: Record<string, string> = {
 }
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
-const fmt = (n: number, unit: FxUnit) => {
-  switch (unit) {
-    case 'x': return n.toFixed(2)
-    case 'conf': return n.toFixed(2)
-    default: return String(Math.round(n))
-  }
-}
+const fmt = (n: number, unit: FxUnit) => (unit === 'x' || unit === 'conf' ? n.toFixed(2) : String(Math.round(n)))
 const unitSuffix = (u: FxUnit) => (u === 'pct' ? '%' : u === 'x' ? '×' : '')
 
-/* count-up that only runs while a station is the live cursor. State is only
-   written inside the rAF callback; when idle we render the target directly. */
+// point on a node's rectangle boundary along the direction toward (tx,ty)
+function edge(cx: number, cy: number, tx: number, ty: number, w = NW, h = NH): XY {
+  const dx = tx - cx, dy = ty - cy
+  const sx = dx ? (w / 2) / Math.abs(dx) : Infinity
+  const sy = dy ? (h / 2) / Math.abs(dy) : Infinity
+  const s = Math.min(sx, sy)
+  return [cx + dx * s, cy + dy * s]
+}
+
+/* count-up that only runs while a station is live cursor */
 function useCountUp(target: number, run: boolean, dur = 820) {
   const [n, setN] = useState(0)
   useEffect(() => {
@@ -71,16 +85,23 @@ function useCountUp(target: number, run: boolean, dur = 820) {
   return run ? n : target
 }
 
-function Metric({ m, active, pending }: { m: FxStation['metric']; active: boolean; pending: boolean }) {
+function NodeMetric({ m, active, pending }: { m: FxStation['metric']; active: boolean; pending: boolean }) {
   const shown = useCountUp(m?.value ?? 0, active)
   if (!m) return null
-  if (pending) return <text className="fx-stn-num pend" x={0} y={0}>·</text>
+  if (pending) return <text className="fx-node-metric pend" x={0} y={0}>·</text>
   return (
     <>
-      <text className="fx-stn-num" x={0} y={0}>{fmt(shown, m.unit)}<tspan className="fx-stn-u">{unitSuffix(m.unit)}</tspan></text>
-      <text className="fx-stn-cap" x={0} y={18}>{m.caption}</text>
+      <text className="fx-node-metric" x={0} y={0}>{fmt(shown, m.unit)}<tspan className="fx-node-u">{unitSuffix(m.unit)}</tspan></text>
+      <text className="fx-node-cap" x={2} y={13}>{m.caption}</text>
     </>
   )
+}
+
+// the reticle-locked hero read of whichever stage is currently active
+function HeroBig({ m }: { m: FxStation['metric'] }) {
+  const shown = useCountUp(m?.value ?? 0, true, 900)
+  if (!m) return null
+  return <text className="fx-hero-big" x={0} y={0}>{fmt(shown, m.unit)}<tspan className="fx-hero-u">{unitSuffix(m.unit)}</tspan></text>
 }
 
 export function FlowGraph({
@@ -102,11 +123,9 @@ export function FlowGraph({
   const idx = (k: string) => stations.findIndex((s) => s.kind === k)
   const memIdx = idx('memory_read'), skIdx = idx('skills_exposed'), probeIdx = idx('tool_called')
   const verIdx = idx('verifier_result'), diagIdx = idx('diagnosis_completed')
-
-  // provenance stations = every station that touches the evidence ledger
   const provStations = [probeIdx, verIdx, diagIdx].filter((i) => i >= 0)
 
-  // ── cross-highlight resolution ──
+  // ── connection-driven cross-highlight ──
   const hovering = hoverStn !== null || hoverEvi !== null
   const hotStn = new Set<number>()
   const hotEvi = new Set<number>()
@@ -122,8 +141,9 @@ export function FlowGraph({
     if (hoverStn === memIdx) hotBus.add('mem')
     if (hoverStn === skIdx) hotBus.add('skill')
     if (provStations.includes(hoverStn)) {
-      provStations.forEach((s) => hotStn.add(s))
-      hotBus.add('pin'); hotBus.add('verify'); hotBus.add('cite')
+      if (hoverStn === probeIdx) hotBus.add('pin')
+      if (hoverStn === verIdx) hotBus.add('verify')
+      if (hoverStn === diagIdx) hotBus.add('cite')
       evidence.forEach((e, j) => { if (e.pinned || e.cited) hotEvi.add(j) })
     }
   }
@@ -131,204 +151,276 @@ export function FlowGraph({
   const eviCls = (j: number) => hovering ? (hotEvi.has(j) ? 'hot' : 'dim') : ''
   const busCls = (b: string) => hovering ? (hotBus.has(b) ? 'hot' : 'dim') : ''
 
-  const eviRows = evidence.slice(0, 3)
-  const rowY = (j: number) => LED_Y + 52 + j * 34
+  // ── module + card frames ──
+  const memBox = { x: 40, y: 604, w: 300, h: 170 }        // 3-tier memory store (lower-left)
+  const skBox = { x: 258, y: 58, w: 322, h: 132 }          // skill-attention ctrl (top)
+  const cards = evidence.slice(0, 2)
+  const CARD_X = 986, CARD_W = 420, CARD_H = 152, CARD_GAP = 20
+  const cardBox = (j: number) => ({ x: CARD_X, y: 604 + j * (CARD_H + CARD_GAP), w: CARD_W, h: CARD_H })
+  const cardCenter = (j: number): XY => { const b = cardBox(j); return [b.x + b.w / 2, b.y + b.h / 2] }
 
-  // vertical bus anchors
-  const pinX = cxOf(probeIdx >= 0 ? probeIdx : 3)
-  const verX = cxOf(verIdx >= 0 ? verIdx : 5)
-  const citeX = cxOf(diagIdx >= 0 ? diagIdx : 6)
-
-  const memPanel = { x: 30, y: RAIL_Y, w: 330, h: RAIL_H }
-  const skPanel = { x: 392, y: RAIL_Y, w: 340, h: RAIL_H }
-  const memDropX = cxOf(memIdx >= 0 ? memIdx : 1)
-  const skDropX = cxOf(skIdx >= 0 ? skIdx : 2)
+  // hero profiler (focal)
+  const hero = { x: 360, y: 600, w: 596, h: 288 }
+  const cur = stations[cursor] ?? stations[0]
+  const curPos = posOf(cursor)
+  const heroAnchorX = Math.max(hero.x + 60, Math.min(hero.x + hero.w - 60, curPos[0]))
 
   const memLive = memIdx >= 0 && reached >= memIdx
   const skLive = skIdx >= 0 && reached >= skIdx
-  const gateX = (xOf(5) + W + xOf(6)) / 2
   const gateLive = verIdx >= 0 && reached >= verIdx
+
+  // memory feed geometry
+  const memC = posOf(memIdx >= 0 ? memIdx : 1)
+  const skC = posOf(skIdx >= 0 ? skIdx : 2)
+  const probeC = posOf(probeIdx >= 0 ? probeIdx : 3)
+  const verC = posOf(verIdx >= 0 ? verIdx : 5)
+  const diagC = posOf(diagIdx >= 0 ? diagIdx : 6)
+
+  // verifier gate sits on the verify→verdict edge
+  const gs = edge(verC[0], verC[1], diagC[0], diagC[1])
+  const ge = edge(diagC[0], diagC[1], verC[0], verC[1])
+  const gate: XY = [gs[0] + (ge[0] - gs[0]) * 0.46, gs[1] + (ge[1] - gs[1]) * 0.46]
 
   return (
     <div className="fx-stage">
-      <svg className={`fx-svg ${hovering ? 'hov' : ''}`} viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" role="img"
+      <svg className={`fx-canvas ${hovering ? 'hov' : ''}`} viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" role="img"
         onMouseLeave={() => { setHoverStn(null); setHoverEvi(null) }}>
         <defs>
-          <pattern id="fx-dots" width={16} height={16} patternUnits="userSpaceOnUse">
-            <circle cx={1} cy={1} r={1} fill="var(--rule)" />
-          </pattern>
-          <pattern id="fx-hatch" width={7} height={7} patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
-            <rect width={2.4} height={7} fill="var(--ink)" />
-          </pattern>
-          <marker id="fx-ar" markerWidth={9} markerHeight={9} refX={6.5} refY={3} orient="auto"><path d="M0 0 L6.5 3 L0 6 Z" fill="var(--ink)" /></marker>
-          <marker id="fx-ar-a" markerWidth={9} markerHeight={9} refX={6.5} refY={3} orient="auto"><path d="M0 0 L6.5 3 L0 6 Z" fill="var(--ink)" /></marker>
+          <pattern id="fx-dots" width={22} height={22} patternUnits="userSpaceOnUse"><circle cx={1} cy={1} r={1} fill="var(--rule)" /></pattern>
+          <pattern id="fx-hatch" width={7} height={7} patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width={2.4} height={7} fill="var(--ink)" /></pattern>
+          <marker id="fx-ar" markerWidth={9} markerHeight={9} refX={6} refY={3} orient="auto"><path d="M0 0 L6.5 3 L0 6 Z" fill="var(--ink)" /></marker>
+          <marker id="fx-ar-d" markerWidth={8} markerHeight={8} refX={5.5} refY={3} orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="var(--gray)" /></marker>
         </defs>
 
-        {/* dot-grid field + registration marks + frame */}
-        <rect x={0} y={0} width={VW} height={VH} fill="url(#fx-dots)" opacity={0.6} />
-        <g className="fx-reg">
-          <path d="M14 14 h16 M14 14 v16" /><path d={`M${VW - 14} 14 h-16 M${VW - 14} 14 v16`} />
-          <path d={`M14 ${VH - 14} h16 M14 ${VH - 14} v-16`} /><path d={`M${VW - 14} ${VH - 14} h-16 M${VW - 14} ${VH - 14} v-16`} />
+        {/* ── field + HUD frame chrome ── */}
+        <rect x={0} y={0} width={VW} height={VH} fill="url(#fx-dots)" opacity={0.7} />
+        <g className="fx-frame">
+          <path d="M30 30 h30 M30 30 v30" /><path d={`M${VW - 30} 30 h-30 M${VW - 30} 30 v30`} />
+          <path d={`M30 ${VH - 30} h30 M30 ${VH - 30} v-30`} /><path d={`M${VW - 30} ${VH - 30} h-30 M${VW - 30} ${VH - 30} v-30`} />
         </g>
-        <text className="fx-anno" x={16} y={VH - 22}>SCHEMA · EXEC-LEDGER · R230 · READ-ONLY DIGRAPH</text>
-        <text className="fx-anno r" x={VW - 16} y={VH - 22} textAnchor="end">0x{(reached + 1).toString(16).toUpperCase().padStart(2, '0')} / 0x{stations.length.toString(16).toUpperCase().padStart(2, '0')}</text>
+        {/* coordinate ticks along the top edge */}
+        <g className="fx-coord">{Array.from({ length: 24 }).map((_, i) => <line key={i} x1={72 + i * 56} y1={30} x2={72 + i * 56} y2={i % 4 === 0 ? 42 : 36} />)}</g>
+        <text className="fx-scanid" x={44} y={64}>◎ SCAN · R230 · EXEC-LEDGER</text>
+        <text className="fx-scanid dim2" x={44} y={80}>READ-ONLY DIGRAPH · OBSERVE-ONLY</text>
+        <text className="fx-ambient" x={VW - 44} y={64} textAnchor="end">TRACE 0x{(reached + 1).toString(16).toUpperCase().padStart(2, '0')} / 0x{stations.length.toString(16).toUpperCase().padStart(2, '0')}</text>
+        <text className="fx-ambient r dim2" x={VW - 44} y={80} textAnchor="end">⊘ NO-WRITE PATH · Σ READ</text>
 
-        {/* ── wireframe globe motif + read-only annotation (top-right void) ── */}
-        <g className="fx-globe" transform="translate(968 116)">
-          <circle r={58} />
-          <ellipse rx={58} ry={22} /><ellipse rx={38} ry={58} /><ellipse rx={20} ry={58} />
-          <line x1={-58} y1={0} x2={58} y2={0} /><line x1={0} y1={-58} x2={0} y2={58} />
-          <circle className="fx-globe-o" r={58} />
+        {/* wireframe globe motif (ambient, top-right void) */}
+        <g className="fx-globe" transform="translate(1240 168)">
+          <circle r={46} /><ellipse rx={46} ry={17} /><ellipse rx={30} ry={46} /><ellipse rx={15} ry={46} />
+          <line x1={-46} y1={0} x2={46} y2={0} /><line x1={0} y1={-46} x2={0} y2={46} />
         </g>
-        <text className="fx-anno" x={900} y={44}>⊘ NO-WRITE PATH</text>
-        <text className="fx-anno" x={900} y={58}>OBSERVE-ONLY · Σ READ</text>
-        <text className="fx-anno dim2" x={1046} y={190} textAnchor="middle">∮ probe ⊂ readonly</text>
 
-        {/* ══ SPINE CONNECTORS (orthogonal) + data-pulses ══ */}
+        {/* ambient scan sweep (atmosphere) */}
+        <g className="fx-sweep"><line x1={0} y1={44} x2={0} y2={VH - 44} /></g>
+
+        {/* ══ CONNECTIVE TISSUE (drawn first, sits under nodes) ══ */}
+        {/* spine links between consecutive stages */}
         {stations.slice(0, -1).map((_, i) => {
-          const x1 = xOf(i) + W, x2 = xOf(i + 1)
+          const a = posOf(i), b = posOf(i + 1)
+          const s = edge(a[0], a[1], b[0], b[1]), e = edge(b[0], b[1], a[0], a[1])
           const on = reached >= i + 1
-          const d = `M${x1} ${CY} L${x2} ${CY}`
+          const isGateEdge = i === verIdx && i + 1 === diagIdx
+          const d = `M${s[0]} ${s[1]} L${e[0]} ${e[1]}`
           return (
-            <g key={`sp${i}`} className={`fx-edge ${on ? 'on' : ''}`}>
-              <path className="fx-edge-l" d={d} markerEnd="url(#fx-ar)" />
-              {on ? <circle className="fx-pulse" r={4}><animateMotion dur="1.5s" repeatCount="indefinite" path={d} /></circle> : null}
+            <g key={`lnk${i}`} className={`fx-link ${on ? 'on' : ''} ${hovering ? (hotStn.has(i) && hotStn.has(i + 1) ? 'hot' : 'dim') : ''}`}>
+              <path className="fx-link-l" d={d} markerEnd={isGateEdge ? undefined : 'url(#fx-ar)'} />
+              {on && !isGateEdge ? <circle className="fx-pulse" r={4}><animateMotion dur="1.6s" repeatCount="indefinite" path={d} /></circle> : null}
+            </g>
+          )
+        })}
+
+        {/* memory-store feed → 记忆 */}
+        <g className={`fx-feed ${memLive ? 'on' : ''} ${busCls('mem')}`}>
+          <path className="fx-feed-l" d={`M${memBox.x + memBox.w / 2} ${memBox.y} L${memBox.x + memBox.w / 2} ${memC[1] + NH / 2 + 4}`} markerEnd="url(#fx-ar)" />
+          <text className="fx-feed-t" x={memBox.x + memBox.w / 2 + 8} y={(memBox.y + memC[1] + NH / 2) / 2}>{zh ? '召回先验' : 'PRIOR'}</text>
+          {memLive ? <circle className="fx-pulse sm" r={3}><animateMotion dur="1.8s" repeatCount="indefinite" path={`M${memBox.x + memBox.w / 2} ${memBox.y} L${memBox.x + memBox.w / 2} ${memC[1] + NH / 2 + 4}`} /></circle> : null}
+        </g>
+        {/* skill-ctrl feed → 技能 */}
+        <g className={`fx-feed ${skLive ? 'on' : ''} ${busCls('skill')}`}>
+          <path className="fx-feed-l" d={`M${skBox.x + skBox.w / 2} ${skBox.y + skBox.h} L${skBox.x + skBox.w / 2} ${skC[1] - NH / 2 - 4}`} markerEnd="url(#fx-ar)" />
+          <text className="fx-feed-t" x={skBox.x + skBox.w / 2 + 8} y={(skBox.y + skBox.h + skC[1] - NH / 2) / 2}>{zh ? '钳制' : 'CLAMP'}</text>
+          {skLive ? <circle className="fx-pulse sm" r={3}><animateMotion dur="1.8s" repeatCount="indefinite" path={`M${skBox.x + skBox.w / 2} ${skBox.y + skBox.h} L${skBox.x + skBox.w / 2} ${skC[1] - NH / 2 - 4}`} /></circle> : null}
+        </g>
+
+        {/* evidence tethers: PROBE pin (down), VERIFY verify, VERDICT cite */}
+        {cards.map((e, j) => {
+          const c = cardCenter(j)
+          const pinS = edge(probeC[0], probeC[1], c[0], c[1])
+          const citeS = edge(diagC[0], diagC[1], c[0], c[1])
+          const verS = edge(verC[0], verC[1], c[0], c[1])
+          const cb = cardBox(j)
+          const toCard = (from: XY): string => `M${from[0]} ${from[1]} L${cb.x} ${c[1]}`
+          return (
+            <g key={`teth${j}`}>
+              {e.pinned ? <g className={`fx-teth pin ${reached >= (probeIdx < 0 ? 3 : probeIdx) ? 'on' : ''} ${hovering ? (hotBus.has('pin') && hotEvi.has(j) ? 'hot' : 'dim') : ''}`}>
+                <path className="fx-teth-l" d={toCard(pinS)} markerEnd="url(#fx-ar-d)" />
+              </g> : null}
+              {e.cited ? <g className={`fx-teth cite ${diagIdx >= 0 && reached >= diagIdx ? 'on' : ''} ${hovering ? (hotBus.has('cite') && hotEvi.has(j) ? 'hot' : 'dim') : ''}`}>
+                <path className="fx-teth-l" d={toCard(citeS)} markerEnd="url(#fx-ar-d)" />
+              </g> : null}
+              {e.cited ? <g className={`fx-teth verify ${verIdx >= 0 && reached >= verIdx ? 'on' : ''} ${hovering ? (hotBus.has('verify') && hotEvi.has(j) ? 'hot' : 'dim') : ''}`}>
+                <path className="fx-teth-l" d={toCard(verS)} markerEnd="url(#fx-ar-d)" />
+              </g> : null}
             </g>
           )
         })}
 
         {/* ══ VERIFIER GATE on the 核验 → 判决 edge ══ */}
-        <g className={`fx-gate ${gateLive ? 'on' : ''} ${verify.passed ? 'pass' : 'reject'}`} transform={`translate(${gateX} ${CY})`}>
-          <path className="fx-gate-body" d="M-15 -18 L15 -18 L15 18 L-15 18 Z" />
-          <path className="fx-gate-slot" d="M-8 -8 L8 8 M-8 8 L8 -8" />
-          <text className="fx-gate-t" x={0} y={-26} textAnchor="middle">{zh ? '核验闸' : 'GATE'}</text>
-          <text className="fx-gate-v" x={0} y={34} textAnchor="middle">{verify.passed ? '✓ PASS' : '✕ REJECT'}</text>
+        <g className={`fx-gate ${gateLive ? 'on' : ''} ${verify.passed ? 'pass' : 'reject'}`} transform={`translate(${gate[0]} ${gate[1]})`}>
+          <path className="fx-gate-body" d="M0 -20 L20 0 L0 20 L-20 0 Z" />
+          <path className="fx-gate-x" d="M-7 -7 L7 7 M-7 7 L7 -7" />
+          <text className="fx-gate-t" x={0} y={-28} textAnchor="middle">{zh ? '核验闸' : 'GATE'}</text>
+          <text className="fx-gate-v" x={0} y={38} textAnchor="middle">{verify.passed ? '✓ PASS' : '✕ REJECT'}</text>
         </g>
 
-        {/* ══ MEMORY 3-TIER STORE · side-module feeding 记忆 ══ */}
-        <g className={`fx-mod ${memLive ? 'on' : ''} ${stnCls(memIdx)}`}
-          onMouseEnter={() => setHoverStn(memIdx)} onMouseLeave={() => setHoverStn(null)}>
-          <path className="fx-mod-box" d={`M${memPanel.x} ${memPanel.y} h${memPanel.w} v${memPanel.h} h-${memPanel.w} Z`} />
-          <rect className="fx-mod-strip" x={memPanel.x} y={memPanel.y} width={memPanel.w} height={4} fill={CAT_COLOR.memory} />
-          <text className="fx-mod-tag" x={memPanel.x + 12} y={memPanel.y + 24}>{zh ? '三层记忆存储' : '3-TIER MEMORY STORE'}</text>
-          <text className="fx-mod-sub" x={memPanel.x + memPanel.w - 12} y={memPanel.y + 24} textAnchor="end">MEM-CORE</text>
-          {memory.length ? memory.slice(0, 4).map((m, k) => {
-            const yy = memPanel.y + 44 + k * 24
-            const max = Math.max(1, ...memory.map((x) => x.count))
-            const bw = (m.count / max) * 150
+        {/* ══ 3-TIER MEMORY STORE (docked subsystem) ══ */}
+        <g className={`fx-mod ${memLive ? 'on' : ''} ${stnCls(memIdx)}`} onMouseEnter={() => setHoverStn(memIdx)} onMouseLeave={() => setHoverStn(null)}>
+          <rect className="fx-mod-box" x={memBox.x} y={memBox.y} width={memBox.w} height={memBox.h} />
+          <rect className="fx-mod-strip" x={memBox.x} y={memBox.y} width={memBox.w} height={4} fill={CAT_COLOR.memory} />
+          <text className="fx-mod-tag" x={memBox.x + 12} y={memBox.y + 24}>{zh ? '三层记忆存储' : '3-TIER MEMORY'}</text>
+          <text className="fx-mod-sub" x={memBox.x + memBox.w - 12} y={memBox.y + 24} textAnchor="end">MEM-CORE</text>
+          {/* tier store as a mesh: satellites sized by recall count, link weight ∝ count */}
+          {(() => {
+            const hubX = memBox.x + memBox.w / 2, hubY = memBox.y + 106
+            const max = Math.max(1, ...memory.map((m) => m.count))
+            const sum = memory.reduce((a, m) => a + m.count, 0)
+            const off: XY[] = [[-100, -40], [100, -40], [-100, 40], [100, 40]]
             return (
-              <g key={m.code}>
-                <text className="fx-mod-k" x={memPanel.x + 14} y={yy + 9}>{m.code}</text>
-                <rect className="fx-mod-track" x={memPanel.x + 74} y={yy} width={154} height={11} />
-                <rect className="fx-mod-bar" x={memPanel.x + 74} y={yy} width={Math.max(3, bw)} height={11} style={{ opacity: memLive ? 1 : 0.3 }} />
-                <text className="fx-mod-n" x={memPanel.x + memPanel.w - 12} y={yy + 9} textAnchor="end">{m.count}</text>
-              </g>
+              <>
+                {memory.slice(0, 4).map((m, k) => {
+                  const sx = hubX + off[k][0], sy = hubY + off[k][1]
+                  return <line key={'l' + m.code} className="fx-mesh-link" x1={hubX} y1={hubY} x2={sx} y2={sy} style={{ strokeWidth: 1 + (m.count / max) * 3, opacity: memLive ? (m.count ? 0.9 : 0.35) : 0.25 }} />
+                })}
+                <circle className="fx-mesh-hub" cx={hubX} cy={hubY} r={13} />
+                <text className="fx-mesh-hubn" x={hubX} y={hubY + 4} textAnchor="middle">Σ{sum}</text>
+                {memory.slice(0, 4).map((m, k) => {
+                  const sx = hubX + off[k][0], sy = hubY + off[k][1]
+                  const r = 7 + Math.sqrt(m.count / max) * 15
+                  const right = off[k][0] > 0
+                  return (
+                    <g key={m.code} className={`fx-mesh-sat ${m.count ? '' : 'empty'}`} style={{ opacity: memLive ? 1 : 0.4 }}>
+                      <circle className="fx-mesh-dot" cx={sx} cy={sy} r={r} />
+                      <text className="fx-mesh-n" x={sx} y={sy + 4} textAnchor="middle">{m.count}</text>
+                      <text className="fx-mesh-k" x={right ? sx + r + 6 : sx - r - 6} y={sy + 3} textAnchor={right ? 'start' : 'end'}>{m.code}</text>
+                    </g>
+                  )
+                })}
+              </>
             )
-          }) : <text className="fx-mod-k" x={memPanel.x + 14} y={memPanel.y + 60}>{zh ? '无先验命中' : 'NO PRIORS'}</text>}
-        </g>
-        {/* memory drop-in bus */}
-        <g className={`fx-bus ${memLive ? 'on' : ''} ${busCls('mem')}`}>
-          <path className="fx-bus-l" d={`M${memDropX} ${memPanel.y + memPanel.h} L${memDropX} ${SP_Y}`} markerEnd="url(#fx-ar)" />
-          <text className="fx-bus-t" x={memDropX + 8} y={(memPanel.y + memPanel.h + SP_Y) / 2} >{zh ? '先验' : 'PRIOR'}</text>
-          {memLive ? <circle className="fx-pulse sm" r={3}><animateMotion dur="1.7s" repeatCount="indefinite" path={`M${memDropX} ${memPanel.y + memPanel.h} L${memDropX} ${SP_Y}`} /></circle> : null}
+          })()}
         </g>
 
-        {/* ══ SKILL-ATTENTION CONTROLLER · side-module feeding 技能 ══ */}
-        <g className={`fx-mod ${skLive ? 'on' : ''} ${stnCls(skIdx)}`}
-          onMouseEnter={() => setHoverStn(skIdx)} onMouseLeave={() => setHoverStn(null)}>
-          <path className="fx-mod-box" d={`M${skPanel.x} ${skPanel.y} h${skPanel.w} v${skPanel.h} h-${skPanel.w} Z`} />
-          <rect className="fx-mod-strip" x={skPanel.x} y={skPanel.y} width={skPanel.w} height={4} fill={CAT_COLOR.skill} />
-          <text className="fx-mod-tag" x={skPanel.x + 12} y={skPanel.y + 24}>{zh ? '技能注意力控制器' : 'SKILL-ATTENTION CTRL'}</text>
-          <text className="fx-mod-sub" x={skPanel.x + skPanel.w - 12} y={skPanel.y + 24} textAnchor="end">TOP-K</text>
-          {/* funnel: full toolset → scored top-k → exposed read-only */}
-          <path className="fx-hatchbox" d={`M${skPanel.x + 14} ${skPanel.y + 42} h56 v78 h-56 Z`} />
-          <text className="fx-mod-mini" x={skPanel.x + 42} y={skPanel.y + 134} textAnchor="middle">{zh ? '全集' : 'TOOLSET'}</text>
-          <path className="fx-funnel" d={`M${skPanel.x + 78} ${skPanel.y + 44} L${skPanel.x + 150} ${skPanel.y + 64} L${skPanel.x + 150} ${skPanel.y + 98} L${skPanel.x + 78} ${skPanel.y + 118} Z`} />
-          <text className="fx-mod-mini" x={skPanel.x + 114} y={skPanel.y + 78} textAnchor="middle">SCORE</text>
-          <text className="fx-mod-mini" x={skPanel.x + 114} y={skPanel.y + 92} textAnchor="middle">&gt;0.5</text>
+        {/* ══ SKILL-ATTENTION CONTROLLER (docked subsystem) ══ */}
+        <g className={`fx-mod ${skLive ? 'on' : ''} ${stnCls(skIdx)}`} onMouseEnter={() => setHoverStn(skIdx)} onMouseLeave={() => setHoverStn(null)}>
+          <rect className="fx-mod-box" x={skBox.x} y={skBox.y} width={skBox.w} height={skBox.h} />
+          <rect className="fx-mod-strip" x={skBox.x} y={skBox.y} width={skBox.w} height={4} fill={CAT_COLOR.skill} />
+          <text className="fx-mod-tag" x={skBox.x + 12} y={skBox.y + 23}>{zh ? '技能注意力控制' : 'SKILL-ATTENTION'}</text>
+          <text className="fx-mod-sub" x={skBox.x + skBox.w - 12} y={skBox.y + 23} textAnchor="end">TOP-K</text>
+          <path className="fx-hatchbox" d={`M${skBox.x + 14} ${skBox.y + 36} h44 v72 h-44 Z`} />
+          <text className="fx-mod-mini" x={skBox.x + 36} y={skBox.y + 122} textAnchor="middle">{zh ? '全集' : 'ALL'}</text>
+          <path className="fx-funnel" d={`M${skBox.x + 64} ${skBox.y + 38} L${skBox.x + 128} ${skBox.y + 58} L${skBox.x + 128} ${skBox.y + 86} L${skBox.x + 64} ${skBox.y + 106} Z`} />
+          <text className="fx-mod-mini" x={skBox.x + 96} y={skBox.y + 68} textAnchor="middle">SCORE</text>
+          <text className="fx-mod-mini" x={skBox.x + 96} y={skBox.y + 80} textAnchor="middle">&gt;0.5</text>
           {skills.exposed.slice(0, 3).map((s, i) => {
-            const yy = skPanel.y + 46 + i * 24
+            const yy = skBox.y + 40 + i * 22
             const code = (s.replace(/^check[_-]?/i, '').replace(/_/g, ' ').slice(0, 15) || 'skill').toUpperCase()
             return (
               <g key={s}>
-                <rect className="fx-sk-chip" x={skPanel.x + 168} y={yy} width={150} height={18} style={{ opacity: skLive ? 1 : 0.3 }} />
-                <text className="fx-sk-t" x={skPanel.x + 176} y={yy + 13}>{code}<title>{s}</title></text>
+                <rect className="fx-sk-chip" x={skBox.x + 146} y={yy} width={162} height={17} style={{ opacity: skLive ? 1 : 0.3 }} />
+                <text className="fx-sk-t" x={skBox.x + 153} y={yy + 12}>{code}<title>{s}</title></text>
               </g>
             )
           })}
-          <text className="fx-mod-lock" x={skPanel.x + skPanel.w - 12} y={skPanel.y + skPanel.h - 10} textAnchor="end">⊘ WRITE-BLOCKED · RO</text>
-        </g>
-        {/* skill drop-in bus */}
-        <g className={`fx-bus ${skLive ? 'on' : ''} ${busCls('skill')}`}>
-          <path className="fx-bus-l" d={`M${skDropX} ${skPanel.y + skPanel.h} L${skDropX} ${SP_Y}`} markerEnd="url(#fx-ar)" />
-          <text className="fx-bus-t" x={skDropX + 8} y={(skPanel.y + skPanel.h + SP_Y) / 2}>{zh ? '钳制' : 'CLAMP'}</text>
-          {skLive ? <circle className="fx-pulse sm" r={3}><animateMotion dur="1.7s" repeatCount="indefinite" path={`M${skDropX} ${skPanel.y + skPanel.h} L${skDropX} ${SP_Y}`} /></circle> : null}
+          <text className="fx-mod-lock" x={skBox.x + skBox.w - 12} y={skBox.y + skBox.h - 9} textAnchor="end">⊘ WRITE-BLOCKED · RO</text>
         </g>
 
-        {/* ══ PROVENANCE LEDGER · real evidence IDs / raw logs / verify status ══ */}
-        <g className={`fx-led ${reached >= (probeIdx < 0 ? 3 : probeIdx) ? 'on' : ''}`}>
-          <path className="fx-led-box" d={`M30 ${LED_Y} h1180 v${LED_H} h-1180 Z`} />
-          <rect className="fx-led-strip" x={30} y={LED_Y} width={1180} height={4} fill={CAT_COLOR.probe} />
-          <text className="fx-led-tag" x={46} y={LED_Y + 26}>{zh ? '证据溯源账本' : 'PROVENANCE LEDGER'}</text>
-          <text className="fx-led-sub" x={214} y={LED_Y + 26}>{zh ? `钉实 ${evidence.filter((e) => e.pinned).length} · 引用核验 ${evidence.filter((e) => e.cited).length}` : `${evidence.filter((e) => e.pinned).length} PINNED · ${evidence.filter((e) => e.cited).length} CITED+VERIFIED`}</text>
-          <text className="fx-led-h" x={64} y={LED_Y + 44}>REF</text>
-          <text className="fx-led-h" x={116} y={LED_Y + 44}>EVIDENCE-ID</text>
-          <text className="fx-led-h" x={342} y={LED_Y + 44}>STATUS</text>
-          <text className="fx-led-h" x={470} y={LED_Y + 44}>RAW OBSERVATION · SOURCE</text>
-          {eviRows.map((e, j) => {
-            const y = rowY(j)
-            return (
-              <g key={e.id} className={`fx-row ${eviCls(j)} ${e.cited ? 'cited' : ''}`}
-                onMouseEnter={() => setHoverEvi(j)} onMouseLeave={() => setHoverEvi(null)}>
-                <rect className="fx-row-hit" x={40} y={y - 15} width={1160} height={30} />
-                <rect className="fx-row-tag" x={52} y={y - 9} width={30} height={18} />
-                <text className="fx-row-ref" x={67} y={y + 4} textAnchor="middle">E{String(j + 1).padStart(2, '0')}</text>
-                <rect className="fx-row-dot" x={110} y={y - 4} width={8} height={8} />
-                <text className="fx-row-id" x={126} y={y + 4}>{clip(e.id, 26)}<title>{e.id}</title></text>
-                <g className={`fx-row-st ${e.verified ? 'ok' : 'obs'}`}>
-                  <path d={`M338 ${y - 9} h94 v18 h-94 Z`} />
-                  <text x={385} y={y + 4} textAnchor="middle">{e.verified ? (zh ? '✓ 已核验' : '✓ VERIFIED') : (zh ? '◇ 已观测' : '◇ OBSERVED')}</text>
-                </g>
-                <text className="fx-row-raw" x={470} y={y + 4}>{clip(e.raw || e.sum, 96)}<title>{e.raw}</title></text>
-              </g>
-            )
-          })}
-        </g>
-
-        {/* ledger ⇄ spine buses: PIN (down) / VERIFY (up) / CITE (up) */}
-        <g className={`fx-bus ${reached >= (probeIdx < 0 ? 3 : probeIdx) ? 'on' : ''} ${busCls('pin')}`}>
-          <path className="fx-bus-l" d={`M${pinX} ${SP_Y + H} L${pinX} ${LED_Y}`} markerEnd="url(#fx-ar)" />
-          <text className="fx-bus-t" x={pinX + 8} y={(SP_Y + H + LED_Y) / 2}>{zh ? '钉证据' : 'PIN'}</text>
-        </g>
-        <g className={`fx-bus ${verIdx >= 0 && reached >= verIdx ? 'on' : ''} ${busCls('verify')}`}>
-          <path className="fx-bus-l" d={`M${verX} ${LED_Y} L${verX} ${SP_Y + H}`} markerEnd="url(#fx-ar)" />
-          <text className="fx-bus-t" x={verX + 8} y={(SP_Y + H + LED_Y) / 2}>{zh ? '核验' : 'VERIFY'}</text>
-        </g>
-        <g className={`fx-bus ${diagIdx >= 0 && reached >= diagIdx ? 'on' : ''} ${busCls('cite')}`}>
-          <path className="fx-bus-l" d={`M${citeX} ${LED_Y} L${citeX} ${SP_Y + H}`} markerEnd="url(#fx-ar)" />
-          <text className="fx-bus-t" x={citeX + 8} y={(SP_Y + H + LED_Y) / 2}>{zh ? '引用' : 'CITE'}</text>
-        </g>
-
-        {/* ══ THE 7 STATIONS ══ */}
-        {stations.map((s, i) => {
-          const x = xOf(i), pending = i > reached, active = i === cursor && !pending
+        {/* ══ PROVENANCE EVIDENCE CARDS (ctOS profiler cards, floating) ══ */}
+        <text className="fx-cards-lead" x={CARD_X} y={588}>{zh ? '证据溯源 · 浮动档案' : 'PROVENANCE · EVIDENCE PROFILE'}</text>
+        {cards.map((e, j) => {
+          const b = cardBox(j)
           return (
-            <g key={s.no} className={`fx-stn ${pending ? 'pend' : active ? 'active' : 'done'} ${s.loadBearing ? 'load' : ''} ${stnCls(i)}`}
-              transform={`translate(${x} ${SP_Y})`}
-              onMouseEnter={() => setHoverStn(i)} onMouseLeave={() => setHoverStn(null)}
-              onClick={() => onSeek(i)} style={{ cursor: 'pointer' }}>
-              <rect className="fx-stn-bg" x={0} y={0} width={W} height={H} />
-              <rect className="fx-stn-strip" x={0} y={0} width={W} height={5} fill={CAT_COLOR[s.cat] ?? '#0d0d0d'} />
-              <text className="fx-stn-no" x={12} y={26}>{s.no}</text>
-              <text className="fx-stn-idx" x={W - 12} y={26} textAnchor="end">◇{i + 1}/{stations.length}</text>
-              <text className="fx-stn-name" x={12} y={50}>{s.name}</text>
-              <line className="fx-stn-rule" x1={12} y1={60} x2={W - 12} y2={60} />
-              <g transform={`translate(14 ${H - 26})`}><Metric m={s.metric} active={active} pending={pending} /></g>
-              {s.loadBearing ? <text className="fx-stn-load" x={W - 12} y={H - 10} textAnchor="end">◼ LOAD-BEARING</text> : null}
-              {active ? <text className="fx-stn-live" x={W - 12} y={H - 10} textAnchor="end">▸ LIVE</text> : null}
+            <g key={e.id} className={`fx-card ${e.verified ? 'ver' : ''} ${eviCls(j)}`}
+              onMouseEnter={() => setHoverEvi(j)} onMouseLeave={() => setHoverEvi(null)}>
+              <rect className="fx-card-box" x={b.x} y={b.y} width={b.w} height={b.h} />
+              <rect className="fx-card-strip" x={b.x} y={b.y} width={4} height={b.h} fill={CAT_COLOR.probe} />
+              <rect className="fx-card-tag" x={b.x + 14} y={b.y + 14} width={34} height={20} />
+              <text className="fx-card-ref" x={b.x + 31} y={b.y + 28} textAnchor="middle">E{String(j + 1).padStart(2, '0')}</text>
+              <text className="fx-card-id" x={b.x + 58} y={b.y + 28}>{clip(e.id, 30)}<title>{e.id}</title></text>
+              <g className={`fx-card-st ${e.verified ? 'ok' : 'obs'}`}>
+                <rect x={b.x + b.w - 118} y={b.y + 14} width={104} height={20} />
+                <text x={b.x + b.w - 66} y={b.y + 28} textAnchor="middle">{e.verified ? (zh ? '✓ 已核验' : '✓ VERIFIED') : (zh ? '◇ 已观测' : '◇ OBSERVED')}</text>
+              </g>
+              <line className="fx-card-rule" x1={b.x + 14} y1={b.y + 44} x2={b.x + b.w - 14} y2={b.y + 44} />
+              <text className="fx-card-h" x={b.x + 14} y={b.y + 62}>RAW OBSERVATION · SOURCE</text>
+              <text className="fx-card-raw" x={b.x + 14} y={b.y + 82}>{clip(e.raw || e.sum, 52)}<title>{e.raw}</title></text>
+              <text className="fx-card-raw dim" x={b.x + 14} y={b.y + 100}>{clip(e.sum, 54)}</text>
+              <text className="fx-card-meta" x={b.x + 14} y={b.y + b.h - 12}>{zh ? '钉实' : 'PINNED'} {e.pinned ? '✓' : '—'} · {zh ? '装入' : 'PACKED'} {e.included ? '✓' : '—'} · {zh ? '引用' : 'CITED'} {e.cited ? '✓' : '—'}</text>
             </g>
           )
         })}
+
+        {/* ══ THE 7 STAGE NODES ══ */}
+        {stations.map((s, i) => {
+          const [cx, cy] = posOf(i)
+          const x = cx - NW / 2, y = cy - NH / 2
+          const pending = i > reached, active = i === cursor && !pending
+          return (
+            <g key={s.no} className={`fx-node ${pending ? 'pend' : active ? 'active' : 'done'} ${s.loadBearing ? 'load' : ''} ${stnCls(i)}`}
+              onMouseEnter={() => setHoverStn(i)} onMouseLeave={() => setHoverStn(null)}
+              onClick={() => onSeek(i)} style={{ cursor: 'pointer' }}>
+              <rect className="fx-node-bg" x={x} y={y} width={NW} height={NH} />
+              <rect className="fx-node-strip" x={x} y={y} width={NW} height={5} fill={CAT_COLOR[s.cat] ?? '#0d0d0d'} />
+              <text className="fx-node-no" x={x + 12} y={y + 24}>{s.no}</text>
+              <text className="fx-node-idx" x={x + NW - 12} y={y + 24} textAnchor="end">◇{i + 1}/{stations.length}</text>
+              <text className="fx-node-name" x={x + 12} y={y + 52}>{s.name}</text>
+              <line className="fx-node-rule" x1={x + 12} y1={y + 61} x2={x + NW - 12} y2={y + 61} />
+              <g transform={`translate(${x + 13} ${y + NH - 20})`}><NodeMetric m={s.metric} active={active} pending={pending} /></g>
+              {s.loadBearing ? <text className="fx-node-load" x={x + NW - 11} y={y + NH - 10} textAnchor="end">◼ LOAD-BEARING</text> : null}
+              {/* reticle lock on the active stage */}
+              {active ? (
+                <g className="fx-reticle">
+                  <path d={`M${x - 8} ${y - 8} h16 M${x - 8} ${y - 8} v16`} />
+                  <path d={`M${x + NW + 8} ${y - 8} h-16 M${x + NW + 8} ${y - 8} v16`} />
+                  <path d={`M${x - 8} ${y + NH + 8} h16 M${x - 8} ${y + NH + 8} v-16`} />
+                  <path d={`M${x + NW + 8} ${y + NH + 8} h-16 M${x + NW + 8} ${y + NH + 8} v-16`} />
+                  <text className="fx-node-live" x={x + NW - 11} y={y + NH - 10} textAnchor="end">▸ LOCKED</text>
+                </g>
+              ) : null}
+            </g>
+          )
+        })}
+
+        {/* ══ HERO PROFILER — the reticle pulls the active stage into the focal read ══ */}
+        <g className="fx-hero-lead">
+          <path className="fx-hero-lead-l" d={`M${curPos[0]} ${curPos[1] + NH / 2 + 8} L${curPos[0]} ${hero.y - 22} L${heroAnchorX} ${hero.y - 22} L${heroAnchorX} ${hero.y}`} />
+          <circle className="fx-hero-lead-o" cx={curPos[0]} cy={curPos[1] + NH / 2 + 8} r={3} />
+        </g>
+        <g className="fx-hero" key={`hero-${cursor}-${reached}`}>
+          <rect className="fx-hero-box" x={hero.x} y={hero.y} width={hero.w} height={hero.h} />
+          <rect className="fx-hero-strip" x={hero.x} y={hero.y} width={hero.w} height={5} fill={CAT_COLOR[cur.cat] ?? '#0d0d0d'} />
+          {/* header */}
+          <text className="fx-hero-kick" x={hero.x + 20} y={hero.y + 28}>◎ {zh ? '锁定 · 焦点站' : 'LOCKED · FOCAL STAGE'} · [{cur.no}/{String(stations.length).padStart(2, '0')}]</text>
+          <text className="fx-hero-name" x={hero.x + 18} y={hero.y + 78}>{cur.name}</text>
+          <text className="fx-hero-role" x={hero.x + 20} y={hero.y + 100}>▸ {cur.role}</text>
+          {/* big metric */}
+          <g transform={`translate(${hero.x + hero.w - 24} ${hero.y + 86})`} textAnchor="end"><HeroBig m={cur.metric} /></g>
+          <text className="fx-hero-cap" x={hero.x + hero.w - 24} y={hero.y + 104} textAnchor="end">{cur.metric?.caption}</text>
+          <line className="fx-hero-rule" x1={hero.x + 18} y1={hero.y + 118} x2={hero.x + hero.w - 18} y2={hero.y + 118} />
+          {/* live readout */}
+          <text className="fx-hero-live" x={hero.x + 20} y={hero.y + 138}>{zh ? '推理读出 · 实时' : 'REASONING READOUT · LIVE'}</text>
+          {(cur.readout ?? []).slice(0, 3).map((r, i) => {
+            const yy = hero.y + 160 + i * 30
+            return (
+              <g key={i} className="fx-hero-line" style={{ animationDelay: `${140 + i * 130}ms` }}>
+                <rect className="fx-hero-op-bg" x={hero.x + 20} y={yy - 13} width={78} height={19} />
+                <text className="fx-hero-op" x={hero.x + 59} y={yy + 1} textAnchor="middle">{r.op}</text>
+                <text className="fx-hero-txt" x={hero.x + 108} y={yy + 1}>{clip(r.body, 52)}</text>
+              </g>
+            )
+          })}
+          <text className="fx-hero-foot" x={hero.x + 20} y={hero.y + hero.h - 14}>{zh ? 'R230 留出集 · 真实轨迹载荷 · 引擎无关' : 'R230 HELD-OUT · REAL TRACE PAYLOAD · ENGINE-INDEPENDENT'}</text>
+        </g>
       </svg>
     </div>
   )

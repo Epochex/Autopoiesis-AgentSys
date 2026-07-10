@@ -289,9 +289,12 @@
 .appear {
   animation: fadein 0.55s var(--ease-guide, ease-out) both;
 }
+/* end at the element's intended opacity (via --o) instead of hard-forcing 1 —
+   this is what lets the flow-line focal hierarchy (hero vs dimmed) survive the
+   fade-in animation. Defaults to 1 for every element that doesn't set --o. */
 @keyframes fadein {
   from { opacity: 0; }
-  to { opacity: 1; }
+  to { opacity: var(--o, 1); }
 }
 .threat-pip {
   fill: var(--coral);
@@ -1224,7 +1227,18 @@
 .pulse.t-attack { fill: var(--coral); filter: drop-shadow(0 0 5px var(--coral)); }
 .pulse.t-deny { fill: var(--amber); filter: drop-shadow(0 0 5px var(--amber)); }
 .pulse.t-flow { fill: var(--mint); filter: drop-shadow(0 0 5px var(--mint)); }
-.pulse.dim { opacity: 0.12; filter: none; }
+.pulse.dim { opacity: 0.28; filter: none; }
+
+/* ── flow-line focal hierarchy (opacity carried through the fade via --o) ──
+   The crimson threat path is the hero; the teal LAN fan is quiet supporting
+   context; dimmed edges read as faint background structure (legible, not a
+   0.07 ghost). Ordered so hot/hero win the cascade over tone/dim. */
+.flow-line.t-attack { --o: 0.92; }
+.flow-line.t-deny   { --o: 0.72; }
+.flow-line.t-flow   { --o: 0.56; }
+.flow-line.dim      { --o: 0.26; }
+.flow-line.hot      { --o: 0.97; opacity: 0.97; }
+.flow-line.hero     { --o: 1; }
 
 .gw-node rect {
   fill: rgba(95, 228, 209, 0.07);
@@ -1240,7 +1254,7 @@
 .n-sub { font-size: 9px; text-anchor: middle; fill: var(--fog); letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
 .n-ip { font-size: 10px; fill: var(--text); letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
 .n-v { font-size: 12px; fill: var(--mint); font-weight: 500; font-variant-numeric: tabular-nums; }
-.node-dim { opacity: 0.28; transition: opacity 0.5s var(--ease-guide, ease); }
+.node-dim { opacity: 0.42; transition: opacity 0.5s var(--ease-guide, ease); }
 /* markers keep their color roles; hovers ease in on the shared guide curve */
 .m-attack, .m-host, .m-flow, .m-intf, .gw-node rect {
   transition: fill 0.25s var(--ease-guide, ease), stroke 0.25s var(--ease-guide, ease), stroke-width 0.2s var(--ease-guide, ease);
@@ -1850,14 +1864,77 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   min-height: calc(100vh - 24px);
 }
 
-/* ── the topology plate: light paper over a faint modular grid ── */
+/* ── the topology plate: a tactical HUD backdrop over crisp modular grid ──
+   Layered background: edge coordinate-ruler ticks (top + left), a bright minor
+   grid and a stronger major grid. Contrast is raised so the plate reads crisp,
+   not washed out. */
 .stage[data-view='console'] .canvas-wrap {
+  --grid-cell: 48px;
+  position: relative;
   background-color: var(--paper);
   background-image:
-    linear-gradient(rgba(13, 13, 13, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(13, 13, 13, 0.055) 1px, transparent 1px);
+    /* top edge ruler ticks */
+    repeating-linear-gradient(90deg, var(--ink) 0 1.5px, transparent 1.5px 24px),
+    /* left edge ruler ticks */
+    repeating-linear-gradient(180deg, var(--ink) 0 1.5px, transparent 1.5px 24px),
+    /* major grid */
+    linear-gradient(rgba(13, 13, 13, 0.10) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 13, 13, 0.10) 1px, transparent 1px),
+    /* minor grid */
+    linear-gradient(rgba(13, 13, 13, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 13, 13, 0.045) 1px, transparent 1px);
+  background-size:
+    100% 9px, 9px 100%,
+    var(--grid-cell) var(--grid-cell), var(--grid-cell) var(--grid-cell),
+    calc(var(--grid-cell) / 4) calc(var(--grid-cell) / 4), calc(var(--grid-cell) / 4) calc(var(--grid-cell) / 4);
+  background-position: 0 0, 0 0, -1px -1px, -1px -1px, -1px -1px, -1px -1px;
+  background-repeat: repeat-x, repeat-y, repeat, repeat, repeat, repeat;
   border: 2px solid var(--ink);
 }
+/* angular corner brackets at the true plate corners (8 layered bars) */
+.stage[data-view='console'] .canvas-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  background-image:
+    linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink)),
+    linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink)),
+    linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink)),
+    linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink));
+  background-repeat: no-repeat;
+  background-size:
+    30px 3px, 3px 30px, 30px 3px, 3px 30px,
+    30px 3px, 3px 30px, 30px 3px, 3px 30px;
+  background-position:
+    left 9px top 9px, left 9px top 9px,
+    right 9px top 9px, right 9px top 9px,
+    left 9px bottom 9px, left 9px bottom 9px,
+    right 9px bottom 9px, right 9px bottom 9px;
+}
+/* animated horizontal scan sweep — game motion, does not dull static contrast */
+.stage[data-view='console'] .canvas-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 24%;
+  pointer-events: none;
+  z-index: 5;
+  background: linear-gradient(90deg, transparent, rgba(204, 255, 0, 0.13) 65%, rgba(13, 13, 13, 0.06));
+  mix-blend-mode: multiply;
+  animation: hud-sweep 7s cubic-bezier(0.2, 0, 0, 1) infinite;
+}
+@keyframes hud-sweep {
+  0% { transform: translateX(-100%); opacity: 0; }
+  8% { opacity: 1; }
+  55% { opacity: 0.7; }
+  70%, 100% { transform: translateX(430%); opacity: 0; }
+}
+.stage[data-view='console'] .canvas-wrap.full3d::before,
+.stage[data-view='console'] .canvas-wrap.full3d::after { display: none; }
 
 /* ── panels: flat printed cards, no dark glass / blur / glow ── */
 .stage[data-view='console'] .float-panel,
@@ -1914,3 +1991,86 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .wan-pentest-cta:hover .wpc-arrow { color: var(--paper); }
 .stage[data-view='console'] .wpc-txt { flex: 1; color: var(--paper); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
 .stage[data-view='console'] .wpc-tag { color: var(--acid); font-size: 9px; letter-spacing: 0.12em; font-weight: 600; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAGE 1 — GAME-UI TACTICAL HUD  ·  ctOS / Division-flavoured, light-editorial
+   Reticle-locked focal core, sector-radar backdrop, ambient corner read-outs,
+   flat-print discipline (no glow/blur). All scoped to the console view.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.stage[data-view='console'] { --font-mono: 'IBM Plex Mono', monospace; --font-display: 'IBM Plex Sans Condensed', sans-serif; }
+
+/* ── FOCAL CORE: FortiGate hero, crisp ink structural node ── */
+.stage[data-view='console'] .gw-node rect { fill: var(--paper-2); stroke: var(--ink); stroke-width: 2.5; }
+.stage[data-view='console'] .n-title { fill: var(--ink); }
+
+/* ── core reticle (the reticle-lock that makes the core the focal point) ── */
+.stage[data-view='console'] .core-reticle { transform-box: fill-box; transform-origin: center; animation: core-lock 0.7s cubic-bezier(0.2, 0, 0, 1) both; }
+@keyframes core-lock { 0% { opacity: 0; transform: scale(1.16); } 60% { opacity: 1; } 100% { opacity: 1; transform: scale(1); } }
+.stage[data-view='console'] .core-lockring { fill: none; stroke: var(--coral); stroke-width: 1.4; stroke-dasharray: 3 8; opacity: 0.85; }
+.stage[data-view='console'] .core-bracket { fill: none; stroke: var(--ink); stroke-width: 2.6; stroke-linecap: square; opacity: 0.92; }
+.stage[data-view='console'] .core-tick { stroke: var(--ink); stroke-width: 2; opacity: 0.6; }
+.stage[data-view='console'] .core-acid { fill: var(--acid); }
+.stage[data-view='console'] .core-label { fill: var(--coral); font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.16em; }
+
+/* ── sector-radar backdrop watermark (big-picture context, kept subtle) ── */
+.stage[data-view='console'] .hud-axis { stroke: var(--ink); stroke-width: 1; opacity: 0.06; }
+.stage[data-view='console'] .hud-ring { fill: none; stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 7; opacity: 0.09; }
+.stage[data-view='console'] .hud-azi { stroke: var(--ink); stroke-width: 1.2; opacity: 0.16; }
+.stage[data-view='console'] .hud-sector { fill: var(--coral); opacity: 0.06; }
+.stage[data-view='console'] .hud-sector-edge { fill: none; stroke: var(--coral); stroke-width: 1; stroke-dasharray: 3 6; opacity: 0.32; }
+.stage[data-view='console'] .hud-bearing { fill: var(--ink); opacity: 0.3; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; }
+
+/* ── ambient corner read-outs (scan-id, window, src/lockout, device counts) ── */
+.stage[data-view='console'] .hud-readouts text { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.stage[data-view='console'] .hud-r-dim { fill: var(--fog); font-size: 9.5px; letter-spacing: 0.14em; }
+.stage[data-view='console'] .hud-r-id { fill: var(--ink); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; }
+.stage[data-view='console'] .hud-r-line { fill: var(--ink); font-size: 12px; letter-spacing: 0.06em; }
+.stage[data-view='console'] .hud-r-line .hot { fill: var(--coral); font-weight: 500; }
+.stage[data-view='console'] .hud-r-line .acc { fill: var(--tier-edge); font-weight: 500; }
+.stage[data-view='console'] .hud-status { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+.stage[data-view='console'] .hud-status .hot { fill: var(--coral); font-weight: 500; }
+.stage[data-view='console'] .hud-status .dim { fill: var(--ink); opacity: 0.55; }
+.stage[data-view='console'] .hud-vlabel { fill: var(--fog); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.34em; text-transform: uppercase; opacity: 0.7; }
+
+/* ── zone label: crisp HUD readout, not a washed-out whisper ── */
+.stage[data-view='console'] .zone-tag { fill: var(--ink); opacity: 0.68; font-weight: 500; }
+
+/* ── flat-print discipline: strip SVG glows/blurs on the light ground ── */
+.stage[data-view='console'] .pulse { filter: none !important; }
+.stage[data-view='console'] .wan-spine { filter: none; }
+.stage[data-view='console'] .rate-dot { background: var(--ink); box-shadow: none; }
+.stage[data-view='console'] .m-dev.high  { fill: var(--paper-2); stroke: var(--coral); animation: devpulse-flat 1.5s ease-in-out infinite; }
+.stage[data-view='console'] .m-dev.watch { fill: var(--paper-2); stroke: var(--amber); }
+.stage[data-view='console'] .m-dev.ok    { fill: var(--paper-2); stroke: var(--mint); }
+.stage[data-view='console'] .m-dev.alert { fill: var(--coral); stroke: var(--ink); animation: devpulse-flat 1.1s ease-in-out infinite; }
+@keyframes devpulse-flat { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* ── live-rate throughput chip: stronger tactical badge ── */
+.stage[data-view='console'] .live-rate {
+  top: 12px; left: 12px;
+  font-size: 10px; font-weight: 500; letter-spacing: 0.18em;
+  padding: 5px 11px; border-width: 1.5px; z-index: 7;
+}
+
+/* ── shell chrome: seat the header as a tactical command bar ── */
+.stage[data-view='console'] .top { border-bottom: 2px solid var(--ink); padding-bottom: 10px; margin-bottom: 14px; }
+.stage[data-view='console'] .mark { color: var(--ink); font-family: var(--font-display); }
+.stage[data-view='console'] .mark-dot { background: var(--acid); box-shadow: none; border-radius: 0; width: 8px; height: 8px; }
+.stage[data-view='console'] .pager button,
+.stage[data-view='console'] .lang button {
+  background: transparent; border: 1.5px solid var(--ink); color: var(--ink);
+  border-radius: 0; box-shadow: none; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.stage[data-view='console'] .pager { border: none; gap: 0; }
+.stage[data-view='console'] .pager button + button { border-left: none; margin-left: -1.5px; }
+.stage[data-view='console'] .pager button.on { background: var(--ink); color: var(--paper); font-weight: 600; }
+.stage[data-view='console'] .lang { gap: 0; }
+.stage[data-view='console'] .lang button.on { background: var(--acid); color: var(--ink); }
+.stage[data-view='console'] .case { border: 1.5px solid var(--line); border-radius: 0; }
+.stage[data-view='console'] .case.on { border-color: var(--ink); }
+.stage[data-view='console'] .tick { background: var(--fog); }
+.stage[data-view='console'] .tick.ok { background: var(--tier-edge); }
+.stage[data-view='console'] .eng { color: var(--fog); }
+.stage[data-view='console'] .eng.on { color: var(--ink); font-weight: 500; }
+.stage[data-view='console'] .gem { background: #b7b7b1; box-shadow: none; }
+.stage[data-view='console'] .gem.live { background: var(--tier-edge); box-shadow: none; }

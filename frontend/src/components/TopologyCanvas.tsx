@@ -18,15 +18,19 @@ function group(key: string): 'attack' | 'deny' | 'health' {
   return 'health'
 }
 
-function Edge({ a, b, tone, flows, dim, hot, delay, tempo }: { a: Pt; b: Pt; tone: string; flows: number; dim: boolean; hot?: boolean; delay: number; tempo: number }) {
+function Edge({ a, b, tone, flows, dim, hot, hero, delay, tempo }: { a: Pt; b: Pt; tone: string; flows: number; dim: boolean; hot?: boolean; hero?: boolean; delay: number; tempo: number }) {
   const d = bez(a, b)
-  const n = dim ? 1 : Math.max(1, Math.min(7, Math.round(Math.log10(flows + 1) - 1)))
+  const n = dim ? 1 : Math.max(1, Math.min(hero ? 8 : 5, Math.round(Math.log10(flows + 1) - 1)))
   const dur = Math.max(0.7, Math.max(1.4, 4.2 - Math.log10(flows + 1) * 0.42) / tempo)
+  // Width encodes hierarchy, not just raw throughput: the hero threat path is
+  // deliberately the boldest line; the supporting fan is capped thin so the eye
+  // locks onto the focal core, and dimmed context is thinnest.
+  const w = hero ? weight(flows) + 2.6 : dim ? Math.min(weight(flows), 2) : Math.min(weight(flows), 3.2)
   return (
     <>
-      <path d={d} className={`flow-line ${tone} ${dim ? 'dim' : ''} ${hot ? 'hot' : ''} appear`} style={{ strokeWidth: weight(flows) + (hot ? 1.5 : 0), animationDelay: `${delay}s` }} />
+      <path d={d} className={`flow-line ${tone} ${dim ? 'dim' : ''} ${hot ? 'hot' : ''} ${hero ? 'hero' : ''} appear`} style={{ strokeWidth: w + (hot ? 1.2 : 0), animationDelay: `${delay}s` }} />
       {Array.from({ length: n }).map((_, i) => (
-        <circle key={i} r={dim ? 1.4 : hot ? 3 : 2.4} className={`pulse ${tone} ${dim ? 'dim' : ''}`}>
+        <circle key={i} r={dim ? 1.3 : hero ? 3.4 : hot ? 3 : 2.2} className={`pulse ${tone} ${dim ? 'dim' : ''} ${hero ? 'hero' : ''}`}>
           <animateMotion dur={`${dur}s`} repeatCount="indefinite" begin={`${(i * dur) / n}s`} path={d} />
         </circle>
       ))}
@@ -46,6 +50,105 @@ function Float({ x, y, w, lines, tone }: { x: number; y: number; w: number; line
         ))}
       </div>
     </foreignObject>
+  )
+}
+
+// ── tactical HUD geometry helpers ──────────────────────────────────────────
+const polar = (c: Pt, r: number, deg: number): Pt => {
+  const a = (deg * Math.PI) / 180
+  return { x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r }
+}
+
+/** Ambient sector-radar watermark centred on the focal core: range rings,
+ *  coordinate crosshair, azimuth ticks and a shaded WAN-ingress threat sector.
+ *  Pure decoration — gives big-picture context without competing with data. */
+function HudRadar({ core }: { core: Pt }) {
+  const rings = [136, 244, 352]
+  const sIn = 250
+  const sOut = 352
+  const a1 = 156
+  const a2 = 220
+  const sector = `M ${polar(core, sIn, a1).x} ${polar(core, sIn, a1).y} L ${polar(core, sOut, a1).x} ${polar(core, sOut, a1).y} A ${sOut} ${sOut} 0 0 1 ${polar(core, sOut, a2).x} ${polar(core, sOut, a2).y} L ${polar(core, sIn, a2).x} ${polar(core, sIn, a2).y} A ${sIn} ${sIn} 0 0 0 ${polar(core, sIn, a1).x} ${polar(core, sIn, a1).y} Z`
+  return (
+    <g className="hud-radar" pointerEvents="none">
+      <line x1={44} y1={core.y} x2={1316} y2={core.y} className="hud-axis" />
+      <line x1={core.x} y1={26} x2={core.x} y2={974} className="hud-axis" />
+      <path d={sector} className="hud-sector" />
+      <path d={sector} className="hud-sector-edge" />
+      {rings.map((r) => (
+        <circle key={r} cx={core.x} cy={core.y} r={r} className="hud-ring" />
+      ))}
+      {Array.from({ length: 36 }).map((_, i) => {
+        const deg = i * 10
+        const r2 = i % 3 === 0 ? 338 : 345
+        const p1 = polar(core, r2, deg)
+        const p2 = polar(core, 352, deg)
+        return <line key={i} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="hud-azi" />
+      })}
+      {['000', '090', '180', '270'].map((b, i) => {
+        const p = polar(core, 366, i * 90)
+        return (
+          <text key={b} x={p.x} y={p.y + 3} className="hud-bearing" textAnchor="middle">{b}</text>
+        )
+      })}
+    </g>
+  )
+}
+
+/** The FortiGate core as a reticle-locked hero: angular corner brackets, a
+ *  rotating crimson lock ring, crosshair ticks and the ONE acid focal accent. */
+function CoreReticle({ core, lang }: { core: Pt; lang: Lang }) {
+  const bx = 82
+  const by = 54
+  const L = 17
+  const corners = [
+    `M ${core.x - bx} ${core.y - by + L} L ${core.x - bx} ${core.y - by} L ${core.x - bx + L} ${core.y - by}`,
+    `M ${core.x + bx - L} ${core.y - by} L ${core.x + bx} ${core.y - by} L ${core.x + bx} ${core.y - by + L}`,
+    `M ${core.x + bx} ${core.y + by - L} L ${core.x + bx} ${core.y + by} L ${core.x + bx - L} ${core.y + by}`,
+    `M ${core.x - bx + L} ${core.y + by} L ${core.x - bx} ${core.y + by} L ${core.x - bx} ${core.y + by - L}`,
+  ]
+  return (
+    <g className="core-reticle" pointerEvents="none">
+      <circle cx={core.x} cy={core.y} r={104} className="core-lockring">
+        <animateTransform attributeName="transform" type="rotate" from={`0 ${core.x} ${core.y}`} to={`360 ${core.x} ${core.y}`} dur="18s" repeatCount="indefinite" />
+      </circle>
+      {corners.map((d, i) => (
+        <path key={i} d={d} className="core-bracket" />
+      ))}
+      <line x1={core.x} y1={core.y - by} x2={core.x} y2={core.y - by + 9} className="core-tick" />
+      <line x1={core.x} y1={core.y + by} x2={core.x} y2={core.y + by - 9} className="core-tick" />
+      <line x1={core.x - bx} y1={core.y} x2={core.x - bx + 9} y2={core.y} className="core-tick" />
+      <line x1={core.x + bx} y1={core.y} x2={core.x + bx - 9} y2={core.y} className="core-tick" />
+      <rect x={core.x - 32} y={core.y - by - 5} width={64} height={5} className="core-acid" />
+      <text x={core.x} y={core.y - by - 12} className="core-label" textAnchor="middle">
+        ◎ {lang === 'zh' ? '主目标 · 核心' : 'PRIMARY TARGET · CORE'}
+      </text>
+    </g>
+  )
+}
+
+/** Corner situational read-outs — the big-picture intel the client asked for:
+ *  scan-id, data window, distinct-src / lockout counts, device / interface /
+ *  subnet counts, and a threat status line. */
+function HudReadouts({ stats, meshCount, ifCount, subCount, lang, showStatus }: { stats: DataStats; meshCount: number; ifCount: number; subCount: number; lang: Lang; showStatus: boolean }) {
+  const scanId = `R230-${((stats.adminLoginFailed ?? 0) % 0x10000).toString(16).toUpperCase().padStart(4, '0')}`
+  const win = stats.windowDays?.[stats.windowDays.length - 1] ?? ''
+  return (
+    <g className="hud-readouts" pointerEvents="none">
+      <g textAnchor="end">
+        <text x={1316} y={30} className="hud-r-dim">{win} · {lang === 'zh' ? '48H 窗口' : '48H WINDOW'}</text>
+        <text x={1316} y={47} className="hud-r-id">SCAN ▸ {scanId}</text>
+        <text x={1316} y={64} className="hud-r-line">SRC <tspan className="hot">{short(stats.distinctSrc)}</tspan> · LCK <tspan className="hot">{stats.lockouts ?? 0}</tspan></text>
+        <text x={1316} y={81} className="hud-r-line">DEV <tspan className="acc">{meshCount}</tspan> · IF {ifCount} · NET {subCount}</text>
+      </g>
+      {showStatus ? (
+        <text x={44} y={642} className="hud-status">
+          <tspan className="hot">◆ {lang === 'zh' ? '威胁等级 · 升高' : 'THREAT ELEVATED'}</tspan>
+          <tspan className="dim"> · {lang === 'zh' ? 'WAN 暴力破解战役' : 'WAN BRUTE-FORCE CAMPAIGN'} · {ifCount} IF / {subCount} NET {lang === 'zh' ? '联动' : 'LINKED'}</tspan>
+        </text>
+      ) : null}
+      <text transform="rotate(-90 22 452)" x={22} y={452} className="hud-vlabel" textAnchor="middle">NET-SITUATIONAL CONSOLE</text>
+    </g>
   )
 }
 
@@ -162,20 +265,10 @@ export function TopologyCanvas({
       onContextMenu={(e) => e.preventDefault()}
       style={{ cursor: drag.current ? 'grabbing' : 'default' }}
     >
-      <defs>
-        <radialGradient id="gw" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="rgba(95,228,209,0.32)" />
-          <stop offset="100%" stopColor="rgba(95,228,209,0)" />
-        </radialGradient>
-        <filter id="mglow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="3.5" result="b" />
-          <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-
       <g transform={`translate(${pan.x} ${pan.y})`}>
+        <HudRadar core={core} />
         {layout.atk.map((a, i) => (
-          <Edge key={`ea${i}`} a={a.p} b={core} tone="t-attack" flows={a.v} dim={g !== 'attack'} delay={0.1 + i * 0.05} tempo={tempo} />
+          <Edge key={`ea${i}`} a={a.p} b={core} tone="t-attack" flows={a.v} dim={g !== 'attack'} hero={g === 'attack'} delay={0.1 + i * 0.05} tempo={tempo} />
         ))}
         {layout.ifs.map((f, i) => {
           const focused = drillSub === f.sub?.cidr
@@ -188,12 +281,12 @@ export function TopologyCanvas({
           )
         })}
 
-        <circle cx={core.x} cy={core.y} r="68" fill="url(#gw)" />
         <g className="node gw-node appear" style={{ animationDelay: '0.3s' }}>
-          <rect x={core.x - 48} y={core.y - 27} width="96" height="54" rx="2" />
-          <text x={core.x} y={core.y - 4} className="n-title">{topo.core.name}</text>
-          <text x={core.x} y={core.y + 13} className="n-sub">{topo.core.ip}</text>
+          <rect x={core.x - 60} y={core.y - 32} width="120" height="64" rx="1" />
+          <text x={core.x} y={core.y - 5} className="n-title">{topo.core.name}</text>
+          <text x={core.x} y={core.y + 14} className="n-sub">{topo.core.ip}</text>
         </g>
+        <CoreReticle core={core} lang={lang} />
 
         {layout.atk.map((a, i) => {
           const sel = wan?.ip === a.ip
@@ -512,6 +605,15 @@ export function TopologyCanvas({
             )
           })()
         ) : null}
+
+        <HudReadouts
+          stats={stats}
+          meshCount={meshCount}
+          ifCount={layout.ifs.length}
+          subCount={layout.ifs.filter((f) => f.sub).length}
+          lang={lang}
+          showStatus={!threat && !wan}
+        />
       </g>
     </svg>
   )
