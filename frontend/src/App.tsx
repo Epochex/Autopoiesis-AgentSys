@@ -5,6 +5,7 @@ import { rc, type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
 import { TrajectoryPage } from './components/TrajectoryPage'
+import { PentestPage } from './components/PentestPage'
 import { lazy, Suspense } from 'react'
 
 const Constellation3D = lazy(() => import('./components/Constellation3D').then((m) => ({ default: m.Constellation3D })))
@@ -15,7 +16,7 @@ type MeshModel = {
 }
 import type { Device } from './types'
 
-type View = 'console' | 'trajectory'
+type View = 'console' | 'trajectory' | 'pentest'
 
 type State =
   | { s: 'load' }
@@ -213,6 +214,7 @@ function App() {
           <div className="pager">
             <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '态势' : 'CONSOLE'}</button>
             <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
+            <button className={view === 'pentest' ? 'on' : ''} onClick={() => setView('pentest')}>{lang === 'zh' ? '渗透' : 'PENTEST'}</button>
           </div>
           {view === 'console' ? (
             <div className="cases">
@@ -249,7 +251,9 @@ function App() {
         </div>
       </header>
 
-      {view === 'trajectory' && d.datasetReady && c ? (
+      {view === 'pentest' ? (
+        <PentestPage lang={lang} />
+      ) : view === 'trajectory' && d.datasetReady && c ? (
         <TrajectoryPage
           key={`${active}:${lang}`}
           cases={d.cases}
@@ -293,6 +297,7 @@ function App() {
                 }}
                 onDev={researchDevice}
                 onBatch={researchSubnet}
+                onPentest={() => setView('pentest')}
               />
             ) : null}
             {rate !== null ? (

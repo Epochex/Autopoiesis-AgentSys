@@ -139,13 +139,32 @@
   color: var(--mint);
 }
 
-/* flow canvas — crop empty lower band when idle, grow for analysis */
+/* ═══════════════════════════════════════════════════════════════════
+   PAGE 1 — CONSOLE / TOPOLOGY  ·  editorial dark · page-2 design system
+   Same refined type, mono kickers, crisp hairline frames, subtle modular
+   grid backdrop, teal accent and tastefully guided motion — while the
+   color roles stay intact: coral = WAN / attack, amber = deny / watch /
+   host, mint = healthy links / FortiGate / 3D model.
+   ═══════════════════════════════════════════════════════════════════ */
+.stage[data-view='console'] {
+  --ease-guide: cubic-bezier(0.2, 0, 0, 1);
+  --grid-cell: 46px;
+}
+
+/* flow canvas — a framed plate over a faint modular grid, like page 2 */
 .canvas-wrap {
   position: relative;
-  margin-top: 4px;
+  margin-top: 12px;
   overflow: hidden;
   aspect-ratio: 1360 / 660;
-  transition: aspect-ratio 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  border: 1px solid var(--line);
+  background-color: rgba(8, 13, 12, 0.34);
+  background-image:
+    linear-gradient(rgba(95, 228, 209, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(95, 228, 209, 0.045) 1px, transparent 1px);
+  background-size: var(--grid-cell) var(--grid-cell);
+  background-position: -1px -1px;
+  transition: aspect-ratio 0.5s var(--ease-guide, cubic-bezier(0.22, 1, 0.36, 1));
 }
 .canvas-wrap.mid {
   aspect-ratio: 1360 / 660;
@@ -232,9 +251,9 @@
   background: rgba(8, 13, 12, 0.92);
   border: 1px solid var(--line);
   border-left: 2px solid var(--mint);
-  padding: 6px 9px;
+  padding: 7px 11px;
   backdrop-filter: blur(6px);
-  animation: floatin 0.3s ease-out both;
+  animation: floatin 0.32s var(--ease-guide, ease-out) both;
 }
 .float-panel.alert { border-left-color: var(--coral); }
 .float-panel.high { border-left-color: var(--coral); }
@@ -251,22 +270,24 @@
 }
 .float-k {
   font-size: 9px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   color: var(--fog);
   font-family: 'IBM Plex Mono', monospace;
-  min-width: 48px;
+  min-width: 50px;
 }
 .float-v {
   font-size: 12px;
   color: var(--text);
   font-family: 'IBM Plex Mono', monospace;
+  font-variant-numeric: tabular-nums;
 }
 @keyframes settle {
   from { transform: scale(1.08); opacity: 0.25; }
   to { transform: scale(1); opacity: 1; }
 }
 .appear {
-  animation: fadein 0.55s ease-out both;
+  animation: fadein 0.55s var(--ease-guide, ease-out) both;
 }
 @keyframes fadein {
   from { opacity: 0; }
@@ -414,7 +435,7 @@
 .branch.high { stroke: var(--coral); }
 .branch.watch { stroke: var(--amber); }
 .branch.ok { stroke: var(--mint); }
-.m-dev { stroke-width: 1.5; }
+.m-dev { stroke-width: 1.5; transition: stroke-width 0.2s var(--ease-guide, ease); }
 .m-dev.high { fill: rgba(255, 107, 94, 0.2); stroke: var(--coral); animation: devpulse 1.5s ease-in-out infinite; }
 .m-dev.watch { fill: rgba(255, 192, 77, 0.16); stroke: var(--amber); }
 .m-dev.ok { fill: rgba(95, 228, 209, 0.16); stroke: var(--mint); }
@@ -427,20 +448,26 @@
 .m-leaf.high { fill: rgba(255, 107, 94, 0.3); }
 .m-leaf.watch { fill: rgba(255, 192, 77, 0.3); }
 .m-leaf.ok { fill: rgba(95, 228, 209, 0.3); }
-.n-leaf { font-size: 10px; fill: var(--fog); font-family: 'IBM Plex Mono', monospace; }
+.n-leaf { font-size: 10px; fill: var(--fog); font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
 
-/* live event-rate badge */
+/* live event-rate badge — bordered kicker chip seated inside the plate */
 .live-rate {
   position: absolute;
-  top: 6px;
-  left: 4px;
+  top: 11px;
+  left: 11px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 11px;
+  gap: 8px;
+  font-size: 10px;
   color: var(--mint);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   font-family: 'IBM Plex Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: rgba(6, 11, 10, 0.7);
+  backdrop-filter: blur(4px);
 }
 .rate-dot {
   width: 7px;
@@ -454,9 +481,9 @@
 /* analysis strip — below canvas, no occlusion */
 .analysis-strip {
   display: flex;
-  gap: 16px;
+  gap: 18px;
   flex-wrap: wrap;
-  margin-top: 14px;
+  margin-top: 16px;
 }
 .analysis-strip > * {
   flex: 1 1 340px;
@@ -490,7 +517,7 @@
 .tc-kicker {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
   color: var(--mint);
   font-family: 'IBM Plex Mono', monospace;
 }
@@ -530,11 +557,18 @@
 .sev-dot.low { background: var(--mint); }
 .sev-tag {
   margin-left: auto;
-  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
   color: var(--fog);
 }
+/* severity rendered as a solid accent label — the page-2 <mark> idiom.
+   Dark ink on the bright hue; color role preserved (coral/amber/mint). */
+.sev-tag.high,
+.sev-tag.critical { color: var(--ink); background: var(--coral); padding: 2px 8px; letter-spacing: 0.1em; }
+.sev-tag.medium { color: var(--ink); background: var(--amber); padding: 2px 8px; letter-spacing: 0.1em; }
+.sev-tag.low { color: var(--ink); background: var(--mint); padding: 2px 8px; letter-spacing: 0.1em; }
 .tc-body p {
   margin: 10px 0 8px;
   font-size: 13px;
@@ -546,6 +580,8 @@
   font-size: 10px;
   color: var(--fog);
   font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
 }
 
 /* threat write-back on graph */
@@ -580,21 +616,26 @@
 
 /* batch-research trigger */
 .batch-trig rect {
-  fill: rgba(95, 228, 209, 0.06);
-  stroke: var(--accent-dim, rgba(95, 228, 209, 0.4));
-  stroke: rgba(95, 228, 209, 0.4);
+  fill: rgba(95, 228, 209, 0.05);
+  stroke: rgba(95, 228, 209, 0.45);
   stroke-width: 1;
+  transition: fill 0.25s var(--ease-guide, ease), stroke 0.25s var(--ease-guide, ease);
 }
 .batch-trig:hover rect {
-  fill: rgba(95, 228, 209, 0.14);
+  fill: var(--mint);
   stroke: var(--mint);
 }
 .batch-trig text {
   fill: var(--mint);
-  font-size: 11px;
+  font-size: 10.5px;
   text-anchor: middle;
   font-family: 'IBM Plex Mono', monospace;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: fill 0.25s var(--ease-guide, ease);
+}
+.batch-trig:hover text {
+  fill: var(--ink);
 }
 
 /* subnet posture summary */
@@ -622,8 +663,8 @@
   stroke-dasharray: 2 5;
 }
 .impact-tag {
-  font-size: 11px;
-  letter-spacing: 0.14em;
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   fill: var(--fog);
   font-family: 'IBM Plex Mono', monospace;
@@ -632,9 +673,9 @@
   background: rgba(9, 14, 13, 0.95);
   border: 1px solid var(--line);
   border-left: 2px solid var(--mint);
-  padding: 12px 16px 14px;
+  padding: 13px 18px 15px;
   backdrop-filter: blur(8px);
-  animation: floatin 0.35s ease-out both;
+  animation: floatin 0.4s var(--ease-guide, ease-out) both;
 }
 .an-panel.sev-high { border-left-color: var(--coral); }
 .an-panel.sev-medium { border-left-color: var(--amber); }
@@ -642,10 +683,12 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
 }
 .an-kicker {
   font-size: 10px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--mint);
   font-family: 'IBM Plex Mono', monospace;
@@ -659,19 +702,20 @@
 .an-verdict {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-top: 8px;
+  gap: 10px;
+  margin-top: 11px;
 }
 .an-vtxt {
   font-family: 'IBM Plex Sans Condensed', sans-serif;
   font-weight: 600;
-  font-size: 17px;
+  font-size: 18px;
+  letter-spacing: 0.01em;
   color: var(--text);
 }
 .an-analysis {
-  margin: 9px 0 10px;
+  margin: 10px 0 11px;
   font-size: 12.5px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--text);
   font-family: 'IBM Plex Sans Condensed', sans-serif;
 }
@@ -686,10 +730,10 @@
 }
 .an-pred .pl {
   display: inline-block;
-  min-width: 44px;
-  margin-right: 8px;
+  min-width: 46px;
+  margin-right: 9px;
   font-size: 9px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--mint);
   font-family: 'IBM Plex Mono', monospace;
@@ -708,25 +752,25 @@
 @keyframes haloPulse { 0% { r: 10; opacity: 0.75; } 100% { r: 24; opacity: 0; } }
 
 .wan-spine { fill: none; stroke: rgba(255, 90, 106, 0.72); stroke-width: 2; filter: drop-shadow(0 0 4px rgba(255, 90, 106, 0.5)); }
-.wan-spine-tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--coral); }
-.wan-netblock { font-family: 'IBM Plex Mono', monospace; font-size: 11px; fill: var(--coral); letter-spacing: 0.05em; }
+.wan-spine-tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--coral); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+.wan-netblock { font-family: 'IBM Plex Mono', monospace; font-size: 11px; fill: var(--coral); letter-spacing: 0.08em; font-variant-numeric: tabular-nums; }
 .wan-sib-link { fill: none; stroke: rgba(255, 90, 106, 0.42); stroke-width: 1; stroke-dasharray: 2 3; }
 .m-attack.sib { fill: rgba(255, 90, 106, 0.28); }
-.wan-sib-ip { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--fog); }
+.wan-sib-ip { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--fog); font-variant-numeric: tabular-nums; }
 .wan-lockring { fill: none; stroke: var(--coral); stroke-width: 1.4; stroke-dasharray: 4 5; opacity: 0.75; animation: march 1s linear infinite; }
-.wan-lock { font-family: 'IBM Plex Mono', monospace; font-size: 11px; fill: var(--coral); }
+.wan-lock { font-family: 'IBM Plex Mono', monospace; font-size: 11px; fill: var(--coral); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
 .wan-pivot-link { fill: none; stroke: rgba(255, 90, 106, 0.34); stroke-width: 1.2; stroke-dasharray: 3 5; animation: march 1.2s linear infinite; }
-.wan-rel { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--amber); }
+.wan-rel { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--amber); font-variant-numeric: tabular-nums; }
 
 .wan-panel { border-left-color: var(--coral); }
 .wan-panel.sev-critical { border-left-color: var(--coral); }
-.wan-conf { margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--coral); }
-.kc-rail { display: flex; gap: 14px; margin: 11px 0 5px; }
-.kc-step { position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 9px; border: 1px solid var(--line); color: var(--fog); }
+.wan-conf { margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--coral); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.kc-rail { display: flex; gap: 14px; margin: 12px 0 6px; }
+.kc-step { position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 10px; border: 1px solid var(--line); color: var(--fog); transition: color 0.25s var(--ease-guide, ease), border-color 0.25s var(--ease-guide, ease), background 0.25s var(--ease-guide, ease); }
 .kc-step.on { color: var(--coral); border-color: var(--coral); background: rgba(255, 90, 106, 0.1); }
 .kc-step:not(:last-child)::after { content: '›'; position: absolute; right: -10px; top: 50%; transform: translateY(-50%); color: var(--fog); }
 .wan-meta { display: flex; flex-direction: column; gap: 5px; font-size: 12px; line-height: 1.5; color: var(--text); font-family: 'IBM Plex Sans Condensed', sans-serif; margin: 6px 0 8px; }
-.wan-meta i { display: inline-block; min-width: 52px; margin-right: 8px; font-style: normal; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--mint); font-family: 'IBM Plex Mono', monospace; }
+.wan-meta i { display: inline-block; min-width: 54px; margin-right: 9px; font-style: normal; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mint); font-family: 'IBM Plex Mono', monospace; }
 .wan-meta i.bad { color: var(--coral); }
 .wan-actions { margin: 0 0 8px; padding-left: 16px; font-size: 11.5px; line-height: 1.55; color: var(--text); font-family: 'IBM Plex Sans Condensed', sans-serif; }
 .wan-actions li { margin-bottom: 3px; }
@@ -796,7 +840,8 @@
 .portal-ring {
   fill: rgba(8, 13, 12, 0.6);
   stroke: var(--mint);
-  stroke-width: 1.4;
+  stroke-width: 1.5;
+  transition: stroke-width 0.25s var(--ease-guide, ease), filter 0.25s var(--ease-guide, ease);
 }
 .portal3d:hover .portal-ring {
   stroke-width: 2.2;
@@ -809,15 +854,17 @@
 }
 .portal-label {
   fill: var(--mint);
-  font-size: 12px;
+  font-size: 11.5px;
   font-family: 'IBM Plex Mono', monospace;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 .portal-sub {
   fill: var(--fog);
   font-size: 10px;
   font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
 }
 
 /* inline 3D layer — right side of the topology frame, fade-blended */
@@ -1146,12 +1193,14 @@
   gap: 8px;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.1em;
   color: var(--fog);
 }
 .pc {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 22px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   margin-right: 2px;
 }
 .pc.high { color: var(--coral); }
@@ -1178,28 +1227,33 @@
 .pulse.dim { opacity: 0.12; filter: none; }
 
 .gw-node rect {
-  fill: rgba(95, 228, 209, 0.06);
+  fill: rgba(95, 228, 209, 0.07);
   stroke: var(--mint);
-  stroke-width: 1;
+  stroke-width: 1.25;
 }
 .node text {
   font-family: 'IBM Plex Mono', monospace;
   fill: var(--text);
 }
-.n-title { font-size: 13px; text-anchor: middle; letter-spacing: 0.06em; }
-.n-sub { font-size: 9px; text-anchor: middle; fill: var(--fog); }
-.n-ip { font-size: 10px; fill: var(--text); }
-.n-v { font-size: 12px; fill: var(--mint); }
-.node-dim { opacity: 0.3; transition: opacity 0.5s ease; }
+/* the FortiGate hub label reads as a page-2 display headline */
+.n-title { font-family: 'IBM Plex Sans Condensed', sans-serif; font-weight: 600; font-size: 13px; text-anchor: middle; letter-spacing: 0.07em; text-transform: uppercase; }
+.n-sub { font-size: 9px; text-anchor: middle; fill: var(--fog); letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+.n-ip { font-size: 10px; fill: var(--text); letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+.n-v { font-size: 12px; fill: var(--mint); font-weight: 500; font-variant-numeric: tabular-nums; }
+.node-dim { opacity: 0.28; transition: opacity 0.5s var(--ease-guide, ease); }
+/* markers keep their color roles; hovers ease in on the shared guide curve */
+.m-attack, .m-host, .m-flow, .m-intf, .gw-node rect {
+  transition: fill 0.25s var(--ease-guide, ease), stroke 0.25s var(--ease-guide, ease), stroke-width 0.2s var(--ease-guide, ease);
+}
 .m-attack { fill: rgba(255, 107, 94, 0.18); stroke: var(--coral); stroke-width: 1; }
 .m-host { fill: rgba(255, 192, 77, 0.16); stroke: var(--amber); stroke-width: 1; }
 .m-port { fill: rgba(255, 192, 77, 0.1); stroke: var(--amber); stroke-width: 1; }
 .m-flow { fill: rgba(95, 228, 209, 0.16); stroke: var(--mint); stroke-width: 1; }
 .m-cons { fill: rgba(95, 228, 209, 0.2); stroke: var(--mint); stroke-width: 1.5; }
-.m-intf { fill: rgba(95, 228, 209, 0.05); stroke: rgba(95, 228, 209, 0.45); stroke-width: 1; }
-.n-intf { font-size: 12px; text-anchor: middle; fill: var(--text); letter-spacing: 0.04em; }
+.m-intf { fill: rgba(95, 228, 209, 0.05); stroke: rgba(95, 228, 209, 0.45); stroke-width: 1.25; }
+.n-intf { font-size: 11.5px; text-anchor: middle; fill: var(--text); letter-spacing: 0.08em; text-transform: uppercase; }
 .n-v.amber { fill: var(--amber); }
-.zone-tag { font-size: 10px; fill: var(--fog); letter-spacing: 0.1em; text-transform: uppercase; }
+.zone-tag { font-size: 9.5px; fill: var(--fog); letter-spacing: 0.2em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
 
 /* deck — verdict + metrics, hairline separated, no overlap */
 .deck {
@@ -1758,3 +1812,105 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .tp-bridge:hover .tp-bridge-tick { background: var(--ink); height: 22px; }
 
 @media (max-width: 1080px) { .tp-evo-body { grid-template-columns: 1fr; } }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONSOLE (page 1) · FUTURIST-UI light-paper re-skin
+   The console was authored against the dark index.css :root. This block scopes
+   the light-poster palette to `.stage[data-view='console']` and overrides the
+   surfaces / glows the dark rules hardcode, so page 1 reads as the same light
+   editorial system as pages 2 & 3 — while KEEPING the three-way threat
+   distinction (high/watch/ok) and adding per-tier hierarchy colors.
+   The 3D scene (.c3d-*) intentionally stays dark (it is a WebGL stage).
+   ═══════════════════════════════════════════════════════════════════════════ */
+.stage[data-view='console'] {
+  --paper:   #e7e7e3;
+  --paper-2: #efeee9;
+  --paper-3: #dddcd5;
+  --ink:     #0d0d0d;
+  --ink-2:   #1a1a17;
+  --text:    #0d0d0d;   /* body type now dark-on-paper (was #e9f1ee) */
+  --fog:     #6f6f6a;
+  --line:    #cfcfca;
+  --acid:    #ccff00;
+  --rule:    #cfcfca;
+  /* threat scale, retuned for a paper ground — distinction preserved */
+  --coral:   #cf2f4a;   /* high / attacker  (crimson) */
+  --amber:   #a86a12;   /* watch            (dark amber, legible on paper) */
+  --mint:    #2f7d72;   /* ok / healthy     (teal) */
+  /* hierarchy tiers (poster swatch scale) — structural identity, not threat */
+  --tier-core:   #0d0d0d;
+  --tier-edge:   #4c9d94;
+  --tier-subnet: #2b3d38;
+  --tier-leaf:   #8c8c88;
+  color-scheme: light;
+  /* cover the dark body gradient so the whole console reads as light paper */
+  background: var(--paper);
+  color: var(--text);
+  min-height: calc(100vh - 24px);
+}
+
+/* ── the topology plate: light paper over a faint modular grid ── */
+.stage[data-view='console'] .canvas-wrap {
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(rgba(13, 13, 13, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 13, 13, 0.055) 1px, transparent 1px);
+  border: 2px solid var(--ink);
+}
+
+/* ── panels: flat printed cards, no dark glass / blur / glow ── */
+.stage[data-view='console'] .float-panel,
+.stage[data-view='console'] .n-panel,
+.stage[data-view='console'] .an-panel,
+.stage[data-view='console'] .wan-panel,
+.stage[data-view='console'] .tc-head,
+.stage[data-view='console'] .tc-body,
+.stage[data-view='console'] .posture-card {
+  background: var(--paper-2);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: var(--ink);
+  box-shadow: none;
+}
+.stage[data-view='console'] .float-panel { border: 1.5px solid var(--ink); }
+
+/* ── kill glows on a light ground (dots keep their fill, lose the halo) ── */
+.stage[data-view='console'] .dev-dot,
+.stage[data-view='console'] .sev-dot,
+.stage[data-view='console'] .dev-dot.high,
+.stage[data-view='console'] .sev-dot.high { box-shadow: none; }
+.stage[data-view='console'] .c3d-bb { text-shadow: none; }
+.stage[data-view='console'] .live-rate {
+  background: var(--acid);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+/* ── hierarchy: each structural tier carries a distinct swatch stroke ── */
+.stage[data-view='console'] .m-attack { fill: var(--coral); stroke: var(--ink); }         /* WAN / external */
+.stage[data-view='console'] .m-attack.sib { fill: #ff7a6b; }
+.stage[data-view='console'] .m-intf  { fill: var(--paper-2); stroke: var(--tier-edge); stroke-width: 2; }    /* edge / interface */
+.stage[data-view='console'] .m-host  { fill: var(--paper-2); stroke: var(--tier-subnet); stroke-width: 2; }  /* subnet */
+.stage[data-view='console'] .n-leaf  { fill: var(--tier-leaf); }                                             /* leaf / port */
+
+/* ── the red-box → page 3 escalation CTA (inside the WAN panel) ── */
+.stage[data-view='console'] .wan-pentest-cta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 9px;
+  padding: 7px 10px;
+  background: var(--ink);
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  text-align: left;
+  transition: background 0.16s var(--ease-guide, ease), transform 0.16s var(--ease-guide, ease);
+}
+.stage[data-view='console'] .wan-pentest-cta:hover { background: var(--coral); transform: translateX(2px); }
+.stage[data-view='console'] .wpc-arrow { color: var(--acid); font-size: 12px; }
+.stage[data-view='console'] .wan-pentest-cta:hover .wpc-arrow { color: var(--paper); }
+.stage[data-view='console'] .wpc-txt { flex: 1; color: var(--paper); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.stage[data-view='console'] .wpc-tag { color: var(--acid); font-size: 9px; letter-spacing: 0.12em; font-weight: 600; }

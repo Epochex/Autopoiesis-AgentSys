@@ -1,0 +1,218 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   ③ EXECUTION-LEDGER · Futurist-UI poster (light). Scoped under .traj-page so
+   every rule inherits the page tokens (--paper/--ink/--acid/…). New `fx-`
+   namespace only — no collision with App.css. Flat & printed: 2px frames,
+   1.5px hairlines, one acid accent, categorical strips, dot-grid, no shadow. */
+
+/* ── head hint ── */
+.traj-page .fx-hint { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); }
+
+/* ── architecture legend (node ⇒ component) ── */
+.traj-page .fx-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 8px 0 0; padding: 8px 10px; border: 2px solid var(--ink); border-bottom: none; background: var(--paper-2); }
+.traj-page .fx-legend-lead { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray); margin-right: 4px; }
+.traj-page .fx-legend-chip { display: inline-flex; align-items: center; gap: 6px; }
+.traj-page .fx-legend-chip i { width: 14px; height: 6px; flex: 0 0 auto; }
+.traj-page .fx-legend-chip b { font-family: var(--font-display); font-weight: 600; font-size: 13px; text-transform: uppercase; color: var(--ink); line-height: 1; }
+.traj-page .fx-legend-chip em { font-family: var(--font-mono); font-style: normal; font-size: 8.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gray); }
+
+/* ── schematic stage ── */
+.traj-page .fx-stage { border: 2px solid var(--ink); background: var(--paper); overflow: hidden; }
+.traj-page .fx-svg { display: block; width: 100%; height: auto; }
+
+/* motifs */
+.traj-page .fx-reg path { stroke: var(--ink); stroke-width: 1.4; fill: none; }
+.traj-page .fx-anno { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .fx-anno.dim2 { opacity: 0.5; letter-spacing: 0.18em; }
+.traj-page .fx-globe { fill: none; stroke: var(--rule); stroke-width: 1; }
+.traj-page .fx-globe .fx-globe-o { stroke: var(--ink); stroke-width: 1.4; }
+
+/* ── spine edges + data-pulses ── */
+.traj-page .fx-edge-l { stroke: var(--rule); stroke-width: 2; fill: none; }
+.traj-page .fx-edge.on .fx-edge-l { stroke: var(--ink); }
+.traj-page .fx-edge .fx-edge-l { marker-end: none; }
+.traj-page .fx-pulse { fill: var(--acid); stroke: var(--ink); stroke-width: 0.75; }
+.traj-page .fx-pulse.sm { stroke-width: 0.6; }
+
+/* ── verifier gate ── */
+.traj-page .fx-gate-body { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.traj-page .fx-gate.on.pass .fx-gate-body { fill: var(--acid); }
+.traj-page .fx-gate.on.reject .fx-gate-body { fill: url(#fx-hatch); }
+.traj-page .fx-gate-slot { stroke: var(--ink); stroke-width: 2; }
+.traj-page .fx-gate.on.pass .fx-gate-slot { stroke-width: 0; }
+.traj-page .fx-gate-t { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .fx-gate-v { font-family: var(--font-mono); font-weight: 600; font-size: 10px; letter-spacing: 0.06em; fill: var(--ink); }
+.traj-page .fx-gate:not(.on) .fx-gate-v { fill: var(--rule); }
+
+/* ── side modules (memory / skill controller) ── */
+.traj-page .fx-mod { transition: opacity 0.3s var(--ease-guide); }
+.traj-page .fx-mod-box { fill: var(--paper-2); stroke: var(--ink); stroke-width: 2; }
+.traj-page .fx-mod:not(.on) .fx-mod-box { stroke: var(--gray); stroke-dasharray: 4 3; }
+.traj-page .fx-mod-tag { font-family: var(--font-display); font-weight: 600; font-size: 14px; text-transform: uppercase; letter-spacing: 0.01em; fill: var(--ink); }
+.traj-page .fx-mod-sub { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .fx-mod-k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; fill: var(--ink); }
+.traj-page .fx-mod-n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12px; fill: var(--ink); }
+.traj-page .fx-mod-track { fill: var(--paper-3); stroke: var(--rule); stroke-width: 1; }
+.traj-page .fx-mod-bar { fill: var(--ink); }
+.traj-page .fx-mod-mini { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .fx-mod-lock { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--ink); }
+.traj-page .fx-hatchbox { fill: url(#fx-hatch); opacity: 0.5; stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .fx-funnel { fill: rgba(204, 255, 0, 0.14); stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .fx-sk-chip { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .fx-sk-t { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.02em; fill: var(--ink); }
+
+/* ── ledger ⇄ spine buses ── */
+.traj-page .fx-bus { transition: opacity 0.3s var(--ease-guide); }
+.traj-page .fx-bus-l { stroke: var(--rule); stroke-width: 1.5; fill: none; }
+.traj-page .fx-bus.on .fx-bus-l { stroke: var(--ink); stroke-width: 2; }
+.traj-page .fx-bus-t { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--gray); paint-order: stroke; stroke: var(--paper); stroke-width: 3px; stroke-linejoin: round; }
+.traj-page .fx-bus.on .fx-bus-t { fill: var(--ink); font-weight: 600; }
+
+/* ── provenance ledger ── */
+.traj-page .fx-led-box { fill: var(--paper-2); stroke: var(--ink); stroke-width: 2; }
+.traj-page .fx-led:not(.on) .fx-led-box { stroke-dasharray: 5 3; }
+.traj-page .fx-led-tag { font-family: var(--font-display); font-weight: 600; font-size: 15px; text-transform: uppercase; letter-spacing: 0.01em; fill: var(--ink); }
+.traj-page .fx-led-sub { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .fx-led-h { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .fx-row { transition: opacity 0.25s var(--ease-guide); cursor: pointer; }
+.traj-page .fx-row-hit { fill: transparent; }
+.traj-page .fx-row:hover .fx-row-hit { fill: var(--paper-3); }
+.traj-page .fx-row-tag { fill: var(--ink); }
+.traj-page .fx-row-ref { font-family: var(--font-mono); font-weight: 600; font-size: 9.5px; fill: var(--paper); }
+.traj-page .fx-row-dot { fill: var(--acid); stroke: var(--ink); stroke-width: 1.2; }
+.traj-page .fx-row-id { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.01em; fill: var(--ink); }
+.traj-page .fx-row.cited .fx-row-id { font-weight: 600; }
+.traj-page .fx-row-st path { stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .fx-row-st.ok path { fill: var(--acid); }
+.traj-page .fx-row-st.obs path { fill: var(--paper); }
+.traj-page .fx-row-st text { font-family: var(--font-mono); font-weight: 600; font-size: 9px; letter-spacing: 0.04em; }
+.traj-page .fx-row-st.ok text { fill: var(--acid-ink); }
+.traj-page .fx-row-st.obs text { fill: var(--gray); }
+.traj-page .fx-row-raw { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.01em; fill: var(--ink-soft); }
+
+/* ── the 7 stations ── */
+.traj-page .fx-stn { transition: opacity 0.25s var(--ease-guide); }
+.traj-page .fx-stn-bg { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.traj-page .fx-stn.pend .fx-stn-bg { fill: var(--paper-3); stroke: var(--rule); stroke-dasharray: 5 3; }
+.traj-page .fx-stn.active .fx-stn-bg { fill: var(--acid); }
+.traj-page .fx-stn.done:hover .fx-stn-bg { stroke-width: 3.5; }
+.traj-page .fx-stn.load .fx-stn-bg { stroke-width: 3; }
+.traj-page .fx-stn-no { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; fill: var(--gray); }
+.traj-page .fx-stn-idx { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.04em; fill: var(--gray); }
+.traj-page .fx-stn-name { font-family: var(--font-display); font-weight: 600; font-size: 27px; text-transform: uppercase; letter-spacing: 0.005em; fill: var(--ink); }
+.traj-page .fx-stn-rule { stroke: var(--rule); stroke-width: 1.5; }
+.traj-page .fx-stn-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 30px; fill: var(--ink); }
+.traj-page .fx-stn-num.pend { fill: var(--rule); }
+.traj-page .fx-stn-u { font-size: 0.45em; fill: var(--gray); }
+.traj-page .fx-stn-cap { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .fx-stn-load { font-family: var(--font-mono); font-weight: 600; font-size: 7.5px; letter-spacing: 0.06em; fill: var(--ink); }
+.traj-page .fx-stn-live { font-family: var(--font-mono); font-weight: 600; font-size: 7.5px; letter-spacing: 0.06em; fill: var(--acid-ink); }
+/* active station recolours its type onto the acid fill */
+.traj-page .fx-stn.active .fx-stn-no,
+.traj-page .fx-stn.active .fx-stn-idx,
+.traj-page .fx-stn.active .fx-stn-name,
+.traj-page .fx-stn.active .fx-stn-num,
+.traj-page .fx-stn.active .fx-stn-u,
+.traj-page .fx-stn.active .fx-stn-cap { fill: var(--acid-ink); }
+.traj-page .fx-stn.active .fx-stn-rule { stroke: rgba(13, 13, 13, 0.35); }
+.traj-page .fx-stn.pend .fx-stn-name,
+.traj-page .fx-stn.pend .fx-stn-cap { fill: var(--gray); }
+
+/* ── provenance cross-highlight (dim the rest, spotlight the chain) ── */
+.traj-page .fx-svg.hov .dim { opacity: 0.2; }
+.traj-page .fx-svg.hov .hot { opacity: 1; }
+.traj-page .fx-svg.hov .fx-stn.hot .fx-stn-bg { stroke-width: 3.5; }
+.traj-page .fx-svg.hov .fx-row.hot .fx-row-hit { fill: var(--paper-3); }
+
+/* ═══ replay deck: scrubber + reasoning HUD ═══════════════════════════════ */
+.traj-page .fx-deck { display: grid; grid-template-columns: 1fr 360px; gap: 0; margin-top: 0; border: 2px solid var(--ink); border-top: none; }
+
+/* scrubber */
+.traj-page .fx-scrub { padding: 12px 16px 14px; border-right: 2px solid var(--ink); display: flex; flex-direction: column; gap: 12px; }
+.traj-page .fx-scrub-transport { display: flex; gap: 6px; }
+.traj-page .fx-scrub-transport button { width: 30px; height: 24px; border: 1.5px solid var(--ink); background: var(--paper); color: var(--ink); cursor: pointer; font-size: 10px; font-family: var(--font-mono); display: inline-flex; align-items: center; justify-content: center; }
+.traj-page .fx-scrub-transport button:hover:not(:disabled) { background: var(--acid); }
+.traj-page .fx-scrub-transport button:disabled { color: var(--rule); border-color: var(--rule); cursor: default; }
+.traj-page .fx-scrub-rail { position: relative; height: 44px; margin: 4px 8px 22px; border-bottom: 2px solid var(--ink); }
+.traj-page .fx-scrub-fill { position: absolute; left: 0; bottom: -2px; height: 2px; background: var(--acid); box-shadow: 0 3px 0 -1px var(--acid); transition: width 0.4s var(--ease-guide); }
+.traj-page .fx-scrub-head { position: absolute; bottom: -6px; width: 2px; height: 12px; background: var(--ink); transform: translateX(-1px); transition: left 0.35s var(--ease-guide); }
+.traj-page .fx-tick { position: absolute; bottom: -2px; transform: translateX(-50%); background: none; border: none; padding: 0; cursor: pointer; display: flex; flex-direction: column; align-items: center; }
+.traj-page .fx-tick i { width: 11px; height: 11px; border: 1.5px solid var(--ink); background: var(--paper); transform: translateY(6px); transition: background 0.2s, transform 0.2s; }
+.traj-page .fx-tick.on i { background: var(--ink); }
+.traj-page .fx-tick.cur i { background: var(--acid); transform: translateY(6px) scale(1.35); }
+.traj-page .fx-tick-no { position: absolute; top: -24px; font-family: var(--font-mono); font-size: 9px; color: var(--gray); font-variant-numeric: tabular-nums; }
+.traj-page .fx-tick-nm { position: absolute; top: 16px; font-family: var(--font-display); font-weight: 600; font-size: 11px; text-transform: uppercase; color: var(--gray); white-space: nowrap; }
+.traj-page .fx-tick.on .fx-tick-no { color: var(--ink); }
+.traj-page .fx-tick.cur .fx-tick-nm { color: var(--ink); }
+.traj-page .fx-scrub-meta { display: flex; align-items: center; gap: 16px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray); }
+.traj-page .fx-scrub-meta b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.traj-page .fx-scrub-cat { margin-left: auto; color: var(--paper); padding: 2px 8px; font-size: 9px; letter-spacing: 0.08em; }
+
+/* reasoning readout HUD */
+.traj-page .fx-hud { padding: 12px 16px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--paper-2); min-width: 0; }
+.traj-page .fx-hud-head { display: flex; align-items: center; gap: 8px; border-bottom: 1.5px solid var(--ink); padding-bottom: 7px; }
+.traj-page .fx-hud-dot { width: 8px; height: 8px; background: var(--acid); border: 1.5px solid var(--ink); flex: 0 0 auto; animation: fx-blink 1.1s steps(2) infinite; }
+.traj-page .fx-hud-title { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink); }
+.traj-page .fx-hud-step { margin-left: auto; font-family: var(--font-display); font-weight: 600; font-size: 15px; text-transform: uppercase; color: var(--ink); }
+.traj-page .fx-hud-role { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.02em; color: var(--ink); }
+.traj-page .fx-hud-body { display: flex; flex-direction: column; gap: 5px; margin-top: 2px; min-height: 84px; }
+.traj-page .fx-hud-line { display: flex; align-items: baseline; gap: 8px; opacity: 0; animation: fx-line 0.4s var(--ease-guide) both; }
+.traj-page .fx-hud-op { flex: 0 0 auto; font-family: var(--font-mono); font-weight: 600; font-size: 9px; letter-spacing: 0.04em; color: var(--acid-ink); background: var(--acid); padding: 1px 5px; }
+.traj-page .fx-hud-txt { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.01em; color: var(--ink); word-break: break-word; }
+.traj-page .fx-hud-foot { margin-top: auto; padding-top: 7px; border-top: 1.5px solid var(--rule); font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray); }
+@keyframes fx-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0.25; } }
+@keyframes fx-line { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+
+/* ═══ detail drawer: ROLE · INPUTS · OUTPUTS · CONTRACT + figure ═══════════ */
+.traj-page .fx-drawer { margin-top: 14px; border: 2px solid var(--ink); background: var(--paper); }
+.traj-page .fx-drawer-head { display: flex; align-items: center; gap: 14px; padding: 9px 14px; border-bottom: 2px solid var(--ink); background: var(--paper-2); }
+.traj-page .fx-drawer-tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--ink); border: 2px solid var(--ink); padding: 2px 8px; white-space: nowrap; }
+.traj-page .fx-drawer-role { font-family: var(--font-display); font-weight: 600; font-size: 18px; text-transform: uppercase; letter-spacing: 0.005em; color: var(--ink); }
+.traj-page .fx-drawer-x { margin-left: auto; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--acid-ink); background: var(--acid); border: 1.5px solid var(--ink); padding: 4px 12px; cursor: pointer; }
+.traj-page .fx-drawer-grid { display: grid; grid-template-columns: 1fr 420px; gap: 0; }
+.traj-page .fx-drawer-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; padding: 14px 16px; align-content: start; }
+.traj-page .fx-io { display: flex; flex-direction: column; gap: 5px; align-content: start; }
+.traj-page .fx-io.contract { grid-column: 1 / -1; margin-top: 12px; padding-top: 12px; border-top: 1.5px solid var(--rule); }
+.traj-page .fx-io-lab { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray); margin-bottom: 3px; }
+.traj-page .fx-io-item { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.01em; color: var(--ink); border-left: 2px solid var(--rule); padding: 2px 0 2px 8px; }
+.traj-page .fx-io-item.out { border-left-color: var(--ink); }
+.traj-page .fx-ct { display: grid; grid-template-columns: 42px 1fr 16px; align-items: center; gap: 8px; padding: 3px 0; }
+.traj-page .fx-ct b { font-family: var(--font-mono); font-weight: 600; font-size: 8.5px; letter-spacing: 0.06em; text-align: center; color: var(--paper); background: var(--ink); padding: 2px 0; }
+.traj-page .fx-ct em { font-family: var(--font-mono); font-style: normal; font-size: 10.5px; color: var(--ink); }
+.traj-page .fx-ct i { font-style: normal; font-size: 13px; text-align: center; }
+.traj-page .fx-ct.ok i { color: var(--ink); }
+.traj-page .fx-ct.ok b { background: var(--acid); color: var(--acid-ink); }
+.traj-page .fx-ct.no i { color: var(--ink); }
+.traj-page .fx-ct.no b { background: var(--ink); }
+.traj-page .fx-ct.struct i { color: var(--gray); }
+.traj-page .fx-ct.struct b { background: var(--gray); }
+.traj-page .fx-drawer-fig { border-left: 2px solid var(--ink); background: var(--paper-2); display: flex; align-items: center; justify-content: center; padding: 12px 16px; min-width: 0; }
+.traj-page .fx-drawer-fig .tp-dia { width: 100%; max-width: 420px; height: auto; max-height: 220px; }
+
+/* ═══ ① evolution hero — poster-scale reinforcement (real cold-vs-warm) ═══ */
+.traj-page .tp-evo-stat.hero b { font-size: 62px; }
+.traj-page .tp-evo-warm { stroke-width: 5; }
+.traj-page .tp-evo-save { opacity: 0.2; }
+.traj-page .tp-evo-real { border: 2px solid var(--ink); }
+/* 3-tier memory composition strip — ties ① to the 3-tier store in ③ */
+.traj-page .fx-evo-tiers { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; padding-top: 11px; border-top: 1.5px solid var(--rule); }
+.traj-page .fx-evo-tiers-lead { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); }
+.traj-page .fx-evo-tierbar { display: flex; flex: 1 1 240px; height: 20px; border: 2px solid var(--ink); min-width: 200px; overflow: hidden; }
+.traj-page .fx-evo-seg { display: flex; align-items: center; justify-content: center; min-width: 0; border-right: 1.5px solid var(--ink); }
+.traj-page .fx-evo-seg:last-child { border-right: none; }
+.traj-page .fx-evo-seg b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 11px; color: var(--ink); }
+.traj-page .fx-evo-tierkey { display: flex; gap: 12px; }
+.traj-page .fx-evo-tk { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--gray); }
+.traj-page .fx-evo-tk i { width: 10px; height: 10px; border: 1.5px solid var(--ink); flex: 0 0 auto; }
+.traj-page .fx-evo-tk b { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .traj-page .fx-hud-dot { animation: none; }
+  .traj-page .fx-hud-line { animation: none; opacity: 1; transform: none; }
+  .traj-page .fx-scrub-fill, .traj-page .fx-scrub-head, .traj-page .fx-stn, .traj-page .fx-row, .traj-page .fx-mod, .traj-page .fx-bus { transition: none; }
+}
+@media (max-width: 1080px) {
+  .traj-page .fx-deck { grid-template-columns: 1fr; }
+  .traj-page .fx-scrub { border-right: none; border-bottom: 2px solid var(--ink); }
+  .traj-page .fx-drawer-grid { grid-template-columns: 1fr; }
+  .traj-page .fx-drawer-fig { border-left: none; border-top: 2px solid var(--ink); }
+}

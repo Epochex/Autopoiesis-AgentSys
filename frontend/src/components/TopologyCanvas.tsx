@@ -81,6 +81,7 @@ export function TopologyCanvas({
   onSub,
   onDev,
   onBatch,
+  onPentest,
 }: {
   topo: Topology
   stats: DataStats
@@ -105,6 +106,7 @@ export function TopologyCanvas({
   onSub: (s: Subnet | null) => void
   onDev: (d: Device | null, cidr: string) => void
   onBatch: (cidr: string) => void
+  onPentest?: () => void
 }) {
   const g = group(activeKey)
   const core: Pt = { x: 452, y: 340 }
@@ -360,7 +362,7 @@ export function TopologyCanvas({
                         <div className="an-verdict">
                           <span className={`sev-dot ${threat.severity}`} />
                           <Scramble className="an-vtxt" text={threat.verdict ?? ''} />
-                          <span className="sev-tag">{threat.severity}</span>
+                          <span className={`sev-tag ${threat.severity ?? ''}`}>{threat.severity}</span>
                         </div>
                         <p className="an-analysis">{threat.analysis}</p>
                         <div className="an-pred">
@@ -477,7 +479,7 @@ export function TopologyCanvas({
                       <div className="an-verdict">
                         <span className={`sev-dot ${wan.severity}`} />
                         <Scramble className="an-vtxt" text={wan.verdict ?? ''} />
-                        <span className="sev-tag">{wan.severity}</span>
+                        <span className={`sev-tag ${wan.severity ?? ''}`}>{wan.severity}</span>
                         {typeof wan.confidence === 'number' ? <span className="wan-conf">{Math.round(wan.confidence * 100)}%</span> : null}
                       </div>
                       <div className="kc-rail">
@@ -496,6 +498,13 @@ export function TopologyCanvas({
                         </ol>
                       ) : null}
                       <span className="tc-model">{wan.model} · {wan.distinctSrc} src</span>
+                      {onPentest ? (
+                        <button className="wan-pentest-cta" onClick={onPentest}>
+                          <span className="wpc-arrow">▸</span>
+                          <span className="wpc-txt">{lang === 'zh' ? '转入自我渗透测试 · 主动验证暴露面' : 'ESCALATE → SELF-PENTEST · PROVE THE EXPOSURE'}</span>
+                          <span className="wpc-tag">PAGE 03</span>
+                        </button>
+                      ) : null}
                     </div>
                   </foreignObject>
                 )}

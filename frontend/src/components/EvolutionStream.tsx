@@ -19,6 +19,12 @@ export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
   const P = warm.length
   const N = data.nCases
   const d = data.delta
+  const bt = data.memory?.by_tier
+  const tiers = bt ? [
+    { id: 'episodic', label: zh ? '情景 EPI' : 'EPISODIC', count: bt.episodic ?? 0, color: '#d6335a' },
+    { id: 'semantic', label: zh ? '语义 SEM' : 'SEMANTIC', count: bt.semantic ?? 0, color: '#4c9d94' },
+    { id: 'procedural', label: zh ? '程序 PRO' : 'PROCEDURAL', count: bt.procedural ?? 0, color: '#ffcfa0' },
+  ] : []
   const maxP = Math.max(1, ...cold.map((p) => p.probes), ...warm.map((p) => p.probes))
   const maxMem = Math.max(1, ...warm.map((p) => p.memory_end))
   const X0 = 70, XW = 560, Y0 = 30, YH = 150
@@ -78,6 +84,23 @@ export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
           <span className="tp-evo-op"><b>A-MEM</b><i>{zh ? '关联' : 'LINKS'}</i><em>{data.memory.links}</em></span>
           <span className="tp-evo-op"><b>{zh ? '反思' : 'REFLECT'}</b><i>{zh ? '族群晋升' : 'FAMILY INSIGHT'}</i><em>{data.memory.insights}</em></span>
           <span className="tp-evo-op"><b>Ebbinghaus</b><i>{zh ? '衰减遗忘' : 'DECAY'}</i><em>{data.memory.forgotten}{zh ? ' · 全复用保鲜' : ' FORGOTTEN'}</em></span>
+        </div>
+      ) : null}
+      {tiers.length ? (
+        <div className="fx-evo-tiers">
+          <span className="fx-evo-tiers-lead">{zh ? '记忆核 · 三层构成' : 'MEMORY CORE · 3-TIER COMPOSITION'}</span>
+          <span className="fx-evo-tierbar">
+            {tiers.map((t) => (
+              <span key={t.id} className="fx-evo-seg" style={{ flexGrow: Math.max(0.001, t.count), background: t.color }} title={`${t.label} ${t.count}`}>
+                {t.count > 0 ? <b>{t.count}</b> : null}
+              </span>
+            ))}
+          </span>
+          <span className="fx-evo-tierkey">
+            {tiers.map((t) => (
+              <span key={t.id} className="fx-evo-tk"><i style={{ background: t.color }} />{t.label}<b>{t.count}</b></span>
+            ))}
+          </span>
         </div>
       ) : null}
     </section>
