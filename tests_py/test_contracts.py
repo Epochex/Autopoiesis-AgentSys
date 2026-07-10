@@ -43,3 +43,31 @@ def test_claimed_but_not_landed_write_is_caught_by_grounded_readback(tmp_path):
     assert grounded_readback({"quote_price": 104.0}, result["state"]) is False
     assert verdict.passed is False
     assert any("claimed but not landed" in violation for violation in verdict.violations)
+
+
+def test_illegal_status_transition_is_caught_by_precondition(tmp_path):
+    # Approving an unpriced draft skips the mandatory quote step: the precondition
+    # must reject the illegal state transition before the write is trusted.
+    orchestrator = build_enterprise_ops_orchestrator(tmp_path / "illegal_transition_trace.jsonl")
+    case = next(item for item in load_enterprise_seed_cases() if item.id == "ops_bad_price")
+
+    result = execute_chain(["approval_submit"], case, orchestrator)
+    verdict = result["verdicts"][0]
+
+    assert verdict.passed is False
+    assert any("quote must be priced first" in violation for violation in verdict.violations)
+
+
+def test_step_judge_below_threshold_fails_the_step(tmp_path):
+    # The step judge is an independent gate: even a contract-clean step fails when
+    # the judge score falls below threshold.
+    orchestrator = build_enterprise_ops_orchestrator(tmp_path / "judge_trace.jsonl")
+    skill = orchestrator.skills.get("status_check")
+    state = orchestrator.system_adapter.snapshot("ops_status_only")
+    result = SkillResult(skill_name="status_check", readonly=True)
+    verifier = ContractVerifier(step_judge=lambda step_context: 0.0)
+
+    verdict = verifier.check_step(skill, state, {}, state, result)
+
+    assert verdict.passed is False
+    assert any("step judge score below threshold" in violation for violation in verdict.violations)

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
@@ -19,11 +20,37 @@ _cache_lock = asyncio.Lock()
 _cache_payload: dict[str, Any] | None = None
 _cache_loaded_at = 0.0
 
+
+def _start_prewarm() -> None:
+    """Warm the DeepSeek subnet models in a daemon thread so the UI gets instant cached hits."""
+    import threading
+
+    from .rca_reader import _load_meshes
+
+    def warm() -> None:
+        for cidr in (_load_meshes() or {}):
+            for lang in ("zh", "en"):
+                try:
+                    assess_mesh(cidr, lang)
+                except Exception:
+                    # Best-effort prewarm; a cold cache only means the first UI hit is slower.
+                    pass
+
+    threading.Thread(target=warm, daemon=True).start()
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _start_prewarm()
+    yield
+
+
 app = FastAPI(
     title="selfevo Network RCA Console",
     version="1.0.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
+    lifespan=_lifespan,
 )
 
 if settings.cors_origins:
@@ -35,24 +62,6 @@ if settings.cors_origins:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-
-@app.on_event("startup")
-async def _prewarm() -> None:
-    # Warm the DeepSeek subnet models in the background so the UI gets instant cached hits.
-    import threading
-
-    from .rca_reader import _load_meshes
-
-    def warm() -> None:
-        for cidr in (_load_meshes() or {}):
-            for lang in ("zh", "en"):
-                try:
-                    assess_mesh(cidr, lang)
-                except Exception:
-                    pass
-
-    threading.Thread(target=warm, daemon=True).start()
 
 
 @app.get("/api/healthz")
@@ -130,9 +139,17 @@ async def rca_snapshot(provider: str = "rule", refresh: bool = False) -> dict[st
 
 
 @app.get("/api/rca/evolution")
-async def rca_evolution(passes: int = 4) -> dict[str, Any]:
+async def rca_evolution(passes: int = Query(default=4, ge=1, le=64)) -> dict[str, Any]:
     from .rca_reader import load_evolution
     return await asyncio.to_thread(load_evolution, None, passes)
+
+
+@app.get("/api/rca/pentest")
+async def rca_pentest(lang: str = "zh") -> dict[str, Any]:
+    # Read-only self-pentest report built from the active_recon mock surface.
+    # Intrusive weak-cred/exploit probes are approval-gated and never executed.
+    from domains.active_recon.pentest import build_pentest_report
+    return await asyncio.to_thread(build_pentest_report, lang)
 
 
 @app.get("/", include_in_schema=False)

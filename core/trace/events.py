@@ -25,10 +25,17 @@ TraceKind = Literal[
     "critic_reviewed",
     "skill_chain_planned",
     "step_verified",
+    "intent_tier_attempted",
+    "intent_routed",
+    "unmatched_captured",
+    "skill_induced",
+    "skill_promoted",
 ]
 
 
 class TraceEvent(BaseModel):
+    """One immutable step in a run's audit trail; `kind` is a closed vocabulary (TraceKind)."""
+
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     run_id: str
     case_id: str

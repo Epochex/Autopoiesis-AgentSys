@@ -1,8 +1,10 @@
+"""Cross-domain kernel-reuse eval: the identical orchestrator class must drive
+both mock seed domains with zero kernel changes. LLM-free and deterministic."""
 from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Callable, Mapping, Sequence
 
 from domains.active_recon.factory import (
     build_active_recon_orchestrator,
@@ -20,11 +22,27 @@ def run_cross_domain_eval() -> dict[str, Any]:
         recon_orch = build_active_recon_orchestrator(root / "active_recon_trace.jsonl")
 
         orchestrator_class = type(network_orch).__name__
-        assert orchestrator_class == type(recon_orch).__name__
+        if orchestrator_class != type(recon_orch).__name__:
+            raise RuntimeError(
+                "kernel reuse violated: domains built different orchestrator classes "
+                f"({orchestrator_class} vs {type(recon_orch).__name__})"
+            )
 
         domains = {
-            "network_rca": _eval_network_rca(network_orch),
-            "active_recon": _eval_active_recon(recon_orch),
+            "network_rca": _eval_domain(
+                network_orch,
+                load_seed_cases(),
+                load_ground_truth(),
+                metric="root_cause_accuracy",
+                expected_key=lambda truth: truth.expected_root_cause_key,
+            ),
+            "active_recon": _eval_domain(
+                recon_orch,
+                load_recon_seed_cases(),
+                load_recon_ground_truth(),
+                metric="top_risk_accuracy",
+                expected_key=lambda truth: truth.top_risk,
+            ),
         }
         for row in domains.values():
             row["orchestrator_class"] = orchestrator_class
@@ -41,50 +59,32 @@ def run_cross_domain_eval() -> dict[str, Any]:
         }
 
 
-def _eval_network_rca(orchestrator) -> dict[str, Any]:
-    cases = load_seed_cases()
-    ground_truth = load_ground_truth()
+def _eval_domain(
+    orchestrator,
+    cases: Sequence[Any],
+    ground_truth: Mapping[str, Any],
+    *,
+    metric: str,
+    expected_key: Callable[[Any], str],
+) -> dict[str, Any]:
+    """Accuracy of ``diagnosis.root_cause_key`` against the domain's expected key,
+    plus verifier pass rate. ``metric`` names the domain's primary-accuracy column."""
     correct = 0
     passed = 0
-
     for case in cases:
         diagnosis, report = orchestrator.diagnose(case)
         truth = ground_truth[case.id]
-        correct += int(diagnosis.root_cause_key == truth.expected_root_cause_key)
+        correct += int(diagnosis.root_cause_key == expected_key(truth))
         passed += int(report.passed)
 
     total = len(cases)
-    root_cause_accuracy = round(correct / total, 4) if total else 0.0
+    accuracy = round(correct / total, 4) if total else 0.0
     return {
         "dataset_kind": "mock",
         "cases": total,
-        "primary_metric": "root_cause_accuracy",
-        "primary_acc": root_cause_accuracy,
-        "root_cause_accuracy": root_cause_accuracy,
-        "verifier_pass_rate": round(passed / total, 4) if total else 0.0,
-    }
-
-
-def _eval_active_recon(orchestrator) -> dict[str, Any]:
-    cases = load_recon_seed_cases()
-    ground_truth = load_recon_ground_truth()
-    correct = 0
-    passed = 0
-
-    for case in cases:
-        diagnosis, report = orchestrator.diagnose(case)
-        truth = ground_truth[case.id]
-        correct += int(diagnosis.root_cause_key == truth.top_risk)
-        passed += int(report.passed)
-
-    total = len(cases)
-    top_risk_accuracy = round(correct / total, 4) if total else 0.0
-    return {
-        "dataset_kind": "mock",
-        "cases": total,
-        "primary_metric": "top_risk_accuracy",
-        "primary_acc": top_risk_accuracy,
-        "top_risk_accuracy": top_risk_accuracy,
+        "primary_metric": metric,
+        "primary_acc": accuracy,
+        metric: accuracy,
         "verifier_pass_rate": round(passed / total, 4) if total else 0.0,
     }
 

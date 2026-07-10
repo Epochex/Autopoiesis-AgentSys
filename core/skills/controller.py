@@ -4,7 +4,15 @@ from core.skills.spec import RegisteredSkill
 
 
 class SkillAttentionController:
+    """Selects which read-only skills a run may see (the attention gate over the skill library).
+
+    Relevance is a hard gate; learned success/misuse rates only rank inside the
+    relevant set so a globally "good" skill can never widen its own scope.
+    """
+
     def __init__(self, enabled: bool = True, top_k: int = 3):
+        if top_k < 1:
+            raise ValueError(f"top_k must be >= 1, got {top_k}")
         self.enabled = enabled
         self.top_k = top_k
 
@@ -14,6 +22,10 @@ class SkillAttentionController:
         query_terms: list[str],
         preferred_skill_names: list[str],
     ) -> list[RegisteredSkill]:
+        """Return at most `top_k` unfrozen read-only skills relevant to `query_terms`.
+
+        With `enabled=False` (ablation) every unfrozen read-only skill is returned.
+        """
         available = [skill for skill in skills if not skill.spec.frozen and skill.spec.risk == "read_only"]
         if not self.enabled:
             return available

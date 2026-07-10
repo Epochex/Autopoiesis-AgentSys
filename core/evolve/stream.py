@@ -10,15 +10,22 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Mapping, Protocol, Sequence
 
-from core.evolve.consolidate import _first, consolidate_run
+from core.evolve.consolidate import CaseLike, _first, consolidate_run
 from core.evolve.memory_ops import memory_health
 from domains.network_rca.factory import build_network_rca_orchestrator
 
 
+class GroundTruthLike(Protocol):
+    """The ground-truth attribute the stream scorer needs (structural)."""
+
+    expected_root_cause_key: str
+
+
 def run_evolving_stream(
-    cases,
-    ground_truth,
+    cases: Sequence[CaseLike],
+    ground_truth: Mapping[str, GroundTruthLike],
     *,
     passes: int = 3,
     evolve: bool = True,
@@ -54,7 +61,7 @@ def run_evolving_stream(
             resolved = any(e.kind == "memory_resolved" for e in events)
             truth = ground_truth.get(case.id)
             correct = int(bool(truth) and diagnosis.root_cause_key == truth.expected_root_cause_key)
-            active_mem = sum(1 for r in orch.memory._records if not r.quarantined)
+            active_mem = len(orch.memory.active())
             per_event.append({
                 "i": i, "pass": i // n, "case": case.id,
                 "probes": probes, "cost": round(cost, 2), "retrieved": retrieved,
@@ -90,16 +97,24 @@ def _by_pass(per_event: list[dict], passes: int) -> list[dict]:
     return out
 
 
-def compare_cold_vs_warm(cases, ground_truth, *, passes: int = 3, **kwargs) -> dict:
+def compare_cold_vs_warm(
+    cases: Sequence[CaseLike],
+    ground_truth: Mapping[str, GroundTruthLike],
+    *,
+    passes: int = 3,
+    **kwargs,
+) -> dict:
     """The headline experiment: same recurring stream, evolution on vs off."""
     warm = run_evolving_stream(cases, ground_truth, passes=passes, evolve=True, **kwargs)
     cold = run_evolving_stream(cases, ground_truth, passes=passes, evolve=False, **kwargs)
+    n_warm = len(warm["per_event"])
+    n_cold = len(cold["per_event"])
     warm_probes = sum(e["probes"] for e in warm["per_event"])
     cold_probes = sum(e["probes"] for e in cold["per_event"])
     warm_cost = round(sum(e["cost"] for e in warm["per_event"]), 2)
     cold_cost = round(sum(e["cost"] for e in cold["per_event"]), 2)
-    warm_acc = round(sum(e["correct"] for e in warm["per_event"]) / len(warm["per_event"]), 4)
-    cold_acc = round(sum(e["correct"] for e in cold["per_event"]) / len(cold["per_event"]), 4)
+    warm_acc = round(sum(e["correct"] for e in warm["per_event"]) / n_warm, 4) if n_warm else 0.0
+    cold_acc = round(sum(e["correct"] for e in cold["per_event"]) / n_cold, 4) if n_cold else 0.0
     return {
         "warm": warm, "cold": cold,
         "memory": warm.get("memory_health", {}),

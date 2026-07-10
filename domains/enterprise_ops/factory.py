@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from core.context.compiler import ContextCompiler
 from core.memory.store import TieredMemoryStore
+from core.orchestrator.intent_router import CascadingIntentRouter
 from core.orchestrator.orchestrator import SingleAgentRCAOrchestrator
 from core.skills.controller import SkillAttentionController
 from core.skills.registry import SkillRegistry
@@ -59,6 +61,41 @@ def build_enterprise_ops_orchestrator(ledger_path: str | Path) -> SingleAgentRCA
     orchestrator.system_adapter = adapter
     orchestrator.contract_verifier = ContractVerifier()
     return orchestrator
+
+
+def build_enterprise_intent_router(
+    orchestrator: SingleAgentRCAOrchestrator,
+    *,
+    deep_agent: Any | None = None,
+    induction_store: str | Path | None = None,
+) -> CascadingIntentRouter:
+    """Cascading intent router over the enterprise ops library.
+
+    Enterprise requests are deterministic workflows, so no deep agent is wired
+    by default (pass one to enable the escalation tier); the seed cases act as
+    the golden replay set guarding skill promotion against routing regressions.
+    """
+    return CascadingIntentRouter(
+        orchestrator.skills,
+        orchestrator.skill_controller,
+        orchestrator.ledger,
+        deep_agent=deep_agent,
+        golden_cases=enterprise_golden_cases(),
+        induction_store=Path(induction_store) if induction_store is not None else None,
+    )
+
+
+def enterprise_golden_cases() -> list[dict]:
+    """Golden replay set for the promotion review: current routes must survive."""
+    return [
+        {
+            "golden": True,
+            "request": case.query,
+            "query_terms": [term.lower() for term in case.query_terms],
+            "expected_skill": case.relevant_skills[0],
+        }
+        for case in load_enterprise_seed_cases()
+    ]
 
 
 def _noop_diagnosis(**kwargs):

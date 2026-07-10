@@ -63,6 +63,11 @@ def _ingest(item: dict) -> tuple[TieredMemoryStore, dict[str, str]]:
     mem = TieredMemoryStore()
     sessions = item.get("haystack_sessions", [])
     sids = item.get("haystack_session_ids") or [f"s{i}" for i in range(len(sessions))]
+    if len(sids) != len(sessions):
+        raise ValueError(
+            f"item {item.get('question_id', '?')}: {len(sids)} haystack_session_ids "
+            f"for {len(sessions)} haystack_sessions — corrupt dataset item"
+        )
     rec_to_sid: dict[str, str] = {}
     for sid, turns in zip(sids, sessions):
         if isinstance(turns, dict):
@@ -91,7 +96,7 @@ def run_longmemeval(items: list[dict], *, k: int = 5) -> dict:
         retrieved_sids = {rec_to_sid.get(r.memory_id) for r in retrieved}
         n += 1
         answer = str(item.get("answer", "")).strip().lower()
-        if answer and any(answer in mem.get(r.memory_id).text.lower() for r in retrieved):
+        if answer and any(answer in r.text.lower() for r in retrieved):
             answer_hits += 1
         if not answer_sids:          # abstention items have no answer session — skip recall
             continue
@@ -115,7 +120,11 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: python -m core.eval.longmemeval <longmemeval_s.json> [k]", file=sys.stderr)
         return 2
     path = argv[0]
-    k = int(argv[1]) if len(argv) > 1 else 5
+    try:
+        k = int(argv[1]) if len(argv) > 1 else 5
+    except ValueError:
+        print(f"k must be an integer, got {argv[1]!r}", file=sys.stderr)
+        return 2
     items = load_longmemeval(path)
     res = run_longmemeval(items, k=k)
     synthetic = "synthetic" in Path(path).name.lower()

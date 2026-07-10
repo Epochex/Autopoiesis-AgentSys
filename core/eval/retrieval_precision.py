@@ -13,13 +13,14 @@ import sys
 from pathlib import Path
 
 from core.memory.logical_retrieval import logical_retrieve, naive_similarity_retrieve
-from core.memory.topo_graph import TopoGraphMemory
+from core.memory.topo_graph import TopoGraphMemory, TopoRecord
 
 
 _DEFAULT_FIXTURE = Path("domains/network_rca/fixtures/topo_incidents.json")
 
 
 def load_fixture(fixtures: str | Path | dict | list | None = None) -> dict:
+    """Normalize a fixture path / dict / bare record-list into {records, queries}."""
     if fixtures is None:
         fixtures = _DEFAULT_FIXTURE
     if isinstance(fixtures, (str, Path)):
@@ -30,14 +31,21 @@ def load_fixture(fixtures: str | Path | dict | list | None = None) -> dict:
 
 
 def run_retrieval_eval(fixtures: str | Path | dict | list | None = None) -> dict:
+    """Score logical vs naive retrieval on every fixture query.
+
+    Returns per-method aggregate precision@k / recall@k / false-retrieval plus the
+    per-query rows behind them. Fully deterministic and LLM-free.
+    """
     fixture = load_fixture(fixtures)
     records = fixture.get("records", [])
     queries = fixture.get("queries", [])
     graph = TopoGraphMemory(records)
 
-    logical_rows = []
-    naive_rows = []
+    logical_rows: list[dict] = []
+    naive_rows: list[dict] = []
     for item in queries:
+        if "id" not in item or "query" not in item:
+            raise ValueError(f"fixture query missing required 'id'/'query' keys: {item}")
         query = item["query"]
         k = int(item.get("k", 3))
         relevant = set(item.get("relevant_ids", []))
@@ -59,7 +67,9 @@ def run_retrieval_eval(fixtures: str | Path | dict | list | None = None) -> dict
     }
 
 
-def _score_query(retrieved, relevant: set[str], k: int, query_id: str) -> dict:
+def _score_query(retrieved: list[TopoRecord], relevant: set[str], k: int, query_id: str) -> dict:
+    """Precision@k penalizes under-retrieval (hits/k); returning nothing scores
+    0.0 false-retrieval — abstention is not hallucination."""
     ids = [rec.id for rec in retrieved]
     hits = [rid for rid in ids if rid in relevant]
     false = [rid for rid in ids if rid not in relevant]

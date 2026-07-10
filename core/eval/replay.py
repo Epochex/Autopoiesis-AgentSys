@@ -1,10 +1,24 @@
+"""Replay-based evaluation: score runs purely from the persisted trace ledger.
+
+Every diagnosis is reconstructed from replayed ``TraceEvent``s, never from live
+state, so any past run can be re-scored offline and the numbers are reproducible
+from the JSONL artifact alone.
+"""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping, Protocol, Sequence
 
 from pydantic import BaseModel
 
 from core.trace.ledger import JSONLTraceLedger
+
+
+class GroundTruthLike(Protocol):
+    """Ground-truth attributes the replay scorer needs (structural)."""
+
+    expected_root_cause_key: str
+    required_evidence: list[str]
 
 
 class ReplayMetrics(BaseModel):
@@ -14,17 +28,26 @@ class ReplayMetrics(BaseModel):
     verifier_pass_rate: float
 
 
-def run_replay(orchestrator, cases: list, ground_truth: dict[str, object]) -> ReplayMetrics:
+def run_replay(orchestrator, cases: Sequence[object], ground_truth: Mapping[str, GroundTruthLike]) -> ReplayMetrics:
+    """Back-compat alias for :func:`run_and_evaluate_replay`."""
     return run_and_evaluate_replay(orchestrator, cases, ground_truth)
 
 
-def run_and_evaluate_replay(orchestrator, cases: list, ground_truth: dict[str, object]) -> ReplayMetrics:
+def run_and_evaluate_replay(orchestrator, cases: Sequence[object], ground_truth: Mapping[str, GroundTruthLike]) -> ReplayMetrics:
+    """Diagnose every case, then score exclusively from the persisted ledger."""
     for case in cases:
         orchestrator.diagnose(case)
     return evaluate_trace(orchestrator.ledger.path, ground_truth)
 
 
-def evaluate_trace(ledger_path: str | Path, ground_truth: dict[str, object]) -> ReplayMetrics:
+def evaluate_trace(ledger_path: str | Path, ground_truth: Mapping[str, GroundTruthLike]) -> ReplayMetrics:
+    """Score a trace ledger against ground truth.
+
+    For a case diagnosed more than once, the latest events win (re-runs supersede).
+    A case absent from the ledger counts as incorrect / unverified; a truth with no
+    required evidence scores full recall. All ratios are 0.0 when ground_truth is
+    empty rather than raising.
+    """
     events = JSONLTraceLedger(ledger_path).replay()
     diagnoses = {
         event.case_id: event.payload

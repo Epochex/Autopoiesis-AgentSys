@@ -40,3 +40,25 @@ def test_logical_retrieval_never_returns_unprovenanced_records_as_grounded():
 
     assert "rc-r230-disk-full-unprovenanced" not in logical_ids
     assert "rc-r230-disk-full-unprovenanced" in naive_ids
+
+
+def test_logical_retrieval_is_entity_anchored_no_entities_means_no_recall():
+    """Without an observed entity anchor there is no reachable subgraph, so the
+    contract is to return nothing rather than fall back to fuzzy text matching."""
+    graph = TopoGraphMemory(_fixture()["records"])
+    assert logical_retrieve({"entities": [], "intent": "root cause storm"}, graph, 5) == []
+    assert logical_retrieve({"entities": ["", "  "], "intent": "root cause"}, graph, 5) == []
+
+
+def test_retrieval_handles_non_positive_k_and_is_deterministic():
+    fixture = _fixture()
+    graph = TopoGraphMemory(fixture["records"])
+    query = {"entities": ["R230"], "relation": "topology", "intent": "root cause"}
+
+    assert logical_retrieve(query, graph, 0) == []
+    assert logical_retrieve(query, graph, -3) == []
+    assert naive_similarity_retrieve(query, fixture["records"], 0) == []
+    assert naive_similarity_retrieve(query, fixture["records"], -1) == []
+
+    first = [r.id for r in logical_retrieve(query, graph, 5)]
+    assert all([r.id for r in logical_retrieve(query, graph, 5)] == first for _ in range(3))

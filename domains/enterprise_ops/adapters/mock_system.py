@@ -26,6 +26,13 @@ class MockEnterpriseSystem:
     def snapshot(self, case_id: str) -> dict[str, Any]:
         return deepcopy(self._state[case_id])
 
+    def has_case(self, case_id: str) -> bool:
+        return case_id in self._state
+
+    def restore(self, case_id: str, state: dict[str, Any]) -> None:
+        """Compensating rollback: reinstate a snapshot after a rejected step."""
+        self._state[case_id] = deepcopy(state)
+
     def apply_pricing(self, case_id: str) -> dict[str, Any]:
         state = self._state[case_id]
         policy = state["policy"]

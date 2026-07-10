@@ -1,12 +1,30 @@
 from __future__ import annotations
 
+from typing import Any
+
 from core.orchestrator.agents import CriticAgent, ExecutorAgent, PlannerAgent
-from core.orchestrator.orchestrator import SingleAgentRCAOrchestrator
+from core.orchestrator.orchestrator import CaseLike, SingleAgentRCAOrchestrator
 from core.trace.events import TraceEvent
+from core.verifier.verifier import VerificationReport
+
+
+def has_high_blast_radius(case: CaseLike) -> bool:
+    """True when the case declares a high blast radius — a routing/escalation feature."""
+    if bool(getattr(case, "high_blast", False)):
+        return True
+    blast_radius = str(getattr(case, "blast_radius", "") or "").strip().lower()
+    return blast_radius in {"high", "critical", "wide", "large", "global"}
 
 
 class AdaptiveOrchestrator:
-    """Single-agent first, with bounded read-only escalation when ambiguity remains."""
+    """Single-agent first, with bounded read-only escalation when ambiguity remains.
+
+    Escalation runs an explicit planner -> executor -> critic round (each agent
+    emits its own trace event) for at most `max_rounds` rounds; the executor
+    enforces the same read-only gate as the base path. Run state (events,
+    evidence, run id) lives on the wrapped base orchestrator, so this wrapper is
+    a drop-in replacement wherever the single-agent orchestrator is accepted.
+    """
 
     def __init__(
         self,
@@ -16,10 +34,16 @@ class AdaptiveOrchestrator:
         max_rounds: int = 2,
         planner_batch_size: int = 2,
     ):
+        if not 0.0 <= confidence_threshold <= 1.0:
+            raise ValueError(f"confidence_threshold must be in [0, 1], got {confidence_threshold}")
+        if max_rounds < 0:
+            raise ValueError(f"max_rounds must be >= 0, got {max_rounds}")
+        if planner_batch_size < 1:
+            raise ValueError(f"planner_batch_size must be >= 1, got {planner_batch_size}")
         self.base = base_orchestrator
         self.confidence_threshold = confidence_threshold
-        self.max_rounds = max(0, max_rounds)
-        self.planner_batch_size = max(1, planner_batch_size)
+        self.max_rounds = max_rounds
+        self.planner_batch_size = planner_batch_size
 
         self.memory = base_orchestrator.memory
         self.context_compiler = base_orchestrator.context_compiler
@@ -28,9 +52,6 @@ class AdaptiveOrchestrator:
         self.verifier = base_orchestrator.verifier
         self.diagnosis_builder = base_orchestrator.diagnosis_builder
         self.ledger = base_orchestrator.ledger
-        self._run_events = base_orchestrator._run_events
-        self._last_evidence = base_orchestrator._last_evidence
-        self.last_run_id = base_orchestrator.last_run_id
         self.planner = PlannerAgent(
             self.skills,
             batch_size=self.planner_batch_size,
@@ -42,12 +63,43 @@ class AdaptiveOrchestrator:
             record=self._record_agent_event,
         )
 
-    def diagnose(self, case) -> tuple[object, object]:
-        self.planner.batch_size = max(1, self.planner_batch_size)
+    # Run state is owned by the base orchestrator; delegate instead of mirroring
+    # so the two views can never drift apart mid-run.
+    @property
+    def _run_events(self) -> list[TraceEvent]:
+        return self.base._run_events
+
+    @_run_events.setter
+    def _run_events(self, value: list[TraceEvent]) -> None:
+        self.base._run_events = value
+
+    @property
+    def _last_evidence(self) -> list[dict]:
+        return self.base._last_evidence
+
+    @_last_evidence.setter
+    def _last_evidence(self, value: list[dict]) -> None:
+        self.base._last_evidence = value
+
+    @property
+    def last_run_id(self) -> str:
+        return self.base.last_run_id
+
+    @last_run_id.setter
+    def last_run_id(self, value: str) -> None:
+        self.base.last_run_id = value
+
+    def diagnose(self, case: CaseLike) -> tuple[Any, VerificationReport]:
+        """Diagnose `case`; escalate to planner/executor/critic rounds while unresolved.
+
+        Returns (diagnosis, report) from the last completed review. Raises
+        PermissionError if any (base or escalation) step touches a non-read-only skill.
+        """
+        # propagate post-construction tuning of the public knobs to the agents
+        self.planner.batch_size = self.planner_batch_size
         self.critic.confidence_threshold = self.confidence_threshold
 
         diagnosis, report = self.base.diagnose(case)
-        self._sync_from_base()
 
         reasons = self._escalation_reasons(case, diagnosis, report)
         if not reasons:
@@ -99,7 +151,6 @@ class AdaptiveOrchestrator:
             reasons = self._escalation_reasons(case, diagnosis, report) or ["unresolved_after_escalation_round"]
 
         self.base._last_evidence = evidence
-        self._sync_from_base()
         self._record(
             run_id,
             case.id,
@@ -112,7 +163,8 @@ class AdaptiveOrchestrator:
         )
         return diagnosis, report
 
-    def _escalation_reasons(self, case, diagnosis, report) -> list[str]:
+    def _escalation_reasons(self, case: CaseLike, diagnosis: Any, report: Any) -> list[str]:
+        """Why this result cannot stand as-is; empty list means no escalation."""
         reasons: list[str] = []
         if not getattr(report, "passed", False):
             reasons.append("report_failed")
@@ -125,11 +177,8 @@ class AdaptiveOrchestrator:
         return reasons
 
     @staticmethod
-    def _has_high_blast_radius(case) -> bool:
-        if bool(getattr(case, "high_blast", False)):
-            return True
-        blast_radius = str(getattr(case, "blast_radius", "") or "").strip().lower()
-        return blast_radius in {"high", "critical", "wide", "large", "global"}
+    def _has_high_blast_radius(case: CaseLike) -> bool:
+        return has_high_blast_radius(case)
 
     def _executed_skill_names(self) -> set[str]:
         return {
@@ -142,15 +191,9 @@ class AdaptiveOrchestrator:
         event = TraceEvent(run_id=run_id, case_id=case_id, kind=kind, payload=payload)
         self.base.ledger.append(event)
         self.base._run_events.append(event)
-        self._sync_from_base()
 
     def _record_agent_event(self, case_id: str, kind: str, payload: dict) -> None:
         self._record(self.base.last_run_id, case_id, kind, payload)
-
-    def _sync_from_base(self) -> None:
-        self._run_events = self.base._run_events
-        self._last_evidence = self.base._last_evidence
-        self.last_run_id = self.base.last_run_id
 
 
 def build_adaptive_orchestrator(
@@ -158,9 +201,12 @@ def build_adaptive_orchestrator(
     *,
     confidence_threshold: float = 0.6,
     max_rounds: int = 2,
+    planner_batch_size: int = 2,
 ) -> AdaptiveOrchestrator:
+    """Wrap a single-agent orchestrator with bounded multi-agent escalation."""
     return AdaptiveOrchestrator(
         base_orchestrator,
         confidence_threshold=confidence_threshold,
         max_rounds=max_rounds,
+        planner_batch_size=planner_batch_size,
     )

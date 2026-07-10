@@ -6,6 +6,8 @@ from core.memory.store import MemoryRecord
 
 
 class ContextPacket(BaseModel):
+    """Budgeted context for one reasoning step, with full provenance of what was kept."""
+
     case_id: str
     summary: str
     included_memory_ids: list[str] = Field(default_factory=list)
@@ -17,9 +19,24 @@ class ContextPacket(BaseModel):
 
 
 class ContextCompiler:
-    def __init__(self, token_budget: int = 900, enabled: bool = True):
+    """Compress memories + evidence into a token-budgeted packet, never dropping required evidence."""
+
+    def __init__(
+        self,
+        token_budget: int = 900,
+        enabled: bool = True,
+        *,
+        max_memory_lines: int = 8,
+        max_evidence_lines: int = 10,
+    ):
+        if token_budget < 1:
+            raise ValueError(f"token_budget must be >= 1, got {token_budget}")
+        if max_memory_lines < 1 or max_evidence_lines < 1:
+            raise ValueError("max_memory_lines and max_evidence_lines must be >= 1")
         self.token_budget = token_budget
         self.enabled = enabled
+        self.max_memory_lines = max_memory_lines
+        self.max_evidence_lines = max_evidence_lines
 
     def compile(
         self,
@@ -29,6 +46,13 @@ class ContextCompiler:
         current_evidence: list[dict],
         required_evidence: list[str],
     ) -> ContextPacket:
+        """Build a ContextPacket for one step.
+
+        Evidence items must carry an `evidence_id` (raises ValueError otherwise);
+        `source`/`summary` are optional. Required evidence is ordered first and is
+        never evicted while trimming to `token_budget`. With `enabled=False`
+        (ablation) nothing is capped or trimmed.
+        """
         memory_lines: list[tuple[str, str]] = []
         for tier in ("asset_profile", "semantic", "procedural", "episodic"):
             for memory in memories_by_tier.get(tier, []):
@@ -36,18 +60,18 @@ class ContextCompiler:
 
         required = set(required_evidence)
         evidence_lines = [
-            (item["evidence_id"], f"{item['source']}: {item['summary']}")
+            (item["evidence_id"], f"{item.get('source', 'unknown')}: {item.get('summary', '')}")
             for item in sorted(
-                current_evidence,
-                key=lambda item: (item.get("evidence_id") not in required, item.get("evidence_id", "")),
+                self._checked_evidence(case_id, current_evidence),
+                key=lambda item: (item["evidence_id"] not in required, item["evidence_id"]),
             )
         ]
         all_lines = [line for _, line in memory_lines + evidence_lines]
         before = self._estimate_tokens(query + " " + " ".join(all_lines))
 
         if self.enabled:
-            selected_memory = memory_lines[:8]
-            selected_evidence = evidence_lines[:10]
+            selected_memory = memory_lines[: self.max_memory_lines]
+            selected_evidence = evidence_lines[: self.max_evidence_lines]
         else:
             selected_memory = memory_lines
             selected_evidence = evidence_lines
@@ -65,13 +89,10 @@ class ContextCompiler:
             selected_items.pop(removable_index)
 
         after = self._estimate_tokens(" ".join(item["line"] for item in selected_items))
-        if before <= 0:
-            compression = 1.0
-        else:
-            compression = round(after / before, 4)
         included_memory_ids = [item["id"] for item in selected_items if item["kind"] == "memory" and item["id"]]
         included_evidence_ids = [item["id"] for item in selected_items if item["kind"] == "evidence" and item["id"]]
-        missing = [eid for eid in required_evidence if eid not in set(included_evidence_ids)]
+        included = set(included_evidence_ids)
+        missing = [eid for eid in required_evidence if eid not in included]
 
         return ContextPacket(
             case_id=case_id,
@@ -81,11 +102,19 @@ class ContextCompiler:
             missing_evidence=missing,
             estimated_tokens_before=before,
             estimated_tokens_after=after,
-            compression_ratio=compression,
+            compression_ratio=round(after / before, 4),
         )
 
     @staticmethod
+    def _checked_evidence(case_id: str, current_evidence: list[dict]) -> list[dict]:
+        for item in current_evidence:
+            if not item.get("evidence_id"):
+                raise ValueError(f"case {case_id!r}: evidence item without an 'evidence_id': {sorted(item)}")
+        return current_evidence
+
+    @staticmethod
     def _estimate_tokens(text: str) -> int:
+        # whitespace-token estimate: deterministic and model-agnostic; always >= 1
         return max(1, len(text.split()))
 
     @staticmethod

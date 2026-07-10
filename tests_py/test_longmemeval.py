@@ -37,3 +37,11 @@ def test_knowledge_update_prefers_the_updated_session():
     update = next(i for i in items if i["question_type"] == "knowledge-update")
     res = run_longmemeval([update], k=2)
     assert res["recall_at_k"] == 1.0, res
+
+
+def test_corrupt_item_with_mismatched_session_ids_fails_loud():
+    """Session-id/session count drift must raise, not silently drop sessions."""
+    item = load_longmemeval(_FIXTURE)[0]
+    corrupt = {**item, "haystack_session_ids": ["only-one-id"]}
+    with pytest.raises(ValueError, match="haystack_session_ids"):
+        run_longmemeval([corrupt], k=3)

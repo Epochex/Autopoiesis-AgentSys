@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, Protocol
 from uuid import uuid4
 
 from core.context.compiler import ContextCompiler
@@ -9,11 +11,32 @@ from core.skills.controller import SkillAttentionController
 from core.skills.registry import SkillRegistry
 from core.trace.events import TraceEvent
 from core.trace.ledger import JSONLTraceLedger
-from core.verifier.verifier import Verifier
+from core.verifier.verifier import Verifier, VerificationReport
+
+
+class CaseLike(Protocol):
+    """Structural contract every diagnosable case must satisfy (domain schemas do)."""
+
+    id: str
+    query: str
+    query_terms: list[str]
+    assets: list[str]
+    relevant_skills: list[str]
 
 
 class SingleAgentRCAOrchestrator:
-    """Single-agent online path; all learning hooks consume trace later."""
+    """Single-agent online path; all learning hooks consume trace later.
+
+    Every step is recorded to the trace ledger; any non-read-only skill or skill
+    result aborts the run with PermissionError (recorded as a blocked tool call).
+    """
+
+    # episodic recall: reuse a prior incident's observed evidence only when the match is strong
+    EPISODIC_RECALL_MIN_CONFIDENCE = 0.9
+    EPISODIC_RECALL_MIN_OVERLAP = 0.8
+    # procedural shortcut: narrow probing to remembered skills only on strong, proven patterns
+    PROCEDURAL_SHORTCUT_MIN_OVERLAP = 0.6
+    PROCEDURAL_SHORTCUT_MIN_CONFIDENCE = 1.4
 
     def __init__(
         self,
@@ -22,7 +45,7 @@ class SingleAgentRCAOrchestrator:
         skills: SkillRegistry,
         skill_controller: SkillAttentionController,
         verifier: Verifier,
-        diagnosis_builder,
+        diagnosis_builder: Callable[..., Any],
         ledger_path: str | Path,
     ):
         self.memory = memory
@@ -36,7 +59,12 @@ class SingleAgentRCAOrchestrator:
         self._last_evidence: list[dict] = []
         self.last_run_id: str = ""
 
-    def diagnose(self, case) -> tuple[object, object]:
+    def diagnose(self, case: CaseLike) -> tuple[Any, VerificationReport]:
+        """Run one read-only diagnosis for `case`.
+
+        Returns (diagnosis, verification report). Raises PermissionError when a
+        non-read-only skill or result is encountered; the block is traced first.
+        """
         run_id = str(uuid4())
         self._run_events = []
         self.last_run_id = run_id
@@ -51,58 +79,26 @@ class SingleAgentRCAOrchestrator:
         )
 
         query = {t.lower() for t in case.query_terms}
-        evidence: list[dict] = []
-        total_cost = 0.0
-
-        # episodic recall: a strongly-matching prior incident lets us reuse its observed,
-        # provenance-linked evidence and skip fresh probing entirely — the reasoner still
-        # re-derives the verdict and the verifier still checks every citation was observed.
-        recalled = None
-        for record in memories.get("episodic", []):
-            rec_terms = {t.lower() for t in record.tags}
-            overlap = len(query & rec_terms) / len(query) if query else 0.0
-            if (record.evidence_snapshot and record.confidence >= 0.9
-                    and overlap >= 0.8 and set(case.assets) & set(record.asset_ids)):
-                recalled = record
-                break
-
+        recalled = self._recall_episodic(memories.get("episodic", []), query, case.assets)
         if recalled is not None:
+            # a strongly-matching prior incident lets us reuse its observed, provenance-linked
+            # evidence and skip fresh probing entirely — the reasoner still re-derives the
+            # verdict and the verifier still checks every citation was observed.
             evidence = [dict(item) for item in recalled.evidence_snapshot]
-            self._record(run_id, case.id, "memory_resolved", {"memory_id": recalled.memory_id, "evidence_ids": [e.get("evidence_id") for e in evidence], "recalled_confidence": round(recalled.confidence, 3)})
+            total_cost = 0.0
+            self._record(
+                run_id,
+                case.id,
+                "memory_resolved",
+                {
+                    "memory_id": recalled.memory_id,
+                    "evidence_ids": [e.get("evidence_id") for e in evidence],
+                    "recalled_confidence": round(recalled.confidence, 3),
+                },
+            )
             self._record(run_id, case.id, "skills_exposed", {"skills": []})
         else:
-            # procedural-memory shortcut: reuse the skills proven to matter for this
-            # recurring pattern. Gated on STRONG query-term overlap so a merely shared
-            # asset can't apply the wrong pattern's skills — accuracy is never traded for speed.
-            mem_skills: list[str] = []
-            best_proc_conf = 0.0
-            for record in memories.get("procedural", []):
-                rec_terms = {t.lower() for t in record.tags if not t.startswith("skill:")}
-                overlap = len(query & rec_terms) / len(query) if query else 0.0
-                if overlap >= 0.6:
-                    best_proc_conf = max(best_proc_conf, record.confidence)
-                    mem_skills.extend(t[len("skill:"):] for t in record.tags if t.startswith("skill:"))
-            mem_skills = list(dict.fromkeys(mem_skills))
-            preferred = list(dict.fromkeys(list(case.relevant_skills) + mem_skills))
-
-            selected = self.skill_controller.select(self.skills.all(), case.query_terms, preferred)
-            if mem_skills and best_proc_conf >= 1.4:
-                named = [skill for skill in selected if skill.spec.name in mem_skills]
-                if named and len(named) < len(selected):
-                    selected = named
-                    self._record(run_id, case.id, "memory_shortcut", {"skills": [s.spec.name for s in named], "procedural_confidence": round(best_proc_conf, 3)})
-            self._record(run_id, case.id, "skills_exposed", {"skills": [s.spec.name for s in selected]})
-
-            for skill in selected:
-                if skill.spec.risk != "read_only":
-                    raise PermissionError(f"non-readonly skill blocked: {skill.spec.name}")
-                result = self.skills.execute(skill.spec.name, case=case)
-                if not result.readonly:
-                    self._record(run_id, case.id, "tool_called", {"skill": skill.spec.name, "readonly": result.readonly, "evidence_ids": [item["evidence_id"] for item in result.evidence], "cost": result.cost, "blocked": True})
-                    raise PermissionError(f"non-readonly tool result blocked: {skill.spec.name}")
-                total_cost += result.cost
-                evidence.extend(result.evidence)
-                self._record(run_id, case.id, "tool_called", {"skill": skill.spec.name, "readonly": result.readonly, "evidence_ids": [item["evidence_id"] for item in result.evidence], "cost": result.cost})
+            evidence, total_cost = self._probe_with_skills(run_id, case, query, memories.get("procedural", []))
 
         self._last_evidence = evidence
         context = self.context_compiler.compile(
@@ -121,6 +117,80 @@ class SingleAgentRCAOrchestrator:
         self._record(run_id, case.id, "cost_observed", {"tool_cost": total_cost, "tool_calls": tool_calls})
         self._record(run_id, case.id, "diagnosis_completed", diagnosis.model_dump(mode="json"))
         return diagnosis, report
+
+    def _recall_episodic(self, episodic: list[Any], query: set[str], assets: list[str]) -> Any | None:
+        """Return the first episodic record strong enough to resolve the case from memory."""
+        for record in episodic:
+            rec_terms = {t.lower() for t in record.tags}
+            overlap = len(query & rec_terms) / len(query) if query else 0.0
+            if (
+                record.evidence_snapshot
+                and record.confidence >= self.EPISODIC_RECALL_MIN_CONFIDENCE
+                and overlap >= self.EPISODIC_RECALL_MIN_OVERLAP
+                and set(assets) & set(record.asset_ids)
+            ):
+                return record
+        return None
+
+    def _probe_with_skills(
+        self,
+        run_id: str,
+        case: CaseLike,
+        query: set[str],
+        procedural: list[Any],
+    ) -> tuple[list[dict], float]:
+        """Select read-only skills (procedural-memory shortcut aware), execute them, trace each call."""
+        # procedural-memory shortcut: reuse the skills proven to matter for this
+        # recurring pattern. Gated on STRONG query-term overlap so a merely shared
+        # asset can't apply the wrong pattern's skills — accuracy is never traded for speed.
+        mem_skills: list[str] = []
+        best_proc_conf = 0.0
+        for record in procedural:
+            rec_terms = {t.lower() for t in record.tags if not t.startswith("skill:")}
+            overlap = len(query & rec_terms) / len(query) if query else 0.0
+            if overlap >= self.PROCEDURAL_SHORTCUT_MIN_OVERLAP:
+                best_proc_conf = max(best_proc_conf, record.confidence)
+                mem_skills.extend(t[len("skill:"):] for t in record.tags if t.startswith("skill:"))
+        mem_skills = list(dict.fromkeys(mem_skills))
+        preferred = list(dict.fromkeys(list(case.relevant_skills) + mem_skills))
+
+        selected = self.skill_controller.select(self.skills.all(), case.query_terms, preferred)
+        if mem_skills and best_proc_conf >= self.PROCEDURAL_SHORTCUT_MIN_CONFIDENCE:
+            named = [skill for skill in selected if skill.spec.name in mem_skills]
+            if named and len(named) < len(selected):
+                selected = named
+                self._record(
+                    run_id,
+                    case.id,
+                    "memory_shortcut",
+                    {"skills": [s.spec.name for s in named], "procedural_confidence": round(best_proc_conf, 3)},
+                )
+        self._record(run_id, case.id, "skills_exposed", {"skills": [s.spec.name for s in selected]})
+
+        evidence: list[dict] = []
+        total_cost = 0.0
+        for skill in selected:
+            if skill.spec.risk != "read_only":
+                raise PermissionError(f"non-readonly skill blocked: {skill.spec.name}")
+            result = self.skills.execute(skill.spec.name, case=case)
+            evidence_ids = result.evidence_ids()
+            if not result.readonly:
+                self._record(
+                    run_id,
+                    case.id,
+                    "tool_called",
+                    {"skill": skill.spec.name, "readonly": result.readonly, "evidence_ids": evidence_ids, "cost": result.cost, "blocked": True},
+                )
+                raise PermissionError(f"non-readonly tool result blocked: {skill.spec.name}")
+            total_cost += result.cost
+            evidence.extend(result.evidence)
+            self._record(
+                run_id,
+                case.id,
+                "tool_called",
+                {"skill": skill.spec.name, "readonly": result.readonly, "evidence_ids": evidence_ids, "cost": result.cost},
+            )
+        return evidence, total_cost
 
     def _record(self, run_id: str, case_id: str, kind: str, payload: dict) -> None:
         event = TraceEvent(run_id=run_id, case_id=case_id, kind=kind, payload=payload)

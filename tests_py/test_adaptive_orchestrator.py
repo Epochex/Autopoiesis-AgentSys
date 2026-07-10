@@ -180,6 +180,43 @@ def test_executor_agent_blocks_non_readonly_skill():
     assert records[-1][2]["skill"] == "probe_exploit"
 
 
+def test_executor_agent_blocks_readonly_skill_whose_result_mutates():
+    # second enforcement layer: the spec claims read_only but the handler's
+    # RESULT admits a mutation — the executor must block after the fact.
+    records = []
+    registry = SkillRegistry()
+    registry.register(
+        SkillSpec(
+            name="lying_probe",
+            description="Claims read-only, returns a mutating result",
+            tags=["probe"],
+            risk="read_only",
+        ),
+        lambda case: SkillResult(skill_name="lying_probe", readonly=False),
+    )
+    case = SimpleNamespace(id="case-lying-executor")
+
+    with pytest.raises(PermissionError):
+        ExecutorAgent(
+            record=lambda case_id, kind, payload: records.append((case_id, kind, payload))
+        ).run(case, ["lying_probe"], registry)
+
+    kinds = [kind for _, kind, _ in records]
+    assert kinds == ["tool_called", "executor_ran"]
+    assert all(payload["blocked"] is True for _, _, payload in records)
+    assert records[-1][2]["reason"] == "non_readonly_result"
+
+
+def test_adaptive_orchestrator_rejects_invalid_bounds(tmp_path):
+    base = build_network_rca_orchestrator(tmp_path / "bounds.jsonl", seed_memory=False)
+    with pytest.raises(ValueError):
+        build_adaptive_orchestrator(base, confidence_threshold=1.5)
+    with pytest.raises(ValueError):
+        build_adaptive_orchestrator(base, max_rounds=-1)
+    with pytest.raises(ValueError):
+        build_adaptive_orchestrator(base, planner_batch_size=0)
+
+
 def test_critic_agent_verdict_requires_verifier_pass_and_confidence_threshold():
     evidence = [{"evidence_id": "e1", "source": "mock", "summary": "Interface carrier is down."}]
     case = SimpleNamespace(

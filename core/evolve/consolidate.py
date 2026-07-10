@@ -16,6 +16,7 @@ Nothing here is synthesized: every field is derived from the real run events.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Protocol
 from uuid import uuid4
 
 from core.evolve.memory_ops import apply_route, link_related, reflect, route
@@ -24,8 +25,19 @@ from core.skills.registry import SkillRegistry
 from core.trace.events import TraceEvent
 
 
+class CaseLike(Protocol):
+    """The case attributes consolidation needs (structural; any domain case fits)."""
+
+    id: str
+    query: str
+    query_terms: list[str]
+    assets: list[str]
+
+
 @dataclass
 class ConsolidationReport:
+    """What one consolidation pass changed, by memory/skill id — the audit trail
+    for every write the offline loop makes."""
     run_id: str
     passed: bool
     added: list[str] = field(default_factory=list)
@@ -46,16 +58,9 @@ def _first(events: list[TraceEvent], kind: str) -> TraceEvent | None:
     return None
 
 
-def _find(memory: TieredMemoryStore, memory_id: str) -> MemoryRecord | None:
-    for record in memory._records:
-        if record.memory_id == memory_id:
-            return record
-    return None
-
-
 def consolidate_run(
     events: list[TraceEvent],
-    case,
+    case: CaseLike,
     memory: TieredMemoryStore,
     skills: SkillRegistry,
     evidence: list[dict] | None = None,
@@ -64,6 +69,13 @@ def consolidate_run(
     misuse_thresh: float = 0.5,
     conf_cap: float = 3.0,
 ) -> ConsolidationReport:
+    """Consume one run's trace and write durable learning back into the store.
+
+    Verified runs add/reinforce episodic + semantic + procedural memories and
+    credit the skills whose evidence the verdict cited; rejected runs quarantine
+    the memories they leaned on. Pure trace-derived — nothing is synthesized.
+    Returns the audit report of every id touched.
+    """
     diag = _first(events, "diagnosis_completed")
     verif = _first(events, "verifier_result")
     mem_read = _first(events, "memory_read")
@@ -92,9 +104,11 @@ def consolidate_run(
     for event in events:
         if event.kind == "tool_called" and not event.payload.get("blocked"):
             name = event.payload.get("skill")
+            if not name:
+                continue
             evids = set(event.payload.get("evidence_ids", []))
             produced[name] = produced.get(name, 0) + len(evids)
-            if name and (evids & cited) and name not in winning:
+            if (evids & cited) and name not in winning:
                 winning.append(name)
 
     if passed and root_key:
@@ -123,7 +137,7 @@ def consolidate_run(
 
         # semantic: the recurring pattern (dedupe by root cause), reinforced on reuse
         sem_id = f"sem-{root_key}"
-        sem = _find(memory, sem_id)
+        sem = memory.get(sem_id)
         if sem is not None:
             sem.confidence = min(conf_cap, sem.confidence + 0.3)
             sem.importance += 1.0
@@ -139,7 +153,7 @@ def consolidate_run(
         # procedural: for this pattern, the skills that mattered (the online shortcut)
         proc_id = f"proc-{root_key}"
         skill_tags = [f"skill:{s}" for s in winning]
-        proc = _find(memory, proc_id)
+        proc = memory.get(proc_id)
         if proc is not None:
             proc.confidence = min(conf_cap, proc.confidence + 0.4)
             proc.importance += 1.0
@@ -161,7 +175,7 @@ def consolidate_run(
         if mem_read:
             for ids in mem_read.payload.values():
                 for mid in ids:
-                    rec = _find(memory, mid)
+                    rec = memory.get(mid)
                     if rec is not None and rec.memory_id not in report.added:
                         rec.confidence = min(conf_cap, rec.confidence + 0.1)
                         rec.importance += 0.5
