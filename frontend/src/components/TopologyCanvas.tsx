@@ -9,6 +9,7 @@ const VBW = 1360
 const VBH = 1000
 const bez = (a: Pt, b: Pt) => `M${a.x} ${a.y} C ${(a.x + b.x) / 2} ${a.y}, ${(a.x + b.x) / 2} ${b.y}, ${b.x} ${b.y}`
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
+const clipS = (s: string, n: number) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s)
 const weight = (f: number) => Math.max(1, Math.min(5.5, 1 + Math.log10(f + 1) * 0.7))
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
@@ -300,7 +301,7 @@ export function TopologyCanvas({
               {sel ? <circle cx={a.p.x} cy={a.p.y} r="15" className="atk-halo" /> : null}
               <rect x={a.p.x - 7} y={a.p.y - 7} width="14" height="14" className="m-attack" transform={`rotate(45 ${a.p.x} ${a.p.y})`} />
               <text x={a.p.x + 16} y={a.p.y - 1} className="n-ip" textAnchor="start">{a.ip}</text>
-              <text x={a.p.x + 16} y={a.p.y + 12} className="n-v" textAnchor="start">{short(a.v)}<tspan className="probe-hint"> ▸ 研判</tspan></text>
+              <text x={a.p.x + 16} y={a.p.y + 12} className="n-v" textAnchor="start">{short(a.v)}<tspan className="probe-hint"> ▸ {lang === 'zh' ? '研判' : 'PROBE'}</tspan></text>
             </g>
           )
         })}
@@ -335,7 +336,7 @@ export function TopologyCanvas({
                     <g>
                       <circle cx={f.subP.x} cy={f.subP.y} r="21" className="alert-ring" />
                       <text x={f.subP.x + 18} y={f.subP.y + (hover3DCidr === f.sub.cidr ? 40 : 26)} className="alert-verdict" textAnchor="start">
-                        ⚠ {topoAlert.ip} · {topoAlert.verdict || '研判中…'}
+                        ⚠ {topoAlert.ip} · {topoAlert.verdict || (lang === 'zh' ? '研判中…' : 'analyzing…')}
                       </text>
                     </g>
                   ) : null}
@@ -361,7 +362,7 @@ export function TopologyCanvas({
                 ]} />
               <g className="batch-trig" onClick={() => onBatch(f.sub!.cidr)} style={{ cursor: 'pointer' }}>
                 <rect x={subNode.x - 8} y={subNode.y + 24} width="132" height="22" />
-                <text x={subNode.x + 58} y={subNode.y + 39}>⚡ 批量研判 / batch</text>
+                <text x={subNode.x + 58} y={subNode.y + 39}>⚡ {lang === 'zh' ? '批量研判 / batch' : 'BATCH ANALYZE'}</text>
               </g>
               {devs.map((dv, j) => {
                 const dy = 90 + j * 80
@@ -410,8 +411,8 @@ export function TopologyCanvas({
           )
         })}
 
-        {/* 3D constellation portal — on the topology itself */}
-        {meshCount > 0 ? (
+        {/* 3D constellation portal — on the topology itself (hidden while WAN pivots occupy the right field) */}
+        {meshCount > 0 && !wan ? (
           <g className="portal3d" onClick={onOpen3D} style={{ cursor: 'pointer' }}>
             {layout.ifs.map((f, i) => (f.sub ? <path key={i} d={bez(f.subP, { x: 1252, y: 372 })} className="portal-link" /> : null))}
             <circle cx={1252} cy={372} r="30" className="portal-halo" />
@@ -544,8 +545,8 @@ export function TopologyCanvas({
                     <g key={c.ip} className="branch-in wan-pivot">
                       <path d={bez(fg, ip_)} className="wan-pivot-link" />
                       <circle cx={ip_.x} cy={ip_.y} r="6" className="m-dev high" />
-                      <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip}</text>
-                      <text x={ip_.x + 12} y={ip_.y + 12} className="wan-rel" textAnchor="start">{c.relation} · {short(c.deny ?? 0)} deny</text>
+                      <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip} · {short(c.deny ?? 0)} deny</text>
+                      <text x={ip_.x + 12} y={ip_.y + 12} className="wan-rel" textAnchor="start">{clipS(c.relation, 26)}</text>
                     </g>
                   )
                 })}
@@ -566,7 +567,7 @@ export function TopologyCanvas({
                   <foreignObject x={28} y={628} width={660} height={364}>
                     <div className={`an-panel wan-panel sev-${wan.severity}`}>
                       <div className="an-head">
-                        <span className="an-kicker">DEEPSEEK · WAN 入侵研判 · {wan.ip}</span>
+                        <span className="an-kicker">DEEPSEEK · WAN {lang === 'zh' ? '入侵研判' : 'INTRUSION VERDICT'} · {wan.ip}</span>
                         <button className="an-x" onClick={onCloseWan}>✕</button>
                       </div>
                       <div className="an-verdict">
