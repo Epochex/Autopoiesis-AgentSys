@@ -194,6 +194,148 @@ def assess_mesh(cidr: str, lang: str = "zh") -> dict[str, Any]:
     return result
 
 
+_graph_cache: dict[str, Any] = {}
+
+
+def subnet_graph(cidr: str) -> dict[str, Any]:
+    """The raw mined device graph for one subnet: every host, every justified relation."""
+    from .rca_reader import _load_device_graphs
+
+    g = (_load_device_graphs() or {}).get(cidr)
+    if not g:
+        return {"ok": False, "text": "no device graph for subnet"}
+    return {"ok": True, **g}
+
+
+def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
+    """The agent reads the whole segment: names the communities, then hunts for the
+    patterns nobody asked about — shadow IoT fleets, netmask leaks, duplicate IPs,
+    lateral-movement corridors — grounded ONLY in the mined evidence."""
+    from . import providers
+    from core.llm.provider import OpenAICompatibleClient
+
+    ck = f"graph:{cidr}:{lang}"
+    if ck in _graph_cache:
+        return _graph_cache[ck]
+    g = subnet_graph(cidr)
+    if not g.get("ok"):
+        return g
+    cfg = providers._deepseek_cfg()
+    if not cfg["api_key"]:
+        return {"ok": False, "text": "DeepSeek key not configured."}
+
+    devs = {d["ip"]: d for d in g["devices"]}
+    deg: dict[str, int] = {}
+    for e in g["edges"]:
+        deg[e["src"]] = deg.get(e["src"], 0) + 1
+        deg[e["dst"]] = deg.get(e["dst"], 0) + 1
+    hubs = sorted(
+        g["devices"],
+        key=lambda d: (-(deg.get(d["ip"], 0)), -d["deny"], -d["flows"]),
+    )[:14]
+    payload = {
+        "subnet": cidr,
+        "stats": g["stats"],
+        "communities": [
+            {
+                "id": c["id"], "size": c["size"], "role": c["role"], "vendor": c["vendor"],
+                "bound_by": c["boundBy"], "denied_flows": c["deny"],
+                "members": c["members"][:10],
+                "sample_names": [devs[m]["name"] for m in c["members"][:6] if devs.get(m, {}).get("name")],
+            }
+            for c in g["clusters"][:12]
+        ],
+        "anomalies": g["anomalies"],
+        "hub_devices": [
+            {
+                "ip": d["ip"], "name": d["name"], "vendor": d["vendor"], "role": d["role"],
+                "links": deg.get(d["ip"], 0), "deny": d["deny"], "accept": d["accept"],
+                "ports": d["topPorts"], "seen_by": d["seenBy"],
+            }
+            for d in hubs
+        ],
+        "strongest_relations": [
+            {"a": e["src"], "b": e["dst"], "kind": e["kind"], "evidence": e["evidence"], "observed": e["observed"]}
+            for e in sorted(g["edges"], key=lambda e: -e["weight"])[:18]
+        ],
+        "evidence_key": {
+            "clash": "same L3 tuple claimed by two hosts (duplicate IP / NAT reuse) — OBSERVED",
+            "bcast": "both hosts broadcast to the same discovery target — OBSERVED",
+            "codst": "both hosts talk to the same destination — OBSERVED",
+            "fleet": "same MAC OUI vendor block — INFERRED",
+            "family": "same DHCP hostname family — INFERRED",
+            "lease": "DHCP leases renew in lockstep (shared switch/power domain) — INFERRED",
+            "portfp": "identical destination-port fingerprint — INFERRED",
+        },
+    }
+    want = "Chinese" if lang == "zh" else "English"
+    instr = (
+        f"You are a network forensics analyst reading a reconstructed device graph for segment {cidr}. "
+        f"The FortiGate only logs L3, so intra-segment links were RECONSTRUCTED from DHCP leases, MAC OUI, "
+        f"hostnames, broadcast targets, session clashes and shared destinations. Respond in {want}. "
+        f"Use ONLY the IPs given. Be concrete and specific — no generic advice.\n"
+        f"Do three things: (1) give each community a real functional name; (2) find the HIDDEN patterns a "
+        f"human would miss — shadow IoT fleets nobody inventoried, netmask/segmentation errors, duplicate-IP "
+        f"conflicts, hosts that bridge two communities (lateral-movement corridors), silent DHCP-only devices "
+        f"that never route; (3) describe where the segment's traffic actually converges. "
+        f'Return JSON {{'
+        f'"summary": <2 sentences on this segment\'s real structure>, '
+        f'"communities": [{{"id": <community id>, "label": <2-5 word functional name>, "note": <<=12 words>}}], '
+        f'"patterns": [{{"title": <short>, "kind": "shadow-fleet|misconfig|duplicate-ip|lateral-corridor|blind-spot|exposure", '
+        f'"members": [<ip>], "why": <1 sentence citing the evidence kind>, "severity": "high|medium|low", '
+        f'"confidence": <0-1>}}], '
+        f'"corridors": [{{"src": <ip>, "dst": <ip>, "why": <<=8 words: why this pair is a pivot path>}}], '
+        f'"flow": <1 sentence: where traffic converges / what the capillary pattern is>, '
+        f'"blind_spot": <1 sentence: what this graph still cannot see>, '
+        f'"actions": [<concrete action>, <concrete action>, <concrete action>]}}. '
+        f"Give 3-6 patterns, ranked by severity."
+    )
+    client = OpenAICompatibleClient(
+        base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=90
+    )
+    try:
+        out = client.complete_json(
+            [{"role": "user", "content": instr + "\n" + json.dumps(payload, ensure_ascii=False)}],
+            schema_name="device_graph_analysis",
+        )
+    except Exception as exc:
+        return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
+
+    valid = set(devs)
+    ids = {c["id"] for c in g["clusters"]}
+    result = {
+        "ok": True,
+        "cidr": cidr,
+        "summary": out.get("summary", ""),
+        "communities": [
+            {"id": c.get("id"), "label": c.get("label", ""), "note": c.get("note", "")}
+            for c in (out.get("communities") or []) if c.get("id") in ids
+        ],
+        "patterns": [
+            {
+                "title": p.get("title", ""),
+                "kind": p.get("kind", ""),
+                "members": [m for m in (p.get("members") or []) if m in valid][:24],
+                "why": p.get("why", ""),
+                "severity": p.get("severity", "medium"),
+                "confidence": p.get("confidence"),
+            }
+            for p in (out.get("patterns") or []) if p.get("title")
+        ][:6],
+        "corridors": [
+            {"src": c.get("src"), "dst": c.get("dst"), "why": c.get("why", "")}
+            for c in (out.get("corridors") or [])
+            if c.get("src") in valid and c.get("dst") in valid and c.get("src") != c.get("dst")
+        ][:8],
+        "flow": out.get("flow", ""),
+        "blindSpot": out.get("blind_spot", ""),
+        "actions": [a for a in (out.get("actions") or []) if a][:4],
+        "model": cfg["model"],
+    }
+    _graph_cache[ck] = result
+    return result
+
+
 def _wan_evidence() -> dict[str, Any]:
     """Full real WAN attack evidence from the held-out window stats, clustered by /24."""
     from collections import defaultdict

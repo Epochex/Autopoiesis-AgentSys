@@ -14,3 +14,8 @@ artifacts/
 frontend/.venv/
 frontend/node_modules/
 frontend/dist/
+
+# private SSH keys — never commit
+key/
+*.pem
+id_ed25519*

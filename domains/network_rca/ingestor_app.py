@@ -7,6 +7,9 @@ from pathlib import Path
 from domains.network_rca.adapters.fortios_syslog import LocalFixtureLogAdapter
 
 
+DEFAULT_R230_FORTIGATE_LOG_PATH = "/data/fortigate-runtime/input/fortigate.log"
+
+
 def create_app(log_paths: list[str | Path] | None = None):
     try:
         from fastapi import FastAPI, Query
@@ -55,7 +58,7 @@ def create_app(log_paths: list[str | Path] | None = None):
 
 
 def _paths_from_env() -> list[str]:
-    raw = os.getenv("R230_FORTIGATE_LOG_PATHS", "/var/log/fortigate/fortigate.log")
+    raw = os.getenv("R230_FORTIGATE_LOG_PATHS", DEFAULT_R230_FORTIGATE_LOG_PATH)
     return [item.strip() for item in raw.split(":") if item.strip()]
 
 

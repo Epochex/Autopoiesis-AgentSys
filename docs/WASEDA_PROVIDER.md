@@ -1,18 +1,18 @@
 # Waseda GPU Provider Notes
 
-selfevo-orchiter can call the Waseda GPU path inherited from the NetOps research environment, but the boundary is intentionally provider-shaped. General agent planning should use an OpenAI-compatible chat backend; incident-specific evidence gateways should stay behind domain adapters.
+Autopoiesis-AgentSys can call the Waseda GPU path inherited from the NetOps research environment, but the boundary is intentionally provider-shaped. General agent planning should use an OpenAI-compatible chat backend; incident-specific evidence gateways should stay behind domain adapters.
 
 ## Direct OpenAI-Compatible Backend
 
 Use this for general model calls:
 
 ```bash
-SELFEVO_MODEL_BASE_URL=http://127.0.0.1:28000/v1
-SELFEVO_MODEL_ID=glm-fast
-SELFEVO_MODEL_PROVIDER=waseda-gpu
+SELFEVO_LLM_BASE_URL=http://127.0.0.1:28000/v1
+SELFEVO_LLM_MODEL=glm-fast
+SELFEVO_LLM_API_KEY=sk-local          # any non-empty token for a local server
 ```
 
-The legacy `HELIX_MODEL_*` variables are still accepted by older scripts, but new documentation should prefer `SELFEVO_MODEL_*`.
+These are the variables the kernel's `OpenAICompatibleClient` (`core/llm/provider.py`) reads.
 
 Request shape:
 
@@ -28,7 +28,7 @@ Request shape:
 
 ## NetOps Evidence Gateway
 
-The gateway on `http://127.0.0.1:18080/infer` is NetOps-specific. It accepts evidence-bundle requests and returns bounded incident-analysis output. selfevo-orchiter should call it only through a `netops` adapter so the core memory, compression, and policy iteration layers remain domain-neutral.
+The gateway on `http://127.0.0.1:18080/infer` is NetOps-specific. It accepts evidence-bundle requests and returns bounded incident-analysis output. Autopoiesis-AgentSys should call it only through a `netops` adapter so the core memory, compression, and policy iteration layers remain domain-neutral.
 
 Health checks:
 
@@ -49,16 +49,16 @@ Useful scripts from the NetOps repository:
 
 ## Smoke Command
 
-Once the OpenAI-compatible backend is reachable:
+Once the OpenAI-compatible backend is reachable, point the kernel's GPU provider at it and
+let the console probe it live:
 
 ```bash
-SELFEVO_MODEL_BASE_URL=http://127.0.0.1:28000/v1 \
-SELFEVO_MODEL_ID=glm-fast \
-npm run provider:smoke
+export SELFEVO_GPU_BASE_URL=http://127.0.0.1:28000/v1
+export SELFEVO_GPU_MODEL=glm-fast
+export SELFEVO_GPU_API_KEY=sk-local          # any non-empty token for a local server
+systemctl restart netops-ops-console-backend
 ```
 
-The command runs health and a tiny JSON sentinel chat. For CI-style opt-in testing:
-
-```bash
-SELFEVO_RUN_PROVIDER_SMOKE=1 npm run test:provider
-```
+`GET /api/rca/providers` then runs a live TCP reachability check and reports the
+`gpu-tunnel` provider as reachable; an RCA snapshot can be produced with
+`GET /api/rca/snapshot?provider=gpu-tunnel` instead of the default rule reasoner.

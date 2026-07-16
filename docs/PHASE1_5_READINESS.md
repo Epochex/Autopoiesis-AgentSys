@@ -55,7 +55,7 @@ Run the optional R230 readonly ingestor on the log host with:
 
 ```bash
 python3 -m pip install -e '.[ingestor]'
-R230_FORTIGATE_LOG_PATHS=/var/log/fortigate/fortigate.log \
+R230_FORTIGATE_LOG_PATHS=/data/fortigate-runtime/input/fortigate.log \
   uvicorn domains.network_rca.ingestor_app:app --host 0.0.0.0 --port 8000
 ```
 
@@ -68,9 +68,9 @@ R230_FORTIGATE_LOG_PATHS=/var/log/fortigate/fortigate.log \
 
 Mock baseline rows are allowed only as pipeline checks and must be labeled `dataset_kind=mock`.
 
-## TypeScript Boundary
+## Legacy TypeScript (removed)
 
-This repository started as a TypeScript self-evolution kernel. The Python `core/` and `domains/network_rca/` tree is the implementation surface for the Python-only Phase 0-1 RCA spec. Existing TypeScript modules remain as legacy/reference material and frontend-adjacent tooling; Python Phase 1.5 metrics must not depend on them.
+This repository started as a TypeScript self-evolution kernel; that `src/` tree has since been **removed**. The Python `core/` and `domains/` tree is the sole implementation surface and the system the Phase 1.5 metrics measure.
 
 ## CI Boundary
 

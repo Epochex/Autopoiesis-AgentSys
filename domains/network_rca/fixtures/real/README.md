@@ -31,7 +31,7 @@ Optional R230 readonly ingestor service:
 
 ```bash
 python3 -m pip install -e '.[ingestor]'
-R230_FORTIGATE_LOG_PATHS=/var/log/fortigate/fortigate.log \
+R230_FORTIGATE_LOG_PATHS=/data/fortigate-runtime/input/fortigate.log \
   uvicorn domains.network_rca.ingestor_app:app --host 0.0.0.0 --port 8000
 ```
 

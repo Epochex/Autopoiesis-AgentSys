@@ -52,7 +52,7 @@ start_manual_backend() {
     cd "${ROOT_DIR}"
     export PYTHONUNBUFFERED=1
     export CONTEXTHELIX_ARTIFACT_ROOT="${CONTEXTHELIX_ARTIFACT_ROOT:-${NETOPS_RUNTIME_ROOT:-/data/netops-runtime}}"
-    export CONTEXTHELIX_REPO_ROOT="${CONTEXTHELIX_REPO_ROOT:-/data/selfevo-orchiter}"
+    export CONTEXTHELIX_REPO_ROOT="${CONTEXTHELIX_REPO_ROOT:-/data/Autopoiesis-AgentSys}"
     export CONTEXTHELIX_FRONTEND_DIST="${CONTEXTHELIX_FRONTEND_DIST:-${ROOT_DIR}/dist}"
     nohup "${BACKEND_CMD[@]}" >"${LOG_PATH}" 2>&1 &
     echo $! >"${PID_PATH}"

@@ -1,6 +1,6 @@
 # Python Network RCA Phase 1
 
-This layer is a Python 3.11 implementation of the Phase 0-1 contract for the selfevo framework. The existing TypeScript kernel remains intact; this package adds a runnable and testable RCA seed domain with the requested `core/` and `domains/network_rca/` layout.
+This layer is a Python (3.10+) implementation of the Phase 0-1 contract for the Autopoiesis-AgentSys framework. (An earlier TypeScript kernel has since been removed; Python `core/` + `domains/` is the only implementation.) This package adds a runnable and testable RCA seed domain with the `core/` and `domains/network_rca/` layout.
 
 ## What Is Included
 

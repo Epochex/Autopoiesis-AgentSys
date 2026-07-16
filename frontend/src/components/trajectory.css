@@ -18,8 +18,9 @@
 .traj-page .fx-mast-q { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.01em; color: var(--ink-soft); max-width: 60ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .traj-page .fx-mast-arrow { font-family: var(--font-display); font-weight: 600; color: var(--ink); }
 .traj-page .fx-mast-root { background: var(--acid); color: var(--acid-ink); font-family: var(--font-display); font-weight: 600; text-transform: uppercase; font-size: 17px; letter-spacing: 0.005em; padding: 1px 9px; }
-.traj-page .fx-mast-facts { display: inline-flex; gap: 12px; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray); }
+.traj-page .fx-mast-facts { display: inline-flex; align-items: center; gap: 12px; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray); }
 .traj-page .fx-mast-facts b { font-size: 14px; color: var(--ink); font-variant-numeric: tabular-nums; margin-right: 3px; }
+.traj-page .fx-lockg { width: 10px; height: 14px; color: var(--ink); }
 .traj-page .fx-mast-r { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; flex: 0 0 auto; }
 .traj-page .fx-mast-real { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--acid-ink); background: var(--acid); border: 2px solid var(--ink); padding: 3px 9px; white-space: nowrap; }
 .traj-page .fx-mast-cases { display: flex; align-items: center; gap: 5px; }
@@ -46,9 +47,7 @@
 /* frame chrome */
 .traj-page .fx-frame path { stroke: var(--ink); stroke-width: 1.6; fill: none; }
 .traj-page .fx-coord line { stroke: var(--rule); stroke-width: 1; }
-.traj-page .fx-scanid { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; fill: var(--ink); }
-.traj-page .fx-ambient { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; fill: var(--ink); }
-.traj-page .fx-scanid.dim2, .traj-page .fx-ambient.dim2 { font-size: 9.5px; fill: var(--gray); letter-spacing: 0.1em; }
+.traj-page .fx-ico { fill: none; stroke: var(--ink); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .traj-page .fx-globe { fill: none; stroke: var(--rule); stroke-width: 1; opacity: 0.7; }
 .traj-page .fx-sweep line { stroke: var(--acid); stroke-width: 2; opacity: 0.28; animation: fx-sweep 7s linear infinite; }
 @keyframes fx-sweep { from { transform: translateX(-30px); } to { transform: translateX(1470px); } }
@@ -72,15 +71,32 @@
 .traj-page .fx-teth.cite.on .fx-teth-l { stroke: var(--ink); }
 .traj-page .fx-teth.verify.on .fx-teth-l { stroke: var(--gray); stroke-dasharray: 2 3; }
 
-/* verifier gate */
+/* verifier gate: ✓ path taken · dashed ✕ stub not taken */
 .traj-page .fx-gate-body { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
 .traj-page .fx-gate.on.pass .fx-gate-body { fill: var(--acid); }
 .traj-page .fx-gate.on.reject .fx-gate-body { fill: url(#fx-hatch); }
 .traj-page .fx-gate-x { stroke: var(--ink); stroke-width: 2; }
 .traj-page .fx-gate.on.pass .fx-gate-x { stroke-width: 0; }
 .traj-page .fx-gate-t { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--gray); }
-.traj-page .fx-gate-v { font-family: var(--font-mono); font-weight: 600; font-size: 11px; letter-spacing: 0.05em; fill: var(--ink); }
-.traj-page .fx-gate:not(.on) .fx-gate-v { fill: var(--rule); }
+.traj-page .fx-gate-mark rect { stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .fx-gate-mark.ok rect { fill: #a8bfa0; }
+.traj-page .fx-gate-mark.no rect { fill: #d6335a; }
+.traj-page .fx-gate-mark text { font-family: var(--font-mono); font-weight: 600; font-size: 12px; fill: var(--ink); }
+.traj-page .fx-gate-mark.no text { fill: var(--paper); }
+.traj-page .fx-gate:not(.on) .fx-gate-mark { opacity: 0.25; }
+.traj-page .fx-gate-stub.idle { opacity: 0.75; }
+.traj-page .fx-gate-stub-x { font-family: var(--font-mono); font-weight: 600; font-size: 12px; fill: #d6335a; }
+.traj-page .fx-gate-stub.taken .fx-gate-stub-x { fill: var(--ink); }
+.traj-page .fx-gate:not(.on) .fx-gate-stub { opacity: 0.25; }
+
+/* decision forks: the branch NOT taken is dashed + grey */
+.traj-page .fx-fork { opacity: 0.35; transition: opacity 0.3s var(--ease-guide); }
+.traj-page .fx-fork.on { opacity: 1; }
+.traj-page .fx-branch { stroke: var(--gray); stroke-width: 1.4; stroke-dasharray: 4 3; fill: none; }
+.traj-page .fx-branch-end { fill: url(#fx-hatch); opacity: 0.5; stroke: var(--gray); stroke-width: 1.2; }
+.traj-page .fx-branch-t { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em; fill: var(--gray); }
+.traj-page .fx-keep-tag rect { fill: var(--paper); stroke: var(--ink); stroke-width: 1.4; }
+.traj-page .fx-keep-tag text { font-family: var(--font-mono); font-weight: 600; font-size: 9.5px; letter-spacing: 0.04em; fill: var(--ink); }
 
 /* docked subsystem modules */
 .traj-page .fx-mod { transition: opacity 0.3s var(--ease-guide); }
@@ -89,11 +105,18 @@
 .traj-page .fx-mod-tag { font-family: var(--font-display); font-weight: 600; font-size: 15px; text-transform: uppercase; letter-spacing: 0.01em; fill: var(--ink); }
 .traj-page .fx-mod-sub { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--gray); }
 .traj-page .fx-mod-mini { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.05em; text-transform: uppercase; fill: var(--gray); }
-.traj-page .fx-mod-lock { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.05em; text-transform: uppercase; fill: var(--ink); }
 .traj-page .fx-hatchbox { fill: url(#fx-hatch); opacity: 0.5; stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .fx-pool-n { font-family: var(--font-mono); font-weight: 600; font-size: 13px; fill: var(--ink); font-variant-numeric: tabular-nums; }
 .traj-page .fx-funnel { fill: rgba(204, 255, 0, 0.16); stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .fx-sk-row { transition: opacity 0.3s var(--ease-guide); }
+.traj-page .fx-sk-link { stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .fx-sk-link.skip { stroke: var(--gray); stroke-width: 1.2; stroke-dasharray: 3 3; }
 .traj-page .fx-sk-chip { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; }
-.traj-page .fx-sk-t { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.02em; fill: var(--ink); }
+.traj-page .fx-sk-chip.skip { fill: var(--paper-3); stroke: var(--gray); stroke-dasharray: 3 3; }
+.traj-page .fx-sk-t { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.02em; fill: var(--ink); }
+.traj-page .fx-sk-t.skip { fill: var(--gray); }
+.traj-page .fx-sk-ok { font-family: var(--font-mono); font-weight: 600; font-size: 10px; fill: var(--ink); }
+.traj-page .fx-sk-sum { font-family: var(--font-mono); font-weight: 600; font-size: 11px; letter-spacing: 0.04em; fill: var(--ink); font-variant-numeric: tabular-nums; }
 
 /* mem-core mesh (tier store) */
 .traj-page .fx-mesh-hub { fill: var(--ink); stroke: var(--ink); stroke-width: 1.5; }
@@ -112,7 +135,7 @@
 .traj-page .fx-card:hover .fx-card-box { fill: var(--paper); }
 .traj-page .fx-card-tag { fill: var(--ink); }
 .traj-page .fx-card-ref { font-family: var(--font-mono); font-weight: 600; font-size: 10px; fill: var(--paper); }
-.traj-page .fx-card-id { font-family: var(--font-mono); font-weight: 600; font-size: 13px; letter-spacing: 0.01em; fill: var(--ink); }
+.traj-page .fx-bars rect { fill: var(--ink); }
 .traj-page .fx-card-st rect { stroke: var(--ink); stroke-width: 1.5; }
 .traj-page .fx-card-st.ok rect { fill: var(--acid); }
 .traj-page .fx-card-st.obs rect { fill: var(--paper); }
@@ -120,10 +143,14 @@
 .traj-page .fx-card-st.ok text { fill: var(--acid-ink); }
 .traj-page .fx-card-st.obs text { fill: var(--gray); }
 .traj-page .fx-card-rule { stroke: var(--rule); stroke-width: 1; }
+.traj-page .fx-card-sum { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.005em; fill: var(--ink-soft); }
 .traj-page .fx-card-h { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; fill: var(--gray); }
-.traj-page .fx-card-raw { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.005em; fill: var(--ink-soft); }
-.traj-page .fx-card-raw.dim { font-size: 10px; fill: var(--gray); }
-.traj-page .fx-card-meta { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .fx-card-raw { font-family: var(--font-mono); font-size: 10px; fill: var(--gray); }
+/* lifecycle pips: lit = it happened, dim = it did not */
+.traj-page .fx-pip-cell { fill: var(--paper); stroke: var(--rule); stroke-width: 1.2; }
+.traj-page .fx-pip path, .traj-page .fx-pip circle, .traj-page .fx-pip line, .traj-page .fx-pip rect:not(.fx-pip-cell) { fill: none; stroke: var(--rule); stroke-width: 1.4; stroke-linecap: round; }
+.traj-page .fx-pip.on .fx-pip-cell { fill: var(--acid); stroke: var(--ink); }
+.traj-page .fx-pip.on path, .traj-page .fx-pip.on circle, .traj-page .fx-pip.on line, .traj-page .fx-pip.on rect:not(.fx-pip-cell) { stroke: var(--acid-ink); }
 
 /* the 7 stage nodes */
 .traj-page .fx-node { transition: opacity 0.25s var(--ease-guide); }
@@ -133,16 +160,14 @@
 .traj-page .fx-node.active .fx-node-bg { fill: var(--acid); stroke-width: 2.4; }
 .traj-page .fx-node.load .fx-node-bg { stroke-width: 3; }
 .traj-page .fx-node-no { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; fill: var(--gray); }
-.traj-page .fx-node-idx { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.04em; fill: var(--gray); }
 .traj-page .fx-node-name { font-family: var(--font-display); font-weight: 600; font-size: 27px; text-transform: uppercase; letter-spacing: 0.005em; fill: var(--ink); }
 .traj-page .fx-node-rule { stroke: var(--rule); stroke-width: 1.4; }
 .traj-page .fx-node-metric { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 22px; fill: var(--ink); }
 .traj-page .fx-node-metric.pend { fill: var(--rule); }
 .traj-page .fx-node-u { font-size: 0.45em; fill: var(--gray); }
 .traj-page .fx-node-cap { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--gray); }
-.traj-page .fx-node-load { font-family: var(--font-mono); font-weight: 600; font-size: 7.5px; letter-spacing: 0.05em; fill: var(--ink); }
-.traj-page .fx-node-live { font-family: var(--font-mono); font-weight: 600; font-size: 8px; letter-spacing: 0.05em; fill: var(--acid-ink); }
-.traj-page .fx-node.active .fx-node-no, .traj-page .fx-node.active .fx-node-idx,
+.traj-page .fx-node-load { font-family: var(--font-mono); font-weight: 600; font-size: 8px; letter-spacing: 0.05em; fill: var(--ink); }
+.traj-page .fx-node.active .fx-node-no,
 .traj-page .fx-node.active .fx-node-name, .traj-page .fx-node.active .fx-node-metric,
 .traj-page .fx-node.active .fx-node-u, .traj-page .fx-node.active .fx-node-cap,
 .traj-page .fx-node.active .fx-node-load { fill: var(--acid-ink); }

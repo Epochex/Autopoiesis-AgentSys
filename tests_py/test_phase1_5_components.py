@@ -18,9 +18,17 @@ from core.verifier.verifier import Verifier
 from domains.network_rca.adapters.fortios_syslog import LocalFixtureLogAdapter, parse_fortios_kv_line
 from domains.network_rca.eval import compare_baselines
 from domains.network_rca.factory import build_network_rca_orchestrator, load_ground_truth, load_seed_cases
+from domains.network_rca.ingestor_app import DEFAULT_R230_FORTIGATE_LOG_PATH, _paths_from_env
 from domains.network_rca.real_data_readiness import probe_r230_readiness
 from domains.network_rca.real_dataset import load_real_case_bundle, validate_real_dataset_manifest
 from domains.network_rca.schema import DiagnosisEvidence, RCADiagnosis
+
+
+def test_r230_ingestor_default_path_matches_the_live_capture(monkeypatch):
+    monkeypatch.delenv("R230_FORTIGATE_LOG_PATHS", raising=False)
+
+    assert DEFAULT_R230_FORTIGATE_LOG_PATH == "/data/fortigate-runtime/input/fortigate.log"
+    assert _paths_from_env() == [DEFAULT_R230_FORTIGATE_LOG_PATH]
 
 
 def test_context_compiler_drops_noise_but_keeps_required_evidence_under_budget():

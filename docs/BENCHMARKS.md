@@ -8,8 +8,8 @@ labelled as such in the same sentence.
 
 > Scope note. The **headline evidence is the real R230 held-out stream** (below).
 > **LongMemEval is the external conformance anchor** — a harness you run yourself on
-> the public dataset. The legacy TypeScript `src/` tree and its `npm` commands are an
-> earlier prototype and are *not* the system measured here.
+> the public dataset. (An earlier TypeScript `src/` prototype and its `npm` workflow have
+> been **removed**; the measured system is Python-only.)
 
 ---
 
@@ -56,6 +56,13 @@ Turn each component off and re-measure root-cause accuracy on the held-out set:
 100% → 16.7% (1/6) — it is the load-bearing lever. Compression and memory are **Δ0 on
 accuracy** on this set: their honest value is *efficiency and robustness* (fewer
 tokens/probes, graceful degradation), **not** an accuracy lift. The resume must say so.
+
+> **Read the 100% honestly.** With N=6 and a deterministic rule reasoner, the 100% is the
+> pipeline correctly classifying six curated real-log incident types — evidence of correct
+> wiring and permission-gated evidence routing, **not** learned accuracy or generalization.
+> The collapse *mechanism* (a dominant signal swamping minority cases without gating) is
+> real and independently reproduced on synthetic stats; the exact *magnitude* (1/6) is a
+> small-N + first-match-reasoner property.
 
 > Caveat (honesty): this collapse is a property of the **real** held-out set. On the mock
 > seed cases every configuration scores 100% — skill scheduling only becomes load-bearing
@@ -119,7 +126,7 @@ reader to generate — we do not ship a LongMemEval score we did not run.
 ## Full test suite
 
 ```bash
-python3 -m pytest tests_py/ -q      # 40 tests: kernel + self-evolution + memory-ops + LongMemEval
+python3 -m pytest tests_py/ -q      # 125 tests: kernel + self-evolution + memory-ops + domains
 ```
 
 ## References

@@ -1,82 +1,118 @@
 # Architecture
 
-`selfevo-orchiter` is a memory-context-skill self-evolution kernel for long-running agents. The important object is the trace: every task produces a record of memory reads, context choices, skill exposure, tool calls, verifier outcomes, token cost, and failure modes. The system learns from those traces without making human review the dominant signal.
+Autopoiesis-AgentSys is a memory–context–skill self-evolution kernel for long-running
+agents. The unit of truth is the **trace**: every task produces an append-only record of
+memory reads, context choices, skill exposure, tool calls, verifier outcomes, cost, and
+failure modes. The system learns from those traces **offline**, without making human
+review the dominant signal.
 
-## Online Path
+> **Scope.** The measured system is the Python kernel in [`core/`](../core) +
+> [`domains/`](../domains). An earlier TypeScript prototype (a `src/` tree with an `npm`
+> workflow) has been **removed**; it is not referenced anywhere below.
 
-```text
-AgentTask
-  -> memory query planner
-  -> context compiler
-  -> skill attention controller
-  -> agent execution
-  -> automatic verifier
-  -> trace ledger
-```
-
-The online path is deliberately narrow. It should not expose every memory and every skill to the model. `src/skill-os/skillAttentionController.ts` selects a small skill shortlist from task tags, skill descriptions, performance statistics, wrong-invocation rate, bypass rate, token cost, latency, and risk. `src/memory-os/temporalRetriever.ts` retrieves clean episodic, semantic, and procedural notes while excluding contaminated memories by default.
-
-## Background Evolution Path
+## Online path — a single read-only agent
 
 ```text
-TraceLedger
-  -> MemoryConsolidator
-  -> ReflectionSummarizer
-  -> SkillAttention feedback update
-  -> GRPO group reward export
-  -> Replay / verifier promotion gate
+alert / task
+  → tiered memory retrieve            (core/memory)
+  → episodic recall shortcut          (reuse a provenance-linked evidence snapshot on recurrence)
+    ── or ── probe read-only skills    (attention-selected shortlist)
+  → evidence-aware context compile     (core/context/compiler.py, to a token budget)
+  → reasoner                           (domains/network_rca/reasoner.py — rules by default; optional DeepSeek LLM)
+  → citation verifier                  (core/verifier/verifier.py)
+  → append typed events                (core/trace/ledger.py — 22-kind closed vocabulary)
 ```
 
-`MemoryConsolidator` turns traces into memory notes. It stores clean notes and quarantines traces with unsupported claims, unsafe actions, or verifier failures. `summarizeTraceLessons` extracts reusable lessons only from high-confidence trace steps. `evaluateLessonPromotion` requires replay cases, positive reward delta, high verifier pass rate, and no regressions.
+`SingleAgentRCAOrchestrator.diagnose()` ([`core/orchestrator/orchestrator.py`](../core/orchestrator/orchestrator.py))
+is the shipped online entry point. It is deliberately narrow: it exposes only a small,
+task-relevant skill shortlist and only clean, high-confidence memories. Write-capable
+skills are **hard-blocked** with defense in depth — a relevance filter, a spec-level
+check, and a result-level check (a skill that lies about being read-only is still caught).
 
-## Memory Model
+## Skill attention — `core/skills`
 
-The system separates three memory tiers:
-
-- Episodic memory records what happened in a specific trace.
-- Semantic memory records stable task context and domain facts.
-- Procedural memory records reusable patterns such as how to repair context, when to retrieve memory, or how to avoid stale evidence.
-
-This is not plain RAG. RAG remains useful for semantic retrieval, but the project treats memory as a lifecycle with write-time consolidation, contamination detection, retrieval-time scoring, and replay-backed promotion.
-
-## Skill Attention
-
-Skill overload is treated as a first-class failure mode. Every skill has performance statistics:
+Skill overload is a first-class failure mode. `SkillAttentionController.select`
+([`controller.py`](../core/skills/controller.py)) is a hard **relevance gate** — a skill
+is eligible only if it is *preferred* or *tag-matched* to the query — with learned
+ranking **inside** the relevant set:
 
 ```text
-attempts
-successes
-wrong_invocations
-bypasses
-unsafe_blocks
-total_token_cost
-total_latency_ms
-last_success_at
+score = topical_relevance + success_rate − 2·misuse_rate − 0.05·cost      (top-k)
 ```
 
-The controller rewards tag/term matches and historical success. It penalizes wrong invocation, silent bypass, cost, latency, and risky permissions. The output is not a policy slogan; it is a concrete top-k skill shortlist plus an irrelevant-exposure reduction estimate.
+A globally "good" skill can never widen its own scope. `SkillSpec` carries
+`success_count`, `misuse_count`, `cost`, `frozen`, and `risk`.
+[`induction.py`](../core/skills/induction.py) synthesizes a new skill from recurring trace
+signals and promotes it only through a **replay gate** (golden non-regression + handler
+replay).
 
-## GRPO Boundary
+## Memory model — `core/memory` + `core/evolve`
 
-`src/training/grpoDataset.ts` exports group-relative training samples. A group contains multiple rollouts for the same objective. Each rollout keeps the trace, action summary, step rewards, total reward, and advantage relative to the group mean.
+Three tiers (CoALA): **episodic** (what happened, with an evidence snapshot), **semantic**
+(stable facts / reflected insights), **procedural** (reusable patterns tagged by root
+cause / skill). This is not plain RAG — memory is a *lifecycle*:
 
-The intended trainable policies are:
+| mechanism | paper | code | status |
+|---|---|---|---|
+| write routing ADD / UPDATE / NOOP | Mem0 | `evolve/memory_ops.py` | ✅ wired |
+| associative links (top-k, bidirectional) | A-MEM | `evolve/memory_ops.py` | ✅ wired |
+| importance-gated reflection → insight | Generative Agents | `evolve/memory_ops.py` | ✅ wired |
+| decay / forgetting below a floor | Ebbinghaus | `evolve/memory_ops.py` | ⚠️ implemented + unit-tested, **not yet wired into the loop** |
+| quarantine (kept for audit, excluded from retrieval) | — | `memory/store.py` | ✅ wired |
 
-- memory retrieval policy
-- context compression policy
-- skill attention policy
-- stop / repair policy
+A topology-graph / logical-retrieval variant
+([`topo_graph.py`](../core/memory/topo_graph.py),
+[`logical_retrieval.py`](../core/memory/logical_retrieval.py)) is used by an eval harness
+(`core/eval/retrieval_precision.py`), **not** the online diagnose path (which uses the
+simpler tiered retrieve).
 
-The TypeScript repo owns trace capture, reward construction, and dataset export. GPU-side GRPO / LoRA training can live in a separate training stack because the mature tooling is Python-based.
+## Background evolution — `core/evolve`
 
-## Evaluation
+Between events, `consolidate_run` turns a trace into memory notes (routing + links +
+reflection + skill-stat updates), quarantining traces with unsupported claims or verifier
+failures. `compare_cold_vs_warm` / `run_evolving_stream` measure the online path getting
+**cheaper on a recurring stream** (StreamBench-style; the recalled snapshot is re-run
+through the reasoner + verifier, so caching cannot trade correctness for speed).
+[`grpo.py`](../core/evolve/grpo.py) exports group-relative advantages and a
+confidence-update rule — **roadmap: not wired into the online loop, and not LLM/GPU policy
+training.**
 
-Current tests verify five automatic properties:
+## Verification — `core/verifier`
 
-- clean procedural memory ranks ahead of contaminated memory under a procedural query
-- skill attention keeps required skills visible while reducing irrelevant exposure
-- wrong tool feedback demotes a skill without human intervention
-- reflection lessons require replay-backed promotion
-- GRPO export produces positive and negative advantages across rollouts
+- **Citation verifier** — every cited fact must have been observed in evidence; also
+  catches contradictions and missing *required* evidence.
+- **Contract verifier** ([`contracts.py`](../core/verifier/contracts.py)) — pre/post/
+  invariant conditions plus a grounded read-back, with rollback on violation.
 
-The next benchmark layer should map these same metrics onto LongMemEval-style memory tasks, WorkArena-style enterprise workflows, and tool-selection suites.
+## Adaptive escalation (opt-in) — `core/orchestrator`
+
+`AdaptiveOrchestrator` wraps the base agent with a read-only **planner / executor /
+critic** ([`agents.py`](../core/orchestrator/agents.py)) and a cascading **intent router**
+([`intent_router.py`](../core/orchestrator/intent_router.py)). It runs the base single
+agent first and escalates only on ambiguity or blast-radius triggers, preserving the
+read-only gate at every layer.
+
+> **Honest note.** This multi-agent path is **opt-in and currently exercised by tests, not
+> the deployed console.** The shipped online path is the single agent above — so "single
+> agent online" is a configuration the console uses, not an architectural guarantee of the
+> whole repo.
+
+## Evaluation — `core/eval` + `domains/*/eval*.py`
+
+- **Replay ablation** over four configs (full · − compression · − memory · − skill
+  scheduling) on the real held-out set.
+- **Real FortiGate held-out** (6 curated real-log incident types) with a deterministic
+  rule reasoner — an engine-independent baseline that rules out an LLM confound.
+- **LongMemEval-style** LLM-free recall@k harness ([`core/eval/longmemeval.py`](../core/eval/longmemeval.py)).
+- **Domains**: `network_rca` (real Dahua FortiGate syslog — the headline), `active_recon`
+  (self-pentest over a labeled RFC-5737 **mock** target), `enterprise_ops` (contract-checked
+  anomaly **simulation** on synthetic data).
+
+`python3 -m pytest tests_py/ -q` → **125 tests**.
+
+## Research backbone
+
+CoALA (2309.02427) · Mem0 (2504.19413) · A-MEM (2502.12110) · Generative Agents
+(2304.03442) · Voyager (2305.16291) · StreamBench (2406.08747) · LongMemEval (2410.10813)
+· GRPO / DeepSeekMath (2402.03300, roadmap) · Ebbinghaus (1885). Full method and verified
+citation list in [BENCHMARKS.md](./BENCHMARKS.md).

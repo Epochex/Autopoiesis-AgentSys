@@ -14,7 +14,7 @@ type MeshModel = {
   links: { src: string; dst: string; relation: string; strength: number }[]
   nodes: Record<string, { severity: string; label: string; summary: string }>
 }
-import type { Device } from './types'
+import type { Device, GraphAnalysis, SubnetGraph } from './types'
 
 type View = 'console' | 'trajectory' | 'pentest'
 
@@ -43,6 +43,44 @@ function App() {
   const [hover3D, setHover3D] = useState<string | null>(null)
   const [focusCidr, setFocusCidr] = useState<string | null>(null)
   const [topoAlert, setTopoAlert] = useState<{ cidr: string; ip: string; verdict: string; severity: string } | null>(null)
+  const [graph, setGraph] = useState<SubnetGraph | null>(null)
+  const [graphAnalysis, setGraphAnalysis] = useState<GraphAnalysis | null>(null)
+  const [hoverDev, setHoverDev] = useState<string | null>(null)
+
+  // Opening a segment loads its FULL device graph — every host the firewall has ever
+  // seen on that /24, plus the device<->device relations mined from the raw syslog.
+  const openSubnet = async (cidr: string | null) => {
+    setDrillSub(cidr)
+    setDrillDev(null)
+    setThreat(null)
+    setWan(null)
+    setPosture(null)
+    setGraphAnalysis(null)
+    setHoverDev(null)
+    if (!cidr) {
+      setGraph(null)
+      return
+    }
+    setGraph(null)
+    try {
+      const r = await fetch(`/api/rca/subnet_graph?cidr=${encodeURIComponent(cidr)}`)
+      const j = await r.json()
+      setGraph(j.ok ? (j as SubnetGraph) : null)
+    } catch {
+      setGraph(null)
+    }
+  }
+
+  const correlateGraph = async (cidr: string) => {
+    setGraphAnalysis({ cidr, loading: true })
+    try {
+      const r = await fetch(`/api/rca/graph_analyze?cidr=${encodeURIComponent(cidr)}&lang=${lang}`)
+      const j = await r.json()
+      setGraphAnalysis(j.ok ? { ...j, loading: false } : { cidr, loading: false, error: j.text || 'failed' })
+    } catch (e) {
+      setGraphAnalysis({ cidr, loading: false, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
 
   const research3D = async (ip: string, cidr: string) => {
     setThreat({ ip, loading: true })
@@ -65,6 +103,8 @@ function App() {
   const researchWan = async (ip: string) => {
     setWan({ ip, loading: true })
     setDrillSub(null)
+    setGraph(null)
+    setGraphAnalysis(null)
     setDrillDev(null)
     setThreat(null)
     setPosture(null)
@@ -283,18 +323,18 @@ function App() {
                 hover3DCidr={hover3D ? Object.entries(d.meshes ?? {}).find(([, l]) => l.some((n) => n.ip === hover3D))?.[0] ?? null : null}
                 topoAlert={topoAlert}
                 wan={wan}
+                graph={graph}
+                graphAnalysis={graphAnalysis}
+                hoverDev={hoverDev}
+                onHoverDev={setHoverDev}
+                onGraphAnalyze={correlateGraph}
+                onCloseGraphAnalysis={() => setGraphAnalysis(null)}
                 onWan={researchWan}
                 onCloseWan={() => setWan(null)}
                 onHoverSubnet={show3D ? setFocusCidr : undefined}
-                onOpen3D={() => { setDrillSub(null); setDrillDev(null); setThreat(null); setWan(null); void analyzeMesh() }}
+                onOpen3D={() => { void openSubnet(null); void analyzeMesh() }}
                 onCloseThreat={() => setThreat(null)}
-                onSub={(sub) => {
-                  setDrillSub(sub?.cidr ?? null)
-                  setDrillDev(null)
-                  setThreat(null)
-                  setWan(null)
-                  setPosture(null)
-                }}
+                onSub={(sub) => void openSubnet(sub?.cidr ?? null)}
                 onDev={researchDevice}
                 onBatch={researchSubnet}
                 onPentest={() => setView('pentest')}

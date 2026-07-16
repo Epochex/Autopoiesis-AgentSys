@@ -3,7 +3,7 @@ import type { Baseline, RcaCase } from '../types'
 import type { Lang } from '../i18n'
 import { rc } from '../i18n'
 import { CountUp } from './Motion'
-import { FlowGraph, type FxStation, type FxEvidence, type FxMemTier, type FxReadout } from './FlowGraph'
+import { FlowGraph, type FxStation, type FxEvidence, type FxMemTier, type FxReadout, type FxSkills } from './FlowGraph'
 import { EvolutionStream, type EvoData } from './EvolutionStream'
 import './trajectory.css'
 
@@ -11,6 +11,20 @@ import './trajectory.css'
 const arr = (v: unknown): string[] => (Array.isArray(v) ? (v as unknown[]).map(String) : [])
 const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+
+// humanized names for the real read-only skills (never show the raw function name)
+const SKILL_LABEL: Record<string, [string, string]> = {
+  check_admin_auth_failures: ['查登录失败', 'LOGIN FAILS'],
+  check_admin_lockout: ['查账号锁定', 'LOCKOUTS'],
+  check_policy_deny_profile: ['查拦截策略', 'BLOCK POLICY'],
+  check_traffic_baseline: ['查流量基线', 'TRAFFIC BASE'],
+  check_event_log: ['查事件日志', 'EVENT LOG'],
+  check_dhcp_service: ['查 DHCP', 'DHCP HEALTH'],
+  check_security_posture: ['查安全态势', 'POSTURE'],
+  check_device_port_probe: ['查端口探测', 'PORT PROBES'],
+}
+const skillLabel = (s: string, zh: boolean) =>
+  SKILL_LABEL[s]?.[zh ? 0 : 1] ?? s.replace(/^check[_-]?/i, '').replace(/_/g, ' ').toUpperCase()
 
 type VStep = { kind: string; no: string; code: string; zh: string; en: string; viz: unknown }
 
@@ -30,10 +44,10 @@ function build(c: RcaCase, lang: Lang): VStep[] {
         break
       case 'memory_read': {
         const tiers = [
-          { id: 'episodic', zh: '情景', en: 'EPI', keys: arr(p.episodic) },
-          { id: 'semantic', zh: '语义', en: 'SEM', keys: arr(p.semantic) },
-          { id: 'procedural', zh: '程序', en: 'PRO', keys: arr(p.procedural) },
-          { id: 'asset_profile', zh: '资产', en: 'AST', keys: arr(p.asset_profile) },
+          { id: 'episodic', zh: '情景', en: 'CASES', keys: arr(p.episodic) },
+          { id: 'semantic', zh: '语义', en: 'FACTS', keys: arr(p.semantic) },
+          { id: 'procedural', zh: '程序', en: 'PLAYBOOKS', keys: arr(p.procedural) },
+          { id: 'asset_profile', zh: '资产', en: 'ASSETS', keys: arr(p.asset_profile) },
         ]
         push('memory_read', 'ME', '记忆', 'MEMORY', { tiers, total: tiers.reduce((a, t) => a + t.keys.length, 0) })
         break
@@ -42,7 +56,7 @@ function build(c: RcaCase, lang: Lang): VStep[] {
         push('skills_exposed', 'SK', '技能', 'SKILLS', { skills: arr(p.skills) })
         break
       case 'context_compiled':
-        push('context_compiled', 'CT', '压缩', 'CONTEXT', {
+        push('context_compiled', 'CT', '压缩', 'COMPRESS', {
           before: num(p.estimated_tokens_before), after: num(p.estimated_tokens_after), ratio: num(p.compression_ratio),
           kept: arr(p.included_evidence_ids).length, missing: arr(p.missing_evidence),
         })
@@ -51,7 +65,7 @@ function build(c: RcaCase, lang: Lang): VStep[] {
         push('verifier_result', 'VF', '核验', 'VERIFY', { passed: Boolean(p.passed), recall: num(p.evidence_recall) })
         break
       case 'diagnosis_completed':
-        push('diagnosis_completed', 'DX', '判决', 'VERDICT', {
+        push('diagnosis_completed', 'DX', '结论', 'RESULT', {
           confidence: num(p.confidence), rootKey: String(p.root_cause_key ?? ''), readonly: Boolean(p.readonly),
           cited: arr((p.evidence as { evidence_id?: string }[] | undefined)?.map((e) => e?.evidence_id)).filter(Boolean),
           label: rc(String(p.root_cause_key ?? ''), lang),
@@ -63,30 +77,30 @@ function build(c: RcaCase, lang: Lang): VStep[] {
   if (tools.length) {
     const faces = [...new Set(tools.flatMap((t) => t.ev))]
     const i = out.findIndex((s) => s.kind === 'skills_exposed')
-    out.splice(i + 1, 0, { kind: 'tool_called', code: 'PR', zh: '取证', en: 'PROBE', no: '', viz: { probes: tools, faces } })
+    out.splice(i + 1, 0, { kind: 'tool_called', code: 'PR', zh: '查证', en: 'PROBE', no: '', viz: { probes: tools, faces } })
   }
   out.forEach((s, i) => (s.no = String(i + 1).padStart(2, '0')))
   return out
 }
 
-// ROLE one-liner per step (crisp, shown on the reticle-locked hero)
+// ROLE one-liner per step (terse, shown on the reticle-locked hero)
 const DESC: Record<string, [string, string]> = {
-  alert_received: ['接入告警 · 划定资产范围', 'INGEST ALERT · SCOPE ASSETS'],
-  memory_read: ['调出三层高置信先验', 'RECALL 3-TIER MEMORY PRIORS'],
-  skills_exposed: ['注意力钳制 · 只放行只读技能', 'CLAMP ATTENTION · READ-ONLY SKILLS'],
-  tool_called: ['只读探针 · 逐条钉实证据', 'READ-ONLY PROBES · PIN EVIDENCE'],
-  context_compiled: ['证据感知压缩 · 装入预算', 'EVIDENCE-AWARE COMPRESS TO BUDGET'],
-  verifier_result: ['核对每条引用是否被观测', 'VERIFY EVERY CITATION IS OBSERVED'],
-  diagnosis_completed: ['给出根因 · 全程只读', 'ISSUE ROOT-CAUSE VERDICT · READ-ONLY'],
+  alert_received: ['收到告警 · 圈定范围', 'ALERT IN · SCOPE ASSETS'],
+  memory_read: ['调出过往经验', 'RECALL PAST CASES'],
+  skills_exposed: ['只允许只读工具', 'READ-ONLY TOOLS ONLY'],
+  tool_called: ['只读查证 · 收集证据', 'READ-ONLY CHECKS · COLLECT EVIDENCE'],
+  context_compiled: ['压缩证据 · 装进预算', 'COMPRESS TO FIT BUDGET'],
+  verifier_result: ['核对每条证据', 'CHECK EACH CITATION'],
+  diagnosis_completed: ['给出根因 · 全程只读', 'ROOT CAUSE · READ-ONLY'],
 }
 const CAT: Record<string, string> = {
   alert_received: 'alert', memory_read: 'memory', skills_exposed: 'skill', tool_called: 'probe',
   context_compiled: 'context', verifier_result: 'verify', diagnosis_completed: 'verdict',
 }
 const CAP: Record<string, [string, string]> = {
-  alert_received: ['资产', 'ASSETS'], memory_read: ['先验', 'PRIORS'], skills_exposed: ['放行', 'EXPOSED'],
-  tool_called: ['探针', 'PROBES'], context_compiled: ['压缩', 'RATIO'], verifier_result: ['召回', 'RECALL'],
-  diagnosis_completed: ['置信', 'CONF'],
+  alert_received: ['资产', 'ASSETS'], memory_read: ['经验', 'PRIORS'], skills_exposed: ['可用', 'TOOLS'],
+  tool_called: ['查证', 'CHECKS'], context_compiled: ['压缩', 'RATIO'], verifier_result: ['找回', 'RECALL'],
+  diagnosis_completed: ['把握', 'CONF'],
 }
 
 function stationMetric(s: VStep, zh: boolean): FxStation['metric'] {
@@ -103,52 +117,58 @@ function stationMetric(s: VStep, zh: boolean): FxStation['metric'] {
   }
 }
 
-// the live "reasoning readout" — the active step's real computation
-function readoutLines(s: VStep, zh: boolean): FxReadout[] {
+// the live readout — the active step's real computation, plain verbs only
+function readoutLines(s: VStep, zh: boolean, pool: number): FxReadout[] {
   const v = s.viz as Record<string, unknown>
   switch (s.kind) {
     case 'alert_received': {
       const a = v.assets as string[]
       return [
-        { op: 'INGEST', body: zh ? `告警载荷 · 归一化 query` : `alert payload · normalize query` },
-        { op: 'SCOPE', body: `${a.length} ${zh ? '台资产入范围' : 'assets in scope'} · ${clip(a.join(' '), 40)}` },
+        { op: zh ? '接收' : 'TAKE', body: zh ? '整理告警内容' : 'clean up the alert' },
+        { op: zh ? '圈定' : 'SCOPE', body: `${a.length} ${zh ? '台资产' : 'assets'} · ${clip(a.join(' '), 40)}` },
       ]
     }
     case 'memory_read': {
-      const t = (v.tiers as { en: string; keys: string[] }[])
+      const t = (v.tiers as { zh: string; en: string; keys: string[] }[])
       return [
-        { op: 'RECALL', body: t.map((x) => `${x.en}:${x.keys.length}`).join('  ') },
-        { op: 'LOAD', body: `${v.total} ${zh ? '条先验 · 只读召回' : 'priors · read-only recall'}` },
+        { op: zh ? '调忆' : 'RECALL', body: t.map((x) => `${zh ? x.zh : x.en} ${x.keys.length}`).join(' · ') },
+        { op: zh ? '载入' : 'LOAD', body: `${v.total} ${zh ? '条经验' : 'priors'}` },
       ]
     }
     case 'skills_exposed': {
       const sk = v.skills as string[]
       return [
-        { op: 'SCORE', body: zh ? `技能全集 → top-k · 分数>0.5` : `full toolset → top-k · score>0.5` },
-        { op: 'EXPOSE', body: `${sk.length} ${zh ? '只读技能 · 写操作硬阻断' : 'read-only · write-blocked'}` },
+        { op: zh ? '打分' : 'SCORE', body: zh ? '从全部工具里挑相关的' : 'pick the relevant tools' },
+        { op: zh ? '放行' : 'ALLOW', body: zh ? `考虑 ${pool} · 选 ${sk.length}` : `considered ${pool} · chose ${sk.length}` },
       ]
     }
     case 'tool_called': {
-      const P = v.probes as { skill: string; ev: string[]; cost: number | null }[]
-      return P.slice(0, 3).map((p) => ({
-        op: 'CALL·RO',
-        body: `${clip(p.skill, 24)} → ${zh ? '钉' : 'pin'} ${clip((p.ev[0] ?? '—'), 22)}`,
-      }))
+      const P = v.probes as { skill: string }[]
+      // glyph flow per check: magnifier → evidence chip (no function name, no ev-id)
+      return P.slice(0, 3).map(() => ({ op: zh ? '查证' : 'CHECK', body: '', glyph: 'probe' as const }))
     }
-    case 'context_compiled':
+    case 'context_compiled': {
+      const ratio = (v.ratio as number) ?? 1
+      const miss = (v.missing as string[]).length
       return [
-        { op: 'PACK', body: `${v.after} / ${v.before} TK · ${((v.ratio as number) ?? 1).toFixed(2)}×` },
-        { op: 'COVER', body: (v.missing as string[]).length ? `${(v.missing as string[]).length} ${zh ? '缺失面' : 'missing'}` : (zh ? '全覆盖 · 0 缺失' : 'full coverage · 0 missing') },
+        {
+          op: zh ? '打包' : 'PACK',
+          body: ratio > 1
+            ? (zh ? `${v.after}/${v.before} 词 · 缩 ${ratio.toFixed(1)} 倍` : `${v.after}/${v.before} tokens · ${ratio.toFixed(1)}× smaller`)
+            : (zh ? `${v.after}/${v.before} 词 · 未超预算` : `${v.after}/${v.before} tokens · fits budget`),
+        },
+        { op: zh ? '覆盖' : 'COVER', body: zh ? `留 ${v.kept} · 丢 ${miss}` : `kept ${v.kept} · dropped ${miss}` },
       ]
+    }
     case 'verifier_result':
       return [
-        { op: 'MATCH', body: zh ? '被引用 ⊆ 被观测' : 'cited ⊆ observed' },
-        { op: v.passed ? 'PASS' : 'REJECT', body: `${zh ? '召回' : 'recall'} ${Math.round(((v.recall as number) ?? 0) * 100)}%` },
+        { op: zh ? '比对' : 'MATCH', body: zh ? '每条引用都亲眼见过' : 'every citation was actually seen' },
+        { op: v.passed ? '✓' : '✕', body: `${zh ? '找回' : 'recall'} ${Math.round(((v.recall as number) ?? 0) * 100)}%` },
       ]
     default:
       return [
-        { op: 'EMIT', body: `${clip(String(v.label ?? v.rootKey), 38)}` },
-        { op: 'SEAL', body: `${zh ? '置信' : 'conf'} ${((v.confidence as number) ?? 0).toFixed(2)} · ${zh ? '引用' : 'cites'} ${(v.cited as string[]).length} · RO ${v.readonly ? '✓' : '✕'}` },
+        { op: zh ? '输出' : 'EMIT', body: `${clip(String(v.label ?? v.rootKey), 38)}` },
+        { op: zh ? '封存' : 'SEAL', body: zh ? `把握 ${((v.confidence as number) ?? 0).toFixed(2)} · 引用 ${(v.cited as string[]).length}` : `conf ${((v.confidence as number) ?? 0).toFixed(2)} · ${(v.cited as string[]).length} cites` },
       ]
   }
 }
@@ -158,19 +178,27 @@ const LEGEND: { cat: string; zh: string; en: string }[] = [
   { cat: 'alert', zh: '告警', en: 'ALERT' },
   { cat: 'memory', zh: '记忆', en: 'MEMORY' },
   { cat: 'skill', zh: '技能', en: 'SKILL' },
-  { cat: 'probe', zh: '取证', en: 'PROBE' },
-  { cat: 'context', zh: '压缩', en: 'CONTEXT' },
+  { cat: 'probe', zh: '查证', en: 'PROBE' },
+  { cat: 'context', zh: '压缩', en: 'COMPRESS' },
   { cat: 'verify', zh: '核验', en: 'VERIFY' },
-  { cat: 'verdict', zh: '判决', en: 'VERDICT' },
+  { cat: 'verdict', zh: '结论', en: 'RESULT' },
 ]
 const CAT_COLOR: Record<string, string> = {
   alert: '#d6335a', memory: '#4c9d94', skill: '#ff7a6b', probe: '#2b3d38', context: '#ffcfa0', verify: '#a8bfa0', verdict: '#0d0d0d',
 }
 
-/* ── ② WHY IT HOLDS · load-bearing structural stress test ──────────────────────
+// small inline padlock (read-only), HTML flavour
+const LockGlyph = () => (
+  <svg className="fx-lockg" viewBox="0 0 12 16" aria-label="read-only">
+    <rect x="1" y="7" width="10" height="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+    <path d="M3 7 V5 a3 3 0 0 1 6 0 V7" fill="none" stroke="currentColor" strokeWidth="1.6" />
+  </svg>
+)
+
+/* ── ② THE KEY STEP · structural stress test ───────────────────────────────────
    The same 7-node skeleton, miniaturised. Pulling a component greys it out; only
-   pulling the load-bearing SKILL-CONTROL node collapses the downstream span and
-   crashes accuracy (real 100% → 16.7%). Not a row of bars — a structural event. */
+   pulling the SKILL node collapses the downstream span and crashes accuracy
+   (real 100% → 16.7%). Not a row of bars — a structural event. */
 type Pull = 'none' | 'memory' | 'context' | 'skill'
 const PULL_BASELINE: Record<Pull, string> = {
   none: 'selfevo_light_path', memory: 'no_memory', context: 'full_context', skill: 'full_tools',
@@ -182,7 +210,7 @@ const MP: [number, number][] = [
 ]
 const MCAT = ['alert', 'memory', 'skill', 'probe', 'context', 'verify', 'verdict']
 const MNAME: [string, string][] = [
-  ['告警', 'ALERT'], ['记忆', 'MEM'], ['技能', 'SKILL'], ['取证', 'PROBE'], ['压缩', 'CTX'], ['核验', 'VERIFY'], ['判决', 'VERDICT'],
+  ['告警', 'ALERT'], ['记忆', 'MEM'], ['技能', 'SKILL'], ['查证', 'PROBE'], ['压缩', 'CTX'], ['核验', 'VERIFY'], ['结论', 'RESULT'],
 ]
 const PULL_INDEX: Record<Pull, number> = { none: -1, memory: 1, context: 4, skill: 2 }
 
@@ -205,12 +233,12 @@ function StressTest({ baselines, zh }: { baselines: Baseline[]; zh: boolean }) {
     { key: 'none', zh: '全链路', en: 'ALL ON' },
     { key: 'memory', zh: '拔记忆', en: '− MEMORY' },
     { key: 'context', zh: '拔压缩', en: '− COMPRESS' },
-    { key: 'skill', zh: '拔技能调度', en: '− SKILL-CTL' },
+    { key: 'skill', zh: '拔技能', en: '− SKILLS' },
   ]
   return (
     <section className="fx-stress">
       <div className="fx-stress-head">
-        <span className="fx-panel-lab"><i className="fx-panel-no">02</i>{zh ? '凭什么成立 · 承重压力测试' : 'WHY IT HOLDS · LOAD-BEARING STRESS TEST'}</span>
+        <span className="fx-panel-lab"><i className="fx-panel-no">02</i>{zh ? '关键一步 · 技能' : 'THE KEY STEP · SKILLS'}</span>
         <span className="fx-stress-chips">
           {chips.map((c) => (
             <button key={c.key} className={`fx-chip ${pull === c.key ? 'on' : ''} ${c.key === 'skill' ? 'crit' : ''}`} onClick={() => setPull(c.key)}>
@@ -232,10 +260,9 @@ function StressTest({ baselines, zh }: { baselines: Baseline[]; zh: boolean }) {
             const af = isFallen(i) ? [a[0], a[1] + 30] : a
             return <line key={i} className={`fx-str-link ${sever ? 'sever' : ''}`} x1={af[0]} y1={af[1]} x2={bf[0]} y2={bf[1]} />
           })}
-          {/* the load-bearing pillar under the skill node */}
+          {/* the load-bearing pillar under the skill node — the shape says it, no word */}
           <g className={`fx-str-pillar ${collapsed ? 'gone' : ''}`}>
-            <line x1={MP[2][0]} y1={MP[2][1] + MNH / 2} x2={MP[2][0]} y2={MH - 18} />
-            <text x={MP[2][0]} y={MH - 6} textAnchor="middle">{zh ? '承重' : 'LOAD'}</text>
+            <line x1={MP[2][0]} y1={MP[2][1] + MNH / 2} x2={MP[2][0]} y2={MH - 10} />
           </g>
           {/* nodes */}
           {MP.map((p, i) => {
@@ -247,26 +274,25 @@ function StressTest({ baselines, zh }: { baselines: Baseline[]; zh: boolean }) {
                 <rect className="fx-str-bg" width={MNW} height={MNH} />
                 <rect className="fx-str-strip" width={MNW} height={4} fill={CAT_COLOR[MCAT[i]]} />
                 <text className="fx-str-nm" x={MNW / 2} y={MNH / 2 + 6} textAnchor="middle">{(zh ? MNAME[i][0] : MNAME[i][1])}</text>
-                {pulled ? <text className="fx-str-x" x={MNW / 2} y={-8} textAnchor="middle">✕ {zh ? '拔除' : 'REMOVED'}</text> : null}
+                {pulled ? <text className="fx-str-x" x={MNW / 2} y={-8} textAnchor="middle">✕</text> : null}
               </g>
             )
           })}
         </svg>
         <div className={`fx-stress-read ${collapsed ? 'bad' : 'ok'}`}>
           <span className="fx-stress-acc"><CountUp value={acc} /><i>%</i></span>
-          <span className="fx-stress-acc-lab">{zh ? '根因准确率' : 'ROOT-CAUSE ACC'}</span>
-          <span className="fx-stress-delta">{acc === base ? 'Δ0' : `Δ${Math.round((acc - base))}`}</span>
+          <span className="fx-stress-acc-lab">{zh ? '准确率' : 'ACCURACY'}</span>
+          {acc !== base ? <span className="fx-stress-delta">↓{Math.abs(acc - base)}%</span> : null}
           <span className={`fx-stress-flag ${collapsed ? 'bad' : 'ok'}`}>
-            {pull === 'none' ? (zh ? '结构完好' : 'STRUCTURE INTACT')
-              : collapsed ? (zh ? '结构失稳 · 不成立' : 'UNSUPPORTED · COLLAPSE')
-                : (zh ? '可容忍 · 结构撑住' : 'TOLERATED · HELD')}
+            {pull === 'none' ? (zh ? '还成立' : 'HOLDS')
+              : collapsed ? (zh ? '结论站不住' : 'BREAKS')
+                : (zh ? '仍成立' : 'STILL HOLDS')}
           </span>
         </div>
       </div>
       <div className="fx-stress-foot">
-        <span className="fx-stress-tag crit">{zh ? '技能调度 = 承重节点' : 'SKILL-CTL = LOAD-BEARING'}</span>
-        <span className="fx-stress-tag">{zh ? '拔记忆 / 压缩 · 100% 撑住' : '− MEM / COMPRESS · 100% HOLD'}</span>
-        <span className="fx-stress-tag dim">6-CASE HELD-OUT · RULE</span>
+        <span className="fx-stress-tag crit">{zh ? '技能 = 最关键' : 'SKILLS = MOST CRITICAL'}</span>
+        <span className="fx-stress-tag">{zh ? '拔记忆或压缩 · 仍 100%' : '− MEMORY / COMPRESS · STILL 100%'}</span>
       </div>
     </section>
   )
@@ -282,7 +308,11 @@ export function TrajectoryPage({
   const zh = lang === 'zh'
   const c = cases.find((x) => x.id === activeId) ?? cases[0]
   const steps = useMemo(() => (c ? build(c, lang) : []), [c, lang])
-  const caseIdx = Math.max(0, cases.findIndex((x) => x.id === (c?.id ?? '')))
+  // the agent's tool pool = every skill observed across the real held-out traces
+  const toolPool = useMemo(() => [...new Set(
+    cases.flatMap((cc) => cc.trace.filter((e) => e.kind === 'skills_exposed' || e.kind === 'tool_called')
+      .flatMap((e) => e.kind === 'skills_exposed' ? arr(e.payload.skills) : [String(e.payload.skill ?? '')]))
+  )].filter(Boolean), [cases])
 
   const [reached, setReached] = useState(0)
   const [cursor, setCursor] = useState(0)
@@ -314,8 +344,12 @@ export function TrajectoryPage({
   // ── derive FlowGraph props from real trace ──
   const pinnedIds = new Set<string>()
   const includedIds = new Set<string>()
+  const calledSkills = new Set<string>()
   for (const ev of c.trace) {
-    if (ev.kind === 'tool_called') arr(ev.payload.evidence_ids).forEach((id) => pinnedIds.add(id))
+    if (ev.kind === 'tool_called') {
+      arr(ev.payload.evidence_ids).forEach((id) => pinnedIds.add(id))
+      calledSkills.add(String(ev.payload.skill ?? ''))
+    }
     if (ev.kind === 'context_compiled') arr(ev.payload.included_evidence_ids).forEach((id) => includedIds.add(id))
   }
   const fxEvidence: FxEvidence[] = evid.slice(0, 2).map((e) => ({
@@ -324,16 +358,25 @@ export function TrajectoryPage({
     cited: true, verified: c.verifier.passed,
   }))
   const memStep = steps.find((s) => s.kind === 'memory_read')
-  const memoryTiers: FxMemTier[] = memStep
-    ? (memStep.viz as { tiers: { zh: string; en: string; keys: string[] }[] }).tiers.map((t) => ({ code: t.en, label: zh ? t.zh : t.en, count: t.keys.length }))
-    : []
+  const memViz = memStep ? (memStep.viz as { tiers: { zh: string; en: string; keys: string[] }[]; total: number }) : null
+  const memoryTiers: FxMemTier[] = memViz ? memViz.tiers.map((t) => ({ label: zh ? t.zh : t.en, count: t.keys.length })) : []
   const skStep = steps.find((s) => s.kind === 'skills_exposed')
   const skExposed = skStep ? (skStep.viz as { skills: string[] }).skills : []
+  const exposedSet = new Set(skExposed)
+  const skippedPool = toolPool.filter((s) => !exposedSet.has(s))
+  const fxSkills: FxSkills = {
+    poolCount: toolPool.length,
+    chosen: skExposed.map((id) => ({ id, label: skillLabel(id, zh), called: calledSkills.has(id) })),
+    skippedCount: skippedPool.length,
+    skippedNames: skippedPool.map((s) => skillLabel(s, zh)).join(' · '),
+  }
+  const ctxStep = steps.find((s) => s.kind === 'context_compiled')
+  const ctxViz = ctxStep ? (ctxStep.viz as { kept: number; missing: string[] }) : null
   const verStep = steps.find((s) => s.kind === 'verifier_result')
   const verRecall = verStep ? ((verStep.viz as { recall: number | null }).recall ?? 1) : 1
   const stations: FxStation[] = steps.map((s) => ({
     no: s.no, name: zh ? s.zh : s.en, role: DESC[s.kind]?.[zh ? 0 : 1] ?? '', kind: s.kind, cat: CAT[s.kind] ?? 'verdict',
-    metric: stationMetric(s, zh), readout: readoutLines(s, zh), loadBearing: s.kind === 'skills_exposed',
+    metric: stationMetric(s, zh), readout: readoutLines(s, zh, toolPool.length), loadBearing: s.kind === 'skills_exposed',
   }))
 
   const seek = (i: number) => { setReached((r) => Math.max(r, i)); setCursor(i); setPlaying(false) }
@@ -347,17 +390,19 @@ export function TrajectoryPage({
       {/* ── HUD masthead: title · mission · case chips ── */}
       <header className="fx-mast">
         <div className="fx-mast-l">
-          <span className="fx-mast-kick">SELFEVO · SELF-EVOLVING LONG-HORIZON AGENT · 内网根因分析</span>
-          <h1 className="fx-mast-title">{zh ? <>长<mark>轨迹</mark></> : <>LONG <mark>TRAJECTORY</mark></>}<em>/ TACTICAL EXEC-LEDGER REPLAY</em></h1>
+          <span className="fx-mast-kick">{zh ? '自我进化 AI · 内网排查' : 'SELF-EVOLVING AI · NETWORK TRIAGE'}</span>
+          <h1 className="fx-mast-title">{zh ? <>长<mark>轨迹</mark></> : <>LONG <mark>TRAJECTORY</mark></>}</h1>
           <div className="fx-mast-mission">
             <span className="fx-mast-q" title={c.query}>{clip(c.query, 62)}</span>
             <span className="fx-mast-arrow">▸</span>
             <mark className="fx-mast-root">{rc(c.diagnosis.rootCauseKey, lang)}</mark>
-            <span className="fx-mast-facts"><b>{c.diagnosis.confidence.toFixed(2)}</b>{zh ? '置信' : 'CONF'} · <b>{evid.length}/{evid.length}</b>{zh ? '引用核验' : 'VERIFIED'} · <b>RO</b>{zh ? '只读' : 'READ-ONLY'}</span>
+            <span className="fx-mast-facts">
+              <b>{c.diagnosis.confidence.toFixed(2)}</b>{zh ? '把握' : 'CONF'} · <b>{evid.length}/{evid.length}</b>{zh ? '已核对' : 'VERIFIED'} · {zh ? '全程只读' : <LockGlyph />}
+            </span>
           </div>
         </div>
         <div className="fx-mast-r">
-          <span className="fx-mast-real">{zh ? '真实事件 · R230 FORTIGATE 留出集' : 'REAL · R230 FORTIGATE HELD-OUT'}</span>
+          <span className="fx-mast-real">{zh ? '真实事件 · R230' : 'REAL CASE · R230'}</span>
           <div className="fx-mast-cases">
             <span className="fx-mast-cases-lab">{zh ? '事件' : 'CASE'}</span>
             {cases.map((x, i) => (
@@ -371,11 +416,11 @@ export function TrajectoryPage({
 
       {/* ── legend key: node type ⇒ system component ── */}
       <div className="fx-key">
-        <span className="fx-key-lead">{zh ? '图例 · 节点 ⇒ 组件' : 'KEY · NODE ⇒ COMPONENT'}</span>
+        <span className="fx-key-lead">{zh ? '图例' : 'KEY'}</span>
         {LEGEND.map((l) => (
           <span key={l.cat} className="fx-key-chip"><i style={{ background: CAT_COLOR[l.cat] }} />{zh ? l.zh : l.en}</span>
         ))}
-        <span className="fx-key-hint">{zh ? '悬停 → 点亮关联 · 点击 → 锁定' : 'HOVER → LIGHT LINKS · CLICK → LOCK'}</span>
+        <span className="fx-key-hint">{zh ? '悬停高亮 · 点击锁定' : 'HOVER · CLICK'}</span>
       </div>
 
       {/* ── ③ THE TACTICAL REPLAY CANVAS (hero) ── */}
@@ -384,7 +429,10 @@ export function TrajectoryPage({
           stations={stations}
           evidence={fxEvidence}
           memory={memoryTiers}
-          skills={{ exposed: skExposed }}
+          memoryTotal={memViz?.total ?? 0}
+          skills={fxSkills}
+          ctxFork={{ kept: ctxViz?.kept ?? 0, dropped: ctxViz?.missing.length ?? 0 }}
+          probes={{ available: skExposed.length, run: calledSkills.size }}
           verify={{ passed: c.verifier.passed, recall: verRecall }}
           reached={reached}
           cursor={cursor}
@@ -414,9 +462,8 @@ export function TrajectoryPage({
             ))}
           </div>
           <div className="fx-tp-meta">
-            <span>STEP <b>{cur.no}</b>/{String(steps.length).padStart(2, '0')}</span>
+            <span>{zh ? <>第 <b>{Number(cur.no)}</b> 步 / 共 {steps.length}</> : <>STEP <b>{Number(cur.no)}</b> / {steps.length}</>}</span>
             <span>t+<b>{(cursor * (BEAT / 1000)).toFixed(1)}s</b></span>
-            <span className="fx-tp-cat" style={{ background: CAT_COLOR[CAT[cur.kind] ?? 'verdict'] }}>{cur.kind.replace(/_/g, ' ').toUpperCase()}</span>
           </div>
         </div>
       </section>
@@ -425,7 +472,6 @@ export function TrajectoryPage({
       <section className="fx-footer">
         {evo?.ready ? <EvolutionStream data={evo} zh={zh} /> : <div className="fx-conv placeholder" />}
         <StressTest baselines={baselines} zh={zh} />
-        <span className="fx-footer-sig">[R230] NO:{String(caseIdx + 1).padStart(2, '0')} · {zh ? '引擎无关 · 可复现' : 'ENGINE-INDEPENDENT · REPRODUCIBLE'}</span>
       </section>
     </div>
   )

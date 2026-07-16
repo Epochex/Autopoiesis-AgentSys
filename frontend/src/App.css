@@ -1864,77 +1864,63 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   min-height: calc(100vh - 24px);
 }
 
-/* ── the topology plate: a tactical HUD backdrop over crisp modular grid ──
-   Layered background: edge coordinate-ruler ticks (top + left), a bright minor
-   grid and a stronger major grid. Contrast is raised so the plate reads crisp,
-   not washed out. */
+/* ── the topology plate: NO frame, NO ruler bezel — the map IS the page ──
+   The plate now bleeds to every edge of the viewport and the whole graph is
+   pan/zoomable (see .zoom-ctl); only a faint modular grid remains as ground. */
+.stage[data-view='console'] {
+  max-width: none;
+  padding: 18px 24px 0;
+}
 .stage[data-view='console'] .canvas-wrap {
   --grid-cell: 48px;
   position: relative;
+  margin: 0 -24px;
+  aspect-ratio: auto;
+  height: calc(100vh - 74px);
+  border: none;
+  overflow: hidden;
   background-color: var(--paper);
   background-image:
-    /* top edge ruler ticks */
-    repeating-linear-gradient(90deg, var(--ink) 0 1.5px, transparent 1.5px 24px),
-    /* left edge ruler ticks */
-    repeating-linear-gradient(180deg, var(--ink) 0 1.5px, transparent 1.5px 24px),
-    /* major grid */
-    linear-gradient(rgba(13, 13, 13, 0.10) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(13, 13, 13, 0.10) 1px, transparent 1px),
-    /* minor grid */
-    linear-gradient(rgba(13, 13, 13, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(13, 13, 13, 0.045) 1px, transparent 1px);
+    linear-gradient(rgba(13, 13, 13, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 13, 13, 0.07) 1px, transparent 1px),
+    linear-gradient(rgba(13, 13, 13, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 13, 13, 0.03) 1px, transparent 1px);
   background-size:
-    100% 9px, 9px 100%,
     var(--grid-cell) var(--grid-cell), var(--grid-cell) var(--grid-cell),
     calc(var(--grid-cell) / 4) calc(var(--grid-cell) / 4), calc(var(--grid-cell) / 4) calc(var(--grid-cell) / 4);
-  background-position: 0 0, 0 0, -1px -1px, -1px -1px, -1px -1px, -1px -1px;
-  background-repeat: repeat-x, repeat-y, repeat, repeat, repeat, repeat;
-  border: 2px solid var(--ink);
+  transition: none;
 }
-/* angular corner brackets at the true plate corners (8 layered bars) */
-.stage[data-view='console'] .canvas-wrap::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 6;
-  background-image:
-    linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink)),
-    linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink)),
-    linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink)),
-    linear-gradient(var(--ink), var(--ink)), linear-gradient(var(--ink), var(--ink));
-  background-repeat: no-repeat;
-  background-size:
-    30px 3px, 3px 30px, 30px 3px, 3px 30px,
-    30px 3px, 3px 30px, 30px 3px, 3px 30px;
-  background-position:
-    left 9px top 9px, left 9px top 9px,
-    right 9px top 9px, right 9px top 9px,
-    left 9px bottom 9px, left 9px bottom 9px,
-    right 9px bottom 9px, right 9px bottom 9px;
+.stage[data-view='console'] .canvas-wrap.mid,
+.stage[data-view='console'] .canvas-wrap.tall,
+.stage[data-view='console'] .canvas-wrap.full3d { aspect-ratio: auto; height: calc(100vh - 74px); }
+.stage[data-view='console'] .flow-canvas { width: 100%; height: 100%; }
+
+/* viewport controls */
+.zoom-fo { overflow: visible; }
+.zoom-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 10px;
+  color: var(--fog);
 }
-/* animated horizontal scan sweep — game motion, does not dull static contrast */
-.stage[data-view='console'] .canvas-wrap::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 24%;
-  pointer-events: none;
-  z-index: 5;
-  background: linear-gradient(90deg, transparent, rgba(204, 255, 0, 0.13) 65%, rgba(13, 13, 13, 0.06));
-  mix-blend-mode: multiply;
-  animation: hud-sweep 7s cubic-bezier(0.2, 0, 0, 1) infinite;
+.zoom-ctl button {
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-2);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
 }
-@keyframes hud-sweep {
-  0% { transform: translateX(-100%); opacity: 0; }
-  8% { opacity: 1; }
-  55% { opacity: 0.7; }
-  70%, 100% { transform: translateX(430%); opacity: 0; }
-}
-.stage[data-view='console'] .canvas-wrap.full3d::before,
-.stage[data-view='console'] .canvas-wrap.full3d::after { display: none; }
+.zoom-ctl button:hover { background: var(--acid); }
+.zoom-ctl .zoom-reset { width: auto; padding: 0 7px; font-size: 9px; letter-spacing: 0.08em; }
+.zoom-ctl .zoom-k { min-width: 34px; text-align: center; color: var(--ink); }
+.zoom-ctl .zoom-hint { opacity: 0.6; letter-spacing: 0.06em; }
 
 /* ── panels: flat printed cards, no dark glass / blur / glow ── */
 .stage[data-view='console'] .float-panel,
@@ -2011,7 +1997,6 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .wpc-arrow { color: var(--acid); font-size: 12px; }
 .stage[data-view='console'] .wan-pentest-cta:hover .wpc-arrow { color: var(--paper); }
 .stage[data-view='console'] .wpc-txt { flex: 1; color: var(--paper); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
-.stage[data-view='console'] .wpc-tag { color: var(--acid); font-size: 9px; letter-spacing: 0.12em; font-weight: 600; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PAGE 1 — GAME-UI TACTICAL HUD  ·  ctOS / Division-flavoured, light-editorial
@@ -2031,27 +2016,50 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .core-bracket { fill: none; stroke: var(--ink); stroke-width: 2.6; stroke-linecap: square; opacity: 0.92; }
 .stage[data-view='console'] .core-tick { stroke: var(--ink); stroke-width: 2; opacity: 0.6; }
 .stage[data-view='console'] .core-acid { fill: var(--acid); }
-.stage[data-view='console'] .core-label { fill: var(--coral); font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: 0.16em; }
+/* tiny padlock glyph above the reticle = locked target (replaces text caption) */
+.stage[data-view='console'] .core-lock-shackle { fill: none; stroke: var(--coral); stroke-width: 2; }
+.stage[data-view='console'] .core-lock-body { fill: var(--coral); }
 
 /* ── sector-radar backdrop watermark (big-picture context, kept subtle) ── */
 .stage[data-view='console'] .hud-axis { stroke: var(--ink); stroke-width: 1; opacity: 0.06; }
 .stage[data-view='console'] .hud-ring { fill: none; stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 7; opacity: 0.09; }
 .stage[data-view='console'] .hud-azi { stroke: var(--ink); stroke-width: 1.2; opacity: 0.16; }
-.stage[data-view='console'] .hud-sector { fill: var(--coral); opacity: 0.06; }
-.stage[data-view='console'] .hud-sector-edge { fill: none; stroke: var(--coral); stroke-width: 1; stroke-dasharray: 3 6; opacity: 0.32; }
 .stage[data-view='console'] .hud-bearing { fill: var(--ink); opacity: 0.3; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; }
 
-/* ── ambient corner read-outs (scan-id, window, src/lockout, device counts) ── */
+/* ── WAN THREAT CONE — active "incoming fire" ingress ────────────────────────
+   Hazard-striped caution fill + range-ring waves converging on the FortiGate +
+   an oscillating radar sweep. The whole cone breathes so the sector reads as a
+   live attack corridor, not a static watermark. */
+.stage[data-view='console'] .tc-haz-stripe { fill: var(--coral); opacity: 0.16; }
+.stage[data-view='console'] .tc-fill { animation: tc-breathe 3.2s ease-in-out infinite; }
+.stage[data-view='console'] .tc-edge { fill: none; stroke: var(--coral); stroke-width: 1.5; stroke-dasharray: 2 6; opacity: 0.42; animation: tc-march 1.1s linear infinite; }
+.stage[data-view='console'] .tc-wave { fill: none; stroke: var(--coral); stroke-width: 2.4; }
+.stage[data-view='console'] .tc-sweep { stroke: var(--coral); stroke-width: 2.2; opacity: 0.55; filter: drop-shadow(0 0 7px var(--coral)); }
+@keyframes tc-breathe { 0%, 100% { opacity: 0.62; } 50% { opacity: 1; } }
+@keyframes tc-march { to { stroke-dashoffset: -16; } }
+
+/* ── attacker → FortiGate TRACER BEAMS ── */
+.stage[data-view='console'] .beam-halo { fill: none; stroke: var(--coral); opacity: 0.14; stroke-linecap: round; filter: blur(3px); }
+.stage[data-view='console'] .beam-core { fill: none; stroke-linecap: round; }
+.stage[data-view='console'] .beam-mote { fill: var(--coral); }
+.stage[data-view='console'] .beam-mote.head { filter: drop-shadow(0 0 5px var(--coral)) drop-shadow(0 0 2px var(--coral)); }
+.stage[data-view='console'] .atk-beam.dim { opacity: 0.16; }
+.stage[data-view='console'] .beam-stop-0 { stop-color: var(--coral); stop-opacity: 0.04; }
+.stage[data-view='console'] .beam-stop-1 { stop-color: var(--coral); stop-opacity: 0.45; }
+.stage[data-view='console'] .beam-stop-2 { stop-color: var(--coral); stop-opacity: 0.95; }
+
+/* ── impact shockwave where volleys land on the gateway ── */
+.stage[data-view='console'] .impact-ring { fill: none; stroke: var(--coral); stroke-width: 2.2; filter: drop-shadow(0 0 4px var(--coral)); }
+
+/* ── ambient corner read-outs (window, sources/lockouts, device counts) ── */
 .stage[data-view='console'] .hud-readouts text { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .stage[data-view='console'] .hud-r-dim { fill: var(--fog); font-size: 9.5px; letter-spacing: 0.14em; }
-.stage[data-view='console'] .hud-r-id { fill: var(--ink); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; }
 .stage[data-view='console'] .hud-r-line { fill: var(--ink); font-size: 12px; letter-spacing: 0.06em; }
 .stage[data-view='console'] .hud-r-line .hot { fill: var(--coral); font-weight: 500; }
 .stage[data-view='console'] .hud-r-line .acc { fill: var(--tier-edge); font-weight: 500; }
 .stage[data-view='console'] .hud-status { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
 .stage[data-view='console'] .hud-status .hot { fill: var(--coral); font-weight: 500; }
 .stage[data-view='console'] .hud-status .dim { fill: var(--ink); opacity: 0.55; }
-.stage[data-view='console'] .hud-vlabel { fill: var(--fog); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.34em; text-transform: uppercase; opacity: 0.7; }
 
 /* ── zone label: crisp HUD readout, not a washed-out whisper ── */
 .stage[data-view='console'] .zone-tag { fill: var(--ink); opacity: 0.68; font-weight: 500; }
@@ -2095,3 +2103,158 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .eng.on { color: var(--ink); font-weight: 500; }
 .stage[data-view='console'] .gem { background: #b7b7b1; box-shadow: none; }
 .stage[data-view='console'] .gem.live { background: var(--tier-edge); box-shadow: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SEGMENT DEVICE GRAPH (page 1, subnet expanded)
+   Every host on the /24 — not just the noisy handful. Hosts the firewall only
+   ever saw take a DHCP lease are drawn hollow (silent); hosts that actually
+   route are filled. Edges carry their evidence class: OBSERVED relations
+   (session clash, shared broadcast domain, shared destination) are solid and
+   carry moving traffic drips; INFERRED ones (vendor OUI, hostname family, DHCP
+   lockstep, port fingerprint) are dashed — the map never pretends an inference
+   is a measurement.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.sg-trunk { fill: none; stroke: var(--tier-edge); stroke-width: 2; opacity: 0.5; stroke-dasharray: 5 5; }
+
+.sg-hull { fill: rgba(13, 13, 13, 0.035); stroke: rgba(13, 13, 13, 0.16); stroke-width: 1; stroke-dasharray: 3 4; }
+.sg-cluster.hot .sg-hull { fill: rgba(207, 47, 74, 0.06); stroke: rgba(207, 47, 74, 0.3); }
+.sg-hull-label {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  fill: var(--fog); opacity: 0.85;
+}
+.sg-cluster.hot .sg-hull-label { fill: var(--coral); opacity: 1; }
+
+.sg-edge { fill: none; stroke-linecap: round; transition: opacity 0.25s ease; }
+.sg-edge.inf { stroke-dasharray: 2 4; opacity: 0.4; }
+.sg-edge.obs { opacity: 0.85; }
+.sg-edge.dim { opacity: 0.07; }
+.sg-edge.k-clash  { stroke: var(--coral); }
+.sg-edge.k-bcast  { stroke: #b4732b; }
+.sg-edge.k-codst  { stroke: var(--tier-edge); }
+.sg-edge.k-lease  { stroke: #7f8f8b; }
+.sg-edge.k-fleet  { stroke: #9a93b8; }
+.sg-edge.k-family { stroke: #8c8c88; }
+.sg-edge.k-portfp { stroke: var(--amber); }
+.sg-drip { fill: var(--tier-edge); }
+.sg-drip.k-clash { fill: var(--coral); }
+.sg-drip.k-bcast { fill: #b4732b; }
+
+.sg-corridor {
+  fill: none; stroke: var(--coral); stroke-width: 2.4; opacity: 0.9;
+  stroke-dasharray: 7 5; animation: sg-march 1.1s linear infinite;
+}
+@keyframes sg-march { to { stroke-dashoffset: -24; } }
+.sg-corridor-drip { fill: var(--coral); }
+
+.sg-dot { fill: var(--paper-2); stroke: var(--tier-subnet); stroke-width: 1.6; transition: opacity 0.25s ease; }
+.sg-node.traffic .sg-dot { fill: var(--tier-subnet); }
+.sg-node.t-watch .sg-dot { fill: var(--amber); stroke: var(--amber); }
+.sg-node.t-high  .sg-dot { fill: var(--coral); stroke: var(--coral); }
+.sg-node.sel .sg-dot { stroke: var(--ink); stroke-width: 3; }
+.sg-node.dim { opacity: 0.22; }
+.sg-node:hover .sg-dot { stroke: var(--ink); stroke-width: 2.4; }
+.sg-ip {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 8.5px; fill: var(--fog);
+}
+.sg-node.t-high .sg-ip, .sg-node.t-watch .sg-ip { fill: var(--ink); }
+.sg-anom { fill: none; stroke: var(--amber); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: 0.9; }
+.sg-flag { fill: none; stroke-width: 1.6; }
+.sg-flag.sev-high { stroke: var(--coral); animation: sg-ping 1.8s ease-out infinite; }
+.sg-flag.sev-medium { stroke: var(--amber); opacity: 0.8; }
+.sg-flag.sev-low { stroke: var(--tier-edge); opacity: 0.6; }
+@keyframes sg-ping {
+  0% { opacity: 0.9; transform: scale(1); }
+  70%, 100% { opacity: 0; transform: scale(1.5); }
+}
+.sg-flag.sev-high { transform-box: fill-box; transform-origin: center; }
+
+/* read-outs */
+.sg-tip-fo { overflow: visible; }
+.sg-tip {
+  border: 1.5px solid var(--ink); background: var(--paper-2);
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 10px; color: var(--text); padding: 7px 9px;
+  box-shadow: 3px 3px 0 rgba(13, 13, 13, 0.12);
+}
+.sg-tip.t-high { border-color: var(--coral); }
+.sg-tip.t-watch { border-color: var(--amber); }
+.sg-tip-h { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.sg-tip-h b { font-size: 11px; }
+.sg-tip-h span { color: var(--fog); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.sg-tip-r { display: flex; gap: 6px; line-height: 1.5; }
+.sg-tip-r i {
+  font-style: normal; color: var(--fog); min-width: 46px;
+  font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; padding-top: 1px;
+}
+
+.sg-head { font-family: var(--font-mono, 'IBM Plex Mono', monospace); }
+.sg-head-t { font-size: 15px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink); }
+.sg-head-s { font-size: 10px; color: var(--fog); line-height: 1.7; }
+.sg-head-s b { color: var(--ink); }
+.sg-cta {
+  margin-top: 5px; padding: 4px 10px; border: 1.5px solid var(--ink);
+  background: var(--acid); color: var(--ink); cursor: pointer;
+  font-family: inherit; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.sg-cta:hover { background: var(--ink); color: var(--acid); }
+
+.sg-panel {
+  border: 2px solid var(--ink); background: var(--paper-2);
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace); color: var(--text);
+  box-shadow: 4px 4px 0 rgba(13, 13, 13, 0.14);
+  max-height: 100%; display: flex; flex-direction: column;
+}
+.sg-panel-h {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 9px; background: var(--ink); color: var(--paper);
+  font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.sg-panel-h button { background: none; border: none; color: var(--paper); cursor: pointer; font-size: 11px; }
+.sg-panel-b { padding: 8px 10px; overflow: auto; }
+.sg-wait, .sg-err { font-size: 11px; color: var(--fog); }
+.sg-err { color: var(--coral); }
+.sg-sum { margin: 0 0 7px; font-size: 11.5px; line-height: 1.55; }
+.sg-pats { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.sg-pats li { border-left: 3px solid var(--fog); padding: 3px 0 3px 8px; }
+.sg-pats li.sev-high { border-color: var(--coral); }
+.sg-pats li.sev-medium { border-color: var(--amber); }
+.sg-pat-h { display: flex; align-items: baseline; gap: 7px; }
+.sg-pat-t { font-size: 11px; font-weight: 600; }
+.sg-pat-k { font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fog); }
+.sg-pat-c { margin-left: auto; font-size: 9px; color: var(--fog); }
+.sg-pat-w { font-size: 10.5px; line-height: 1.45; }
+.sg-pat-m { font-size: 9px; color: var(--fog); margin-top: 1px; }
+.sg-foot { margin-top: 8px; display: grid; gap: 3px; font-size: 10.5px; line-height: 1.45; }
+.sg-foot i {
+  font-style: normal; color: var(--fog); margin-right: 6px;
+  font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.sg-foot i.bad { color: var(--coral); }
+
+.sg-legend {
+  border: 1.5px solid var(--line); background: var(--paper-2); padding: 6px 8px;
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace); font-size: 9px; color: var(--fog);
+}
+.sg-lg-t { color: var(--ink); letter-spacing: 0.1em; margin-bottom: 4px; font-size: 8.5px; }
+.sg-lg-r { display: flex; align-items: center; gap: 6px; line-height: 1.55; }
+.sg-lg-line { width: 18px; height: 0; border-top: 2px solid var(--fog); flex: 0 0 18px; }
+.sg-lg-line.inf { border-top-style: dashed; }
+.sg-lg-line.k-clash { border-color: var(--coral); }
+.sg-lg-line.k-bcast { border-color: #b4732b; }
+.sg-lg-line.k-codst { border-color: var(--tier-edge); }
+.sg-lg-line.k-lease { border-color: #7f8f8b; }
+.sg-lg-line.k-fleet { border-color: #9a93b8; }
+.sg-lg-line.k-family { border-color: #8c8c88; }
+
+/* drilled breadcrumb (collapsed gateway chain) */
+.mesh-crumb-t {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 12px; letter-spacing: 0.08em; fill: var(--ink); font-weight: 600;
+}
+.mesh-crumb-b {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--fog);
+}
+.mesh-crumb:hover .mesh-crumb-t { fill: var(--coral); }

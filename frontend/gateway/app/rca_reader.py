@@ -33,13 +33,32 @@ _TOPOLOGY = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real" / "real
 
 
 _MESH = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real" / "real_mesh.json"
+_DEVICE_GRAPH = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real" / "real_device_graph.json"
+
+
+def _load_device_graphs() -> dict[str, Any]:
+    """Full per-subnet device graphs mined from the raw syslog (see build_device_graph)."""
+    try:
+        return json.loads(_DEVICE_GRAPH.read_text(encoding="utf-8")).get("graphs", {})
+    except Exception:
+        return {}
 
 
 def _load_topology() -> dict[str, Any] | None:
     try:
-        return json.loads(_TOPOLOGY.read_text(encoding="utf-8"))
+        topo = json.loads(_TOPOLOGY.read_text(encoding="utf-8"))
     except Exception:
         return None
+    # The device graph is the single source of truth for how many hosts a segment
+    # actually has — the fixture's `hosts` was a stale count from an older capture,
+    # so the map claimed 103 devices while only the flagged handful could open.
+    graphs = _load_device_graphs()
+    for sub in topo.get("subnets", []):
+        g = graphs.get(sub.get("cidr"))
+        if g:
+            sub["hosts"] = g["stats"]["devices"]
+            sub["graphEdges"] = g["stats"]["edges"]
+    return topo
 
 
 def _load_meshes() -> dict[str, Any]:

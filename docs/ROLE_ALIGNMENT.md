@@ -1,6 +1,6 @@
 # Role Alignment
 
-selfevo-orchiter is positioned as a TypeScript-first research engineering project for self-evolving agent systems, enterprise memory, context compression, and policy iteration. It is not a NetOps-only artifact; NetOps and intranet incident analysis are retained as high-pressure benchmark domains because they force the system to handle evidence boundaries, topology-aware context, approval gates, and auditable recovery decisions.
+Autopoiesis-AgentSys is positioned as a Python research engineering project for self-evolving agent systems, enterprise memory, context compression, and policy iteration. It is not a NetOps-only artifact; NetOps and intranet incident analysis are retained as high-pressure benchmark domains because they force the system to handle evidence boundaries, topology-aware context, approval gates, and auditable recovery decisions.
 
 ## Target Signals
 
@@ -16,7 +16,7 @@ The project should communicate these signals:
 
 Strong one-line framing:
 
-> Built selfevo-orchiter, a TypeScript-first self-evolving agent orchestration platform that combines enterprise memory graphs, evidence-aware context compression, topology gating, and GRPO-style policy iteration for auditable long-running agents.
+> Built Autopoiesis-AgentSys, a Python self-evolving agent orchestration platform that combines enterprise memory graphs, evidence-aware context compression, topology gating, and GRPO-style policy iteration for auditable long-running agents.
 
 The architecture is domain-neutral. Recommended demo families:
 
@@ -27,7 +27,7 @@ The architecture is domain-neutral. Recommended demo families:
 
 ## Capability Map
 
-| Target signal | selfevo-orchiter surface | Next deepening |
+| Target signal | Autopoiesis-AgentSys surface | Next deepening |
 | --- | --- | --- |
 | Agent loop | AgentKernel, planner, executor, reviewer, repair and approval states | resumable cancellation, bounded retry policy |
 | Skill library | typed Skill SDK, registry, document, memory, decision, CLI, workspace skills | skill versioning, replay fixtures, MCP adapters |
@@ -39,6 +39,6 @@ The architecture is domain-neutral. Recommended demo families:
 
 ## Resume Narrative
 
-- Built a TypeScript-first self-evolving agent orchestration platform with typed skill orchestration, scoped enterprise memory, evidence-aware context compression, approval gates, trace replay, and regression gates.
+- Built a Python self-evolving agent orchestration platform with typed skill orchestration, scoped enterprise memory, evidence-aware context compression, approval gates, trace replay, and regression gates.
 - Designed a policy iteration layer that converts execution traces into memory utilities, branch-aware evidence packets, topology decisions, and GRPO-style reward signals for safer agent updates.
 - Kept NetOps as an audit-heavy enterprise benchmark while abstracting the core system across coding, decision simulation, office workflow, and incident investigation.

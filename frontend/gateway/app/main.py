@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from .config import Settings
-from .live import assess_device, assess_mesh, assess_subnet, assess_wan, event_rate
+from .live import analyze_graph, assess_device, assess_mesh, assess_subnet, assess_wan, event_rate, subnet_graph
 from .providers import list_providers
 from .rca_reader import load_rca_snapshot, _load_topology
 
@@ -113,6 +113,19 @@ async def rca_threat(ip: str, cidr: str = "", lang: str = "zh") -> dict[str, Any
                 break
         if device:
             break
+    if device is None and cidr:
+        # Every host on the segment is analyzable now, not just the handful the old
+        # topology fixture carried — fall back to the full mined device graph.
+        g = subnet_graph(cidr)
+        if g.get("ok"):
+            devs = g["devices"]
+            hit = next((d for d in devs if d["ip"] == ip), None)
+            if hit is not None:
+                device = {**hit, "top_ports": hit.get("topPorts", [])}
+                peers = [
+                    {**p, "top_ports": p.get("topPorts", [])}
+                    for p in sorted(devs, key=lambda d: -(d["deny"] + d["flows"]))[:9]
+                ]
     if device is None:
         return {"ok": False, "text": "device not found"}
     return await asyncio.to_thread(assess_device, ip, cidr, device, lang, peers)
@@ -131,6 +144,18 @@ async def rca_threat_subnet(cidr: str, lang: str = "zh") -> dict[str, Any]:
 @app.get("/api/rca/mesh_analyze")
 async def rca_mesh_analyze(cidr: str, lang: str = "zh") -> dict[str, Any]:
     return await asyncio.to_thread(assess_mesh, cidr, lang)
+
+
+@app.get("/api/rca/subnet_graph")
+async def rca_subnet_graph(cidr: str) -> dict[str, Any]:
+    """Every host on the segment plus the device<->device relations mined from syslog."""
+    return await asyncio.to_thread(subnet_graph, cidr)
+
+
+@app.get("/api/rca/graph_analyze")
+async def rca_graph_analyze(cidr: str, lang: str = "zh") -> dict[str, Any]:
+    """Agent pass over the device graph: community names, hidden patterns, pivot corridors."""
+    return await asyncio.to_thread(analyze_graph, cidr, lang)
 
 
 @app.get("/api/rca/snapshot")

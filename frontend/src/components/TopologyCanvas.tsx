@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react'
-import type { DataStats, Device, Subnet, Topology } from '../types'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import type { DataStats, Device, GraphAnalysis, GraphDevice, Subnet, SubnetGraph, Topology } from '../types'
 import { Scramble } from './Motion'
+import { SubnetGraphLayer } from './SubnetGraph'
 import { Analyzing, type Threat, type WanThreat } from './ThreatCard'
 import type { Lang } from '../i18n'
 
@@ -60,22 +61,24 @@ const polar = (c: Pt, r: number, deg: number): Pt => {
   return { x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r }
 }
 
+/** Annular-sector (wedge) path from an inner to an outer radius across [a1,a2]°. */
+function annularSector(c: Pt, rIn: number, rOut: number, a1: number, a2: number): string {
+  const large = a2 - a1 > 180 ? 1 : 0
+  const p1 = polar(c, rOut, a1)
+  const p2 = polar(c, rOut, a2)
+  const p3 = polar(c, rIn, a2)
+  const p4 = polar(c, rIn, a1)
+  return `M ${p1.x} ${p1.y} A ${rOut} ${rOut} 0 ${large} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${rIn} ${rIn} 0 ${large} 0 ${p4.x} ${p4.y} Z`
+}
+
 /** Ambient sector-radar watermark centred on the focal core: range rings,
- *  coordinate crosshair, azimuth ticks and a shaded WAN-ingress threat sector.
- *  Pure decoration — gives big-picture context without competing with data. */
+ *  coordinate crosshair, azimuth ticks. Pure decoration. */
 function HudRadar({ core }: { core: Pt }) {
   const rings = [136, 244, 352]
-  const sIn = 250
-  const sOut = 352
-  const a1 = 156
-  const a2 = 220
-  const sector = `M ${polar(core, sIn, a1).x} ${polar(core, sIn, a1).y} L ${polar(core, sOut, a1).x} ${polar(core, sOut, a1).y} A ${sOut} ${sOut} 0 0 1 ${polar(core, sOut, a2).x} ${polar(core, sOut, a2).y} L ${polar(core, sIn, a2).x} ${polar(core, sIn, a2).y} A ${sIn} ${sIn} 0 0 0 ${polar(core, sIn, a1).x} ${polar(core, sIn, a1).y} Z`
   return (
     <g className="hud-radar" pointerEvents="none">
       <line x1={44} y1={core.y} x2={1316} y2={core.y} className="hud-axis" />
       <line x1={core.x} y1={26} x2={core.x} y2={974} className="hud-axis" />
-      <path d={sector} className="hud-sector" />
-      <path d={sector} className="hud-sector-edge" />
       {rings.map((r) => (
         <circle key={r} cx={core.x} cy={core.y} r={r} className="hud-ring" />
       ))}
@@ -96,9 +99,99 @@ function HudRadar({ core }: { core: Pt }) {
   )
 }
 
+/** WAN-ingress THREAT CONE — the region the internet is actively attacking through.
+ *  Hazard-striped caution fill + range-ring "incoming waves" that converge on the
+ *  FortiGate + an oscillating radar sweep. Motion speed tracks the live event rate
+ *  (tempo), so a busier hour visibly hammers harder. Reads as "under fire", not decor. */
+function ThreatCone({ core, tempo, active }: { core: Pt; tempo: number; active: boolean }) {
+  const a1 = 158
+  const a2 = 216
+  const rIn = 104
+  const rOut = 398
+  const wedge = annularSector(core, rIn, rOut, a1, a2)
+  const waveDur = Math.max(2.0, 3.8 / tempo)
+  const sweepDur = Math.max(2.8, 5.4 / tempo)
+  return (
+    <g className={`threat-cone ${active ? 'live' : ''}`} pointerEvents="none">
+      <defs>
+        <clipPath id="tc-clip"><path d={wedge} /></clipPath>
+        <pattern id="tc-haz" width="16" height="16" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <rect width="8" height="16" className="tc-haz-stripe" />
+        </pattern>
+      </defs>
+      <path d={wedge} fill="url(#tc-haz)" className="tc-fill" />
+      <path d={wedge} className="tc-edge" />
+      <g clipPath="url(#tc-clip)">
+        {[0, 1, 2, 3].map((i) => (
+          <circle key={i} cx={core.x} cy={core.y} className="tc-wave" r={rOut}>
+            <animate attributeName="r" values={`${rOut};${rIn}`} dur={`${waveDur}s`} begin={`${(i * waveDur) / 4}s`} repeatCount="indefinite" />
+            <animate attributeName="opacity" values="0;0.6;0" dur={`${waveDur}s`} begin={`${(i * waveDur) / 4}s`} repeatCount="indefinite" />
+          </circle>
+        ))}
+        <line x1={core.x + rIn} y1={core.y} x2={core.x + rOut} y2={core.y} className="tc-sweep">
+          <animateTransform attributeName="transform" type="rotate" dur={`${sweepDur}s`} repeatCount="indefinite"
+            calcMode="spline" keyTimes="0;0.5;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
+            values={`${a1} ${core.x} ${core.y};${a2} ${core.x} ${core.y};${a1} ${core.x} ${core.y}`} />
+        </line>
+      </g>
+    </g>
+  )
+}
+
+/** One WAN attacker → FortiGate TRACER BEAM: a source→target gradient beam under a
+ *  soft glow, with a streaking comet volley (bright head + fading trail) racing
+ *  inbound. This is the "incoming fire" — the thing the old thin static curve never
+ *  conveyed. */
+function AttackBeam({ a, b, i, attempts, tempo, dim }: { a: Pt; b: Pt; i: number; attempts: number; tempo: number; dim: boolean }) {
+  const d = bez(a, b)
+  const gid = `beam-grad-${i}`
+  const dur = Math.max(0.85, 1.7 / tempo)
+  const w = Math.max(2.4, Math.min(5, 1.7 + Math.log10(attempts + 1)))
+  const trail = 4
+  return (
+    <g className={`atk-beam ${dim ? 'dim' : ''}`} pointerEvents="none">
+      <defs>
+        <linearGradient id={gid} gradientUnits="userSpaceOnUse" x1={a.x} y1={a.y} x2={b.x} y2={b.y}>
+          <stop offset="0" className="beam-stop-0" />
+          <stop offset="0.6" className="beam-stop-1" />
+          <stop offset="1" className="beam-stop-2" />
+        </linearGradient>
+      </defs>
+      <path d={d} className="beam-halo" style={{ strokeWidth: w + 7 }} />
+      <path d={d} stroke={`url(#${gid})`} className="beam-core" style={{ strokeWidth: w }} />
+      {/* two staggered comet volleys, each a bright head trailed by fading motes */}
+      {[0, 1].flatMap((v) =>
+        Array.from({ length: trail }).map((_, h) => (
+          <circle key={`${v}-${h}`} className={`beam-mote ${h === 0 ? 'head' : ''}`} r={Math.max(1.1, 3.6 - h * 0.8)} style={{ opacity: 0.95 - h * 0.22 }}>
+            <animateMotion dur={`${dur}s`} repeatCount="indefinite" path={d} begin={`${(v * dur) / 2 + h * 0.05}s`} />
+          </circle>
+        )),
+      )}
+    </g>
+  )
+}
+
+/** Impact shockwave at the FortiGate where the volleys land — coral rings bursting
+ *  outward in time with the comet cadence. */
+function CoreImpact({ core, tempo }: { core: Pt; tempo: number }) {
+  const dur = Math.max(0.85, 1.7 / tempo)
+  return (
+    <g className="core-impact" pointerEvents="none">
+      {[0, 1].map((i) => (
+        <circle key={i} cx={core.x} cy={core.y} className="impact-ring" r={4}>
+          <animate attributeName="r" values="6;34" dur={`${dur}s`} begin={`${(i * dur) / 2}s`} repeatCount="indefinite" />
+          <animate attributeName="opacity" values="0.7;0" dur={`${dur}s`} begin={`${(i * dur) / 2}s`} repeatCount="indefinite" />
+        </circle>
+      ))}
+    </g>
+  )
+}
+
 /** The FortiGate core as a reticle-locked hero: angular corner brackets, a
- *  rotating crimson lock ring, crosshair ticks and the ONE acid focal accent. */
-function CoreReticle({ core, lang }: { core: Pt; lang: Lang }) {
+ *  rotating crimson lock ring, crosshair ticks and the ONE acid focal accent.
+ *  No caption — the reticle itself says "locked target"; a tiny padlock glyph
+ *  is the only marker. */
+function CoreReticle({ core }: { core: Pt }) {
   const bx = 82
   const by = 54
   const L = 17
@@ -121,45 +214,46 @@ function CoreReticle({ core, lang }: { core: Pt; lang: Lang }) {
       <line x1={core.x - bx} y1={core.y} x2={core.x - bx + 9} y2={core.y} className="core-tick" />
       <line x1={core.x + bx} y1={core.y} x2={core.x + bx - 9} y2={core.y} className="core-tick" />
       <rect x={core.x - 32} y={core.y - by - 5} width={64} height={5} className="core-acid" />
-      <text x={core.x} y={core.y - by - 12} className="core-label" textAnchor="middle">
-        ◎ {lang === 'zh' ? '主目标 · 核心' : 'PRIMARY TARGET · CORE'}
-      </text>
+      {/* tiny padlock = locked target; replaces the old text caption */}
+      <g className="core-lock">
+        <path d={`M ${core.x - 3.5} ${core.y - by - 14} v -3 a 3.5 3.5 0 0 1 7 0 v 3`} className="core-lock-shackle" />
+        <rect x={core.x - 5.5} y={core.y - by - 14} width={11} height={8} className="core-lock-body" />
+      </g>
     </g>
   )
 }
 
-/** Corner situational read-outs — the big-picture intel the client asked for:
- *  scan-id, data window, distinct-src / lockout counts, device / interface /
- *  subnet counts, and a threat status line. */
+/** Corner situational read-outs — plain-language big picture: data window,
+ *  attack-source / lockout counts, device / link / subnet counts, one status line. */
 function HudReadouts({ stats, meshCount, ifCount, subCount, lang, showStatus }: { stats: DataStats; meshCount: number; ifCount: number; subCount: number; lang: Lang; showStatus: boolean }) {
-  const scanId = `R230-${((stats.adminLoginFailed ?? 0) % 0x10000).toString(16).toUpperCase().padStart(4, '0')}`
-  const win = stats.windowDays?.[stats.windowDays.length - 1] ?? ''
+  const zh = lang === 'zh'
   return (
     <g className="hud-readouts" pointerEvents="none">
       <g textAnchor="end">
-        <text x={1316} y={30} className="hud-r-dim">{win} · {lang === 'zh' ? '48H 窗口' : '48H WINDOW'}</text>
-        <text x={1316} y={47} className="hud-r-id">SCAN ▸ {scanId}</text>
-        <text x={1316} y={64} className="hud-r-line">SRC <tspan className="hot">{short(stats.distinctSrc)}</tspan> · LCK <tspan className="hot">{stats.lockouts ?? 0}</tspan></text>
-        <text x={1316} y={81} className="hud-r-line">DEV <tspan className="acc">{meshCount}</tspan> · IF {ifCount} · NET {subCount}</text>
+        <text x={1316} y={30} className="hud-r-dim">{zh ? '近 48 小时' : 'LAST 48H'}</text>
+        <text x={1316} y={50} className="hud-r-line"><tspan className="hot">{short(stats.distinctSrc)}</tspan> {zh ? '攻击来源' : 'sources'} · <tspan className="hot">{stats.lockouts ?? 0}</tspan> {zh ? '次锁定' : 'lockouts'}</text>
+        <text x={1316} y={67} className="hud-r-line"><tspan className="acc">{meshCount}</tspan> {zh ? '设备' : 'devices'} · {ifCount} {zh ? '接口' : 'links'} · {subCount} {zh ? '网段' : 'subnets'}</text>
       </g>
       {showStatus ? (
         <text x={44} y={642} className="hud-status">
-          <tspan className="hot">◆ {lang === 'zh' ? '威胁等级 · 升高' : 'THREAT ELEVATED'}</tspan>
-          <tspan className="dim"> · {lang === 'zh' ? 'WAN 暴力破解战役' : 'WAN BRUTE-FORCE CAMPAIGN'} · {ifCount} IF / {subCount} NET {lang === 'zh' ? '联动' : 'LINKED'}</tspan>
+          <tspan className="hot">◆ {zh ? '威胁升高' : 'THREAT RISING'}</tspan>
+          <tspan className="dim"> · {zh ? '外网暴力破解' : 'INTERNET BRUTE-FORCE'}</tspan>
         </text>
       ) : null}
-      <text transform="rotate(-90 22 452)" x={22} y={452} className="hud-vlabel" textAnchor="middle">NET-SITUATIONAL CONSOLE</text>
     </g>
   )
 }
 
 const THREAT_DX: Record<string, number> = { high: 0, watch: 30, ok: 56 }
 const KILLCHAIN: { k: string; zh: string; en: string }[] = [
-  { k: 'recon', zh: '侦察', en: 'recon' },
-  { k: 'credential-access', zh: '凭证攻击', en: 'cred-access' },
-  { k: 'lateral-movement', zh: '横向移动', en: 'lateral' },
-  { k: 'impact', zh: '影响', en: 'impact' },
+  { k: 'recon', zh: '踩点', en: 'recon' },
+  { k: 'credential-access', zh: '盗密码', en: 'steal creds' },
+  { k: 'lateral-movement', zh: '内网扩散', en: 'spread' },
+  { k: 'impact', zh: '破坏', en: 'impact' },
 ]
+
+const SEV_ZH: Record<string, string> = { critical: '严重', high: '高危', medium: '中危', low: '低危' }
+const sevLabel = (sev: string | undefined, lang: Lang) => (lang === 'zh' ? SEV_ZH[sev ?? ''] ?? sev ?? '' : sev ?? '')
 
 export function TopologyCanvas({
   topo,
@@ -177,6 +271,12 @@ export function TopologyCanvas({
   hover3DCidr,
   topoAlert,
   wan,
+  graph,
+  graphAnalysis,
+  hoverDev,
+  onHoverDev,
+  onGraphAnalyze,
+  onCloseGraphAnalysis,
   onWan,
   onCloseWan,
   onHoverSubnet,
@@ -202,6 +302,12 @@ export function TopologyCanvas({
   hover3DCidr: string | null
   topoAlert: { cidr: string; ip: string; verdict: string; severity: string } | null
   wan: WanThreat | null
+  graph: SubnetGraph | null
+  graphAnalysis: GraphAnalysis | null
+  hoverDev: string | null
+  onHoverDev: (ip: string | null) => void
+  onGraphAnalyze: (cidr: string) => void
+  onCloseGraphAnalysis: () => void
   onWan: (ip: string) => void
   onCloseWan: () => void
   onHoverSubnet?: (cidr: string | null) => void
@@ -215,22 +321,60 @@ export function TopologyCanvas({
   const g = group(activeKey)
   const core: Pt = { x: 452, y: 340 }
   const ref = useRef<SVGSVGElement | null>(null)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null)
+  // ── viewport: wheel-zoom about the cursor, drag-to-pan anywhere on the plate ──
+  const [view, setView] = useState({ k: 1, x: 0, y: 0 })
+  const drag = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null)
+  const [panning, setPanning] = useState(false)
+
+  /** client px → root user space (accounts for the meet-fit letterboxing) */
+  const toLocal = useCallback((e: React.MouseEvent | React.WheelEvent): Pt => {
+    const svg = ref.current
+    if (!svg) return { x: 0, y: 0 }
+    const box = svg.getBoundingClientRect()
+    const s = Math.min(box.width / VBW, box.height / VBH)
+    return {
+      x: (e.clientX - box.left - (box.width - VBW * s) / 2) / s,
+      y: (e.clientY - box.top - (box.height - VBH * s) / 2) / s,
+    }
+  }, [])
 
   const onDown = (e: React.MouseEvent) => {
-    if (e.button !== 2 && e.button !== 1) return
-    e.preventDefault()
-    drag.current = { px: e.clientX, py: e.clientY, x: pan.x, y: pan.y }
+    drag.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, moved: false }
   }
   const onMove = (e: React.MouseEvent) => {
-    if (!drag.current || !ref.current) return
-    const k = VBW / ref.current.clientWidth
-    setPan({ x: drag.current.x + (e.clientX - drag.current.px) * k, y: drag.current.y + (e.clientY - drag.current.py) * k })
+    const d = drag.current
+    const svg = ref.current
+    if (!d || !svg) return
+    const box = svg.getBoundingClientRect()
+    const s = Math.min(box.width / VBW, box.height / VBH)
+    const dx = (e.clientX - d.px) / s
+    const dy = (e.clientY - d.py) / s
+    if (!d.moved && Math.hypot(dx, dy) < 3) return // let clicks through
+    d.moved = true
+    if (!panning) setPanning(true)
+    setView((v) => ({ ...v, x: d.x + dx, y: d.y + dy }))
   }
   const endDrag = () => {
     drag.current = null
+    setPanning(false)
   }
+  const onWheel = (e: React.WheelEvent) => {
+    const p = toLocal(e)
+    setView((v) => {
+      const k = Math.max(0.45, Math.min(6, v.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)))
+      // keep the point under the cursor pinned while the scale changes
+      return { k, x: p.x - ((p.x - v.x) / v.k) * k, y: p.y - ((p.y - v.y) / v.k) * k }
+    })
+  }
+  const resetView = () => setView({ k: 1, x: 0, y: 0 })
+
+  const zoomBy = (f: number) =>
+    setView((v) => {
+      const k = Math.max(0.45, Math.min(6, v.k * f))
+      const cx = VBW / 2
+      const cy = VBH / 2
+      return { k, x: cx - ((cx - v.x) / v.k) * k, y: cy - ((cy - v.y) / v.k) * k }
+    })
 
   const layout = useMemo(() => {
     const atk = stats.topAttackerSrc.slice(0, 3).map((d, i) => ({ ip: d[0], v: d[1], p: { x: 70, y: 170 + i * 110 } as Pt }))
@@ -245,8 +389,19 @@ export function TopologyCanvas({
   }, [topo, stats])
 
   const openSub = layout.ifs.find((f) => f.sub && drillSub === f.sub.cidr)?.sub ?? null
+  const drilled = !!graph && drillSub === graph.cidr
+  // Expanding a segment hands it the ENTIRE plate: the gateway chain collapses to
+  // a breadcrumb and the ~120 hosts spread across a wide ellipse that fills the
+  // whole field (kept clear of the bottom-left agent panel).
+  const meshCenter: Pt = { x: 706, y: 446 }
+  const meshRX = 606
+  const meshRY = 384
   const devPos: Record<string, Pt> = {}
-  if (openSub) {
+  if (drilled && graph) {
+    for (const dv of graph.devices) {
+      devPos[dv.ip] = { x: meshCenter.x + dv.x * meshRX, y: meshCenter.y + dv.y * meshRY }
+    }
+  } else if (openSub) {
     ;(openSub.devices ?? []).slice(0, 7).forEach((dv, j) => {
       devPos[dv.ip] = { x: 1066 + (THREAT_DX[dv.threat] ?? 40), y: 90 + j * 80 }
     })
@@ -263,33 +418,58 @@ export function TopologyCanvas({
       onMouseMove={onMove}
       onMouseUp={endDrag}
       onMouseLeave={endDrag}
+      onWheel={onWheel}
       onContextMenu={(e) => e.preventDefault()}
-      style={{ cursor: drag.current ? 'grabbing' : 'default' }}
+      style={{ cursor: panning ? 'grabbing' : 'grab' }}
     >
-      <g transform={`translate(${pan.x} ${pan.y})`}>
-        <HudRadar core={core} />
-        {layout.atk.map((a, i) => (
-          <Edge key={`ea${i}`} a={a.p} b={core} tone="t-attack" flows={a.v} dim={g !== 'attack'} hero={g === 'attack'} delay={0.1 + i * 0.05} tempo={tempo} />
-        ))}
-        {layout.ifs.map((f, i) => {
-          const focused = drillSub === f.sub?.cidr
-          const fade = g === 'attack' || (drillSub && !focused) || !!wan
-          return (
-            <g key={`if${i}`}>
-              <Edge a={core} b={f.p} tone="t-flow" flows={f.it.flows} dim={!!fade} hot={focused} delay={0.4 + i * 0.06} tempo={tempo} />
-              {f.sub ? <Edge a={f.p} b={f.subP} tone="t-flow" flows={f.sub.flows} dim={!!fade} hot={focused} delay={0.6 + i * 0.06} tempo={tempo} /> : null}
+      <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+        {/* Drilling into a segment hands the whole field to that LAN: the ambient
+            radar, the WAN-attack fan and the sibling interfaces fall away so the
+            eye analyses one subnet's device relations, not the whole console. */}
+        {!drilled ? <HudRadar core={core} /> : null}
+        {!drilled && !wan ? <ThreatCone core={core} tempo={tempo} active /> : null}
+        {!drilled
+          ? layout.atk.map((a, i) => (
+              <AttackBeam key={`ea${i}`} a={a.p} b={core} i={i} attempts={a.v} tempo={tempo} dim={!!wan && wan.ip !== a.ip} />
+            ))
+          : null}
+        {!drilled
+          ? layout.ifs.map((f, i) => {
+              const focused = drillSub === f.sub?.cidr
+              const fade = g === 'attack' || (drillSub && !focused) || !!wan
+              return (
+                <g key={`if${i}`}>
+                  <Edge a={core} b={f.p} tone="t-flow" flows={f.it.flows} dim={!!fade} hot={focused} delay={0.4 + i * 0.06} tempo={tempo} />
+                  {f.sub ? <Edge a={f.p} b={f.subP} tone="t-flow" flows={f.sub.flows} dim={!!fade} hot={focused} delay={0.6 + i * 0.06} tempo={tempo} /> : null}
+                </g>
+              )
+            })
+          : null}
+
+        {!drilled ? (
+          <>
+            <g className="node gw-node appear" style={{ animationDelay: '0.3s' }}>
+              <rect x={core.x - 60} y={core.y - 32} width="120" height="64" rx="1" />
+              <text x={core.x} y={core.y - 5} className="n-title">{topo.core.name}</text>
+              <text x={core.x} y={core.y + 14} className="n-sub">{topo.core.ip}</text>
             </g>
-          )
-        })}
+            <CoreReticle core={core} />
+            <CoreImpact core={core} tempo={tempo} />
+          </>
+        ) : null}
 
-        <g className="node gw-node appear" style={{ animationDelay: '0.3s' }}>
-          <rect x={core.x - 60} y={core.y - 32} width="120" height="64" rx="1" />
-          <text x={core.x} y={core.y - 5} className="n-title">{topo.core.name}</text>
-          <text x={core.x} y={core.y + 14} className="n-sub">{topo.core.ip}</text>
-        </g>
-        <CoreReticle core={core} lang={lang} />
+        {/* drilled breadcrumb — the collapsed gateway chain, one click back to全网 */}
+        {drilled && graph ? (
+          <g className="mesh-crumb" onClick={() => onSub(null)} style={{ cursor: 'pointer' }}>
+            <text x={30} y={200} className="mesh-crumb-t">
+              ◂ {topo.core.name} · {layout.ifs.find((f) => f.sub?.cidr === graph.cidr)?.it.name ?? 'LAN'}
+            </text>
+            <text x={30} y={220} className="mesh-crumb-b">{lang === 'zh' ? '返回全网态势' : 'BACK TO CONSOLE'}</text>
+          </g>
+        ) : null}
 
-        {layout.atk.map((a, i) => {
+        {!drilled
+          ? layout.atk.map((a, i) => {
           const sel = wan?.ip === a.ip
           return (
             <g
@@ -301,21 +481,29 @@ export function TopologyCanvas({
               {sel ? <circle cx={a.p.x} cy={a.p.y} r="15" className="atk-halo" /> : null}
               <rect x={a.p.x - 7} y={a.p.y - 7} width="14" height="14" className="m-attack" transform={`rotate(45 ${a.p.x} ${a.p.y})`} />
               <text x={a.p.x + 16} y={a.p.y - 1} className="n-ip" textAnchor="start">{a.ip}</text>
-              <text x={a.p.x + 16} y={a.p.y + 12} className="n-v" textAnchor="start">{short(a.v)}<tspan className="probe-hint"> ▸ {lang === 'zh' ? '研判' : 'PROBE'}</tspan></text>
+              <text x={a.p.x + 16} y={a.p.y + 12} className="n-v" textAnchor="start">{short(a.v)}<tspan className="probe-hint"> ▸ {lang === 'zh' ? '分析' : 'ANALYZE'}</tspan></text>
             </g>
           )
-        })}
-        <text x={70} y={120} className="zone-tag appear">WAN1 · {short(stats.distinctSrc)} src · {stats.lockouts ?? ''} lockout</text>
+            })
+          : null}
+        {!drilled ? (
+          <text x={70} y={120} className="zone-tag appear">
+            {lang === 'zh'
+              ? `外网入口 · ${short(stats.distinctSrc)} 来源 · ${stats.lockouts ?? 0} 次锁定`
+              : `INTERNET IN · ${short(stats.distinctSrc)} sources · ${stats.lockouts ?? 0} lockouts`}
+          </text>
+        ) : null}
 
         {layout.ifs.map((f, i) => {
           const focused = drillSub === f.sub?.cidr
+          if (drilled) return null
           const dimIf = g === 'attack' || (drillSub && !focused) || !!wan
           const highThreat = f.sub?.devices?.some((dv) => dv.threat === 'high')
           return (
             <g key={`ifn${i}`} className={`node appear ${dimIf ? 'node-dim' : ''}`} style={{ animationDelay: `${0.5 + i * 0.06}s` }}>
               <rect x={f.p.x - 52} y={f.p.y - 16} width="104" height="32" className="m-intf" />
               <text x={f.p.x} y={f.p.y - 1} className="n-intf">{f.it.name}</text>
-              <text x={f.p.x} y={f.p.y + 12} className="n-sub">{short(f.it.flows)} flows</text>
+              <text x={f.p.x} y={f.p.y + 12} className="n-sub">{short(f.it.flows)} {lang === 'zh' ? '连接' : 'conns'}</text>
               {f.sub ? (
                 <g
                   className={`subnet ${focused ? 'open' : ''} ${hover3DCidr === f.sub.cidr ? 'mapped' : ''}`}
@@ -328,7 +516,7 @@ export function TopologyCanvas({
                   <rect x={f.subP.x - 9} y={f.subP.y - 9} width="18" height="18" className="m-host" />
                   {highThreat ? <circle cx={f.subP.x + 9} cy={f.subP.y - 9} r="3.5" className="threat-pip" /> : null}
                   <text x={f.subP.x + 18} y={f.subP.y - 1} className="n-ip" textAnchor="start">{f.sub.cidr}</text>
-                  <text x={f.subP.x + 18} y={f.subP.y + 12} className="n-v amber" textAnchor="start">{f.sub.hosts} hosts {focused ? '▾' : '▸'}</text>
+                  <text x={f.subP.x + 18} y={f.subP.y + 12} className="n-v amber" textAnchor="start">{f.sub.hosts} {lang === 'zh' ? '台设备' : 'devices'} {focused ? '▾' : '▸'}</text>
                   {hover3DCidr === f.sub.cidr && hover3D ? (
                     <text x={f.subP.x + 18} y={f.subP.y + 26} className="map-ip" textAnchor="start">◂ {hover3D}</text>
                   ) : null}
@@ -336,7 +524,7 @@ export function TopologyCanvas({
                     <g>
                       <circle cx={f.subP.x} cy={f.subP.y} r="21" className="alert-ring" />
                       <text x={f.subP.x + 18} y={f.subP.y + (hover3DCidr === f.sub.cidr ? 40 : 26)} className="alert-verdict" textAnchor="start">
-                        ⚠ {topoAlert.ip} · {topoAlert.verdict || (lang === 'zh' ? '研判中…' : 'analyzing…')}
+                        ⚠ {topoAlert.ip} · {topoAlert.verdict || (lang === 'zh' ? '分析中…' : 'analyzing…')}
                       </text>
                     </g>
                   ) : null}
@@ -346,9 +534,38 @@ export function TopologyCanvas({
           )
         })}
 
-        {/* open subnet → fixed-column device tree, generous spacing */}
+        {/* open subnet → the FULL segment: every host, every mined relation */}
+        {drilled && graph ? (
+                <g key={`mesh-${graph.cidr}`}>
+                  <SubnetGraphLayer
+                    graph={graph}
+                    analysis={graphAnalysis}
+                    center={meshCenter}
+                    rx={meshRX}
+                    ry={meshRY}
+                    lang={lang}
+                    hoverIp={hoverDev}
+                    selectedIp={drillDev}
+                    marks={marks}
+                    showPanel={!threat}
+                    onHover={onHoverDev}
+                    onPick={(dv: GraphDevice) =>
+                      onDev(
+                        drillDev === dv.ip
+                          ? null
+                          : { ip: dv.ip, flows: dv.flows, deny: dv.deny, accept: dv.accept, threat: dv.threat, top_ports: dv.topPorts },
+                        graph.cidr,
+                      )
+                    }
+                    onAnalyze={() => onGraphAnalyze(graph.cidr)}
+                    onCloseAnalysis={onCloseGraphAnalysis}
+                  />
+                </g>
+          ) : null}
+
+        {/* fallback: subnet opened but no mined graph (or still loading) */}
         {layout.ifs.map((f) => {
-          if (!f.sub || drillSub !== f.sub.cidr) return null
+          if (!f.sub || drillSub !== f.sub.cidr || drilled) return null
           const devs = (f.sub.devices ?? []).slice(0, 7)
           const subNode: Pt = { x: f.subP.x, y: f.subP.y }
           const hi = devs.filter((d) => d.threat === 'high').length
@@ -356,13 +573,13 @@ export function TopologyCanvas({
             <g key={`tree-${f.sub.cidr}`}>
               <Float x={subNode.x - 96} y={subNode.y - 84} w={232} tone={hi ? 'alert' : 'flow'}
                 lines={[
-                  { k: 'SUBNET', v: f.sub.cidr },
-                  { k: 'HOSTS', v: `${f.sub.hosts} · ${short(f.sub.flows)} flows` },
-                  { k: 'FLAGGED', v: `${hi} high · ${short(f.sub.accept)} accept` },
+                  { k: lang === 'zh' ? '网段' : 'NET', v: f.sub.cidr },
+                  { k: lang === 'zh' ? '设备' : 'DEVICES', v: `${f.sub.hosts} · ${short(f.sub.flows)} ${lang === 'zh' ? '连接' : 'conns'}` },
+                  { k: lang === 'zh' ? '可疑' : 'FLAGGED', v: lang === 'zh' ? `${hi} 高危 · ${short(f.sub.accept)} 放行` : `${hi} high · ${short(f.sub.accept)} allowed` },
                 ]} />
               <g className="batch-trig" onClick={() => onBatch(f.sub!.cidr)} style={{ cursor: 'pointer' }}>
                 <rect x={subNode.x - 8} y={subNode.y + 24} width="132" height="22" />
-                <text x={subNode.x + 58} y={subNode.y + 39}>⚡ {lang === 'zh' ? '批量研判 / batch' : 'BATCH ANALYZE'}</text>
+                <text x={subNode.x + 58} y={subNode.y + 39}>⚡ {lang === 'zh' ? '全部分析' : 'ANALYZE ALL'}</text>
               </g>
               {devs.map((dv, j) => {
                 const dy = 90 + j * 80
@@ -382,14 +599,14 @@ export function TopologyCanvas({
                       {mark ? (
                         <text x={dp.x + 14} y={dp.y + 12} className={`n-verdict ${alert ? 'alert' : ''}`} textAnchor="start">{mark.verdict}</text>
                       ) : (
-                        <text x={dp.x + 14} y={dp.y + 12} className={`n-v ${dv.threat === 'high' ? '' : 'amber'}`} textAnchor="start">{short(dv.deny)} deny</text>
+                        <text x={dp.x + 14} y={dp.y + 12} className={`n-v ${dv.threat === 'high' ? '' : 'amber'}`} textAnchor="start">{short(dv.deny)} {lang === 'zh' ? '次拦截' : 'blocked'}</text>
                       )}
                     </g>
                     {open ? (
                       <Float x={dp.x - 6} y={dp.y - 64} w={206} tone={alert ? 'alert' : dv.threat}
                         lines={[
-                          { k: 'DENY', v: `${short(dv.deny)} / ${dv.accept} ok` },
-                          { k: 'PORTS', v: dv.top_ports.map((p) => `:${p}`).join(' ') },
+                          { k: lang === 'zh' ? '拦截' : 'BLOCKED', v: lang === 'zh' ? `${short(dv.deny)} · ${dv.accept} 放行` : `${short(dv.deny)} · ${dv.accept} allowed` },
+                          { k: lang === 'zh' ? '端口' : 'PORTS', v: dv.top_ports.map((p) => `:${p}`).join(' ') },
                         ]} />
                     ) : null}
                     {showPorts
@@ -411,14 +628,14 @@ export function TopologyCanvas({
           )
         })}
 
-        {/* 3D constellation portal — on the topology itself (hidden while WAN pivots occupy the right field) */}
-        {meshCount > 0 && !wan ? (
+        {/* 3D constellation portal — hidden while the WAN pivots or a segment mesh own the right field */}
+        {meshCount > 0 && !wan && !drilled ? (
           <g className="portal3d" onClick={onOpen3D} style={{ cursor: 'pointer' }}>
             {layout.ifs.map((f, i) => (f.sub ? <path key={i} d={bez(f.subP, { x: 1252, y: 372 })} className="portal-link" /> : null))}
             <circle cx={1252} cy={372} r="30" className="portal-halo" />
             <circle cx={1252} cy={372} r="20" className="portal-ring" />
             <text x={1252} y={377} className="portal-glyph" textAnchor="middle">⬡</text>
-            <text x={1252} y={418} className="portal-label" textAnchor="middle">{meshLoading ? (lang === 'zh' ? '建模中…' : 'modeling…') : lang === 'zh' ? '3D 全网建模' : '3D model'}</text>
+            <text x={1252} y={418} className="portal-label" textAnchor="middle">{meshLoading ? (lang === 'zh' ? '载入中…' : 'loading…') : lang === 'zh' ? '3D 全网视图' : '3D NETWORK VIEW'}</text>
             <text x={1252} y={433} className="portal-sub" textAnchor="middle">{meshCount} {lang === 'zh' ? '设备' : 'devices'}</text>
           </g>
         ) : null}
@@ -437,7 +654,7 @@ export function TopologyCanvas({
                 {threat.loading ? (
                   <foreignObject x={40} y={690} width={560} height={120}>
                     <div className="an-panel">
-                      <div className="an-head"><span className="an-kicker">DEEPSEEK · {threat.ip}</span></div>
+                      <div className="an-head"><span className="an-kicker">{lang === 'zh' ? 'AI 分析' : 'AI'} · {threat.ip}</span></div>
                       <Analyzing lang={lang} />
                     </div>
                   </foreignObject>
@@ -450,13 +667,13 @@ export function TopologyCanvas({
                     <foreignObject x={40} y={680} width={600} height={300}>
                       <div className={`an-panel sev-${threat.severity}`}>
                         <div className="an-head">
-                          <span className="an-kicker">DEEPSEEK · {threat.ip}</span>
+                          <span className="an-kicker">{lang === 'zh' ? 'AI 分析' : 'AI'} · {threat.ip}</span>
                           <button className="an-x" onClick={onCloseThreat}>✕</button>
                         </div>
                         <div className="an-verdict">
                           <span className={`sev-dot ${threat.severity}`} />
                           <Scramble className="an-vtxt" text={threat.verdict ?? ''} />
-                          <span className={`sev-tag ${threat.severity ?? ''}`}>{threat.severity}</span>
+                          <span className={`sev-tag ${threat.severity ?? ''}`}>{sevLabel(threat.severity, lang)}</span>
                         </div>
                         <p className="an-analysis">{threat.analysis}</p>
                         <div className="an-pred">
@@ -468,7 +685,7 @@ export function TopologyCanvas({
                     </foreignObject>
 
                     <text x={cx} y={cy - 96} className="impact-tag" textAnchor="middle">
-                      {lang === 'zh' ? '影响面关系网络' : 'blast-radius graph'}
+                      {lang === 'zh' ? '影响范围' : 'IMPACT MAP'}
                     </text>
                     <circle cx={cx} cy={cy} r="11" className="m-dev alert sel" />
                     <text x={cx} y={cy + 26} className="n-ip" textAnchor="middle">{threat.ip}</text>
@@ -506,12 +723,12 @@ export function TopologyCanvas({
               <g className="wan-layer">
                 <path d={bez(anchorP, fg)} className="wan-spine appear" />
                 <text x={(anchorP.x + fg.x) / 2 - 6} y={(anchorP.y + fg.y) / 2 - 10} className="wan-spine-tag" textAnchor="middle">
-                  {short(wan.attempts ?? 0)} · admin login
+                  {short(wan.attempts ?? 0)} {lang === 'zh' ? '次登录尝试' : 'login attempts'}
                 </text>
 
                 {/* /24 lockstep sibling cluster */}
                 <text x={anchorP.x} y={anchorP.y - 26} className="wan-netblock" textAnchor="start">
-                  ◇ {wan.netblock} · {short(wan.netblockAttempts ?? 0)} · lockstep
+                  ◇ {lang === 'zh' ? '整段 IP 协同' : 'whole IP block'} · {short(wan.netblockAttempts ?? 0)}
                 </text>
                 {sibs.map((s, k) => {
                   const sp: Pt = { x: anchorP.x + 78, y: clamp(anchorP.y - 44 + k * 30, 20, VBH - 20) }
@@ -528,14 +745,14 @@ export function TopologyCanvas({
                 {!wan.loading && !wan.error ? (
                   <>
                     <circle cx={fg.x} cy={fg.y} r="34" className="wan-lockring" />
-                    <text x={fg.x} y={fg.y + 54} className="wan-lock" textAnchor="middle">⊘ {wan.lockouts ?? 0} admin lockouts</text>
+                    <text x={fg.x} y={fg.y + 54} className="wan-lock" textAnchor="middle">⊘ {wan.lockouts ?? 0} {lang === 'zh' ? '次账号锁定' : 'account lockouts'}</text>
                   </>
                 ) : null}
 
                 {/* cross-canvas post-compromise pivots */}
                 {inter.length ? (
                   <text x={1132} y={112} className="impact-tag" textAnchor="start">
-                    {lang === 'zh' ? '内网横移关联' : 'internal pivots'}
+                    {lang === 'zh' ? '内网扩散' : 'INTERNAL SPREAD'}
                   </text>
                 ) : null}
                 {inter.map((c, k) => {
@@ -545,7 +762,7 @@ export function TopologyCanvas({
                     <g key={c.ip} className="branch-in wan-pivot">
                       <path d={bez(fg, ip_)} className="wan-pivot-link" />
                       <circle cx={ip_.x} cy={ip_.y} r="6" className="m-dev high" />
-                      <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip} · {short(c.deny ?? 0)} deny</text>
+                      <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip} · {short(c.deny ?? 0)} {lang === 'zh' ? '次拦截' : 'blocked'}</text>
                       <text x={ip_.x + 12} y={ip_.y + 12} className="wan-rel" textAnchor="start">{clipS(c.relation, 26)}</text>
                     </g>
                   )
@@ -555,7 +772,7 @@ export function TopologyCanvas({
                 {wan.loading ? (
                   <foreignObject x={36} y={678} width={580} height={130}>
                     <div className="an-panel wan-panel">
-                      <div className="an-head"><span className="an-kicker">DEEPSEEK · WAN · {wan.ip}</span></div>
+                      <div className="an-head"><span className="an-kicker">{lang === 'zh' ? 'AI 分析' : 'AI'} · {wan.ip}</span></div>
                       <Analyzing lang={lang} />
                     </div>
                   </foreignObject>
@@ -567,13 +784,13 @@ export function TopologyCanvas({
                   <foreignObject x={28} y={628} width={660} height={364}>
                     <div className={`an-panel wan-panel sev-${wan.severity}`}>
                       <div className="an-head">
-                        <span className="an-kicker">DEEPSEEK · WAN {lang === 'zh' ? '入侵研判' : 'INTRUSION VERDICT'} · {wan.ip}</span>
+                        <span className="an-kicker">{lang === 'zh' ? 'AI 分析 · 入侵判定' : 'AI · INTRUSION'} · {wan.ip}</span>
                         <button className="an-x" onClick={onCloseWan}>✕</button>
                       </div>
                       <div className="an-verdict">
                         <span className={`sev-dot ${wan.severity}`} />
                         <Scramble className="an-vtxt" text={wan.verdict ?? ''} />
-                        <span className={`sev-tag ${wan.severity ?? ''}`}>{wan.severity}</span>
+                        <span className={`sev-tag ${wan.severity ?? ''}`}>{sevLabel(wan.severity, lang)}</span>
                         {typeof wan.confidence === 'number' ? <span className="wan-conf">{Math.round(wan.confidence * 100)}%</span> : null}
                       </div>
                       <div className="kc-rail">
@@ -583,20 +800,18 @@ export function TopologyCanvas({
                       </div>
                       <p className="an-analysis">{wan.campaign}</p>
                       <div className="wan-meta">
-                        <span><i>{lang === 'zh' ? '归因' : 'attribution'}</i>{wan.attribution}</span>
-                        <span><i className="bad">{lang === 'zh' ? '影响' : 'blast'}</i>{wan.blast}</span>
+                        <span><i>{lang === 'zh' ? '疑似来自' : 'SOURCE'}</i>{wan.attribution}</span>
+                        <span><i className="bad">{lang === 'zh' ? '影响' : 'IMPACT'}</i>{wan.blast}</span>
                       </div>
                       {wan.actions && wan.actions.length ? (
                         <ol className="wan-actions">
                           {wan.actions.map((a, i) => (<li key={i}>{a}</li>))}
                         </ol>
                       ) : null}
-                      <span className="tc-model">{wan.model} · {wan.distinctSrc} src</span>
                       {onPentest ? (
                         <button className="wan-pentest-cta" onClick={onPentest}>
+                          <span className="wpc-txt">{lang === 'zh' ? '去实测暴露面' : 'TEST THE EXPOSURE'}</span>
                           <span className="wpc-arrow">▸</span>
-                          <span className="wpc-txt">{lang === 'zh' ? '转入自我渗透测试 · 主动验证暴露面' : 'ESCALATE → SELF-PENTEST · PROVE THE EXPOSURE'}</span>
-                          <span className="wpc-tag">PAGE 03</span>
                         </button>
                       ) : null}
                     </div>
@@ -607,15 +822,29 @@ export function TopologyCanvas({
           })()
         ) : null}
 
-        <HudReadouts
-          stats={stats}
-          meshCount={meshCount}
-          ifCount={layout.ifs.length}
-          subCount={layout.ifs.filter((f) => f.sub).length}
-          lang={lang}
-          showStatus={!threat && !wan}
-        />
+        {!drilled ? (
+          <HudReadouts
+            stats={stats}
+            meshCount={meshCount}
+            ifCount={layout.ifs.length}
+            subCount={layout.ifs.filter((f) => f.sub).length}
+            lang={lang}
+            showStatus={!threat && !wan}
+          />
+        ) : null}
       </g>
+
+      {/* viewport controls — pinned to the plate (never zoomed), sits above the
+          legend on the right so it never collides with the bottom-left agent panel */}
+      <foreignObject x={VBW - 218} y={drilled ? VBH - 174 : VBH - 44} width={214} height={32} className="zoom-fo">
+        <div className="zoom-ctl">
+          <button onClick={() => zoomBy(1 / 1.3)} title="zoom out">−</button>
+          <span className="zoom-k">{Math.round(view.k * 100)}%</span>
+          <button onClick={() => zoomBy(1.3)} title="zoom in">+</button>
+          <button className="zoom-reset" onClick={resetView}>{lang === 'zh' ? '复位' : 'RESET'}</button>
+          <span className="zoom-hint">{lang === 'zh' ? '拖动平移 · 滚轮缩放' : 'drag · scroll'}</span>
+        </div>
+      </foreignObject>
     </svg>
   )
 }
