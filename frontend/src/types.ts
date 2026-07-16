@@ -188,6 +188,94 @@ export interface MeshNode {
   role: string
   threat: 'high' | 'watch' | 'ok'
 }
+/* ── memory observatory ───────────────────────────────────────────────────────
+ * Item-level memory lifecycle from GET /api/rca/evolution → `observatory`.
+ * Every field is serialized from the real kernel run (core/evolve/observatory.py).
+ * Nothing here may be synthesized in the frontend.
+ * ────────────────────────────────────────────────────────────────────────── */
+export type MemTier = 'episodic' | 'semantic' | 'procedural' | 'asset_profile'
+
+/** Ops the kernel can emit. UPDATE/NOOP/QUARANTINE are real code paths that do
+ *  NOT fire on the R230 held-out set — render them only if they actually appear. */
+export type MemOp = 'ADD' | 'UPDATE' | 'NOOP' | 'REINFORCE' | 'QUARANTINE' | 'INSIGHT' | 'LINK'
+
+export interface MemRecord {
+  memory_id: string
+  tier: MemTier
+  text: string
+  tags: string[]
+  asset_ids: string[]
+  evidence_ids: string[]
+  confidence: number
+  importance: number
+  strength: number
+  quarantined: boolean
+  quarantine_reason: string | null
+  source_trace_ids: string[]
+  links: string[]
+  evidence_snapshot: { evidence_id?: string; source?: string; summary?: string }[]
+}
+
+/** Scalar+list snapshot taken either side of an in-place mutation. */
+export interface MemSnapshot {
+  confidence: number
+  importance: number
+  strength: number
+  tags: string[]
+  asset_ids: string[]
+  links: string[]
+}
+
+export interface MemEvent {
+  seq: number
+  pass: number
+  case_id: string
+  run_id: string
+  op: MemOp
+  memory_id: string
+  tier: MemTier
+  /** Real RouteDecision.similarity. null on paths where route() never ran. */
+  similarity: number | null
+  target_id: string | null
+  before: MemSnapshot | null
+  after: MemSnapshot | null
+  added_tags: string[]
+  added_assets: string[]
+  /** INSIGHT only: the real episodic members reflection abstracted from. */
+  source_memory_ids?: string[]
+}
+
+export interface MemRecall {
+  seq: number
+  pass: number
+  case_id: string
+  run_id: string
+  retrieved: Partial<Record<MemTier, string[]>>
+  included_memory_ids: string[]
+  /** Derived set-difference retrieved − included. The kernel does not record WHY. */
+  dropped_memory_ids: string[]
+  probes: number
+  shortcut: boolean
+  resolved: boolean
+  resolved_memory_ids: string[]
+}
+
+/** What the kernel genuinely cannot tell us. Drives honesty labels in the UI —
+ *  never render a capability that is false as though it were live. */
+export interface MemCapabilities {
+  decay_wired: boolean
+  retrieval_scores: boolean
+  context_drop_reason: boolean
+  update_text_mutation: boolean
+}
+
+export interface Observatory {
+  records: MemRecord[]
+  events: MemEvent[]
+  recall: MemRecall[]
+  capabilities: MemCapabilities
+}
+
 export interface RcaSnapshot {
   readiness: Readiness
   datasetReady: boolean

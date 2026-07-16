@@ -14,6 +14,7 @@ from typing import Mapping, Protocol, Sequence
 
 from core.evolve.consolidate import CaseLike, _first, consolidate_run
 from core.evolve.memory_ops import memory_health
+from core.evolve.observatory import CAPABILITIES, recall_row, serialize_store
 from domains.network_rca.factory import build_network_rca_orchestrator
 
 
@@ -49,6 +50,11 @@ def run_evolving_stream(
         n = len(cases)
         stream = [case for _ in range(passes) for case in cases]
         per_event: list[dict] = []
+        # observability side-channel (warm runs only): the item-level memory lifecycle
+        # the aggregate metrics above throw away. Collected, never acted on.
+        obs_events: list[dict] = []
+        obs_recall: list[dict] = []
+        obs_reports: list[dict] = []
         for i, case in enumerate(stream):
             diagnosis, report = orch.diagnose(case)
             events = list(orch._run_events)
@@ -69,13 +75,48 @@ def run_evolving_stream(
                 "passed": int(bool(report.passed)), "memory": active_mem,
             })
             if evolve:
-                consolidate_run(events, case, orch.memory, orch.skills, orch._last_evidence)
-        return {
+                run_id = orch.last_run_id
+                ops: list[dict] = []
+                report = consolidate_run(
+                    events, case, orch.memory, orch.skills, orch._last_evidence, recorder=ops,
+                )
+                obs_recall.append(recall_row(
+                    events, seq=len(obs_recall), pass_no=i // n,
+                    case_id=case.id, run_id=run_id, probes=probes,
+                ))
+                for op in ops:
+                    obs_events.append({
+                        "seq": len(obs_events), "pass": i // n,
+                        "case_id": case.id, "run_id": run_id, **op,
+                    })
+                # the ConsolidationReport was previously discarded here; it is the
+                # kernel's own audit trail, so surface it alongside the op stream.
+                obs_reports.append({
+                    "seq": len(obs_reports), "pass": i // n, "case_id": case.id,
+                    "run_id": report.run_id, "passed": report.passed,
+                    "added": list(report.added), "updated": list(report.updated),
+                    "reinforced": list(report.reinforced), "quarantined": list(report.quarantined),
+                    "linked": list(report.linked), "insights": list(report.insights),
+                    "skills_success": list(report.skills_success),
+                    "skills_misuse": list(report.skills_misuse),
+                    "skills_frozen": list(report.skills_frozen),
+                })
+        out = {
             "per_event": per_event,
             "by_pass": _by_pass(per_event, passes),
             "final_memory": per_event[-1]["memory"] if per_event else 0,
             "memory_health": memory_health(orch.memory),
         }
+        if evolve:
+            # cold runs carry evolve=False and therefore have no memory lifecycle at all.
+            out["observatory"] = {
+                "records": serialize_store(orch.memory),
+                "events": obs_events,
+                "recall": obs_recall,
+                "reports": obs_reports,
+                "capabilities": dict(CAPABILITIES),
+            }
+        return out
 
 
 def _by_pass(per_event: list[dict], passes: int) -> list[dict]:

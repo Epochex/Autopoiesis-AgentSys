@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from .config import Settings
@@ -52,6 +53,10 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=_lifespan,
 )
+
+# The evolution observatory ships every memory record + lifecycle event (~290 KB of
+# highly repetitive JSON); it gzips to ~11 KB.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 if settings.cors_origins:
     allow_all = "*" in settings.cors_origins

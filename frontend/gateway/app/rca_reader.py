@@ -207,6 +207,9 @@ def load_evolution(manifest_path: Path | None = None, passes: int = 4) -> dict[s
         cases, ground_truth, passes=passes,
         data_source="real", real_stats_path=stats_path, reasoner_mode="rule",
     )
+    # The warm run is the only one with a memory lifecycle (cold has evolve=False).
+    # Move it to the top level rather than copying, so the payload isn't doubled.
+    observatory = res["warm"].pop("observatory", None)
     return {
         "ready": True,
         "passes": passes,
@@ -224,4 +227,5 @@ def load_evolution(manifest_path: Path | None = None, passes: int = 4) -> dict[s
         "cold": res["cold"],
         "delta": res["delta"],
         "memory": res.get("memory", {}),
+        "observatory": observatory,
     }
