@@ -1,0 +1,229 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   ② MEMORY INSPECTOR + WRITE-ROUTER RULER — light-editorial audit panel.
+   Scoped under .traj-page so it inherits the page tokens (--paper/--ink/--acid/
+   --rule/--font-mono/--t-mark/--ease-guide), like trajectory.css. New `mi-`
+   namespace only — no collision with fx- or App.css.
+
+   ONE accent rule, enforced by hand: --acid appears only on `.live`, and `.live`
+   is only ever set when a field changed at the CURRENT cursor step. Not tier,
+   not risk, not decoration. Everything the kernel does not record is rendered
+   as .mi-note prose — never as a number, never as a gauge.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── shell · fills the row it is given, scrolls internally so the page never grows ──
+   Height comes from the grid row (.mo-side), not from a fixed px value: the
+   observatory sizes itself against the viewport so 1080p and 900p are the same
+   code path, and a hardcoded height here overflows the shorter one and paints
+   over the route ruler beneath it. */
+.traj-page .mi-root {
+  box-sizing: border-box;
+  display: flex; flex-direction: column;
+  width: 100%; height: 100%; min-height: 0;
+  border: 2px solid var(--ink); background: var(--paper);
+}
+.traj-page .mi-mast {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  flex: 0 0 auto; padding: 8px 12px; border-bottom: 2px solid var(--ink); background: var(--paper-2);
+}
+.traj-page .mi-kick { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); }
+.traj-page .mi-real { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); }
+.traj-page .mi-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.traj-page .mi-scroll::-webkit-scrollbar { width: 8px; }
+.traj-page .mi-scroll::-webkit-scrollbar-track { background: var(--paper-3); }
+.traj-page .mi-scroll::-webkit-scrollbar-thumb { background: var(--gray); border: 2px solid var(--paper-3); }
+
+/* ── empty state · a real absence, not a skeleton pretending to be a record ── */
+.traj-page .mi-empty { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 24px 20px; background: var(--paper-3); }
+.traj-page .mi-empty-t { font-family: var(--font-display); font-weight: 600; font-size: 20px; text-transform: uppercase; letter-spacing: 0.01em; color: var(--ink); }
+.traj-page .mi-empty-b { margin: 0; max-width: 46ch; font-family: var(--font-mono); font-size: 11px; line-height: 1.6; color: var(--ink-soft); }
+
+/* ── identity bar ─────────────────────────────────────────────────────────── */
+.traj-page .mi-idbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 9px 12px; border-bottom: 1.5px solid var(--rule); }
+.traj-page .mi-tier { flex: 0 0 auto; font-family: var(--font-mono); font-weight: 600; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--paper); background: var(--ink); padding: 2px 7px; }
+.traj-page .mi-id { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.005em; color: var(--ink); word-break: break-all; }
+.traj-page .mi-quar { font-family: var(--font-mono); font-weight: 600; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink); background: var(--hatch-ink); border: 1.5px solid var(--ink); padding: 1px 6px; }
+
+/* ── sections ─────────────────────────────────────────────────────────────── */
+.traj-page .mi-sec { padding: 11px 12px 12px; border-bottom: 1.5px solid var(--rule); }
+.traj-page .mi-sec.last { border-bottom: none; }
+.traj-page .mi-h { display: flex; align-items: baseline; gap: 8px; margin: 0 0 7px; font-family: var(--font-mono); font-weight: 600; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); }
+.traj-page .mi-h::before { content: ''; width: 8px; height: 8px; flex: 0 0 auto; background: var(--ink); }
+.traj-page .mi-h.thin { margin-top: 12px; color: var(--gray); font-weight: 400; }
+.traj-page .mi-h.thin::before { background: var(--rule); }
+.traj-page .mi-h-sub { font-style: normal; font-weight: 400; letter-spacing: 0.08em; color: var(--gray); }
+
+/* ── the memory text · the thing the whole panel exists to show ───────────── */
+.traj-page .mi-text {
+  margin: 0; padding: 8px 10px;
+  border-left: 3px solid var(--ink); background: var(--paper-2);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.55; color: var(--ink);
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+
+/* ── honesty prose · NOT uppercased, it has to be readable ────────────────── */
+.traj-page .mi-note {
+  margin-top: 7px; padding: 6px 8px 6px 22px; position: relative;
+  border: 1.5px dashed var(--rule); background: var(--paper-2);
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.55; color: var(--ink-soft);
+  text-transform: none; letter-spacing: 0;
+}
+.traj-page .mi-note::before {
+  content: '!'; position: absolute; left: 7px; top: 6px;
+  font-weight: 600; font-size: 10px; color: var(--ink);
+}
+
+/* ── generic key/value row ────────────────────────────────────────────────── */
+.traj-page .mi-row { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: baseline; padding: 3px 0; }
+.traj-page .mi-row + .mi-row { border-top: 1px solid var(--rule); }
+.traj-page .mi-row-k { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); }
+.traj-page .mi-row-v { min-width: 0; font-family: var(--font-mono); font-size: 11px; color: var(--ink); overflow-wrap: anywhere; }
+.traj-page .mi-mono { font-family: var(--font-mono); font-size: 11px; color: var(--ink); overflow-wrap: anywhere; }
+.traj-page .mi-nil { font-family: var(--font-mono); font-size: 11px; color: var(--rule); }
+.traj-page .mi-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.traj-page .mi-chip { font-style: normal; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.01em; color: var(--ink); border: 1px solid var(--rule); background: var(--paper-2); padding: 1px 5px; overflow-wrap: anywhere; }
+.traj-page .mi-chip.id { border-color: var(--ink); background: var(--paper); }
+
+/* ── state @ cursor · scalars. --acid ONLY when it moved at this step ─────── */
+.traj-page .mi-scal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.traj-page .mi-sc { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border: 1.5px solid var(--rule); background: var(--paper-2); }
+.traj-page .mi-sc b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 24px; line-height: 1; color: var(--ink); }
+.traj-page .mi-sc span { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray); }
+.traj-page .mi-sc.live { border-color: var(--ink); background: var(--acid); }
+.traj-page .mi-sc.live b { color: var(--acid-ink); }
+.traj-page .mi-sc.live span { color: var(--acid-ink); }
+/* an inert field must not read as a live measurement: hatched well, greyed numeral */
+.traj-page .mi-sc.dead { background: var(--paper-3); border-style: dashed; }
+.traj-page .mi-sc.dead b { color: var(--gray); }
+/* the inert tag must stay legible — it is the honesty label, not decoration */
+.traj-page .mi-dead-tag { align-self: flex-start; font-style: normal; margin-top: 2px; font-family: var(--font-mono); font-weight: 600; font-size: 7.5px; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; color: var(--ink); background: var(--paper); border: 1px solid var(--ink); padding: 1px 4px; }
+
+/* ── unborn · the record genuinely does not exist at this cursor ───────────── */
+.traj-page .mi-unborn { display: flex; flex-direction: column; gap: 3px; padding: 10px; background: var(--paper-3); border: 1.5px dashed var(--gray); }
+.traj-page .mi-unborn-t { font-family: var(--font-display); font-weight: 600; font-size: 14px; text-transform: uppercase; color: var(--ink); }
+.traj-page .mi-unborn-b { font-family: var(--font-mono); font-size: 10px; color: var(--ink-soft); }
+
+/* ── change panel ─────────────────────────────────────────────────────────── */
+.traj-page .mi-chg { border: 1.5px solid var(--rule); background: var(--paper-2); padding: 8px 9px; }
+.traj-page .mi-chg.live { border-color: var(--ink); border-width: 2px; }
+.traj-page .mi-chg-head { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding-bottom: 6px; border-bottom: 1.5px solid var(--rule); margin-bottom: 6px; }
+.traj-page .mi-op { font-family: var(--font-mono); font-weight: 600; font-size: 10px; letter-spacing: 0.06em; color: var(--paper); background: var(--ink); padding: 1px 6px; }
+.traj-page .mi-chg.live .mi-op { color: var(--acid-ink); background: var(--acid); box-shadow: 0 0 0 1.5px var(--ink); }
+.traj-page .mi-chg-at { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; color: var(--gray); font-variant-numeric: tabular-nums; }
+.traj-page .mi-chg-case { margin-left: auto; font-family: var(--font-mono); font-size: 9px; color: var(--gray); overflow-wrap: anywhere; }
+.traj-page .mi-init { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: baseline; margin-top: 6px; }
+
+/* the real before → after ladder */
+.traj-page .mi-diff { display: flex; flex-direction: column; gap: 4px; }
+.traj-page .mi-d { display: grid; grid-template-columns: 92px 1fr auto 1fr; gap: 8px; align-items: baseline; }
+.traj-page .mi-d-k { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); }
+.traj-page .mi-d-a { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; color: var(--gray); text-decoration: line-through; text-decoration-color: var(--rule); }
+.traj-page .mi-d-ar { font-family: var(--font-mono); font-size: 11px; color: var(--ink); }
+.traj-page .mi-d-b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 13px; color: var(--ink); }
+.traj-page .mi-chg.live .mi-d-b { background: var(--acid); color: var(--acid-ink); padding: 0 4px; justify-self: start; }
+
+/* INSIGHT provenance · the abstraction's real concrete members */
+.traj-page .mi-abs { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; padding: 7px 8px; border-left: 3px solid var(--ink); background: var(--paper-3); }
+.traj-page .mi-abs-h { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); }
+.traj-page .mi-abs-h b { font-size: 12px; color: var(--ink); }
+.traj-page .mi-abs-id { font-style: normal; font-family: var(--font-mono); font-size: 10px; color: var(--ink); overflow-wrap: anywhere; padding-left: 11px; position: relative; }
+.traj-page .mi-abs-id::before { content: '└'; position: absolute; left: 0; color: var(--gray); }
+
+/* ── context packet ───────────────────────────────────────────────────────── */
+.traj-page .mi-ctx { display: flex; flex-direction: column; gap: 3px; padding: 7px 9px; border: 1.5px solid var(--rule); background: var(--paper-2); }
+.traj-page .mi-ctx-t { font-family: var(--font-display); font-weight: 600; font-size: 15px; text-transform: uppercase; letter-spacing: 0.01em; color: var(--ink); }
+/* no text-transform: this line carries a real case_id, and an audit panel must
+   never restyle an identifier into something that is not what the kernel wrote */
+.traj-page .mi-ctx-m { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.04em; color: var(--gray); }
+.traj-page .mi-ctx.in { border-color: var(--ink); border-left-width: 4px; }
+.traj-page .mi-ctx.drop { border-color: var(--gray); border-style: dashed; background: var(--paper-3); }
+.traj-page .mi-ctx.drop .mi-ctx-t { color: var(--ink-soft); }
+.traj-page .mi-ctx.ret, .traj-page .mi-ctx.miss, .traj-page .mi-ctx.no { border-color: var(--rule); }
+.traj-page .mi-ctx.miss .mi-ctx-t, .traj-page .mi-ctx.no .mi-ctx-t { color: var(--gray); }
+
+/* ── evidence snapshot ────────────────────────────────────────────────────── */
+.traj-page .mi-ev { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; }
+.traj-page .mi-ev + .mi-ev { border-top: 1px solid var(--rule); }
+.traj-page .mi-ev-id { align-self: flex-start; font-family: var(--font-mono); font-weight: 600; font-size: 9px; letter-spacing: 0.04em; color: var(--paper); background: var(--ink); padding: 1px 5px; }
+.traj-page .mi-ev-src { font-family: var(--font-mono); font-size: 9px; color: var(--gray); overflow-wrap: anywhere; }
+.traj-page .mi-ev-sum { margin: 1px 0 0; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5; color: var(--ink-soft); overflow-wrap: anywhere; }
+
+/* ── ledger ───────────────────────────────────────────────────────────────── */
+.traj-page .mi-ops { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.traj-page .mi-op-c { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; color: var(--ink); border: 1.5px solid var(--rule); padding: 1px 6px; }
+.traj-page .mi-op-c b { font-weight: 600; font-size: 8.5px; letter-spacing: 0.06em; color: var(--gray); }
+.traj-page .mi-life { display: block; width: 100%; height: auto; }
+.traj-page .mi-life-ax { stroke: var(--ink); stroke-width: 1.4; }
+.traj-page .mi-life-t { stroke: var(--rule); stroke-width: 1.6; }
+.traj-page .mi-life-t.past { stroke: var(--ink); }
+.traj-page .mi-life-t.live { stroke: var(--acid); stroke-width: 3.4; }
+.traj-page .mi-life-cur { stroke: var(--ink); stroke-width: 1.4; fill: none; }
+.traj-page .mi-life-n { font-family: var(--font-mono); font-size: 7.5px; fill: var(--gray); }
+
+/* ═══ WRITE-ROUTER RULER · ~600×140. No --acid: no cursor, nothing to mark. ═══ */
+.traj-page .mi-ruler { box-sizing: border-box; width: 100%; border: 2px solid var(--ink); background: var(--paper); padding: 6px 8px 4px; }
+.traj-page .mi-ruler svg { display: block; width: 100%; height: auto; }
+.traj-page .mi-hl { stroke: var(--ink); stroke-width: 1; }
+
+.traj-page .mi-r-kick { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .mi-r-rule { stroke: var(--ink); stroke-width: 1.5; }
+
+/* zones are always drawn at full structural weight — a zone with 0 hits is a
+   measured result, so it gets a hatch fill and a real count, never blank paper */
+.traj-page .mi-r-zone rect { stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .mi-r-zone.hit rect { fill: var(--paper-3); }
+.traj-page .mi-r-zone.void rect { fill: url(#mi-hatch); opacity: 0.55; }
+.traj-page .mi-r-zt { font-family: var(--font-mono); font-weight: 600; font-size: 8px; letter-spacing: 0.06em; fill: var(--ink); paint-order: stroke; stroke: var(--paper); stroke-width: 3px; stroke-linejoin: round; }
+/* the never-entered span: a measured result, so it is typeset in ink, not greyed
+   out like absent data would be */
+.traj-page .mi-r-void path { stroke: var(--ink); stroke-width: 1.2; fill: none; }
+.traj-page .mi-r-vt { font-family: var(--font-mono); font-weight: 600; font-size: 7.5px; letter-spacing: 0.07em; text-transform: uppercase; fill: var(--ink); paint-order: stroke; stroke: var(--paper); stroke-width: 3px; stroke-linejoin: round; }
+
+/* the gates: the decision rule, drawn as two walls */
+.traj-page .mi-r-gate { stroke: var(--ink); stroke-width: 1.5; }
+
+/* one real call = one stem + one line of type */
+.traj-page .mi-r-stem { stroke: var(--ink); stroke-width: 1.2; }
+.traj-page .mi-r-dot { fill: var(--ink); }
+.traj-page .mi-r-lab { paint-order: stroke; stroke: var(--paper); stroke-width: 3.5px; stroke-linejoin: round; }
+.traj-page .mi-r-val { font-family: var(--font-mono); font-weight: 500; font-size: 9.5px; font-variant-numeric: tabular-nums; fill: var(--ink); }
+.traj-page .mi-r-ar { font-family: var(--font-mono); font-size: 9.5px; fill: var(--gray); }
+.traj-page .mi-r-op { font-family: var(--font-mono); font-weight: 600; font-size: 9.5px; letter-spacing: 0.04em; fill: var(--ink); }
+.traj-page .mi-r-case { font-family: var(--font-mono); font-size: 9px; fill: var(--gray); }
+
+/* the headroom annotation: how far the closest real call stayed from the gate */
+.traj-page .mi-r-gap path { stroke: var(--ink); stroke-width: 1; fill: none; }
+.traj-page .mi-r-gt { font-family: var(--font-mono); font-weight: 600; font-size: 7.5px; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--ink); paint-order: stroke; stroke: var(--paper); stroke-width: 3px; stroke-linejoin: round; }
+
+.traj-page .mi-r-ax { stroke: var(--ink); stroke-width: 1.5; }
+.traj-page .mi-r-ax-t { stroke: var(--ink); stroke-width: 1.2; }
+.traj-page .mi-r-ax-n { font-family: var(--font-mono); font-size: 8px; fill: var(--gray); font-variant-numeric: tabular-nums; }
+.traj-page .mi-r-ax-l { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--gray); }
+.traj-page .mi-r-sum { font-family: var(--font-mono); font-weight: 600; font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--ink); }
+.traj-page .mi-r-none { font-family: var(--font-mono); font-size: 10px; fill: var(--gray); }
+
+/* ── motion · structural only: masked reveal + line growth. No spring, no
+      hover-scale, no permanent scanning, no flicker. ─────────────────────── */
+.traj-page .mi-sec { animation: mi-wipe var(--t-wipe) var(--ease-guide) both; }
+.traj-page .mi-chg { animation: mi-open var(--t-wipe) var(--ease-guide) both; }
+/* stagger comes from an inline animation-delay per real call (annotation trace) */
+.traj-page .mi-r-call { animation: mi-trace var(--t-count) var(--ease-guide) both; }
+.traj-page .mi-sc, .traj-page .mi-life-t, .traj-page .mi-ctx { transition: all var(--t-mark) var(--ease-guide); }
+
+@keyframes mi-wipe { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes mi-open { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes mi-trace { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .traj-page .mi-sec, .traj-page .mi-chg, .traj-page .mi-r-call { animation: none; clip-path: none; opacity: 1; }
+  .traj-page .mi-sc, .traj-page .mi-life-t, .traj-page .mi-ctx { transition: none; }
+}
+
+/* ── 1440×900: the column narrows; keep the text readable, drop the panel height
+      so the page still never scrolls as a whole ───────────────────────────── */
+@media (max-width: 1600px) {
+  /* height stays 100%: the observatory's grid row owns it at every width */
+  .traj-page .mi-scal { grid-template-columns: 1fr 1fr; }
+  .traj-page .mi-sc.dead { grid-column: 1 / -1; flex-direction: row; align-items: baseline; gap: 8px; }
+  .traj-page .mi-row, .traj-page .mi-init { grid-template-columns: 76px 1fr; }
+  .traj-page .mi-d { grid-template-columns: 76px 1fr auto 1fr; }
+}

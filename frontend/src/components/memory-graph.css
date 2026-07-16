@@ -1,0 +1,133 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   MEMORY GRAPH — light-editorial three-tier memory space.
+
+   Tokens come from the .traj-page scope in App.css (--paper/--ink/--acid/…).
+   Nothing here hardcodes a hex value. The `mg-` namespace is exclusive to
+   MemoryGraph.tsx; it does not touch `fx-` (trajectory.css) or App.css.
+
+   Tiers are told apart by STRUCTURE, never by a second accent family:
+     semantic    2px ink frame + heavy top rule
+     procedural  solid frame + hatch mark in the band label
+     episodic    thin frame + dot-grid ground
+   --acid carries exactly one meaning: mutated at the current cursor step.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mg-root { width: 100%; }
+.mg-canvas { display: block; width: 100%; height: auto; background: var(--paper); }
+.mg-bg { fill: transparent; }
+
+/* ── column headers ───────────────────────────────────────────────────────── */
+.mg-kick { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--gray); }
+.mg-colkey { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.06em; fill: var(--ink); font-weight: 500; }
+.mg-headrule { stroke: var(--ink); stroke-width: 1.5; }
+
+/* ── bands ────────────────────────────────────────────────────────────────── */
+.mg-band-box { fill: none; stroke: var(--ink); stroke-width: 2; }
+.mg-band.episodic .mg-band-box { stroke-width: 1; }
+.mg-band.episodic .mg-band-ground { fill: url(#mg-dots); }
+.mg-band-heavy { stroke: var(--ink); stroke-width: 5; }
+.mg-band-hatch { fill: url(#mg-hatch); stroke: var(--ink); stroke-width: 1; }
+.mg-dot { fill: var(--rule); }
+.mg-hatchbar { fill: var(--ink); }
+.mg-band-lab {
+  font-family: var(--font-display); font-weight: 600; font-size: 11px;
+  letter-spacing: 0.06em; fill: var(--ink);
+  /* knock the paper out behind the label so routing lanes read cleanly under it */
+  paint-order: stroke; stroke: var(--paper); stroke-width: 3px; stroke-linejoin: round;
+}
+.mg-row-lab {
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em; fill: var(--gray);
+  text-anchor: end; paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round;
+}
+.mg-spine-lab {
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em; fill: var(--gray); text-anchor: end;
+  paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round;
+}
+
+/* ── real edges · line growth on reveal, nothing else ─────────────────────── */
+.mg-edge { fill: none; stroke: var(--gray); stroke-width: 1.2; }
+.mg-edge.prov { stroke: var(--ink); stroke-width: 1.4; }
+.mg-edge.assoc { stroke: var(--gray); stroke-width: 1.2; stroke-dasharray: 5 3; }
+.mg-arrow { fill: none; stroke: var(--ink); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.mg-edges .mg-edge { animation: mg-draw var(--t-wipe, 360ms) var(--ease-guide, ease-out) both; }
+@keyframes mg-draw { from { stroke-dasharray: 1200; stroke-dashoffset: 1200; } to { stroke-dasharray: 1200; stroke-dashoffset: 0; } }
+.mg-edges .mg-edge.assoc { animation: none; }
+
+/* ── recall connectors ────────────────────────────────────────────────────── */
+.mg-conn-l { fill: none; stroke: var(--ink); stroke-width: 1.1; }
+.mg-conn.out .mg-conn-l { stroke: var(--gray); stroke-dasharray: 3 3; }
+.mg-break { stroke: var(--ink); stroke-width: 1.6; }
+.mg-recall .mg-conn { animation: mg-draw var(--t-wipe, 360ms) var(--ease-guide, ease-out) both; }
+
+/* ── nodes ────────────────────────────────────────────────────────────────── */
+.mg-node { cursor: pointer; outline: none; }
+.mg-node-bg { fill: var(--paper-2); stroke: var(--ink); stroke-width: 1.6; transition: stroke-width 0.16s var(--ease-guide, ease-out), fill 0.16s var(--ease-guide, ease-out); }
+.mg-band.semantic .mg-node-bg { stroke-width: 2; }
+.mg-node.pend .mg-node-bg { fill: var(--paper-3); stroke: var(--rule); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.mg-node.quar .mg-node-bg { fill: url(#mg-hatch); }
+/* THE one meaning of --acid: mutated at this cursor step. */
+.mg-node.touch .mg-node-bg { fill: var(--acid); stroke-width: 2.4; }
+.mg-node.on .mg-node-bg { stroke-width: 3.4; }
+/* hover = contrast/stroke only. No scale, no shadow. */
+.mg-node.live:hover .mg-node-bg { stroke-width: 3; fill: var(--paper); }
+.mg-node.touch.live:hover .mg-node-bg { fill: var(--acid); }
+.mg-node:focus-visible .mg-node-bg { stroke-width: 3.4; }
+.mg-node:focus-visible .mg-node-rule { stroke: var(--ink); }
+
+.mg-id { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.02em; fill: var(--gray); }
+.mg-tally { font-family: var(--font-mono); font-size: 8px; font-weight: 600; fill: var(--ink-soft); text-anchor: end; font-variant-numeric: tabular-nums; }
+.mg-node-rule { stroke: var(--rule); stroke-width: 1; }
+.mg-txt { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.005em; fill: var(--ink); }
+.mg-pend-t { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--gray); }
+.mg-val { font-family: var(--font-mono); font-size: 7.5px; font-weight: 600; fill: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.mg-val.imp { text-anchor: end; fill: var(--ink); font-size: 8.5px; }
+.mg-cell { fill: var(--paper); stroke: var(--gray); stroke-width: 0.8; }
+.mg-cell-f { fill: var(--ink); }
+.mg-node.touch .mg-id, .mg-node.touch .mg-txt, .mg-node.touch .mg-val, .mg-node.touch .mg-tally { fill: var(--acid-ink); }
+.mg-node.touch .mg-cell { fill: none; stroke: var(--acid-ink); }
+.mg-node.touch .mg-cell-f { fill: var(--acid-ink); }
+.mg-node.touch .mg-node-rule { stroke: var(--acid-ink); opacity: 0.4; }
+/* fill-mode MUST be `backwards`, not `both`: a filled animation keeps its final
+ * opacity:1 keyframe applied forever, and an animated value beats the normal
+ * cascade — which would silently defeat the .dim cross-highlight below. */
+.mg-node.live { animation: mg-appear var(--t-wipe, 360ms) var(--ease-guide, ease-out) backwards; }
+
+/* op tag on the record that actually changed at this step */
+.mg-op-bg { fill: var(--ink); }
+.mg-op-t { font-family: var(--font-mono); font-size: 7.5px; font-weight: 600; letter-spacing: 0.08em; fill: var(--acid); }
+
+/* ── context rail ─────────────────────────────────────────────────────────── */
+.mg-rail-box { fill: var(--paper-2); stroke: var(--ink); stroke-width: 2; }
+.mg-rail-cap { fill: var(--ink); }
+.mg-rail-t { font-family: var(--font-display); font-weight: 600; font-size: 11px; letter-spacing: 0.08em; fill: var(--paper); }
+.mg-rail-s { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.mg-rail-drop { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.08em; fill: var(--gray); }
+.mg-slot-l { stroke: var(--ink); stroke-width: 2; }
+.mg-slot-n { font-family: var(--font-mono); font-size: 7.5px; font-weight: 600; fill: var(--gray); font-variant-numeric: tabular-nums; }
+.mg-slot-id { font-family: var(--font-mono); font-size: 7.5px; fill: var(--ink); }
+.mg-slot-rule { stroke: var(--rule); stroke-width: 1; }
+
+/* ── legend ───────────────────────────────────────────────────────────────── */
+.mg-lg { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.06em; fill: var(--ink-soft); }
+.mg-lg-sig { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--gray); text-anchor: end; }
+.mg-lg-acid { fill: var(--acid); stroke: var(--ink); stroke-width: 1; }
+.mg-lg-box { fill: var(--paper-2); stroke: var(--ink); stroke-width: 1.2; }
+.mg-lg-pend { fill: var(--paper-3); stroke: var(--rule); stroke-width: 1.2; stroke-dasharray: 3 2; }
+.mg-foot .mg-edge { animation: none; }
+
+/* ── connection-driven cross-highlight ────────────────────────────────────── */
+.mg-canvas.sel .mg-node.dim,
+.mg-canvas.sel .mg-edge.dim,
+.mg-canvas.sel .mg-conn.dim,
+.mg-canvas.sel .mg-slot.dim { opacity: 0.16; }
+.mg-canvas.sel .mg-edge.hot { stroke: var(--ink); stroke-width: 2; }
+.mg-canvas.sel .mg-conn.hot .mg-conn-l { stroke-width: 2; }
+
+@keyframes mg-appear { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-edges .mg-edge,
+  .mg-recall .mg-conn,
+  .mg-node.live { animation: none; }
+  .mg-node-bg { transition: none; }
+}

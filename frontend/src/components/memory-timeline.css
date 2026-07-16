@@ -1,0 +1,339 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   MEMORY TIMELINE + CAUSAL RIBBON — light-editorial, page-2 visual language.
+   Scoped under .traj-page so the page tokens resolve (--paper/--ink/--acid/…).
+   Namespaces: `mt-` (timeline) and `cr-` (ribbon). No collision with fx-/App.
+
+   ONE rule about --acid: it means CHANGED / ACTIVE AT THE CURRENT STEP.
+   · timeline — the event under the cursor, and only it (mark fill, head, the
+     exact-seq tick inside an aggregated REINFORCE run).
+   · ribbon   — the one quantity memory actually changed (probes 8 → 0).
+   Never tier, never risk, never decoration.
+
+   Hard height budget: .mt 120px · .cr 110px (first screen must fit 1080p).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══ ① MEMORY TIMELINE ═══════════════════════════════════════════════════ */
+.traj-page .mt {
+  box-sizing: border-box;
+  height: 120px;
+  display: grid;
+  grid-template-columns: 196px 1fr 268px;
+  align-items: stretch;
+  gap: 18px;
+  padding: 8px 14px;
+  border: 2px solid var(--ink);
+  background: var(--paper-2);
+}
+.traj-page .mt * { box-sizing: border-box; }
+
+/* ── transport (echoes .fx-transport idiom) + derived op legend ── */
+.traj-page .mt-side { display: flex; flex-direction: column; justify-content: space-between; gap: 6px; min-width: 0; }
+.traj-page .mt-ctl { display: flex; gap: 6px; }
+.traj-page .mt-ctl button {
+  width: 32px; height: 26px; padding: 0;
+  border: 1.5px solid var(--ink); background: var(--paper); color: var(--ink);
+  font-family: var(--font-mono); font-size: 10px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: background var(--t-mark) var(--ease-guide);
+}
+.traj-page .mt-ctl button:hover:not(:disabled) { background: var(--acid); }
+.traj-page .mt-ctl button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.traj-page .mt-ctl button:disabled { color: var(--rule); border-color: var(--rule); cursor: default; }
+.traj-page .mt-ctl .mt-play { width: 40px; border-width: 2px; }
+.traj-page .mt-ctl .mt-play[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
+
+.traj-page .mt-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; }
+.traj-page .mt-lg {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--gray); white-space: nowrap;
+}
+.traj-page .mt-lg b { font-size: 9.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.traj-page .mt-lg em { font-style: normal; color: var(--rule); }
+/* legend keys mirror the rail marks exactly — shape is the encoding, not colour */
+.traj-page .mt-lg i { flex: 0 0 auto; display: block; background: var(--ink); border: 1.5px solid var(--ink); }
+.traj-page .mt-lg.add i, .traj-page .mt-lg.update i, .traj-page .mt-lg.quarantine i { width: 8px; height: 8px; }
+.traj-page .mt-lg.update i { background: var(--paper-2); }
+.traj-page .mt-lg.quarantine i { background-image: var(--hatch-ink); }
+.traj-page .mt-lg.link i { width: 10px; height: 8px; background: var(--paper-2); border-width: 2.5px 0; }
+.traj-page .mt-lg.insight i { width: 8px; height: 8px; margin: 0 2px; transform: rotate(45deg); }
+.traj-page .mt-lg.noop i { width: 8px; height: 3px; background: var(--gray); border-color: var(--gray); }
+.traj-page .mt-lg.dense i { width: 4px; height: 9px; border: none; opacity: 0.3; }
+
+/* ── the rail ── */
+.traj-page .mt-plot {
+  position: relative;
+  display: grid;
+  grid-template-rows: 13px 26px 26px 24px;
+  gap: 3px;
+  min-width: 0;
+  cursor: crosshair;
+  touch-action: none;
+}
+.traj-page .mt-plot:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+/* pass bands */
+.traj-page .mt-bands { position: relative; }
+.traj-page .mt-band {
+  position: absolute; top: 0; bottom: 0;
+  display: flex; align-items: center; gap: 4px;
+  padding-left: 5px; overflow: hidden; white-space: nowrap;
+  border-left: 1.5px solid var(--rule);
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--gray);
+}
+.traj-page .mt-band b { font-weight: 600; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.traj-page .mt-band.on { color: var(--ink); border-left-color: var(--ink); }
+
+/* lanes */
+.traj-page .mt-lane { position: relative; }
+.traj-page .mt-lane.rare { border-bottom: 1px solid var(--rule); }
+.traj-page .mt-lane.dense { border-bottom: 1.5px solid var(--ink); }
+
+/* rare ops — one addressable slot each (ADD · LINK · INSIGHT · …) */
+.traj-page .mt-op {
+  position: absolute; top: 50%; left: 0;
+  transform: translate(-50%, -50%);
+  width: 16px; height: 20px; padding: 0;
+  border: none; background: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.traj-page .mt-op:focus-visible { outline: 1.5px solid var(--ink); outline-offset: 0; }
+.traj-page .mt-op i { display: block; background: var(--ink); border: 1.5px solid var(--ink); }
+.traj-page .mt-op.add i { width: 10px; height: 10px; }
+.traj-page .mt-op.link i {
+  width: 13px; height: 10px; background: var(--paper-2);
+  border-width: 3px 0; border-style: solid; border-color: var(--ink);
+}
+.traj-page .mt-op.insight i { width: 12px; height: 12px; transform: rotate(45deg); }
+.traj-page .mt-op.update i { width: 10px; height: 10px; background: var(--paper-2); }
+.traj-page .mt-op.noop i { width: 8px; height: 3px; background: var(--gray); border-color: var(--gray); }
+.traj-page .mt-op.quarantine i { width: 10px; height: 10px; background: var(--hatch-ink), var(--paper-2); }
+.traj-page .mt-op:hover i { border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper-2), 0 0 0 3.5px var(--ink); }
+/* --acid = the step under the cursor */
+.traj-page .mt-op.on i { background: var(--acid); border-color: var(--ink); }
+.traj-page .mt-op.on.insight i { width: 14px; height: 14px; }
+
+/* the reflection is the climax — it is annotated, not just plotted */
+.traj-page .mt-anno {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  padding-left: 5px; margin-left: 3px;
+  border-left: 1px solid var(--ink);
+  font-family: var(--font-mono); font-size: 7.5px; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+  white-space: nowrap; pointer-events: none;
+  animation: mt-trace var(--t-wipe) var(--ease-guide) both;
+}
+
+/* REINFORCE mass — aggregated per run, height = reinforce count in that run */
+.traj-page .mt-run {
+  position: absolute; top: 0; bottom: 0;
+  display: flex; align-items: flex-end;
+  border-left: 1px solid var(--rule);
+}
+.traj-page .mt-run i { display: block; width: 100%; background: var(--ink); opacity: 0.3; }
+.traj-page .mt-run:hover i { opacity: 0.55; }
+.traj-page .mt-run.on { border-left-color: var(--ink); }
+.traj-page .mt-run.on i { opacity: 0.8; }
+.traj-page .mt-hot {
+  position: absolute; top: 0; bottom: 0; width: 3px;
+  transform: translateX(-50%);
+  background: var(--acid); border-left: 1px solid var(--ink); border-right: 1px solid var(--ink);
+  pointer-events: none;
+}
+
+/* axis — case numeral per run + scrub track */
+.traj-page .mt-axis { position: relative; }
+.traj-page .mt-no {
+  position: absolute; top: 0; transform: translateX(-50%);
+  font-family: var(--font-mono); font-size: 8px; color: var(--rule);
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+.traj-page .mt-no.on { color: var(--ink); font-weight: 600; }
+.traj-page .mt-track { position: absolute; left: 0; right: 0; bottom: 6px; height: 1px; background: var(--rule); }
+.traj-page .mt-fill {
+  position: absolute; left: 0; bottom: 5.5px; height: 2px; background: var(--ink);
+  transition: width var(--t-point) var(--ease-guide);
+}
+.traj-page .mt-head {
+  position: absolute; bottom: 2px; width: 9px; height: 9px;
+  transform: translateX(-50%);
+  background: var(--acid); border: 1.5px solid var(--ink);
+  transition: left var(--t-point) var(--ease-guide);
+}
+.traj-page .mt-stem {
+  position: absolute; top: 13px; bottom: 10px; width: 2px;
+  transform: translateX(-1px);
+  background: var(--ink); pointer-events: none;
+  transition: left var(--t-point) var(--ease-guide);
+}
+.traj-page .mt-rule { position: absolute; top: 0; bottom: 10px; width: 2px; background: var(--ink); pointer-events: none; }
+.traj-page .mt-plot.drag .mt-fill,
+.traj-page .mt-plot.drag .mt-head,
+.traj-page .mt-plot.drag .mt-stem { transition: none; }
+
+/* ── readout: the object under the cursor ── */
+.traj-page .mt-read {
+  display: flex; flex-direction: column; gap: 3px;
+  padding-left: 12px; border-left: 2px solid var(--ink); min-width: 0;
+}
+.traj-page .mt-read-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.traj-page .mt-seq {
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--gray); font-variant-numeric: tabular-nums;
+}
+.traj-page .mt-seq b { font-size: 15px; font-weight: 500; letter-spacing: 0; color: var(--ink); }
+.traj-page .mt-badge {
+  font-family: var(--font-mono); font-weight: 600; font-size: 9px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 7px; border: 1.5px solid var(--ink);
+  background: var(--acid); color: var(--acid-ink);
+}
+.traj-page .mt-badge.dense { background: var(--paper); color: var(--ink); }
+.traj-page .mt-kv {
+  margin: 0; display: grid; grid-template-columns: 46px 1fr; gap: 0 8px; align-content: start;
+  font-family: var(--font-mono); font-size: 9px; overflow: hidden;
+}
+.traj-page .mt-kv dt { color: var(--gray); letter-spacing: 0.06em; text-transform: uppercase; font-size: 8px; line-height: 13px; }
+.traj-page .mt-kv dd {
+  margin: 0; color: var(--ink-soft); line-height: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.traj-page .mt-kv dd.id { color: var(--ink); direction: rtl; text-align: left; }
+.traj-page .mt-kv-empty, .traj-page .cr-none {
+  margin: 0; font-family: var(--font-mono); font-size: 9px; color: var(--gray);
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.traj-page .mt-foot {
+  margin: auto 0 0; padding-top: 4px; border-top: 1px solid var(--rule);
+  font-family: var(--font-mono); font-size: 7.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--gray);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ═══ ② CAUSAL RIBBON ═════════════════════════════════════════════════════ */
+.traj-page .cr {
+  box-sizing: border-box;
+  height: 110px;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 14px;
+  border: 2px solid var(--ink); border-top: none;
+  background: var(--paper);
+}
+.traj-page .cr * { box-sizing: border-box; }
+.traj-page .cr.empty { align-items: flex-start; justify-content: center; }
+
+.traj-page .cr-chain { flex: 1 1 auto; display: flex; align-items: stretch; min-height: 0; }
+.traj-page .cr-cell {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; justify-content: center; gap: 3px;
+  padding: 0 12px; border-left: 1.5px solid var(--rule);
+}
+.traj-page .cr-cell:first-child { border-left: none; padding-left: 0; }
+.traj-page .cr-lab {
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--gray); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.traj-page .cr-big {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 23px; line-height: 1; color: var(--ink); white-space: nowrap;
+}
+.traj-page .cr-big i {
+  font-style: normal; font-size: 8.5px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--gray); margin-left: 5px;
+}
+/* the ONE thing memory changed */
+.traj-page .cr-cell.hot .cr-big {
+  align-self: flex-start; padding: 1px 7px;
+  background: var(--acid); color: var(--acid-ink);
+}
+.traj-page .cr-cell.hot .cr-big i { color: var(--acid-ink); }
+.traj-page .cr-sub {
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ink-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.traj-page .cr-sub b { font-weight: 600; color: var(--ink); border-bottom: 2px solid var(--ink); }
+.traj-page .cr-sub.drop { color: var(--gray); }
+.traj-page .cr-hatch {
+  display: inline-block; width: 8px; height: 8px; margin-right: 4px; vertical-align: -1px;
+  background-image: var(--hatch-ink); border: 1px solid var(--gray);
+}
+
+/* connectors — the verbs are the causal chain */
+.traj-page .cr-arrow {
+  flex: 0 0 auto; width: 88px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+}
+.traj-page .cr-arrow em {
+  font-style: normal; font-family: var(--font-mono); font-size: 8px;
+  font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+}
+.traj-page .cr-arrow i {
+  position: relative; width: 100%; height: 0; border-top: 1.5px solid var(--ink);
+  transform-origin: left center;
+  animation: mt-grow var(--t-wipe) var(--ease-guide) both;
+}
+.traj-page .cr-arrow i::after {
+  content: ''; position: absolute; right: -1px; top: -4px;
+  border-left: 7px solid var(--ink);
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+}
+
+/* per-pass strip + kernel limits */
+/* The footer carries the per-pass strip and the kernel-limit chips. Both rows are
+   nowrap+hidden, so anything over budget is chopped mid-word rather than ellipsed
+   — and the English strings run ~10px long, which silently truncated
+   "NO TEXT REWRITE". A kernel limit that only half-prints is worse than useless,
+   so the tracking and gaps below are tuned to fit the longest (EN) case. */
+.traj-page .cr-foot {
+  flex: 0 0 auto; height: 22px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-top: 5px; border-top: 1.5px solid var(--rule); overflow: hidden;
+}
+.traj-page .cr-passes { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; overflow: hidden; }
+.traj-page .cr-p {
+  display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 7.5px; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--gray);
+}
+.traj-page .cr-p b { font-size: 9px; font-weight: 600; color: var(--paper); background: var(--ink); padding: 0 4px; }
+.traj-page .cr-p em {
+  font-style: normal; font-size: 10px; color: var(--ink);
+  font-variant-numeric: tabular-nums; margin-right: 4px;
+}
+.traj-page .cr-limits { display: flex; align-items: center; gap: 5px; flex-wrap: nowrap; overflow: hidden; }
+.traj-page .cr-limits-lead {
+  font-family: var(--font-mono); font-size: 7.5px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--gray); white-space: nowrap;
+}
+.traj-page .cr-limit {
+  font-family: var(--font-mono); font-size: 7.5px; letter-spacing: 0.02em;
+  text-transform: uppercase; color: var(--ink-soft);
+  border: 1px solid var(--rule); border-left: 3px solid var(--gray);
+  padding: 1px 5px; white-space: nowrap;
+}
+
+@keyframes mt-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes mt-trace { from { opacity: 0; clip-path: inset(0 100% 0 0); } to { opacity: 1; clip-path: inset(0 0 0 0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .traj-page .mt-fill, .traj-page .mt-head, .traj-page .mt-stem,
+  .traj-page .mt-ctl button { transition: none; }
+  .traj-page .mt-anno, .traj-page .cr-arrow i { animation: none; opacity: 1; clip-path: none; transform: none; }
+}
+
+/* 1440×900 — rail ≈910px / 362 units ≈ 2.5px per unit, so a rare op still owns
+   a ~12.5px slot and the reflection a ~55px one. Nothing goes sub-pixel. */
+@media (max-width: 1600px) {
+  .traj-page .mt { grid-template-columns: 178px 1fr 236px; gap: 12px; }
+  .traj-page .mt-op { width: 13px; }
+  .traj-page .mt-op.add i, .traj-page .mt-op.update i,
+  .traj-page .mt-op.quarantine i { width: 9px; height: 9px; }
+  .traj-page .mt-op.link i { width: 11px; height: 9px; }
+  .traj-page .mt-op.insight i { width: 10px; height: 10px; }
+  .traj-page .mt-op.on.insight i { width: 12px; height: 12px; }
+  .traj-page .cr-arrow { width: 62px; }
+  .traj-page .cr-cell { padding: 0 8px; }
+}

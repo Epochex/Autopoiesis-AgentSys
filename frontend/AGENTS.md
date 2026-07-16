@@ -326,3 +326,55 @@ If this repository later defines:
 - folder ownership rules
 
 append them below this section and follow the more specific local rule.
+
+---
+
+## Repository override — console theme (supersedes "### Theme" above)
+
+**This console is LIGHT, not dark.** The generic rule above (dark graphite ground,
+vermilion accent) is superseded here. All three views ship a light-editorial
+tactical surface, and a component that goes dark now reads as broken, not as
+compliant.
+
+Tokens are authoritative in `src/App.css` under `.traj-page, .stage[data-view='trajectory']`:
+
+| role | token | value |
+|---|---|---|
+| ground | `--paper` | `#e7e7e3` |
+| raised surface | `--paper-2` / `--paper-3` | `#efeee9` / `#dddcd5` |
+| type | `--ink` / `--ink-soft` | `#0d0d0d` / `#2a2a27` |
+| neutral | `--gray` / `--rule` | `#8c8c88` / `#cfcfca` |
+| accent | `--acid` | `#ccff00` |
+| type families | `--font-display` / `--font-mono` | IBM Plex Sans Condensed / IBM Plex Mono |
+
+Everything else in "Visual language rules" still binds — in particular **one accent
+family per screen**, no gauges/pie/donut, no glassmorphism, no decorative 3D, and
+structural motion only.
+
+`--acid` is a semantic accent, not decoration. On the trajectory view it means
+exactly one thing: **changed at the current step**. It must never encode tier,
+severity, or category. Distinguish categories by structure (frame weight, hatch,
+dot-grid, rule position), not by adding accent families.
+
+### Honesty rules for the memory UI
+
+The console renders a real kernel run, and the kernel is specific about what it
+does and does not record. `GET /api/rca/evolution` → `observatory.capabilities`
+reports this at runtime; **respect it rather than filling the gap**:
+
+- `decay_wired: false` — `decay_and_forget()` has no production caller. Never
+  render a "forgotten"/decay figure as if the loop were forgetting. Note that
+  `memory_health()["forgotten"]` counts *quarantined* records, not decayed ones.
+- `retrieval_scores: false` — retrieval computes a score and drops it. There is no
+  "why was this recalled".
+- `context_drop_reason: false` — the compiler drops memory lines by cap/budget
+  without recording which rule fired. A drop may be *shown* (it is derived from
+  real ids); it may not be *explained*.
+- `strength` is `1.0` on every record because decay never runs. Do not encode a
+  constant as though it varied.
+- `UPDATE`, `NOOP` and `QUARANTINE` are real code paths that do not fire on the
+  R230 held-out set. Render them if they appear; never imply they occurred.
+
+If a value does not exist, say so on the surface. Do not synthesize positions,
+scores, reasons, or diffs in the frontend and present them as system behaviour —
+that is the specific failure this UI was rebuilt to remove.

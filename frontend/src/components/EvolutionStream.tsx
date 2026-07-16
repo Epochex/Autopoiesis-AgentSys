@@ -2,7 +2,15 @@
    One self over a recurring real-incident stream, drawn as two overlaid runs that
    SPLIT: no-memory holds flat, with-memory plunges checks to zero as the memory
    core thickens — accuracy identical the whole way. All numbers are the live
-   cold-vs-warm result, not 示意. Compact tactical panel (fx-conv-*), not a band. */
+   cold-vs-warm result, not 示意. Compact tactical panel (fx-conv-*), not a band.
+
+   Scope note: this panel answers "did it get cheaper", nothing more. What the
+   memory IS, and how it changed, belongs to MemoryObservatory, which renders the
+   item-level record/event data. The tier "mesh" that used to live here was
+   decorative — hub and satellite coordinates were hardcoded and the API only ever
+   returned scalar counts — so it was removed rather than restyled. */
+
+import type { Observatory } from '../types'
 
 type ByPass = { pass: number; probes: number; recalled: number; memory_end: number; accuracy: number }
 export type MemHealth = { active: number; forgotten: number; insights: number; links: number; by_tier?: Record<string, number> }
@@ -12,6 +20,7 @@ export type EvoData = {
   warm: { by_pass: ByPass[] }
   cold: { by_pass: ByPass[] }
   memory?: MemHealth
+  observatory?: Observatory
 }
 
 export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
@@ -20,12 +29,9 @@ export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
   const P = warm.length
   const N = data.nCases
   const d = data.delta
-  const bt = data.memory?.by_tier
-  const tiers = bt ? [
-    { id: 'episodic', label: zh ? '情景' : 'CASES', count: bt.episodic ?? 0, color: '#d6335a' },
-    { id: 'semantic', label: zh ? '语义' : 'FACTS', count: bt.semantic ?? 0, color: '#4c9d94' },
-    { id: 'procedural', label: zh ? '程序' : 'PLAYBOOKS', count: bt.procedural ?? 0, color: '#ffcfa0' },
-  ] : []
+  // Real recall on the final pass. This used to read {N}/{N} straight from nCases,
+  // so it could never report anything but 100% — recalled is the measured field.
+  const lastRecalled = warm.length ? warm[warm.length - 1].recalled : 0
 
   const VW = 620, VH = 236
   const X0 = 54, XW = 462, Y0 = 26, YH = 138
@@ -39,7 +45,6 @@ export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
   const warmPts = warm.map((p, i) => `${px(i)},${py(p.probes)}`).join(' ')
   const memPts = warm.map((p, i) => `${px(i)},${my(p.memory_end)}`).join(' ')
   const area = [...cold.map((p, i) => `${px(i)},${py(p.probes)}`), ...warm.slice().reverse().map((p, i) => `${px(P - 1 - i)},${py(p.probes)}`)].join(' ')
-  const memTotal = tiers.reduce((a, t) => a + t.count, 0)
 
   return (
     <section className="fx-conv">
@@ -52,7 +57,7 @@ export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
           <div className="fx-conv-stat hero"><b>−{d.probes_saved_pct}<i>%</i></b><span>{zh ? '省下的查证' : 'CHECKS SAVED'}</span></div>
           <div className="fx-conv-stat keep"><b>{Math.round(d.accuracy_warm * 100)}<i>%</i></b><span>{zh ? '准确率不变' : 'ACCURACY KEPT'}</span></div>
           <div className="fx-conv-stat"><b>0→{d.memory_grown}</b><span>{zh ? '记忆累积' : 'MEMORY GROWN'}</span></div>
-          <div className="fx-conv-stat"><b>{N}/{N}</b><span>{zh ? '每次都记得' : 'REMEMBERED EVERY TIME'}</span></div>
+          <div className="fx-conv-stat"><b>{lastRecalled}/{N}</b><span>{zh ? '末轮召回' : 'RECALLED LAST PASS'}</span></div>
         </div>
         <svg className="fx-conv-chart" viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet">
           <line className="fx-conv-axis" x1={X0} y1={Y0 + YH} x2={X0 + XW + 8} y2={Y0 + YH} />
@@ -82,45 +87,6 @@ export function EvolutionStream({ data, zh }: { data: EvoData; zh: boolean }) {
           ))}
         </svg>
       </div>
-      {tiers.length ? (
-        <div className="fx-conv-tiers">
-          <span className="fx-conv-tiers-lead">{zh ? `记忆库 · 共 ${memTotal}` : `MEMORY · ${memTotal} total`}</span>
-          <svg className="fx-conv-mesh" viewBox="0 0 168 96" preserveAspectRatio="xMidYMid meet">
-            {(() => {
-              const max = Math.max(1, ...tiers.map((t) => t.count))
-              const hub: [number, number] = [84, 50]
-              const sat: [number, number][] = [[84, 16], [36, 82], [132, 82]]
-              return (
-                <>
-                  {tiers.map((t, i) => (
-                    <line key={'l' + t.id} className="fx-conv-mlink" x1={hub[0]} y1={hub[1]} x2={sat[i][0]} y2={sat[i][1]} style={{ strokeWidth: 1 + (t.count / max) * 3, stroke: t.color }} />
-                  ))}
-                  <circle className="fx-conv-mhub" cx={hub[0]} cy={hub[1]} r={13} />
-                  <text className="fx-conv-mhubn" x={hub[0]} y={hub[1] + 4} textAnchor="middle">{memTotal}</text>
-                  {tiers.map((t, i) => {
-                    const r = 8 + Math.sqrt(t.count / max) * 12
-                    return (
-                      <g key={t.id}>
-                        <circle className="fx-conv-mdot2" cx={sat[i][0]} cy={sat[i][1]} r={r} style={{ fill: t.color }} />
-                        <text className="fx-conv-mn" x={sat[i][0]} y={sat[i][1] + 4} textAnchor="middle">{t.count}</text>
-                        <text className="fx-conv-mk" x={sat[i][0]} y={i === 0 ? sat[i][1] - r - 5 : sat[i][1] + r + 11} textAnchor="middle">{t.label}</text>
-                      </g>
-                    )
-                  })}
-                </>
-              )
-            })()}
-          </svg>
-          {data.memory ? (
-            <span className="fx-conv-ops">
-              <span className="fx-conv-op"><b>{zh ? '活跃' : 'ACTIVE'}</b>{data.memory.active}</span>
-              <span className="fx-conv-op"><b>{zh ? '关联' : 'LINKS'}</b>{data.memory.links}</span>
-              <span className="fx-conv-op"><b>{zh ? '反思' : 'REFLECT'}</b>{data.memory.insights}</span>
-              <span className="fx-conv-op"><b>{zh ? '遗忘' : 'FORGET'}</b>{data.memory.forgotten}</span>
-            </span>
-          ) : null}
-        </div>
-      ) : null}
     </section>
   )
 }

@@ -1,0 +1,79 @@
+/* 记忆观测舱 / MEMORY OBSERVATORY — container layout only.
+ * Panel-internal styling lives in memory-graph.css / memory-inspector.css /
+ * memory-timeline.css. Tokens come from .traj-page (App.css:1494-1551).
+ *
+ * Height budget is the whole point: the observatory must resolve inside one
+ * 1920x1080 screen with no page scroll, and still hold together at 1440x900.
+ * Everything below is expressed against the viewport so neither is a special case.
+ */
+
+.mo {
+  --mo-side-w: clamp(360px, 31vw, 600px);
+
+  display: grid;
+  /* The timeline and the ribbon carry their own intrinsic heights and their
+     content does not compress — squeezing them just clips the readout. They take
+     what they need; the three-tier space absorbs the remainder, which it can do
+     because its SVG scales. */
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  /* Both zeros are load-bearing. As a grid item .mo defaults to min-width/height
+     auto, i.e. "never shrink below my content" — which let the side column push
+     the whole observatory past the right edge of the page. */
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The three-tier space takes the room; the inspector holds a fixed column. */
+.mo-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--mo-side-w);
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.mo-space,
+.mo-side {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The graph carries a fixed viewBox, so left to itself it derives height from
+   width and overflows a short row. Its default preserveAspectRatio (xMidYMid
+   meet) already letterboxes correctly — it just has to be told to fill the box
+   it was given rather than the one it wants. */
+.mo-space {
+  display: grid;
+  overflow: hidden;
+}
+.traj-page .mo-space .mg-root {
+  min-height: 0;
+  height: 100%;
+}
+.traj-page .mo-space .mg-canvas {
+  height: 100%;
+  max-height: 100%;
+}
+
+/* Inspector + route ruler stack; only the inspector may scroll, and it scrolls
+ * inside itself — the page never grows to accommodate it. */
+.mo-side {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+/* Below the trajectory footer breakpoint the side column would be unusably
+ * narrow, so the inspector drops under the space rather than being squeezed. */
+@media (max-width: 1180px) {
+  .mo-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .mo-side {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto;
+  }
+}

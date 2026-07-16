@@ -5,6 +5,7 @@ import { rc } from '../i18n'
 import { CountUp } from './Motion'
 import { FlowGraph, type FxStation, type FxEvidence, type FxMemTier, type FxReadout, type FxSkills } from './FlowGraph'
 import { EvolutionStream, type EvoData } from './EvolutionStream'
+import { MemoryObservatory } from './MemoryObservatory'
 import './trajectory.css'
 
 /* ── real ledger → typed viz per step ── */
@@ -413,6 +414,17 @@ export function TrajectoryPage({
           </div>
         </div>
       </header>
+
+      {/* ── ② THE MEMORY OBSERVATORY (first screen) ──────────────────────────
+          What the agent remembers, how each record got there, and what that
+          bought on the next encounter. Item-level, straight off the real run.
+          It leads the page because it is the claim the project actually makes;
+          the execution replay below is one run inside this loop. */}
+      <section className="fx-first">
+        {evo?.ready && evo.observatory
+          ? <MemoryObservatory obs={evo.observatory} byPass={evo.warm.by_pass} zh={zh} />
+          : <div className="fx-first-wait">{zh ? '正在跑真实自我进化流…' : 'RUNNING REAL SELF-EVOLUTION STREAM…'}</div>}
+      </section>
 
       {/* ── legend key: node type ⇒ system component ── */}
       <div className="fx-key">

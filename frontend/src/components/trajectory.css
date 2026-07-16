@@ -11,7 +11,9 @@
 /* ── HUD masthead ─────────────────────────────────────────────────────────── */
 .traj-page .fx-mast { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding: 12px 0 12px; border-bottom: 2px solid var(--ink); }
 .traj-page .fx-mast-kick { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gray); margin-bottom: 4px; }
-.traj-page .fx-mast-title { margin: 26px 0 0 -2px; font-family: var(--font-display); font-weight: 600; text-transform: uppercase; font-size: clamp(34px, 4.4vw, 62px); line-height: 0.9; letter-spacing: -0.03em; color: var(--ink); }
+/* Compact since the observatory took the first screen: the old clamp topped out
+   at 62px and spent ~90px of vertical budget on a word the reader already knows. */
+.traj-page .fx-mast-title { margin: 8px 0 0 -2px; font-family: var(--font-display); font-weight: 600; text-transform: uppercase; font-size: clamp(26px, 2.4vw, 40px); line-height: 0.92; letter-spacing: -0.03em; color: var(--ink); }
 .traj-page .fx-mast-title mark { background: var(--acid); color: var(--acid-ink); padding: 0 0.04em; box-decoration-break: clone; }
 .traj-page .fx-mast-title em { font-style: normal; font-size: 0.19em; letter-spacing: 0.18em; color: var(--gray); margin-left: 12px; vertical-align: 0.5em; }
 .traj-page .fx-mast-mission { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
@@ -42,7 +44,10 @@
 /* ── the tactical replay canvas ───────────────────────────────────────────── */
 .traj-page .fx-replay { margin-top: 10px; }
 .traj-page .fx-stage { border: 2px solid var(--ink); background: var(--paper); overflow: hidden; }
-.traj-page .fx-canvas { display: block; width: 100%; height: auto; }
+/* Capped: at full bleed the 1440x900 viewBox rendered ~1165px tall on a 1920
+   screen, which is what pushed the whole page past two screens. The replay is
+   one run inside the loop the observatory shows — it does not need a screen. */
+.traj-page .fx-canvas { display: block; width: 100%; max-height: 720px; height: auto; margin: 0 auto; }
 
 /* frame chrome */
 .traj-page .fx-frame path { stroke: var(--ink); stroke-width: 1.6; fill: none; }
@@ -315,6 +320,17 @@
 .traj-page .fx-stress-tag { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink); border: 1.5px solid var(--ink); padding: 2px 7px; }
 .traj-page .fx-stress-tag.crit { background: var(--ink); color: var(--acid); border-color: var(--ink); }
 .traj-page .fx-stress-tag.dim { border-color: var(--rule); color: var(--gray); }
+
+/* ── first screen: the memory observatory ──────────────────────────────────────
+   The observatory holds the first screen on its own — at 1920x1080 the whole
+   memory story (space · inspector · lifecycle · causal payoff) must be legible
+   without scrolling, since a presenter who has to scroll never gets to it. The
+   execution replay and the analytical footer live below the fold by design. */
+.traj-page .fx-first { height: calc(100vh - 190px); min-height: 520px; display: grid; grid-template-columns: minmax(0, 1fr); margin: 10px 0 14px; }
+.traj-page .fx-first-wait {
+  display: grid; place-items: center; border: var(--frame); background: var(--paper-2);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gray);
+}
 
 @keyframes fx-line { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
 @keyframes fx-in { from { opacity: 0; } to { opacity: 1; } }
