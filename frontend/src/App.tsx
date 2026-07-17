@@ -270,20 +270,37 @@ function App() {
               ))}
             </div>
           ) : null}
-          <div className="engines">
-            {d.providers.map((p) => (
-              <button
-                key={p.id}
-                className={`eng ${p.id === d.provider ? 'on' : ''}`}
-                disabled={!p.reachable && p.id !== 'rule'}
-                onClick={() => setProvider(p.id)}
-                title={`${p.label} · ${p.model}`}
-              >
-                <span className={`gem ${p.reachable ? 'live' : ''}`} />
-                {p.label.split(' ')[0]}
-              </button>
-            ))}
-          </div>
+          {/* The selector governs exactly one thing: the case diagnosis in
+              /api/rca/snapshot. Baselines, evolution and the live threat cards
+              resolve their own reasoner server-side and ignore it — so it is
+              captioned with its real scope, and hidden on pentest where it
+              governs nothing at all. */}
+          {view === 'pentest' ? null : (
+            <div className="engines" role="group" aria-label={lang === 'zh' ? '案例诊断引擎' : 'Case-diagnosis reasoner'}>
+              <span className="eng-scope">{lang === 'zh' ? '案例诊断' : 'Case diag'}</span>
+              {d.providers.map((p) => {
+                const off = !p.reachable && p.id !== 'rule'
+                return (
+                  <button
+                    key={p.id}
+                    className={`eng ${p.id === d.provider ? 'on' : ''} ${off ? 'off' : ''}`}
+                    disabled={off}
+                    onClick={() => setProvider(p.id)}
+                    title={off ? `${p.label} · ${lang === 'zh' ? '不可达' : 'unreachable'} — ${p.note}` : `${p.label} · ${p.model}`}
+                  >
+                    <span className={`gem ${p.reachable ? 'live' : ''}`} />
+                    <span className="eng-name">{p.label.split(' ')[0]}</span>
+                    {off ? <span className="eng-off">{lang === 'zh' ? '离线' : 'Off'}</span> : null}
+                  </button>
+                )
+              })}
+              {d.providerError ? (
+                <span className="eng-err" title={d.providerError}>
+                  {lang === 'zh' ? '引擎失败' : 'Engine failed'}
+                </span>
+              ) : null}
+            </div>
+          )}
           <div className="lang">
             <button className={lang === 'zh' ? 'on' : ''} onClick={() => setLang('zh')}>中</button>
             <button className={lang === 'en' ? 'on' : ''} onClick={() => setLang('en')}>EN</button>
@@ -373,6 +390,9 @@ function App() {
                 <aside className={`posture-card ${posture.high ? 'sev-high' : ''}`}>
                   <div className="tc-head">
                     <span className="tc-kicker">{lang === 'zh' ? '子网态势汇总' : 'subnet posture'} · {posture.cidr}</span>
+                    {/* /api/rca/threat_subnet takes no provider — it always runs
+                        DeepSeek server-side. Name the real reasoner, not the header's. */}
+                    <span className="prov-tag">{lang === 'zh' ? '引擎 · DEEPSEEK' : 'Reasoner · DeepSeek'}</span>
                     <button className="tc-x" onClick={() => setPosture(null)}>✕</button>
                   </div>
                   {posture.loading ? (

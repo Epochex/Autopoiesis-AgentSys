@@ -2,16 +2,40 @@
 @import '@fontsource/ibm-plex-mono/500.css';
 @import '@fontsource/ibm-plex-sans-condensed/600.css';
 
+/* Base palette. NOT vestigial: the shared header chrome (.pager / .eng / .lang)
+   and the pre-mount .boot screen live outside every `.stage[data-view]` scope,
+   so they resolve their colors from here. The trajectory + console views shadow
+   these tokens locally; the pentest view does not, which is why this block had
+   been painting page 3's header in dark-theme colors on light paper
+   (--text #e9f1ee on --paper #e7e7e3 == 1.07:1). It is now the LIGHT base of the
+   same editorial system App.css scopes: same values, same legacy aliases. */
 :root {
-  --ink: #0a0f0e;
-  --ink-2: #0e1413;
-  --line: #1b2624;
-  --fog: #7c8f8a;
-  --text: #e9f1ee;
-  --mint: #5fe4d1;
-  --coral: #ff6b5e;
-  --amber: #ffc04d;
-  color-scheme: dark;
+  /* ── surfaces · warm print paper ── */
+  --paper:   #e7e7e3;
+  --paper-2: #efeee9;
+  --paper-3: #dddcd5;
+
+  /* ── ink · type ── */
+  --ink:      #0d0d0d;
+  --ink-soft: #2a2a27;
+
+  /* ── neutrals · --gray carries text (AA), --rule is hairlines only ── */
+  --gray: #605f5a;
+  --rule: #cfcfca;
+
+  /* ── THE single accent · fills only, never text-on-paper ── */
+  --acid:     #ccff00;
+  --acid-ink: #0d0d0d;
+
+  /* ── legacy aliases → the pre-light rules resolve light automatically ── */
+  --ink-2: #1a1a17;
+  --text:  var(--ink);
+  --fog:   var(--gray);
+  --line:  var(--rule);
+  --mint:  var(--acid);
+  --coral: #b3243c;  /* .boot.err gateway failure · 5.24:1 on --paper */
+  --amber: #a86a12;
+  color-scheme: light;
 }
 
 * {

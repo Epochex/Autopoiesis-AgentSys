@@ -49,7 +49,11 @@
   text-transform: uppercase; color: var(--gray); white-space: nowrap;
 }
 .traj-page .mt-lg b { font-size: 9.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
-.traj-page .mt-lg em { font-style: normal; color: var(--rule); }
+/* em was painted with --rule (a hairline token) — 1.34:1, a 4th "step" below the
+   legend body that no text token can legally occupy. It now simply inherits
+   --gray; the ink <b> still carries the emphasis in this legend. --rule itself
+   stays put: it is non-text and must not be darkened to satisfy a checker. */
+.traj-page .mt-lg em { font-style: normal; }
 /* legend keys mirror the rail marks exactly — shape is the encoding, not colour */
 .traj-page .mt-lg i { flex: 0 0 auto; display: block; background: var(--ink); border: 1.5px solid var(--ink); }
 .traj-page .mt-lg.add i, .traj-page .mt-lg.update i, .traj-page .mt-lg.quarantine i { width: 8px; height: 8px; }
@@ -57,6 +61,7 @@
 .traj-page .mt-lg.quarantine i { background-image: var(--hatch-ink); }
 .traj-page .mt-lg.link i { width: 10px; height: 8px; background: var(--paper-2); border-width: 2.5px 0; }
 .traj-page .mt-lg.insight i { width: 8px; height: 8px; margin: 0 2px; transform: rotate(45deg); }
+.traj-page .mt-lg.refresh i { width: 7px; height: 7px; margin: 0 2px; background: var(--paper-2); transform: rotate(45deg); }
 .traj-page .mt-lg.noop i { width: 8px; height: 3px; background: var(--gray); border-color: var(--gray); }
 .traj-page .mt-lg.dense i { width: 4px; height: 9px; border: none; opacity: 0.3; }
 
@@ -106,6 +111,9 @@
   border-width: 3px 0; border-style: solid; border-color: var(--ink);
 }
 .traj-page .mt-op.insight i { width: 12px; height: 12px; transform: rotate(45deg); }
+/* reflection re-deriving itself — same diamond as INSIGHT, hollow. Same family
+   of event, not a new kind of thing. */
+.traj-page .mt-op.refresh i { width: 10px; height: 10px; background: var(--paper-2); transform: rotate(45deg); }
 .traj-page .mt-op.update i { width: 10px; height: 10px; background: var(--paper-2); }
 .traj-page .mt-op.noop i { width: 8px; height: 3px; background: var(--gray); border-color: var(--gray); }
 .traj-page .mt-op.quarantine i { width: 10px; height: 10px; background: var(--hatch-ink), var(--paper-2); }
@@ -336,4 +344,15 @@
   .traj-page .mt-op.on.insight i { width: 12px; height: 12px; }
   .traj-page .cr-arrow { width: 62px; }
   .traj-page .cr-cell { padding: 0 8px; }
+
+  /* Below ~1600 the two footer rows genuinely do not fit side by side: they want
+     ~1833px of a ~1384px line, so no amount of tracking saves them and the
+     nowrap+hidden pair silently chops the kernel-limit chips. Let them stack and
+     let the ribbon grow — the three-tier space absorbs the ~22px, and a limit
+     that only half-prints is worse than a shorter graph. */
+  .traj-page .cr { height: auto; min-height: 110px; }
+  .traj-page .cr-foot {
+    height: auto; flex-wrap: wrap; justify-content: flex-start; gap: 3px 12px;
+  }
+  .traj-page .cr-passes, .traj-page .cr-limits { flex-wrap: wrap; overflow: visible; }
 }

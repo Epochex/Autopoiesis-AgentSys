@@ -92,7 +92,19 @@
 }
 .engines {
   display: inline-flex;
+  align-items: center;
   gap: 4px;
+}
+/* The selector governs case diagnosis only — the caption says so, so the group
+   cannot read as a global model switch. */
+.eng-scope {
+  color: var(--gray);
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding-right: 2px;
+  white-space: nowrap;
 }
 .eng {
   display: inline-flex;
@@ -110,9 +122,40 @@
 .eng.on {
   color: var(--text);
 }
+/* An unreachable provider is MARKED, not dimmed into illegibility: the old
+   opacity:0.4 crushed the label below readable contrast, which hid the fact
+   rather than stating it. Structure (hairline frame + "Off" chip) carries it. */
 .eng:disabled {
-  opacity: 0.4;
+  color: var(--gray);
   cursor: not-allowed;
+}
+/* Strike the provider NAME only — text-decoration propagates to descendants and
+   cannot be cancelled on a child, so putting it on .eng would also strike the
+   "Off" chip into an unreadable smudge. */
+.eng.off .eng-name {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.eng-off {
+  border: 1px solid var(--rule);
+  color: var(--gray);
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 1px 4px;
+}
+/* providerError: the endpoint resolved but the run failed. Ink-on-paper frame —
+   no new accent family. */
+.eng-err {
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 5px;
+  margin-left: 4px;
+  white-space: nowrap;
 }
 .gem {
   width: 6px;
@@ -135,8 +178,12 @@
   cursor: pointer;
   font-size: 13px;
 }
+/* The accent is a FILL, never bare text on paper (AGENTS.md). This is the same
+   idiom the console + trajectory scopes already override to; page 3 inherits it
+   here instead of painting --mint straight onto --paper. */
 .lang button.on {
-  color: var(--mint);
+  background: var(--acid);
+  color: var(--acid-ink);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -523,6 +570,19 @@
   letter-spacing: 0.14em;
   color: var(--mint);
   font-family: 'IBM Plex Mono', monospace;
+}
+/* Real provenance of a panel's data, independent of the header selector. */
+.prov-tag {
+  margin-left: auto;
+  margin-right: 10px;
+  border: 1px solid var(--rule);
+  color: var(--gray);
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 5px;
+  white-space: nowrap;
 }
 .tc-x {
   background: none;
@@ -1503,8 +1563,16 @@
   --ink-soft: #2a2a27; /* long-form small text                          */
 
   /* ── neutrals ── */
-  --gray: #8c8c88;     /* labels, ruler numerals, ©®№     (was --fog)   */
+  --gray: #605f5a;     /* labels, ruler numerals, ©®№     (was --fog)   */
+                       /* #8c8c88 was 2.72:1 on --paper — the whole
+                          secondary tier failed AA. 5.16:1 on --paper,
+                          5.51:1 on --paper-2, 4.65:1 on --paper-3: it
+                          clears 4.5:1 on every ground it can land on,
+                          and still reads two clear steps below
+                          --ink-soft (2.25:1 apart).                    */
   --rule: #cfcfca;     /* hairlines, modular grid, dots    (was --line) */
+                       /* NON-TEXT. Never darken to satisfy a contrast
+                          checker — WCAG 1.4.3 does not apply to it.    */
 
   /* ── THE single accent · fills only, never text-on-paper ── */
   --acid:     #ccff00; /* (was --mint #5fe4d1) rects, highlight blocks,
@@ -1844,15 +1912,23 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   --ink:     #0d0d0d;
   --ink-2:   #1a1a17;
   --text:    #0d0d0d;   /* body type now dark-on-paper (was #e9f1ee) */
-  --fog:     #6f6f6a;
+  --gray:    #605f5a;   /* same secondary tier as the trajectory scope */
+  --fog:     var(--gray); /* was #6f6f6a — 4.07:1 on --paper, just under AA */
   --line:    #cfcfca;
   --acid:    #ccff00;
   --rule:    #cfcfca;
-  /* threat scale, retuned for a paper ground — distinction preserved */
-  --coral:   #cf2f4a;   /* high / attacker  (crimson) */
-  --amber:   #a86a12;   /* watch            (dark amber, legible on paper) */
-  --mint:    #2f7d72;   /* ok / healthy     (teal) */
-  /* hierarchy tiers (poster swatch scale) — structural identity, not threat */
+  /* threat scale, retuned for a paper ground — distinction preserved.
+     These carry TEXT (.hot / .n-v.amber numerals, .dev-tag) as well as dots and
+     bars, so each must clear 4.5:1 on --paper. Same hue, one step darker:
+     the scale still reads crimson / amber / teal at a glance. */
+  --coral:   #b3243c;   /* high / attacker  (crimson) · 5.24:1 (was #cf2f4a 4.07) */
+  --amber:   #8a560e;   /* watch            (dark amber) · 4.96:1 (was #a86a12 3.58) */
+  --mint:    #276b61;   /* ok / healthy     (teal)      · 5.04:1 (was #2f7d72 3.94) */
+  /* hierarchy tiers (poster swatch scale) — structural identity, not threat.
+     NON-TEXT: node fills + strokes on the topology map. Left alone deliberately —
+     WCAG 1.4.3 does not apply to them. (--tier-edge did leak into one numeral,
+     .hud-r-line .acc; that call site is repointed at --mint rather than darkening
+     the map's stroke colour to satisfy a checker.) */
   --tier-core:   #0d0d0d;
   --tier-edge:   #4c9d94;
   --tier-subnet: #2b3d38;
@@ -2056,7 +2132,10 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .hud-r-dim { fill: var(--fog); font-size: 9.5px; letter-spacing: 0.14em; }
 .stage[data-view='console'] .hud-r-line { fill: var(--ink); font-size: 12px; letter-spacing: 0.06em; }
 .stage[data-view='console'] .hud-r-line .hot { fill: var(--coral); font-weight: 500; }
-.stage[data-view='console'] .hud-r-line .acc { fill: var(--tier-edge); font-weight: 500; }
+/* --tier-edge is a map STROKE colour (2.58:1 as type — the worst pair on the
+   console, and axe cannot see it because it is an SVG tspan). The numeral takes
+   the teal TEXT token instead; --tier-edge itself stays put for the map. */
+.stage[data-view='console'] .hud-r-line .acc { fill: var(--mint); font-weight: 500; }
 .stage[data-view='console'] .hud-status { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
 .stage[data-view='console'] .hud-status .hot { fill: var(--coral); font-weight: 500; }
 .stage[data-view='console'] .hud-status .dim { fill: var(--ink); opacity: 0.55; }
