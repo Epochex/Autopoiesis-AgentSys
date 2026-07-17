@@ -15,6 +15,17 @@ ingestor = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
 ]
+# OPTIONAL, eval-only. The deterministic core stays LLM-free and zero-dependency;
+# this extra powers ONLY the dense/embedding retrieval BASELINE in core.eval.dense_retrieval,
+# which is a comparison baseline and is never imported from the online RCA path or the
+# default (non-dense) test path. Install into a dedicated venv, e.g.:
+#   python3 -m venv .venv-dense && . .venv-dense/bin/activate
+#   pip install sentence-transformers faiss-cpu torch
+dense = [
+  "sentence-transformers>=2.2",
+  "faiss-cpu>=1.7",
+  "torch>=2.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests_py"]

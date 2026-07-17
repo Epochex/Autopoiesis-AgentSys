@@ -19,3 +19,5 @@ frontend/dist/
 key/
 *.pem
 id_ed25519*
+.venv-dense/
+.dense_cache/
