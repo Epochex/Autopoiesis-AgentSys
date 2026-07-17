@@ -14,8 +14,8 @@
   /* The timeline and the ribbon carry their own intrinsic heights and their
      content does not compress — squeezing them just clips the readout. They take
      what they need; the three-tier space absorbs the remainder, which it can do
-     because its SVG scales. */
-  grid-template-rows: minmax(0, 1fr) auto auto;
+     because its SVG scales. The framing line is the same deal in one text row. */
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   /* Both zeros are load-bearing. As a grid item .mo defaults to min-width/height
@@ -23,6 +23,41 @@
      the whole observatory past the right edge of the page. */
   min-height: 0;
   min-width: 0;
+}
+
+/* ── framing line ───────────────────────────────────────────────────────────
+   Answers "what am I looking at, and what is about to happen" before the replay
+   starts, in ONE text row. It is deliberately a rule-and-type line, not a panel:
+   every pixel it takes comes out of the memory space below it, and the tiers
+   themselves are already named on the canvas (band labels + provenance spine),
+   so this line does not repeat them. Measured cost: 21px + 10px gap. */
+.mo-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+  padding-bottom: 5px;
+  border-bottom: 1.5px solid var(--ink);
+}
+.mo-head-t {
+  flex: 0 0 auto;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+/* the thesis itself: real counts, real ops, no claim the run does not make */
+.mo-head-s {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
 }
 
 /* The three-tier space takes the room; the inspector holds a fixed column. */

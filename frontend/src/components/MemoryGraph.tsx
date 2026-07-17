@@ -36,6 +36,13 @@
      ⊣ break       recall: retrieved but NOT included. The kernel records no
                    reason for the drop, so none is implied.
 
+   INTERACTION MARKS — about the viewer, never about the data
+     ⌐ inner ticks every node is a button; the ticks say so at rest, before the
+                   pointer arrives. They encode nothing about the record.
+     ⌐ outer marks the inspector is PINNED to this record. NOT the selection
+                   halo: the cursor selects a record every step by itself, so the
+                   halo means "current", which is not a thing the viewer did.
+
    DELIBERATELY NOT ENCODED
      `strength` — it is 1.0 on every record (decay is not wired into the loop).
      Encoding a constant as if it varied is the exact failure mode this view
@@ -185,16 +192,45 @@ interface EdgeGeom {
   d: string
 }
 
+/* ── click affordance · a hit-target frame, drawn at rest ─────────────────────
+   The nodes were always buttons; nothing said so until the pointer was already
+   on one. These are registration ticks INSIDE the box corners — structural, no
+   shadow, no scale, no glow, no second accent. Quiet enough to survive 19 of
+   them on one canvas, and they are the same mark the pin brackets complete.  */
+const hitTicks = (x: number, y: number, w: number, h: number, inset = 3.5, arm = 5) => {
+  const l = x + inset, r = x + w - inset, t = y + inset, b = y + h - inset
+  return [
+    `M${l} ${t + arm} V${t} H${l + arm}`,
+    `M${r - arm} ${t} H${r} V${t + arm}`,
+    `M${r} ${b - arm} V${b} H${r - arm}`,
+    `M${l + arm} ${b} H${l} V${b - arm}`,
+  ].join(' ')
+}
+/* ── pin mark · the SAME corner language, completed OUTSIDE the box ───────────
+   Crop marks around the record the inspector is held on. Distinct from the
+   selection halo, which the cursor sets on its own every step and which
+   therefore cannot mean "you pinned this". */
+const pinBrackets = (x: number, y: number, w: number, h: number, off = 3.5, arm = 9) => {
+  const l = x - off, r = x + w + off, t = y - off, b = y + h + off
+  return [
+    `M${l} ${t + arm} V${t} H${l + arm}`,
+    `M${r - arm} ${t} H${r} V${t + arm}`,
+    `M${r} ${b - arm} V${b} H${r - arm}`,
+    `M${l + arm} ${b} H${l} V${b - arm}`,
+  ].join(' ')
+}
+
 export function MemoryGraph(props: {
   records: MemRecord[]
   events: MemEvent[]
   touchedIds: Set<string>
   recall: MemRecall | null
   selectedId: string | null
+  pinnedId: string | null
   onSelect: (id: string | null) => void
   zh: boolean
 }): JSX.Element {
-  const { records, events, touchedIds, recall, selectedId, onSelect, zh } = props
+  const { records, events, touchedIds, recall, selectedId, pinnedId, onSelect, zh } = props
 
   /* ── 1 · geometry. Depends on `records` only, so scrubbing the cursor never
    *      moves a single box. Same input ⇒ same positions, always. ─────────── */
@@ -489,13 +525,22 @@ export function MemoryGraph(props: {
     return { retrieved, included, dropped, conns, slotY, slotH, top }
   }, [recall, geom])
 
-  /* ── 5 · selection halo: the selected node and whatever it really links to ─ */
+  /* ── 5 · pin halo: the PINNED node and whatever it really links to ─────────
+   *
+   * Keyed to the pin, not to `selectedId`. `selectedId` falls back to the record
+   * at the cursor, which the replay moves every 60ms — so keying the halo off it
+   * meant the canvas was permanently in "something is selected" mode, dimming 17
+   * of 19 records at 6Hz for a choice the viewer never made. That (a) flickers,
+   * (b) hides the resting click affordance under opacity 0.16, and (c) burns the
+   * one canvas-wide signal that could have meant "you pinned this" on a state
+   * that arrives by itself. The cursor already has its own marker: the acid fill.
+   */
   const hot = useMemo(() => {
-    if (!selectedId) return null
-    const s = new Set<string>([selectedId])
-    for (const id of state.links.get(selectedId) ?? []) s.add(id)
+    if (!pinnedId) return null
+    const s = new Set<string>([pinnedId])
+    for (const id of state.links.get(pinnedId) ?? []) s.add(id)
     return s
-  }, [selectedId, state])
+  }, [pinnedId, state])
 
   /* Report the click; do not interpret it. Toggling here against `selectedId`
    * double-toggled with the owner's own pin toggle: `selectedId` is
@@ -519,7 +564,7 @@ export function MemoryGraph(props: {
   return (
     <div className="mg-root">
       <svg
-        className={`mg-canvas${selectedId ? ' sel' : ''}`}
+        className={`mg-canvas${pinnedId ? ' sel' : ''}`}
         viewBox={`0 0 ${VB_W} ${vbH}`}
         role="group"
         aria-label={zh ? '三层记忆空间' : 'Three-tier memory space'}
@@ -630,11 +675,13 @@ export function MemoryGraph(props: {
             const touched = alive && touchedIds.has(id)
             const op = touched ? state.lastOp.get(id) : undefined
             const rf = state.reinforce.get(id) ?? 0
+            const isPin = pinnedId === id
             const cls = [
               'mg-node',
               alive ? 'live' : 'pend',
               touched ? 'touch' : '',
               selectedId === id ? 'on' : '',
+              isPin ? 'pin' : '',
               n.rec.quarantined ? 'quar' : '',
               hot ? (hot.has(id) ? 'hot' : 'dim') : '',
             ]
@@ -647,7 +694,9 @@ export function MemoryGraph(props: {
                 tabIndex={0}
                 role="button"
                 aria-label={`${n.rec.tier} ${id}`}
-                aria-pressed={selectedId === id}
+                /* the click toggles the PIN, so that — not the cursor's own
+                   selection — is what pressed state means here */
+                aria-pressed={isPin}
                 onClick={(ev) => {
                   ev.stopPropagation()
                   pick(id)
@@ -660,6 +709,13 @@ export function MemoryGraph(props: {
                     will eventually reach. The reserved geometry stays put so
                     nothing moves when it is finally written. */}
                 <rect x={n.x} y={n.y} width={n.w} height={alive ? n.h : H_MIN} className="mg-node-bg" />
+                {/* every node is a real button — including one not yet written,
+                    which pins to an honest "NOT YET IN MEMORY". So every node
+                    carries the hit-target frame; none of them lies about it. */}
+                <path d={hitTicks(n.x, n.y, n.w, alive ? n.h : H_MIN)} className="mg-hit" />
+                {isPin && (
+                  <path d={pinBrackets(n.x, n.y, n.w, alive ? n.h : H_MIN)} className="mg-pinmark" />
+                )}
                 {!alive ? (
                   <text x={n.x + 7} y={n.y + 20} className="mg-pend-t">
                     {zh ? '未写入' : 'NOT YET'}
@@ -783,6 +839,13 @@ export function MemoryGraph(props: {
           <rect x={660} y={13} width={8} height={7} className="mg-cell" />
           <text x={675} y={20} className="mg-lg">
             {zh ? '三格=置信度·库当前值（上限 3.0）' : 'TICKS = CONFIDENCE · STORE (CAP 3)'}
+          </text>
+
+          {/* the interaction the whole panel to the right depends on */}
+          <rect x={862} y={10} width={14} height={12} className="mg-lg-box" />
+          <path d={hitTicks(862, 10, 14, 12, 1.5, 3)} className="mg-hit" />
+          <text x={882} y={20} className="mg-lg">
+            {zh ? '点击卡片 = 锁定' : 'CLICK A CARD = PIN'}
           </text>
 
           <rect x={FRAME_X} y={34} width={13} height={9} className="mg-lg-pend" />

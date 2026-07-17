@@ -74,6 +74,26 @@
 .mg-node:focus-visible .mg-node-bg { stroke-width: 3.4; }
 .mg-node:focus-visible .mg-node-rule { stroke: var(--ink); }
 
+/* ── hit-target frame · the resting affordance ──────────────────────────────
+   The nodes are buttons at rest, not only under a pointer. Registration ticks
+   inside each corner say "target" in the same structural language as the rest of
+   the canvas: no shadow, no scale, no glow, no second accent. Kept at --gray and
+   1px so nineteen of them read as a grid of targets, not as nineteen shouts;
+   they go to full ink on hover/focus, where they double as the hover feedback. */
+.mg-hit { fill: none; stroke: var(--gray); stroke-width: 1; stroke-linecap: butt; transition: stroke 0.16s var(--ease-guide, ease-out), stroke-width 0.16s var(--ease-guide, ease-out); }
+.mg-node.pend .mg-hit { stroke: var(--rule); }
+.mg-node.touch .mg-hit { stroke: var(--acid-ink); opacity: 0.5; }
+.mg-node:hover .mg-hit, .mg-node:focus-visible .mg-hit { stroke: var(--ink); stroke-width: 1.6; }
+.mg-node.touch:hover .mg-hit, .mg-node.touch:focus-visible .mg-hit { stroke: var(--acid-ink); opacity: 1; }
+
+/* ── pinned · the inspector is HELD on this record ──────────────────────────
+   Crop marks completing the corner language outside the box. The selection halo
+   cannot carry this meaning: the cursor sets a selection every step on its own,
+   so a halo says "current", never "you chose this". */
+.mg-pinmark { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: butt; }
+.mg-node.pin .mg-node-bg { stroke-width: 3.4; }
+.mg-canvas.sel .mg-node.pin .mg-hit { stroke: var(--ink); }
+
 .mg-id { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.02em; fill: var(--gray); }
 .mg-tally { font-family: var(--font-mono); font-size: 8px; font-weight: 600; fill: var(--ink-soft); text-anchor: end; font-variant-numeric: tabular-nums; }
 .mg-node-rule { stroke: var(--rule); stroke-width: 1; }
@@ -115,8 +135,35 @@
 .mg-lg-pend { fill: var(--paper-3); stroke: var(--rule); stroke-width: 1.2; stroke-dasharray: 3 2; }
 .mg-foot .mg-edge { animation: none; }
 
-/* ── connection-driven cross-highlight ────────────────────────────────────── */
-.mg-canvas.sel .mg-node.dim,
+/* ── connection-driven cross-highlight · ONLY while pinned ───────────────────
+   The canvas only enters this mode when the viewer pins a record, so receding
+   means "not connected to the thing you chose" — never "inactive", and never
+   something the cursor did on its own.
+
+   A receded record fades its CONTENTS but keeps its frame: two quiet states now
+   share the canvas — receded (real, written, just not connected) and not-yet-
+   written (genuinely absent at this cursor) — and they must not collapse into
+   each other. They are told apart structurally, the way the tiers are:
+     receded      solid frame, crisp · contents ghosted
+     not written  DASHED frame · no contents at all, only the NOT YET label
+   Fading the whole node would have left both as identical pale rectangles. */
+.mg-canvas.sel .mg-node.dim { opacity: 1; }
+.mg-canvas.sel .mg-node.dim > *:not(.mg-node-bg) { opacity: 0.16; }
+.mg-canvas.sel .mg-node.dim .mg-node-bg { stroke: var(--gray); stroke-width: 1; }
+/* "changed at this step" outranks "not connected to the record you pinned".
+   Both are true at once, but the acid mark is the only thing on the canvas that
+   says the replay is still running, and a receded record that keeps its acid
+   fill while ghosting its own text is just unreadable. So the record the cursor
+   is touching reads at full strength for that step, then recedes again. */
+.mg-canvas.sel .mg-node.touch.dim > * { opacity: 1; }
+.mg-canvas.sel .mg-node.touch.dim .mg-node-bg { stroke: var(--ink); stroke-width: 2.4; }
+
+/* a receded record is still a button: hovering restores it, so the viewer can
+   read what they are about to click without unpinning first */
+.mg-canvas.sel .mg-node.dim:hover > *,
+.mg-canvas.sel .mg-node.dim:focus-visible > * { opacity: 1; }
+.mg-canvas.sel .mg-node.dim:hover .mg-node-bg,
+.mg-canvas.sel .mg-node.dim:focus-visible .mg-node-bg { stroke: var(--ink); stroke-width: 1.6; }
 .mg-canvas.sel .mg-edge.dim,
 .mg-canvas.sel .mg-conn.dim,
 .mg-canvas.sel .mg-slot.dim { opacity: 0.16; }
@@ -129,5 +176,5 @@
   .mg-edges .mg-edge,
   .mg-recall .mg-conn,
   .mg-node.live { animation: none; }
-  .mg-node-bg { transition: none; }
+  .mg-node-bg, .mg-hit { transition: none; }
 }

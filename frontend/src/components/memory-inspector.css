@@ -27,6 +27,50 @@
 }
 .traj-page .mi-kick { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); }
 .traj-page .mi-real { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); }
+/* ── mode strip · pinned vs following, stated ─────────────────────────────────
+   Fixed above the scroller: the mode is true of the whole panel, so it may not
+   scroll out of the panel. Structural states only — no --acid (that word is
+   taken: "changed at this step"), no colour-only signal (both states carry a
+   label), no motion (a mode is a fact, not an event). */
+.traj-page .mi-mode {
+  flex: 0 0 auto;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+  padding: 5px 12px; min-width: 0;
+  border-bottom: 2px solid var(--ink);
+  background: var(--paper);
+}
+.traj-page .mi-mode-t {
+  flex: 0 0 auto;
+  font-family: var(--font-mono); font-weight: 600; font-size: 9px;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink);
+  border: 1.5px dashed var(--gray); padding: 1px 6px;
+}
+.traj-page .mi-mode-h {
+  font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--gray);
+}
+/* the id is the "pinned to WHAT". It may ellipsis — it is repeated in full in
+   the identity bar directly below, so nothing is lost here. */
+.traj-page .mi-mode-id {
+  flex: 1 1 90px; min-width: 0;
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--paper);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.traj-page .mi-mode.pinned { background: var(--ink); border-bottom-color: var(--ink); }
+.traj-page .mi-mode.pinned .mi-mode-t { color: var(--ink); background: var(--paper); border: 1.5px solid var(--paper); }
+.traj-page .mi-mode.pinned .mi-mode-h { color: var(--rule); }
+/* the way out, spelled out. A real button: hit target, keyboard, focus ring. */
+.traj-page .mi-unpin {
+  flex: 0 0 auto; margin-left: auto; cursor: pointer;
+  font-family: var(--font-mono); font-weight: 600; font-size: 8.5px;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--paper); background: transparent;
+  border: 1.5px solid var(--paper); padding: 2px 7px;
+  transition: color var(--t-mark) var(--ease-guide), background var(--t-mark) var(--ease-guide);
+}
+.traj-page .mi-unpin:hover { color: var(--ink); background: var(--paper); }
+.traj-page .mi-unpin:focus-visible { outline: 2px solid var(--paper); outline-offset: 2px; }
+
 .traj-page .mi-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .traj-page .mi-scroll::-webkit-scrollbar { width: 8px; }
 .traj-page .mi-scroll::-webkit-scrollbar-track { background: var(--paper-3); }
@@ -215,7 +259,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .traj-page .mi-sec, .traj-page .mi-chg, .traj-page .mi-r-call { animation: none; clip-path: none; opacity: 1; }
-  .traj-page .mi-sc, .traj-page .mi-life-t, .traj-page .mi-ctx { transition: none; }
+  .traj-page .mi-sc, .traj-page .mi-life-t, .traj-page .mi-ctx, .traj-page .mi-unpin { transition: none; }
 }
 
 /* ── 1440×900: the column narrows; keep the text readable, drop the panel height

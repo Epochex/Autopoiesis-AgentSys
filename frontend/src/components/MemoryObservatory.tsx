@@ -4,7 +4,7 @@
  * three presentational panels. Every value shown downstream is serialized from
  * the real kernel run (core/evolve/observatory.py); nothing is synthesized here.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MemEvent, MemRecall, Observatory } from '../types'
 import { MemoryGraph } from './MemoryGraph'
 import { MemoryInspector } from './MemoryInspector'
@@ -24,6 +24,14 @@ export interface ObsByPass {
 /** One real event per tick: 257 events ≈ 15s, the length of a demo beat. */
 const TICK_MS = 60
 
+/** Read at mount, not subscribed to: playback intent is a decision taken once,
+ *  when the viewer arrives. Flipping a running replay because the OS setting
+ *  changed mid-demo would be a bigger surprise than not reacting to it. */
+const reducedMotion = () =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
 export function MemoryObservatory({
   obs,
   byPass,
@@ -34,21 +42,65 @@ export function MemoryObservatory({
   zh: boolean
 }) {
   const last = obs.events.length - 1
-  const [cursor, setCursor] = useState(0)
-  const [playing, setPlaying] = useState(true)
+  const rootRef = useRef<HTMLElement | null>(null)
+  // Under reduced motion the replay never runs on its own, so opening on cursor 0
+  // would park the viewer on an empty store with no indication it fills in. Open
+  // on the settled end state instead and let them scrub back.
+  const [reduced] = useState(reducedMotion)
+  const [cursor, setCursor] = useState(() => (reducedMotion() ? Math.max(0, last) : 0))
+  const [playing, setPlaying] = useState(!reduced)
+  /* No IntersectionObserver (jsdom, ancient engines) ⇒ no visibility signal to
+   * gate on, so fall back to the old always-on behaviour rather than to a replay
+   * that can never start. */
+  const [onScreen, setOnScreen] = useState(() => typeof IntersectionObserver !== 'function')
   const [pinned, setPinned] = useState<string | null>(null)
+
+  /* The replay is the argument this screen makes, and it only makes it if the
+   * viewer watches memory fill from empty. Mounting is not watching: the
+   * observatory leads a scrollable page, and at 60ms/event a mount-time start
+   * had burned ~27 real events before the page even settled. Gate on visibility
+   * — start on entry, hold on exit, keep the viewer's own play/pause intent. */
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el || typeof IntersectionObserver !== 'function') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          /* Ratio alone is not a safe test: the observatory is sized against the
+           * viewport, so on a short screen it can be taller than the screen and
+           * then "half of it" is never on screen at once. Half a screenful of
+           * observatory counts too. */
+          const vh = window.innerHeight || 1
+          setOnScreen(e.intersectionRatio >= 0.5 || e.intersectionRect.height >= vh * 0.5)
+        }
+      },
+      { threshold: [0, 0.25, 0.5, 0.75, 1] },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
 
   // Playback runs out at the last real event rather than looping — a demo that
   // never settles reads as a screensaver instead of a result. `atEnd` is derived
   // so the run-out needs no state write from inside the effect.
   const atEnd = cursor >= last
-  const running = playing && !atEnd
+  const running = playing && onScreen && !atEnd
 
   useEffect(() => {
     if (!running) return
     const id = window.setTimeout(() => setCursor((c) => Math.min(last, c + 1)), TICK_MS)
     return () => window.clearTimeout(id)
   }, [running, cursor, last])
+
+  /* Esc releases the pin. The inspector carries a real button too — this is the
+   * shortcut for it, not the only way out. */
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setPinned(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const scrub = (seq: number) => {
     setPlaying(false)
@@ -111,8 +163,20 @@ export function MemoryObservatory({
     [obs.events],
   )
 
+  /* The thesis line. Both counts are the real array lengths — the sentence is
+   * built from the data it describes, so it cannot drift away from it. Every op
+   * it names actually fires on this run (ADD 18 · INSIGHT 1 · REINFORCE 235 ·
+   * INSIGHT_REFRESH 22 · LINK 8); the ones that never fire are not mentioned. */
+  const thesis = zh
+    ? `回放一次真实内核运行：记忆从空开始，${obs.records.length} 条记录经 ${obs.events.length} 次生命周期事件写入 → 加固 → 抽象为洞察`
+    : `ONE REAL KERNEL RUN, REPLAYED FROM EMPTY MEMORY — ${obs.records.length} RECORDS WRITTEN, REINFORCED AND ABSTRACTED ACROSS ${obs.events.length} LIFECYCLE EVENTS`
+
   return (
-    <section className="mo" aria-label={zh ? '记忆观测舱' : 'Memory observatory'}>
+    <section className="mo" ref={rootRef} aria-label={zh ? '记忆观测舱' : 'Memory observatory'}>
+      <header className="mo-head">
+        <span className="mo-head-t">{zh ? '记忆观测舱' : 'MEMORY OBSERVATORY'}</span>
+        <p className="mo-head-s">{thesis}</p>
+      </header>
       <div className="mo-body">
         <div className="mo-space">
           <MemoryGraph
@@ -121,6 +185,7 @@ export function MemoryObservatory({
             touchedIds={touchedIds}
             recall={currentRecall}
             selectedId={selectedId}
+            pinnedId={pinned}
             onSelect={(id: string | null) => setPinned((p) => (p === id ? null : id))}
             zh={zh}
           />
@@ -132,6 +197,8 @@ export function MemoryObservatory({
             cursorSeq={cursor}
             recall={currentRecall}
             capabilities={obs.capabilities}
+            pinned={pinned !== null}
+            onUnpin={() => setPinned(null)}
             zh={zh}
           />
           <RouteRuler decisions={decisions} zh={zh} />

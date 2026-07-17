@@ -94,6 +94,15 @@ const L: Record<string, [string, string]> = {
 
   ledger: ['该条目的全部事件', 'EVENT LEDGER FOR THIS RECORD'],
   quar: ['已隔离', 'QUARANTINED'],
+
+  /* ── which record this panel is showing, and why. The two modes were
+        previously distinguishable only by "the panel stopped changing", which
+        only reads as a mode to someone who already knew there was one. ── */
+  followT: ['跟随游标', 'FOLLOWING CURSOR'],
+  followH: ['点击任一记忆卡片可锁定', 'CLICK ANY MEMORY CARD TO PIN IT HERE'],
+  pinT: ['已锁定', 'PINNED'],
+  pinH: ['游标继续走 · 此面板停在', 'CURSOR KEEPS RUNNING · PANEL HELD ON'],
+  release: ['解除 ESC', 'RELEASE ESC'],
 }
 const t = (k: string, zh: boolean) => L[k][zh ? 0 : 1]
 
@@ -223,14 +232,38 @@ function ChangePanel({
   )
 }
 
+/* ── mode strip · WHICH record, WHY this one, HOW to get out ──────────────────
+   Sits between the masthead and the scroller so it is on screen at every scroll
+   position: it is the answer to "is this thing following the replay or not",
+   and that question can be asked at any moment.
+   Structure, not accent, carries the state — --acid is spoken for (changed at
+   this step), and a pin is not a change. Pinned inverts to a solid ink bar;
+   following is a dashed outline. Neither is colour-only: both are labelled. */
+function ModeStrip({ pinned, id, onUnpin, zh }: { pinned: boolean; id: string | null; onUnpin: () => void; zh: boolean }) {
+  return (
+    <div className={pinned ? 'mi-mode pinned' : 'mi-mode'} aria-live="polite">
+      <span className="mi-mode-t">{t(pinned ? 'pinT' : 'followT', zh)}</span>
+      <span className="mi-mode-h">{t(pinned ? 'pinH' : 'followH', zh)}</span>
+      {pinned && id && <span className="mi-mode-id" title={id}>{id}</span>}
+      {pinned && (
+        <button type="button" className="mi-unpin" onClick={onUnpin}>
+          {t('release', zh)}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function MemoryInspector({
-  record, events, cursorSeq, recall, capabilities, zh,
+  record, events, cursorSeq, recall, capabilities, pinned, onUnpin, zh,
 }: {
   record: MemRecord | null
   events: MemEvent[]
   cursorSeq: number
   recall: MemRecall | null
   capabilities: MemCapabilities
+  pinned: boolean
+  onUnpin: () => void
   zh: boolean
 }) {
   if (!record) {
@@ -239,6 +272,7 @@ export function MemoryInspector({
         <header className="mi-mast">
           <span className="mi-kick">{t('kick', zh)}</span>
         </header>
+        <ModeStrip pinned={false} id={null} onUnpin={onUnpin} zh={zh} />
         <div className="mi-empty">
           <span className="mi-empty-t">{t('emptyT', zh)}</span>
           <p className="mi-empty-b">{t('emptyB', zh)}</p>
@@ -278,6 +312,7 @@ export function MemoryInspector({
         <span className="mi-kick">{t('kick', zh)}</span>
         <span className="mi-real">{t('real', zh)}</span>
       </header>
+      <ModeStrip pinned={pinned} id={id} onUnpin={onUnpin} zh={zh} />
 
       <div className="mi-scroll">
         {/* ── identity ─────────────────────────────────────────────────────── */}
