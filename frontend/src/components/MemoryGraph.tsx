@@ -60,8 +60,11 @@ const HEAD_H = 44 /* column-header row */
 
 /* Band label, op badge and link approach lanes all live in this strip. It has to
    clear the label's baseline plus the badge that hangs at node.y - 12, or the
-   leftmost node's badge prints straight through the band title. */
-const BAND_HEAD = 38
+   leftmost node's badge prints straight through the band title.
+   Measured, not guessed: at 24 the col-0 badge overlaps the label ink by 2px in
+   both languages (episodic + procedural bands); 27 is the exact touch point, so
+   30 buys a 3px gap. Every +1 here costs 1px on each band — keep it tight. */
+const BAND_HEAD = 30
 const ROW_HEAD = 14 /* approach lanes for sub-rows       */
 const LANE_STEP = 4
 const ROW_LANES = 4 /* 0..2 recall · 3 associative       */
@@ -155,7 +158,6 @@ interface NodeGeom {
   rec: MemRecord
   col: number /* -1 = family row, spans the plot */
   row: RowGeom
-  rowIdx: number
   x: number
   y: number
   w: number
@@ -178,8 +180,6 @@ interface EdgeGeom {
   kind: 'prov' | 'assoc'
   d: string
 }
-
-const opLabel = (op: MemOp) => op
 
 export function MemoryGraph(props: {
   records: MemRecord[]
@@ -238,7 +238,7 @@ export function MemoryGraph(props: {
         }
         band.rows.push(row)
 
-        rs.forEach((rec, rowIdx) => {
+        for (const rec of rs) {
           const h = hOf(rec.importance)
           let x: number
           let col: number
@@ -265,7 +265,6 @@ export function MemoryGraph(props: {
             rec,
             col,
             row,
-            rowIdx,
             x,
             y: nodesTop,
             w: boxW,
@@ -278,7 +277,7 @@ export function MemoryGraph(props: {
           }
           nodes.push(n)
           byId.set(rec.memory_id, n)
-        })
+        }
 
         y = row.laneBase + ROW_LANES * LANE_STEP
         if (tier === 'semantic' && kind === 'family') {
@@ -295,7 +294,7 @@ export function MemoryGraph(props: {
     const vbH = Math.round(footTop + FOOT_H)
     const railBottom = bands[bands.length - 1].bottom
 
-    return { cols, colW, boxW, boxDx, colX, colCx, riserX, assocX, bands, nodes, byId, spineY, footTop, vbH, railBottom }
+    return { cols, colW, colX, riserX, assocX, bands, nodes, byId, spineY, footTop, vbH, railBottom }
   }, [records])
 
   /* ── 2 · state at the cursor, derived from the supplied event window ─────── */
@@ -663,9 +662,9 @@ export function MemoryGraph(props: {
                   <>
                     {op && (
                       <g className="mg-op">
-                        <rect x={n.x} y={n.y - 12} width={opLabel(op).length * advOf(7.5, LS_OP) + 10} height={11} className="mg-op-bg" />
+                        <rect x={n.x} y={n.y - 12} width={op.length * advOf(7.5, LS_OP) + 10} height={11} className="mg-op-bg" />
                         <text x={n.x + 5} y={n.y - 3.5} className="mg-op-t">
-                          {opLabel(op)}
+                          {op}
                         </text>
                       </g>
                     )}
