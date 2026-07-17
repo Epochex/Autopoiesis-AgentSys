@@ -115,12 +115,48 @@ async function run() {
 
         await page.goto(URL_BASE, { waitUntil: 'networkidle' })
 
-        const langBtn = page.locator('header button, nav button')
-          .filter({ hasText: lang === 'zh' ? /^中$/ : /^EN$/ })
-        if (await langBtn.count()) await langBtn.first().click()
+        /* Same attach race as the nav below: retry until the nav actually speaks
+         * the language we asked for, rather than silently grading zh as en. */
+        const wantNav = VIEWS[view][lang === 'zh' ? 0 : 1]
+        for (let i = 0; i < 8; i++) {
+          if (await page.locator('nav button, header button').filter({ hasText: wantNav }).count()) break
+          const langBtn = page.locator('header button, nav button')
+            .filter({ hasText: lang === 'zh' ? /^中$/ : /^EN$/ })
+          if (await langBtn.count()) await langBtn.first().click().catch(() => {})
+          await page.waitForTimeout(250)
+        }
 
-        const nav = page.locator('nav button, header button').filter({ hasText: VIEWS[view][lang === 'zh' ? 0 : 1] })
-        if (await nav.count()) await nav.first().click()
+        /* Click, then PROVE the view actually switched.
+         *
+         * The nav button exists in the DOM before React attaches its handler, so
+         * on a cold context the click can land on nothing. The run then measures
+         * whichever view was already mounted while reporting the one it was asked
+         * for — a green tick for a page it never looked at. Retry until the stage
+         * says so, and fail loudly rather than grade the wrong page. */
+        const want = VIEWS[view][lang === 'zh' ? 0 : 1]
+        const onView = async () =>
+          (await page.getAttribute('.stage', 'data-view')) === view
+        let switched = await onView()
+        for (let i = 0; i < 8 && !switched; i++) {
+          const nav = page.locator('nav button, header button').filter({ hasText: want })
+          if (await nav.count()) await nav.first().click().catch(() => {})
+          try {
+            await page.waitForFunction(
+              (v) => document.querySelector('.stage')?.getAttribute('data-view') === v,
+              view,
+              { timeout: 1500 },
+            )
+            switched = true
+          } catch { /* handler not attached yet — click again */ }
+        }
+        if (!switched) {
+          const actual = await page.getAttribute('.stage', 'data-view')
+          lines.push(`\n=== ${tag} ✗ HARNESS`)
+          lines.push(`    could not switch to '${view}' — stage is on '${actual}'. NOT GRADED.`)
+          fails += 1
+          await ctx.close()
+          continue
+        }
         await page.waitForTimeout(SETTLE)
 
         /* --- overflow --- */
