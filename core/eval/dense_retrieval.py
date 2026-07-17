@@ -32,6 +32,17 @@ No-leakage: the dense query/document texts are rendered from exactly the same
 operator-observable fields the lexical retrievers use (IODA: locations, ASNs,
 outage type/cause, datasources, time is NOT given to dense; evidence doc text =
 the same non-identifying ``_evidence_doc_text``). Dense sees no id, no label field.
+
+HONESTY — the IODA "structured beats dense" number is a LABEL ARTIFACT, and the
+report says so. The IODA relevance labels (``candidate_event_id``) were DEFINED by a
+per-event entity+time-window pull, and the ``structured`` retriever scores documents by
+that same entity+time key — it reconstructs the label-defining key, so its lead is
+circular, not a retrieval win. ``run_ioda_dense_comparison`` therefore surfaces a FAIR,
+text-only comparison BY DEFAULT (naive / bm25 / dense-* / structured_no_time / rrf-fair,
+all with the time window withheld) and keeps ``structured`` / ``rrf`` / ``rrf+dense``
+only as a clearly-labelled diagnostic upper bound. On the fair comparison dense does
+NOT beat BM25 on this pool (the evidence docs carry almost no free-text signal) — that
+is reported as measured, not hidden.
 """
 from __future__ import annotations
 
@@ -295,6 +306,29 @@ def _ioda_query_text(event: dict) -> str:
     return " ".join(p for p in parts if p).strip() or (otype or "network outage")
 
 
+# The FAIR comparison: every method sees ONLY operator-observable text/entities that
+# carry no label information. ``structured_no_time`` is the typed entity retriever with
+# the time axis removed, so it is a legitimate text/metadata baseline. ``rrf-fair`` fuses
+# only fair routes (bm25 + structured_no_time + dense).
+_IODA_FAIR_METHODS = ["naive", "bm25", "dense-flat", "dense-hnsw", "dense-binary",
+                      "structured_no_time", "rrf-fair"]
+# The LABEL-KEY UPPER BOUND: a DIAGNOSTIC, not a fair baseline. See ``_IODA_UPPER_BOUND_NOTE``.
+_IODA_UPPER_BOUND_METHODS = ["structured", "rrf", "rrf+dense"]
+_IODA_FAIR_NOTE = (
+    "FAIR, text-only comparison (NO time window). Apples-to-apples: every method sees "
+    "only operator-observable text/entities (country/ASN/outage words/source hints) that "
+    "carry no label information. These are the honest retrieval numbers."
+)
+_IODA_UPPER_BOUND_NOTE = (
+    "DIAGNOSTIC — NOT a fair retrieval baseline. The relevance labels "
+    "(candidate_event_id) were DEFINED by a per-event entity+time-window pull, and "
+    "'structured' scores documents by that exact same entity+time key: it reconstructs "
+    "the label-defining key. 'rrf'/'rrf+dense' fuse 'structured' in and inherit the leak, "
+    "and the time window is deliberately withheld from every fair method. Read these as an "
+    "UPPER BOUND on what the join key can recover — never as a retrieval win over dense/BM25."
+)
+
+
 def run_ioda_dense_comparison(
     *,
     max_events: int | None = None,
@@ -304,11 +338,19 @@ def run_ioda_dense_comparison(
     include_hnsw: bool = True,
     path=None,
 ) -> dict:
-    """Add dense-flat / dense-HNSW / dense-binary / RRF(+dense) rows to the IODA eval.
+    """Compare dense vs sparse retrieval on the real IODA v2 pool — FAIR by default.
 
     Reuses ``core.eval.ioda_retrieval`` end-to-end: same corpus, same non-leaking doc
-    text, same typed structured retriever, same ground truth. Dense sees only the
-    operator-observable query text (no time window).
+    text, same typed retrievers, same ground truth. Dense sees only the operator-
+    observable query text (no time window).
+
+    The DEFAULT surfaced result is the FAIR, text-only comparison (``fair_methods``):
+    naive / bm25 / dense-{flat,hnsw,binary} / structured_no_time / rrf-fair — every one
+    of which sees only label-free text/entities. The time-using retrievers
+    (``upper_bound_methods``: structured / rrf / rrf+dense) are KEPT but relabelled as a
+    diagnostic upper bound, because the relevance labels are DEFINED by the same
+    entity+time key the structured retriever scores on (see ``_IODA_UPPER_BOUND_NOTE``):
+    a circular, label-reconstructing number, not a fair baseline.
     """
     from core.memory.rrf import rrf_fuse
     from core.eval import ioda_retrieval as R
@@ -324,7 +366,7 @@ def run_ioda_dense_comparison(
     event_ids = [e["event_id"] for e in events]
 
     relevant = R._relevant_sets(path)
-    sparse = R.build_retrievers("base", path)              # naive / bm25 / structured / rrf / structured_no_time
+    sparse = R.build_retrievers("base", path)              # naive / bm25 / structured / structured_no_time / rrf
     queries = R.build_queries("base", path, max_events)    # aligned with events
 
     k_max = max(k_values)
@@ -342,34 +384,43 @@ def run_ioda_dense_comparison(
     dense_hnsw_res = idx_hnsw.search_texts(query_texts, k_max, model_name=model_name) if idx_hnsw else None
     dense_bin_res = idx_binary.search_texts(query_texts, k_max, model_name=model_name) if idx_binary else None
 
-    methods = ["naive", "bm25", "dense-flat"]
-    if include_hnsw:
-        methods.append("dense-hnsw")
-    if include_binary:
-        methods.append("dense-binary")
-    methods += ["structured", "rrf", "rrf+dense"]
+    # split fair vs upper-bound, honouring include_* toggles
+    fair_methods = [m for m in _IODA_FAIR_METHODS
+                    if not (m == "dense-hnsw" and not include_hnsw)
+                    and not (m == "dense-binary" and not include_binary)]
+    methods = fair_methods + _IODA_UPPER_BOUND_METHODS
 
     acc: dict[str, dict[int, list[dict]]] = {m: {k: [] for k in k_values} for m in methods}
 
     for i, (q, ev_id) in enumerate(zip(queries, event_ids)):
         rel = relevant.get(ev_id, set())
         ranked: dict[str, list[str]] = {
+            # ── fair (text-only, no time) ──
             "naive": sparse["naive"](q, k_max),
             "bm25": sparse["bm25"](q, k_max),
+            "structured_no_time": sparse["structured_no_time"](q, k_max),
+            "dense-flat": [d for d, _ in dense_flat_res[i]],
+            # ── label-key upper bound (uses the time window that DEFINES the labels) ──
             "structured": sparse["structured"](q, k_max),
             "rrf": sparse["rrf"](q, k_max),
-            "dense-flat": [d for d, _ in dense_flat_res[i]],
         }
         if dense_hnsw_res is not None:
             ranked["dense-hnsw"] = [d for d, _ in dense_hnsw_res[i]]
         if dense_bin_res is not None:
             ranked["dense-binary"] = [d for d, _ in dense_bin_res[i]]
-        # RRF(bm25 + structured + dense-flat) — does adding a dense route to the fusion help?
+        # fair fusion: RRF over fair routes only (bm25 + structured_no_time + dense-flat).
+        ranked["rrf-fair"] = rrf_fuse(
+            [ranked["bm25"], ranked["structured_no_time"], ranked["dense-flat"]], k_max
+        )
+        # upper-bound fusion: adds a dense route to the time-leaking structured retriever.
         ranked["rrf+dense"] = rrf_fuse([ranked["bm25"], ranked["structured"], ranked["dense-flat"]], k_max)
         for m in methods:
             for k in k_values:
                 acc[m][k].append(score_ranking(ranked[m], rel, k))
 
+    hk = 10 if 10 in k_values else k_max
+    fair_headline = {m: round(sum(r["recall_at_k"] for r in acc[m][hk]) / len(acc[m][hk]), 3)
+                     for m in fair_methods} if acc[fair_methods[0]][hk] else {}
     out: dict = {
         "dataset_kind": "real-ioda-v2-three-source",
         "model": model_name,
@@ -377,6 +428,11 @@ def run_ioda_dense_comparison(
         "n_corpus_docs": len(doc_ids),
         "k_values": list(k_values),
         "embed_seconds_flat": embed_secs,
+        "fair_note": _IODA_FAIR_NOTE,
+        "fair_methods": fair_methods,
+        "upper_bound_note": _IODA_UPPER_BOUND_NOTE,
+        "upper_bound_methods": list(_IODA_UPPER_BOUND_METHODS),
+        "fair_headline_recall_at_{}".format(hk): fair_headline,
         "methods": {m: {k: _macro(acc[m][k]) for k in k_values} for m in methods},
     }
     if include_binary:
@@ -503,17 +559,50 @@ def _fmt_row(name: str, by_k: dict, ks: list[int], metric: str) -> str:
     return name.ljust(14) + "".join(f"{by_k[k][metric]:.3f}".rjust(9) for k in ks)
 
 
+def _wrap(text: str, width: int = 76, indent: str = "  ") -> str:
+    import textwrap
+
+    return "\n".join(textwrap.wrap(text, width=width, initial_indent=indent, subsequent_indent=indent))
+
+
+def _print_ioda_group(res: dict, method_names: list[str], ks: list[int]) -> None:
+    for metric, label in (("recall_at_k", "recall@k"), ("ndcg_at_k", "nDCG@k"), ("precision_at_k", "precision@k")):
+        print(f"\n{label}:")
+        print("method".ljust(20) + "".join(f"@{k}".rjust(9) for k in ks))
+        print("-" * (20 + 9 * len(ks)))
+        for m in method_names:
+            print(m.ljust(20) + "".join(f"{res['methods'][m][k][metric]:.3f}".rjust(9) for k in ks))
+
+
 def _print_ioda(res: dict) -> None:
     ks = res["k_values"]
+    fair = res.get("fair_methods") or list(res["methods"])
+    upper = res.get("upper_bound_methods") or []
     print("=" * 78)
     print(f"IODA v2 three-source pool — {res['n_corpus_docs']} docs / {res['n_queries']} events "
           f"(model={res['model']}, embed {res['embed_seconds_flat']}s)")
-    for metric, label in (("recall_at_k", "recall@k"), ("ndcg_at_k", "nDCG@k"), ("precision_at_k", "precision@k")):
-        print(f"\n{label}:")
-        print("method".ljust(14) + "".join(f"@{k}".rjust(9) for k in ks))
-        print("-" * (14 + 9 * len(ks)))
-        for m in res["methods"]:
-            print(_fmt_row(m, res["methods"][m], ks, metric))
+
+    print("\n" + "#" * 78)
+    print("# FAIR COMPARISON (text-only, NO time window) — the honest retrieval numbers")
+    print("#" * 78)
+    if "fair_note" in res:
+        print(_wrap(res["fair_note"]))
+    _print_ioda_group(res, fair, ks)
+    hk = 10 if 10 in ks else ks[-1]
+    hkey = f"fair_headline_recall_at_{hk}"
+    if res.get(hkey):
+        order = sorted(res[hkey].items(), key=lambda kv: kv[1])
+        print(f"\nfair headline (recall@{hk}, worst→best): "
+              + "  ".join(f"{m} {v:.3f}" for m, v in order))
+
+    if upper:
+        print("\n" + "#" * 78)
+        print("# LABEL-KEY UPPER BOUND (diagnostic — NOT a fair baseline)")
+        print("#" * 78)
+        if "upper_bound_note" in res:
+            print(_wrap(res["upper_bound_note"]))
+        _print_ioda_group(res, upper, ks)
+
     if "memory" in res:
         mem = res["memory"]
         print(f"\nindex memory ({mem['n_docs']} docs x {mem['dim']}-dim):")

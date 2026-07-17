@@ -26,6 +26,17 @@ dense = [
   "faiss-cpu>=1.7",
   "torch>=2.0",
 ]
+# OPTIONAL, eval-only. Powers ONLY the cross-encoder reranker BASELINE in
+# core.eval.reranker (two-stage retrieval eval: BM25/dense first stage + CrossEncoder
+# rerank). Like `dense`, it is never imported from the online RCA path or the default
+# (non-dense) test path; new tests importorskip it. The CrossEncoder ships with
+# sentence-transformers, so this reuses that dep; torch is its runtime. The public
+# BEIR SciFact benchmark it evaluates on is downloaded with the stdlib (no extra pkg).
+#   pip install sentence-transformers torch     # (already present in .venv-dense)
+rerank = [
+  "sentence-transformers>=2.2",
+  "torch>=2.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests_py"]
