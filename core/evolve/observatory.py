@@ -76,6 +76,44 @@ def added(before: dict[str, Any] | None, after: dict[str, Any] | None, key: str)
     return [x for x in after.get(key, []) if x not in seen]
 
 
+def emit(
+    recorder: list[dict] | None,
+    op: str,
+    memory_id: str,
+    tier: str | None,
+    *,
+    similarity: float | None = None,
+    target_id: str | None = None,
+    before: dict[str, Any] | None = None,
+    after: dict[str, Any] | None = None,
+    source_memory_ids: list[str] | None = None,
+) -> None:
+    """Append one lifecycle op to an optional observability recorder.
+
+    Purely a side-channel: when `recorder` is None (the kernel's own callers) this is
+    a no-op, and it never influences the decision it is describing. `similarity` is
+    the REAL RouteDecision score where a route ran, and None where no routing
+    happened — it is never invented for paths route() never touched.
+
+    Lives here rather than in consolidate.py because the mutation sites span both
+    consolidate.py and memory_ops.py, and memory_ops must not import consolidate.
+    """
+    if recorder is None:
+        return
+    recorder.append({
+        "op": op,
+        "memory_id": memory_id,
+        "tier": tier,
+        "similarity": similarity,
+        "target_id": target_id,
+        "before": before,
+        "after": after,
+        "added_tags": added(before, after, "tags"),
+        "added_assets": added(before, after, "asset_ids"),
+        "source_memory_ids": list(source_memory_ids or []),
+    })
+
+
 def quarantine_reason(record: MemoryRecord) -> str | None:
     """The reason a record was quarantined, parsed from its ``quarantine:<reason>`` tag."""
     if not record.quarantined:

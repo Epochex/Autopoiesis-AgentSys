@@ -20,7 +20,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from core.evolve.memory_ops import apply_route, link_related, reflect, route
-from core.evolve.observatory import added as _added
+from core.evolve.observatory import emit as _emit
 from core.evolve.observatory import snapshot as _snap
 from core.memory.store import MemoryRecord, TieredMemoryStore
 from core.skills.registry import SkillRegistry
@@ -58,40 +58,6 @@ def _first(events: list[TraceEvent], kind: str) -> TraceEvent | None:
         if event.kind == kind:
             return event
     return None
-
-
-def _emit(
-    recorder: list[dict] | None,
-    op: str,
-    memory_id: str,
-    tier: str | None,
-    *,
-    similarity: float | None = None,
-    target_id: str | None = None,
-    before: dict | None = None,
-    after: dict | None = None,
-    source_memory_ids: list[str] | None = None,
-) -> None:
-    """Append one lifecycle op to an optional observability recorder.
-
-    Purely a side-channel: when `recorder` is None (every existing caller) this is a
-    no-op, and it never influences the decision it is describing. `similarity` is the
-    REAL RouteDecision score where a route ran, and None where no routing happened.
-    """
-    if recorder is None:
-        return
-    recorder.append({
-        "op": op,
-        "memory_id": memory_id,
-        "tier": tier,
-        "similarity": similarity,
-        "target_id": target_id,
-        "before": before,
-        "after": after,
-        "added_tags": _added(before, after, "tags"),
-        "added_assets": _added(before, after, "asset_ids"),
-        "source_memory_ids": list(source_memory_ids or []),
-    })
 
 
 def consolidate_run(
@@ -181,10 +147,9 @@ def consolidate_run(
             )
             if decision.op == "ADD":
                 report.added.append(held_id)
-                linked = link_related(memory, epi)
+                # link_related emits its own LINK ops (both sides, with snapshots).
+                linked = link_related(memory, epi, recorder=recorder)
                 report.linked.extend(linked)
-                for neighbour_id in linked:
-                    _emit(recorder, "LINK", held_id, epi.tier, target_id=neighbour_id)
             elif decision.op == "UPDATE":
                 report.updated.append(held_id)
             else:
@@ -277,7 +242,10 @@ def consolidate_run(
 
     # Generative-Agents reflection: once a family has matured, abstract it into a
     # higher-level insight that links its members (idempotent; safe to call each run).
-    report.insights = reflect(memory)
+    # reflect() returns only NEWLY created insights, so the refresh of an existing
+    # insight (which re-derives its importance every pass) is invisible from out here
+    # — it emits its own INSIGHT_REFRESH op at the mutation site instead.
+    report.insights = reflect(memory, recorder=recorder)
     for insight_id in report.insights:
         insight = memory.get(insight_id)
         if insight is not None:

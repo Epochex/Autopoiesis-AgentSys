@@ -25,6 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
+from core.evolve.observatory import emit as _emit
+from core.evolve.observatory import snapshot as _snap
 from core.memory.store import MemoryRecord, TieredMemoryStore
 
 _SKIP_PREFIX = ("skill:", "quarantine:", "root:")
@@ -34,6 +36,26 @@ _SIM_TAG_WEIGHT = 0.6
 _SIM_ASSET_WEIGHT = 0.4
 
 RouteOp = Literal["ADD", "UPDATE", "NOOP"]
+
+
+def _emit_change(
+    recorder: list[dict] | None,
+    op: str,
+    record: MemoryRecord,
+    before: dict[str, object],
+    **kw: object,
+) -> None:
+    """Record a mutation only if it actually mutated something.
+
+    reflect() runs over every mature family on every pass and link_related re-walks
+    neighbours, so both routinely re-apply a value that is already current. An op
+    whose before == after changed nothing, so there is nothing to observe — emitting
+    it anyway would pad the stream with events that explain no state change.
+    """
+    after = _snap(record)
+    if after == before:
+        return
+    _emit(recorder, op, record.memory_id, record.tier, before=before, after=after, **kw)
 
 
 def _tagset(tags: Iterable[str]) -> set[str]:
@@ -105,9 +127,21 @@ def apply_route(memory: TieredMemoryStore, candidate: MemoryRecord, decision: Ro
     return target.memory_id
 
 
-def link_related(memory: TieredMemoryStore, record: MemoryRecord, *, k: int = 3, thresh: float = 0.34) -> list[str]:
+def link_related(
+    memory: TieredMemoryStore,
+    record: MemoryRecord,
+    *,
+    k: int = 3,
+    thresh: float = 0.34,
+    recorder: list[dict] | None = None,
+) -> list[str]:
     """A-MEM: connect a memory bidirectionally to its k most similar neighbours, so
-    recall can traverse family links from a weak hit to a strong one."""
+    recall can traverse family links from a weak hit to a strong one.
+
+    `recorder` is write-only observability (see observatory.emit): the link is
+    bidirectional, so BOTH sides are mutated and both therefore get their own LINK
+    event with a genuine before/after. The neighbour's mutation used to be invisible.
+    """
     scored: list[tuple[float, MemoryRecord]] = []
     for rec in memory.active():
         if rec.memory_id == record.memory_id:
@@ -118,10 +152,14 @@ def link_related(memory: TieredMemoryStore, record: MemoryRecord, *, k: int = 3,
     scored.sort(key=lambda x: x[0], reverse=True)
     linked: list[str] = []
     for _, rec in scored[:k]:
+        before_self, before_other = _snap(record), _snap(rec)
         if rec.memory_id not in record.links:
             record.links.append(rec.memory_id)
         if record.memory_id not in rec.links:
             rec.links.append(record.memory_id)
+        # the A-MEM neighbour score IS real here, unlike the Mem0 route score.
+        _emit_change(recorder, "LINK", record, before_self, similarity=s, target_id=rec.memory_id)
+        _emit_change(recorder, "LINK", rec, before_other, similarity=s, target_id=record.memory_id)
         linked.append(rec.memory_id)
     return linked
 
@@ -131,12 +169,25 @@ def neighbours(memory: TieredMemoryStore, record: MemoryRecord) -> list[MemoryRe
     return [n for mid in record.links if (n := memory.get(mid)) is not None and not n.quarantined]
 
 
-def reflect(memory: TieredMemoryStore, *, importance_thresh: float = 3.0, min_members: int = 2) -> list[str]:
+def reflect(
+    memory: TieredMemoryStore,
+    *,
+    importance_thresh: float = 3.0,
+    min_members: int = 2,
+    recorder: list[dict] | None = None,
+) -> list[str]:
     """Generative-Agents reflection: when an incident family (grouped by primary
     asset) has accrued enough salience across >= min_members episodic incidents,
     synthesize a higher-level semantic *insight* that names the family, records its
     distinct root causes, and links its members. Idempotent per family; an existing
-    insight is refreshed instead of duplicated. Returns newly created insight ids."""
+    insight is refreshed instead of duplicated. Returns newly created insight ids.
+
+    `recorder` is write-only observability (see observatory.emit). The RETURN VALUE
+    only ever names *newly created* insights, so a caller watching it cannot see the
+    refresh branch below — which re-derives importance from the family's current
+    salience on EVERY pass. Those mutations are emitted here, at the mutation site,
+    as INSIGHT_REFRESH; recording them is what keeps the event stream reconcilable
+    with the final store."""
     families: dict[str, list[MemoryRecord]] = {}
     for rec in memory.active():
         if rec.tier == "episodic" and rec.asset_ids:
@@ -154,6 +205,7 @@ def reflect(memory: TieredMemoryStore, *, importance_thresh: float = 3.0, min_me
         roots = sorted({t[len("root:"):] for m in members for t in m.tags if t.startswith("root:")})
         member_ids = [m.memory_id for m in members]
         if existing is not None:                       # keep an existing insight current
+            before = _snap(existing)
             existing.strength = 1.0
             existing.importance = salience
             for mid in member_ids:
@@ -162,6 +214,12 @@ def reflect(memory: TieredMemoryStore, *, importance_thresh: float = 3.0, min_me
             for r in roots:
                 if r not in existing.tags:
                     existing.tags.append(r)
+            # NOT a REINFORCE: that op is a fixed += increment from a recall hit. This
+            # re-derives importance ABSOLUTELY from the family's salience, so it can
+            # move either way and routinely overwrites a REINFORCE increment. No
+            # route() ran on this dedupe-by-id path, so there is no similarity.
+            _emit_change(recorder, "INSIGHT_REFRESH", existing, before,
+                         source_memory_ids=list(member_ids))
             continue
         insight = MemoryRecord(
             memory_id=insight_id, tier="semantic",
@@ -173,7 +231,11 @@ def reflect(memory: TieredMemoryStore, *, importance_thresh: float = 3.0, min_me
         memory.add(insight)
         for m in members:
             if insight_id not in m.links:
+                before_m = _snap(m)
                 m.links.append(insight_id)
+                # the member is an EXISTING record being mutated by reflection; the
+                # INSIGHT event only describes the insight, so record this side too.
+                _emit_change(recorder, "LINK", m, before_m, target_id=insight_id)
         created.append(insight_id)
     return created
 

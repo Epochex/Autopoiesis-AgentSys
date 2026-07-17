@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import pytest
+
 from core.evolve import compare_cold_vs_warm, consolidate_run, run_evolving_stream
 from core.evolve.observatory import (
     CAPABILITIES,
@@ -159,6 +161,74 @@ def test_insight_reports_its_real_member_provenance():
     assert all(mem.get(m) is not None for m in members)  # real ids, resolvable in the store
 
 
+def test_reflection_refresh_of_an_existing_insight_is_recorded():
+    """reflect() re-derives a live insight's importance on EVERY pass, but returns only
+    NEWLY created ids — so this mutation used to reach the store with no event at all."""
+    mem = TieredMemoryStore()
+    for i, root in enumerate(("carrier_down", "link_flap")):
+        case = _Case(f"c{i}", f"{root} on r230", [root, "r230"], ["r230"])
+        ops = _consolidate(case, mem, root=root)
+    assert [o for o in ops if o["op"] == "INSIGHT"], "family matures on this pass"
+
+    # a third incident on the same asset grows the family: the r230 insight is
+    # refreshed (importance re-derived, new root tagged), NOT created a second time
+    case = _Case("c2", "power_loss on r230", ["power_loss", "r230"], ["r230"])
+    ops = _consolidate(case, mem, root="power_loss")
+    assert not [o for o in ops if o["op"] == "INSIGHT"], "no second insight for one family"
+
+    refresh = [o for o in ops if o["op"] == "INSIGHT_REFRESH"]
+    assert refresh, "the refresh branch of reflect() must emit its own op"
+    op = refresh[0]
+    assert op["memory_id"] == "insight-r230" and op["tier"] == "semantic"
+    assert op["similarity"] is None, "no route() ran on the dedupe-by-id path"
+    assert op["before"] != op["after"], "a refresh that changed nothing is not an event"
+    # the emitted 'after' is the record's REAL state, not a reconstruction
+    assert op["after"]["importance"] == mem.get("insight-r230").importance
+    assert op["source_memory_ids"], "the refreshed family's members are real provenance"
+
+
+def _last_after(events: list[dict]) -> dict[str, dict]:
+    """Per memory_id, the `after` of the highest-seq op that carries a snapshot."""
+    out: dict[str, dict] = {}
+    for e in sorted(events, key=lambda e: e["seq"]):
+        if e.get("after") is not None:
+            out[e["memory_id"]] = e["after"]
+    return out
+
+
+def test_every_records_last_event_reconciles_with_the_final_store():
+    """THE observatory invariant, over the real API run the UI consumes.
+
+    If the last recorded `after` for a record disagrees with that record's final
+    value, then some mutation reached the store without emitting an event — and a
+    cursor-scoped UI would contradict the record list. This failed for exactly one
+    record (insight-fortigate, importance 21.02 vs 50.9) before reflect()'s refresh
+    branch was recorded.
+    """
+    from frontend.gateway.app.rca_reader import load_evolution
+
+    payload = load_evolution(None, 4)
+    if not payload.get("ready"):
+        pytest.skip("no validated real held-out dataset present")
+    obs = payload["observatory"]
+    records = obs["records"]
+    assert records and obs["events"]
+
+    last = _last_after(obs["events"])
+    for record in records:
+        mid = record["memory_id"]
+        assert mid in last, f"{mid} reached the final store with no snapshot-bearing event"
+        after = last[mid]
+        for field_ in ("importance", "confidence"):
+            assert after[field_] == record[field_], (
+                f"{mid}.{field_}: last event says {after[field_]}, store says {record[field_]}"
+            )
+        for field_ in ("tags", "links"):
+            assert sorted(after[field_]) == sorted(record[field_]), (
+                f"{mid}.{field_}: last event says {after[field_]}, store says {record[field_]}"
+            )
+
+
 # ── the honesty contract ─────────────────────────────────────────────────────
 def test_snapshot_deep_copies_so_before_cannot_alias_after():
     rec = MemoryRecord(memory_id="m", tier="episodic", text="t", tags=["a"])
@@ -233,7 +303,9 @@ def test_evolution_events_are_ordered_and_attributed():
     ids = {c.id for c in cases}
     for e in events:
         assert e["case_id"] in ids and e["run_id"]      # every op traces to a real run
-        assert e["op"] in {"ADD", "UPDATE", "NOOP", "REINFORCE", "QUARANTINE", "INSIGHT", "LINK"}
+        assert e["op"] in {
+            "ADD", "UPDATE", "NOOP", "REINFORCE", "QUARANTINE", "INSIGHT", "INSIGHT_REFRESH", "LINK",
+        }
         if e["op"] == "REINFORCE":
             assert e["before"] != e["after"]            # a reinforcement that changed nothing is a bug
             assert e["similarity"] is None              # no route() ran — not invented
