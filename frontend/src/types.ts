@@ -196,8 +196,22 @@ export interface MeshNode {
 export type MemTier = 'episodic' | 'semantic' | 'procedural' | 'asset_profile'
 
 /** Ops the kernel can emit. UPDATE/NOOP/QUARANTINE are real code paths that do
- *  NOT fire on the R230 held-out set — render them only if they actually appear. */
-export type MemOp = 'ADD' | 'UPDATE' | 'NOOP' | 'REINFORCE' | 'QUARANTINE' | 'INSIGHT' | 'LINK'
+ *  NOT fire on the R230 held-out set — render them only if they actually appear.
+ *
+ *  INSIGHT_REFRESH is distinct from REINFORCE on purpose: REINFORCE is a fixed
+ *  `+=` increment from a recall hit, whereas reflection re-derives an insight's
+ *  importance ABSOLUTELY from family salience and routinely overwrites a
+ *  REINFORCE increment. Collapsing the two would misreport both the code path
+ *  and the arithmetic. */
+export type MemOp =
+  | 'ADD'
+  | 'UPDATE'
+  | 'NOOP'
+  | 'REINFORCE'
+  | 'QUARANTINE'
+  | 'INSIGHT'
+  | 'INSIGHT_REFRESH'
+  | 'LINK'
 
 export interface MemRecord {
   memory_id: string

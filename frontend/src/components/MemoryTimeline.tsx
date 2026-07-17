@@ -67,11 +67,15 @@ const OP_LABEL: Record<MemOp, [string, string]> = {
   REINFORCE: ['强化', 'REINFORCE'],
   QUARANTINE: ['隔离', 'QUARANTINE'],
   INSIGHT: ['洞见', 'INSIGHT'],
+  INSIGHT_REFRESH: ['洞见重算', 'REFLECT+'],
   LINK: ['连接', 'LINK'],
 }
 const opLabel = (op: MemOp, zh: boolean) => OP_LABEL[op]?.[zh ? 0 : 1] ?? op
-/** css modifier per op — dense ops are never marked individually */
-const opClass = (op: MemOp) => (op === 'REINFORCE' ? 'dense' : op.toLowerCase())
+/** css modifier per op — dense ops are never marked individually.
+ *  Underscores would not survive as a class modifier, so INSIGHT_REFRESH maps to
+ *  `refresh`; it is drawn as a hollow diamond against INSIGHT's solid one, since
+ *  it is the same reflection re-deriving itself, not a second kind of thing. */
+const opClass = (op: MemOp) => (op === 'REINFORCE' ? 'dense' : op === 'INSIGHT_REFRESH' ? 'refresh' : op.toLowerCase())
 const isRare = (op: MemOp) => op !== 'REINFORCE'
 const shortCase = (id: string) => id.replace(/^real_/, '')
 const pad = (n: number, w: number) => String(n).padStart(w, '0')

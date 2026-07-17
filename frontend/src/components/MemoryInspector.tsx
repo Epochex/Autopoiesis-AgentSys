@@ -52,6 +52,10 @@ const L: Record<string, [string, string]> = {
     '该条目在一次通过校验的运行中被召回并被引用 —— 这就是加固的全部依据。内核不记录任何“原因”字符串。',
     'The record was recalled and cited on a verified run — that is the whole basis. The kernel records no reason string.',
   ],
+  noteRefresh: [
+    '反思在每一轮对这个族重新求值：重要度不是累加，而是由家族显著度绝对重算得出，会覆盖掉召回带来的加固增量。这是与「强化」不同的代码路径，因此单独记录。',
+    'Reflection re-evaluates this family each pass: importance is not incremented, it is re-derived absolutely from family salience and overwrites the recall increment. A different code path from REINFORCE, so it is recorded as its own op.',
+  ],
   noteQuar: ['内核记录的隔离原因', 'Quarantine reason as recorded by the kernel'],
   addedT: ['新增标签', 'TAGS ADDED'],
   addedA: ['新增资产', 'ASSETS ADDED'],
@@ -201,7 +205,7 @@ function ChangePanel({
       {ev.op === 'LINK' && ev.target_id && (
         <Row k={t('edge', zh)}><i className="mi-chip id">{ev.target_id}</i></Row>
       )}
-      {ev.op === 'INSIGHT' && !!ev.source_memory_ids?.length && (
+      {(ev.op === 'INSIGHT' || ev.op === 'INSIGHT_REFRESH') && !!ev.source_memory_ids?.length && (
         <div className="mi-abs">
           <span className="mi-abs-h">
             {t('absFrom', zh)} <b>{ev.source_memory_ids.length}</b> {t('absN', zh)}
@@ -210,6 +214,7 @@ function ChangePanel({
         </div>
       )}
       {ev.op === 'REINFORCE' && <div className="mi-note">{t('noteReinf', zh)}</div>}
+      {ev.op === 'INSIGHT_REFRESH' && <div className="mi-note">{t('noteRefresh', zh)}</div>}
       {ev.op === 'QUARANTINE' && quarReason && (
         <Row k={t('noteQuar', zh)}><span className="mi-mono">{quarReason}</span></Row>
       )}

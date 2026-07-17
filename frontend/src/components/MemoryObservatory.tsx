@@ -98,9 +98,16 @@ export function MemoryObservatory({
     [obs.events, selectedId],
   )
 
-  /** The 6 real route() calls — the only events carrying a similarity score. */
+  /** The real route() calls — what the write-router ruler is about.
+   *
+   *  Filter by OP, not by `similarity !== null`. LINK now carries a genuine
+   *  similarity too (link_related computes its own A-MEM score), so keying off
+   *  the field alone drags associative links onto a ruler whose axis is the
+   *  ADD/UPDATE/NOOP gate they were never measured against. */
   const decisions = useMemo(
-    () => obs.events.filter((e) => e.similarity !== null),
+    () => obs.events.filter(
+      (e) => e.similarity !== null && (e.op === 'ADD' || e.op === 'UPDATE' || e.op === 'NOOP'),
+    ),
     [obs.events],
   )
 

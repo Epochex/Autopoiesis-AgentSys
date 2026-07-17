@@ -145,6 +145,10 @@ const rootOf = (r: MemRecord): string | null => {
  * product, which abstracts across root families rather than sitting inside one. */
 const isFamily = (r: MemRecord) => r.tier === 'semantic' && rootOf(r) === null
 
+/* Badge text = the raw op, except the one that cannot fit: INSIGHT_REFRESH is 15
+ * chars against a badge sized for REINFORCE, and nodes go as narrow as 60px. */
+const opBadge = (op: MemOp) => (op === 'INSIGHT_REFRESH' ? 'REFLECT+' : op)
+
 /* ── layout types ─────────────────────────────────────────────────────────── */
 interface RowGeom {
   tier: MemTier
@@ -662,9 +666,9 @@ export function MemoryGraph(props: {
                   <>
                     {op && (
                       <g className="mg-op">
-                        <rect x={n.x} y={n.y - 12} width={op.length * advOf(7.5, LS_OP) + 10} height={11} className="mg-op-bg" />
+                        <rect x={n.x} y={n.y - 12} width={opBadge(op).length * advOf(7.5, LS_OP) + 10} height={11} className="mg-op-bg" />
                         <text x={n.x + 5} y={n.y - 3.5} className="mg-op-t">
-                          {op}
+                          {opBadge(op)}
                         </text>
                       </g>
                     )}
