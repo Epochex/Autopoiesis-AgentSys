@@ -330,6 +330,14 @@ export function TrajectoryPage({
   const retreat = () => setCursor((cc) => Math.max(0, cc - 1))
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // This listener is on `window`, so without a target check it drives the
+      // replay from every keypress on the page — including ones already spoken
+      // for. The observatory has its own transport and its own arrow handling,
+      // so one press was scrubbing memory AND stepping the replay; and Space is
+      // a button's activation key, so preventDefault() here ate the click on
+      // whatever button had focus. Only act when the page itself has focus.
+      const el = e.target as HTMLElement | null
+      if (el && el !== document.body && el.closest('.mo, button, a, input, textarea, select, [role="slider"]')) return
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); advance() }
       else if (e.key === 'ArrowLeft') { retreat(); setPlaying(false) }
     }

@@ -497,10 +497,12 @@ export function MemoryGraph(props: {
     return s
   }, [selectedId, state])
 
-  const pick = useCallback(
-    (id: string) => onSelect(selectedId === id ? null : id),
-    [onSelect, selectedId],
-  )
+  /* Report the click; do not interpret it. Toggling here against `selectedId`
+   * double-toggled with the owner's own pin toggle: `selectedId` is
+   * `pinned ?? recordAtCursor`, so clicking a node the cursor already sat on
+   * sent null and read as "unpin" — making the click a silent no-op in exactly
+   * the case that matters (jump to the reflection, then pin it). */
+  const pick = useCallback((id: string) => onSelect(id), [onSelect])
   const onKey = useCallback(
     (e: KeyboardEvent, id: string) => {
       if (e.key === 'Enter' || e.key === ' ') {
