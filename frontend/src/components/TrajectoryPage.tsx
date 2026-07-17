@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useInView, usePrefersReducedMotion } from '../hooks/useInView'
 import type { Baseline, RcaCase } from '../types'
 import type { Lang } from '../i18n'
 import { rc } from '../i18n'
@@ -202,7 +203,7 @@ const LockGlyph = () => (
    (real 100% → 16.7%). Not a row of bars — a structural event. */
 type Pull = 'none' | 'memory' | 'context' | 'skill'
 const PULL_BASELINE: Record<Pull, string> = {
-  none: 'selfevo_light_path', memory: 'no_memory', context: 'full_context', skill: 'full_tools',
+  none: 'autopoiesis_light_path', memory: 'no_memory', context: 'full_context', skill: 'full_tools',
 }
 // mini skeleton positions (compact viewBox)
 const MW = 700, MH = 250, MNW = 92, MNH = 44
@@ -223,7 +224,7 @@ function StressTest({ baselines, zh }: { baselines: Baseline[]; zh: boolean }) {
     return () => clearTimeout(id)
   }, [])
   const bAcc = (name: string) => baselines.find((b) => b.name === name)?.rootCauseAccuracy ?? 1
-  const base = Math.round(bAcc('selfevo_light_path') * 100)
+  const base = Math.round(bAcc('autopoiesis_light_path') * 100)
   const acc = Math.round(bAcc(PULL_BASELINE[pull]) * 100)
   const collapsed = acc < 50
   const pulledIdx = PULL_INDEX[pull]
@@ -319,13 +320,30 @@ export function TrajectoryPage({
   const [cursor, setCursor] = useState(0)
   const [playing, setPlaying] = useState(true)
   const [evo, setEvo] = useState<EvoData | null>(null)
+  // The replay lives below the fold, under the observatory. Left to itself it
+  // autoplayed from mount and was over before anyone scrolled to it — two
+  // timelines racing, both finishing unwatched. It now runs only while it is
+  // actually on screen.
+  const [replayRef, replayInView] = useInView<HTMLElement>(0.35)
+  const reduced = usePrefersReducedMotion()
+  const replayAtEnd = reached >= steps.length - 1
+  const replayRunning = playing && replayInView && !reduced && !replayAtEnd && steps.length > 0
+
   useEffect(() => { fetch('/api/rca/evolution?passes=4').then((r) => r.json()).then(setEvo).catch(() => setEvo(null)) }, [])
+
+  // Under reduce-motion there is no playback, so show the settled end state
+  // rather than a replay frozen at step 1.
   useEffect(() => {
-    if (!playing || !steps.length) return
-    if (reached >= steps.length - 1) { setPlaying(false); return }
+    if (!reduced || !steps.length) return
+    setReached(steps.length - 1)
+    setCursor(steps.length - 1)
+  }, [reduced, steps.length])
+
+  useEffect(() => {
+    if (!replayRunning) return
     const id = setTimeout(() => setReached((r) => { const nx = Math.min(steps.length - 1, r + 1); setCursor(nx); return nx }), BEAT)
     return () => clearTimeout(id)
-  }, [playing, reached, steps.length])
+  }, [replayRunning, reached, steps.length])
   const advance = () => setReached((r) => { const nx = Math.min(steps.length - 1, r + 1); setCursor(nx); setPlaying(false); return nx })
   const retreat = () => setCursor((cc) => Math.max(0, cc - 1))
   useEffect(() => {
@@ -390,7 +408,7 @@ export function TrajectoryPage({
 
   const seek = (i: number) => { setReached((r) => Math.max(r, i)); setCursor(i); setPlaying(false) }
   const scrubTo = (i: number) => { setReached((r) => Math.max(r, i)); setCursor(i); setPlaying(false) }
-  const atEnd = reached >= steps.length - 1
+  const atEnd = replayAtEnd
 
   return (
     <div className="traj-page">
@@ -444,7 +462,7 @@ export function TrajectoryPage({
       </div>
 
       {/* ── ③ THE TACTICAL REPLAY CANVAS (hero) ── */}
-      <section className="fx-replay">
+      <section className="fx-replay" ref={replayRef}>
         <FlowGraph
           stations={stations}
           evidence={fxEvidence}
@@ -463,7 +481,7 @@ export function TrajectoryPage({
         {/* ── transport HUD: scrubber through the spatial graph ── */}
         <div className="fx-transport">
           <div className="fx-tp-ctl">
-            <button onClick={() => { if (atEnd && !playing) { setReached(0); setCursor(0) } setPlaying((p) => !p) }} title="play/pause">{playing ? '❚❚' : '▶'}</button>
+            <button onClick={() => { if (atEnd) { setReached(0); setCursor(0); setPlaying(true) } else setPlaying((p) => !p) }} title="play/pause">{replayRunning ? '❚❚' : '▶'}</button>
             <button onClick={() => { setReached(0); setCursor(0); setPlaying(false) }} title="reset">⤺</button>
             <button onClick={() => { retreat(); setPlaying(false) }} disabled={cursor <= 0} title="prev">◀</button>
             <button onClick={advance} disabled={atEnd} title="step">▸|</button>
