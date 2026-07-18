@@ -209,6 +209,73 @@ unreachable the driver skips (c) and reports (a)(b) only):
 python3 -m core.eval.reranker all
 ```
 
+### 5.3 FortiOS operations-KB RAG — the first REAL ops-doc corpus (eval-only, optional)
+
+This is the honest, application-grounded version of the resume's "运维知识库 RAG (runbook /
+工单 / 设备手册)" line. Unlike §5.1 (terse IODA identifier strings) and §5.2's 9-skill
+catalog, the corpus here is a **real vendor operations manual**.
+
+- **Corpus (real, not synthesized).** The public **FortiOS 7.4.0 Administration Guide** from
+  `docs.fortinet.com` — **all 1,145 sections** downloaded as HTML and converted to text with
+  the stdlib parser (`<div id="mc-main-content">` → headings/paragraphs/list-items/table
+  cells). **Structure-aware chunking** (split at h1/h2 boundaries, ~1.1 k-char windows) yields
+  **9,014 chunks**. Nothing is fabricated; the build is reproducible
+  (`python -m core.eval.fortios_corpus build`).
+- **Contextual Retrieval, deterministic (no LLM).** Each chunk is prefixed with a document
+  context header built purely from its **section-title hierarchy** taken from the guide's own
+  table-of-contents tree, e.g. `FortiOS 7.4 Administration Guide > User & Authentication >
+  LDAP servers > Configuring an LDAP server`. This is the zero-cost, reproducible variant of
+  Anthropic's Contextual Retrieval — we lift the publisher's ground-truth breadcrumb instead
+  of asking an LLM to write per-chunk context.
+- **Labels — NON-CIRCULAR, and this time it matters.** Queries are the **six real R230
+  FortiGate incidents** (held-out set). A manual section is labelled *relevant* iff its prose
+  **explains the mechanism of that incident's root cause**, judged by reading the section —
+  never by any retriever score. The map + a written per-section rationale are frozen in
+  `core/eval/fortios_labels.json`. Every retriever scores on query↔chunk **text** (BM25 term
+  overlap / bge cosine / cross-encoder pair score); the labels use the section↔root-cause
+  **meaning**. There is **no shared key** (no entity+time join, no title match) a retriever
+  could reconstruct — exactly the circularity that invalidated the earlier IODA +334%. (Some
+  relevant sections, e.g. *Configuring the maximum log in attempts and lockout period* and the
+  *DHCP monitor*, barely share surface terms with the incident wording, which is why BM25
+  alone misses them.)
+
+Four-stage pipeline, each stage adding **one** component; metrics are **section-level**
+(passage→document collapse), macro-averaged over the **N = 6** incidents:
+
+| stage | recall@1 | recall@5 | recall@10 | nDCG@10 |
+|---|--:|--:|--:|--:|
+| BM25 (raw chunks) | 0.000 | 0.250 | 0.333 | 0.179 |
+| + Contextual-Retrieval header | 0.000 | 0.250 | 0.333 | 0.182 |
+| **+ dense/hybrid** (BM25-CR ⊕ bge, RRF) | **0.083** | 0.167 | **0.417** | **0.267** |
+| + cross-encoder rerank | 0.000 | 0.250 | 0.417 | 0.192 |
+
+**Honest verdict — where the pipeline helps, and where it does NOT:**
+
+- **Hybrid BM25+dense is the only lever that helps.** It lifts **recall@10 0.333 → 0.417
+  (+25% relative)** and nDCG@10 0.179 → 0.267, and is the only stage to land a relevant
+  section at rank 1. Dense embeddings recover semantically-worded incidents that lexical
+  overlap misses (e.g. the DHCP-allocation and security-posture cases), though the fusion also
+  reorders mid-ranks (recall@5 dips) — a real, mixed effect, not a clean win.
+- **Deterministic Contextual Retrieval gives ~zero lift here** (recall@10 unchanged; nDCG@10
+  +0.003). The ToC-hierarchy header adds correct parent terms but does not change which
+  sections surface for these six queries. Honest null result — reported, not hidden. (It
+  remains cheap insurance and is expected to matter more on deeper, more ambiguous chunks.)
+- **Cross-encoder reranking does NOT help recall@10 (flat 0.417) and *hurts* ranking quality**
+  (nDCG@10 0.267 → 0.192): it demotes the good top-1 that hybrid found. On this corpus the
+  reranker is not worth its cost.
+- **Statistical power is low: N = 6.** Each incident is ≈0.17 of recall@10, so the +25% is
+  "roughly one more incident's section reaching the top-10." Treat the magnitudes as
+  **directional**, not precise. The value of this eval is that it is *real and non-circular*,
+  not that it is high-powered — §5.2's BEIR SciFact (300 queries, human qrels) remains the
+  higher-power external anchor for the rerank stage.
+
+Reproduce (needs the `dense`+`rerank` venv; the corpus HTML/embeddings cache under
+`.dense_cache/`, gitignored):
+```bash
+python3 -m core.eval.fortios_corpus build   # (re)build the corpus from docs.fortinet.com
+python3 -m core.eval.fortios_corpus eval    # four-stage recall@k / nDCG@k table
+```
+
 ---
 
 ## Full test suite
