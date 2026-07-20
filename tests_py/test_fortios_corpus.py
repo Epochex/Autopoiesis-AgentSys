@@ -181,6 +181,44 @@ def test_stage_delta_signs_and_relative():
     assert d["ndcg_at_k@5"]["abs_delta"] == pytest.approx(-0.05)  # honest: a stage can hurt
 
 
+def test_eval_routes_ablation_through_production_retriever(monkeypatch):
+    from core.memory.hybrid_kb import HybridKBRetriever
+
+    corpus = {
+        "source": "test",
+        "n_sections": 2,
+        "chunks": [
+            {"id": "a#0", "section_id": "a", "context_header": "Doc > A", "text": "alpha"},
+            {"id": "b#0", "section_id": "b", "context_header": "Doc > B", "text": "beta"},
+        ],
+    }
+    labels = [{
+        "incident_id": "q1", "query": "alpha", "query_source": "test",
+        "relevant_sections": ["a"], "rationale": {}, "root_cause": "test",
+    }]
+    calls = []
+
+    class _FakeRetriever:
+        def retrieve_ids(self, query, k, **flags):
+            calls.append((query, k, flags))
+            return ["a#0", "b#0"]
+
+    monkeypatch.setattr(FC, "build_corpus", lambda: corpus)
+    monkeypatch.setattr(FC, "load_labels", lambda **kwargs: labels)
+    monkeypatch.setattr(
+        HybridKBRetriever,
+        "from_corpus",
+        classmethod(lambda cls, supplied, **kwargs: _FakeRetriever()),
+    )
+    res = FC.run_fortios_rag_eval(k_values=(1,), rrf_pool=2, include_rerank=False)
+    assert res["stages"] == ["bm25", "hybrid"]
+    assert [call[2] for call in calls] == [
+        {"rerank_depth": 30, "fusion": False, "rerank": False},
+        {"rerank_depth": 30, "fusion": True, "rerank": False},
+    ]
+    assert res["results"]["bm25"][1]["recall_at_k"] == 1.0
+
+
 # ── gated end-to-end (needs the extras AND a built corpus cache) ─────────────────────
 def _corpus_cached() -> bool:
     return FC._CORPUS_JSON.exists()
@@ -211,7 +249,7 @@ def test_fortios_rag_eval_end_to_end():
     pytest.importorskip("faiss")
     res = FC.run_fortios_rag_eval(k_values=(1, 5, 10), include_rerank=False)
     assert res["n_queries"] == 6
-    assert set(res["stages"]) == {"bm25_raw", "bm25_cr", "hybrid_cr"}
+    assert set(res["stages"]) == {"bm25", "hybrid"}
     for s in res["stages"]:
         for k in (1, 5, 10):
             m = res["results"][s][k]

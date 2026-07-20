@@ -15,10 +15,9 @@ ingestor = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
 ]
-# OPTIONAL, eval-only. The deterministic core stays LLM-free and zero-dependency;
-# this extra powers ONLY the dense/embedding retrieval BASELINE in core.eval.dense_retrieval,
-# which is a comparison baseline and is never imported from the online RCA path or the
-# default (non-dense) test path. Install into a dedicated venv, e.g.:
+# OPTIONAL. The deterministic core stays zero-dependency; this extra powers the
+# production HybridKBRetriever dense/HNSW stage and the dense evaluation drivers.
+# Heavy imports remain lazy. Install into a dedicated venv, e.g.:
 #   python3 -m venv .venv-dense && . .venv-dense/bin/activate
 #   pip install sentence-transformers faiss-cpu torch
 dense = [
@@ -26,10 +25,8 @@ dense = [
   "faiss-cpu>=1.7",
   "torch>=2.0",
 ]
-# OPTIONAL, eval-only. Powers ONLY the cross-encoder reranker BASELINE in
-# core.eval.reranker (two-stage retrieval eval: BM25/dense first stage + CrossEncoder
-# rerank). Like `dense`, it is never imported from the online RCA path or the default
-# (non-dense) test path; new tests importorskip it. The CrossEncoder ships with
+# OPTIONAL. Powers the HybridKBRetriever cross-encoder stage and reranker evals.
+# Like `dense`, imports remain lazy and tests importorskip it. The CrossEncoder ships with
 # sentence-transformers, so this reuses that dep; torch is its runtime. The public
 # BEIR SciFact benchmark it evaluates on is downloaded with the stdlib (no extra pkg).
 #   pip install sentence-transformers torch     # (already present in .venv-dense)

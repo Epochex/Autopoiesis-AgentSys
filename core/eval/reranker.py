@@ -1,4 +1,4 @@
-"""Cross-encoder RERANKER stage over the hybrid first stage — OPTIONAL, eval-only.
+"""Shared cross-encoder reranker and two-stage evaluation drivers — OPTIONAL.
 
 A two-stage retrieval eval: a cheap first stage (BM25 / dense / RRF) fetches a
 candidate pool, then a cross-encoder rescores every (query, document) *pair jointly*
@@ -7,11 +7,10 @@ bi-encoder they read the query and document together, so they can catch relevanc
 that lexical/embedding first stages miss — at the cost of one forward pass per
 candidate (why they only ever run over a top-k pool, never the whole corpus).
 
-Like :mod:`core.eval.dense_retrieval` this is the ONLY-eval, optional path: it is
-never imported from the online RCA path, from ``reasoner``/``factory``/orchestrator,
-or from the default (non-dense) test path. It is gated behind the ``rerank`` extra
-(``sentence-transformers``; the CrossEncoder ships with it). Import it only from a
-venv that has that installed.
+The reusable :class:`core.memory.hybrid_kb.HybridKBRetriever` lazily constructs
+``CrossEncoderReranker`` for its optional final stage; the benchmark drivers remain
+in this module.  The model runtime is gated behind the ``rerank`` extra
+(``sentence-transformers`` + torch) and loads only on the first rerank call.
 
 Three settings are measured, first-stage vs +reranker, on recall@k and nDCG@k:
 

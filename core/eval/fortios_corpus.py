@@ -9,11 +9,10 @@ FortiGate incidents from the held-out set. Nothing here is synthesized: the corp
 downloaded HTML converted to text; the relevance labels are hand-assigned by reading the
 manual's section CONTENT (see ``fortios_labels.json``).
 
-Like :mod:`core.eval.dense_retrieval` / :mod:`core.eval.reranker` this is the ONLY-eval,
-optional path: it is NEVER imported from the online RCA path, from
-``reasoner``/``factory``/orchestrator, or from the default (non-dense) test path. Heavy
-deps (sentence-transformers / faiss / torch) are imported lazily and only in the stages
-that need them; the corpus build + BM25 stage are pure stdlib.
+This corpus/metric driver is eval-only, while the retriever it exercises lives in
+``core.memory.hybrid_kb`` and is reusable by online callers. Heavy dependencies
+(sentence-transformers / faiss / torch) are imported lazily and only in enabled stages;
+the corpus build and BM25-only path remain pure stdlib.
 
 What it builds
 --------------
@@ -31,10 +30,10 @@ What it builds
    is the cheap, reproducible variant of Anthropic's Contextual Retrieval: instead of
    asking an LLM to write a per-chunk context, we lift the ground-truth breadcrumb the
    publisher already encoded in the ToC.
-4. PIPELINE. index -> BM25 first stage -> +Contextual-Retrieval -> +dense/hybrid (bge +
-   RRF) -> +cross-encoder rerank, measuring recall@k / nDCG@k at each stage (reusing
-   :class:`core.memory.bm25.BM25Index`, :class:`core.eval.dense_retrieval.DenseIndex`,
-   :class:`core.eval.reranker.CrossEncoderReranker`, :func:`core.memory.rrf.rrf_fuse`).
+4. PIPELINE. The real :class:`core.memory.hybrid_kb.HybridKBRetriever` indexes the
+   contextual chunks with BM25 + dense HNSW, fuses them with RRF, and optionally
+   cross-encoder reranks.  This module only supplies the corpus, labels, metrics, and
+   ablation driver; evaluation and online callers exercise the same component.
 
 Non-circularity (the whole point)
 ---------------------------------
@@ -492,7 +491,7 @@ def load_labels(*, use_heldout: bool = True) -> list[dict]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# 6. Eval driver  —  BM25(raw) -> +CR -> +hybrid(dense RRF) -> +rerank  (section-level)
+# 6. Eval driver  —  BM25 -> +dense/HNSW+RRF -> +rerank  (section-level)
 # ══════════════════════════════════════════════════════════════════════════════════
 def _collapse_to_sections(chunk_ranking: Iterable[str], chunk_to_section: dict[str, str]) -> list[str]:
     """Passage->document: order sections by first appearance in the chunk ranking."""
@@ -530,24 +529,23 @@ def run_fortios_rag_eval(
     include_rerank: bool = True,
     use_heldout: bool = True,
 ) -> dict:
-    """Four-stage RAG eval on the real FortiOS corpus with non-circular incident labels.
+    """Hybrid retriever ablation on FortiOS with non-circular incident labels.
 
-    Stages (each adds ONE component; recall@k / nDCG@k measured at every stage, at SECTION
-    granularity via passage->document collapse):
-      1. ``bm25_raw``   — BM25 over raw chunk text (no context header).
-      2. ``bm25_cr``    — BM25 over Contextual-Retrieval text (ToC-hierarchy header prepended).
-      3. ``hybrid_cr``  — RRF( BM25-CR , dense-bge-CR ) over the CR chunks.
-      4. ``hybrid_rerank`` — cross-encoder reranks the hybrid top-``rerank_depth`` pool.
+    Stages (recall@k / nDCG@k measured at SECTION granularity via passage->document
+    collapse):
+      1. ``bm25`` — BM25 over chunks with their existing hierarchy headers.
+      2. ``hybrid`` — RRF(BM25, bge HNSW) over those same chunks.
+      3. ``hybrid_rerank`` — cross-encoder reranks the hybrid candidate pool.
+
+    This intentionally instantiates :class:`HybridKBRetriever`; it is not a parallel
+    eval-only implementation of the production retrieval algorithm.
     """
-    from core.memory.bm25 import BM25Index, tokenize
-    from core.memory.rrf import rrf_fuse
+    from core.memory.hybrid_kb import HybridKBRetriever
 
     corpus = build_corpus() if not _CORPUS_JSON.exists() else load_corpus()
     chunks = corpus["chunks"]
     chunk_ids = [c["id"] for c in chunks]
     chunk_to_section = {c["id"]: c["section_id"] for c in chunks}
-    raw_text = {c["id"]: c["text"] for c in chunks}
-    cr_text = {c["id"]: f'{c["context_header"]}\n\n{c["text"]}' for c in chunks}
 
     labels = load_labels(use_heldout=use_heldout)
     # relevant sections that actually exist in the corpus (guard against a skipped page)
@@ -560,49 +558,47 @@ def run_fortios_rag_eval(
                for l in queries if set(l["relevant_sections"]) - present_sections]
 
     k_max = max(k_values)
-    depth = max(rerank_depth, k_max, rrf_pool)
+    first_stage_depth = max(k_max, rrf_pool)
+    actual_rerank_depth = max(k_max, rerank_depth)
 
-    # ── first stages: BM25 over raw vs CR text ──────────────────────────────────────
-    bm25_raw = BM25Index({cid: tokenize(raw_text[cid]) for cid in chunk_ids})
-    bm25_cr = BM25Index({cid: tokenize(cr_text[cid]) for cid in chunk_ids})
+    from core.eval.dense_retrieval import score_ranking, _macro
 
-    # ── dense over CR text (bge) — reuse DenseIndex ─────────────────────────────────
-    from core.eval.dense_retrieval import DenseIndex, score_ranking, _macro
-    dense_cr = DenseIndex.build(
-        chunk_ids, [cr_text[cid] for cid in chunk_ids],
-        model_name=model_name, index_type="flat", cache_key=f"fortios_cr_{len(chunk_ids)}",
+    retriever = HybridKBRetriever.from_corpus(
+        corpus,
+        fusion=True,
+        rerank=include_rerank,
+        k=k_max,
+        rerank_depth=rerank_depth,
+        fusion_depth=rrf_pool,
+        model_name=model_name,
+        reranker_model=reranker_model,
+        dense_cache_key=f"fortios_cr_{len(chunk_ids)}",
     )
 
-    reranker = None
-    if include_rerank:
-        from core.eval.reranker import CrossEncoderReranker
-        reranker = CrossEncoderReranker(reranker_model)
-
-    stages = ["bm25_raw", "bm25_cr", "hybrid_cr"] + (["hybrid_rerank"] if include_rerank else [])
+    stages = ["bm25", "hybrid"] + (["hybrid_rerank"] if include_rerank else [])
     acc: dict[str, dict[int, list[dict]]] = {s: {k: [] for k in k_values} for s in stages}
     per_query: dict[str, dict] = {}
-    t_dense = t_rerank = 0.0
+    stage_seconds = {s: 0.0 for s in stages}
 
-    dense_batch = dense_cr.search_texts([q["query"] for q in queries], depth, model_name=model_name)
-
-    for qi, q in enumerate(queries):
+    for q in queries:
         qtext, rel = q["query"], q["relevant"]
-        # stage 1/2 first-stage chunk rankings
-        raw_rank = [cid for cid, _ in bm25_raw.rank_with_scores(qtext, depth)]
-        cr_rank = [cid for cid, _ in bm25_cr.rank_with_scores(qtext, depth)]
-        t0 = time.time()
-        dense_rank = [cid for cid, _ in dense_batch[qi]]
-        t_dense += time.time() - t0
-        # stage 3 hybrid: RRF fuse BM25-CR + dense-CR
-        hybrid_rank = rrf_fuse([cr_rank, dense_rank], depth)
-        stage_rank = {"bm25_raw": raw_rank, "bm25_cr": cr_rank, "hybrid_cr": hybrid_rank}
-        # stage 4 rerank the hybrid pool
-        if reranker is not None:
-            pool = hybrid_rank[:depth]
-            cands = [(cid, cr_text[cid]) for cid in pool]
+        stage_rank = {}
+        settings = {
+            "bm25": {"fusion": False, "rerank": False},
+            "hybrid": {"fusion": True, "rerank": False},
+        }
+        if include_rerank:
+            settings["hybrid_rerank"] = {"fusion": True, "rerank": True}
+        for stage, flags in settings.items():
+            output_depth = actual_rerank_depth if flags["rerank"] else first_stage_depth
             t0 = time.time()
-            stage_rank["hybrid_rerank"] = reranker.rerank(qtext, cands, depth)
-            t_rerank += time.time() - t0
+            stage_rank[stage] = retriever.retrieve_ids(
+                qtext,
+                output_depth,
+                rerank_depth=actual_rerank_depth,
+                **flags,
+            )
+            stage_seconds[stage] += time.time() - t0
         # score each stage at SECTION granularity
         pq = {"query": qtext, "query_source": q["query_source"], "relevant": sorted(rel)}
         for s in stages:
@@ -614,12 +610,11 @@ def run_fortios_rag_eval(
 
     results = {s: {k: _macro(acc[s][k]) for k in k_values} for s in stages}
     deltas = {
-        "cr_over_bm25": _stage_delta(results["bm25_raw"], results["bm25_cr"], k_values),
-        "hybrid_over_cr": _stage_delta(results["bm25_cr"], results["hybrid_cr"], k_values),
-        "full_over_bm25": _stage_delta(results["bm25_raw"], results[stages[-1]], k_values),
+        "hybrid_over_bm25": _stage_delta(results["bm25"], results["hybrid"], k_values),
+        "full_over_bm25": _stage_delta(results["bm25"], results[stages[-1]], k_values),
     }
     if include_rerank:
-        deltas["rerank_over_hybrid"] = _stage_delta(results["hybrid_cr"], results["hybrid_rerank"], k_values)
+        deltas["rerank_over_hybrid"] = _stage_delta(results["hybrid"], results["hybrid_rerank"], k_values)
 
     return {
         "dataset_kind": "real-fortios-adminguide-rag",
@@ -630,13 +625,14 @@ def run_fortios_rag_eval(
         "reranker_model": reranker_model if include_rerank else None,
         "n_queries": len(queries),
         "k_values": list(k_values),
-        "rerank_depth": depth,
+        "rerank_depth": actual_rerank_depth,
+        "first_stage_depth": first_stage_depth,
         "stages": stages,
         "results": results,
         "deltas": deltas,
         "labels_are_noncircular": why_labels_are_noncircular(),
         "missing_relevant_sections": missing,
-        "seconds": {"dense": round(t_dense, 2), "rerank": round(t_rerank, 2)},
+        "seconds": {stage: round(seconds, 2) for stage, seconds in stage_seconds.items()},
         "per_query": per_query,
         "query_sources": {q["incident_id"]: q["query_source"] for q in queries},
     }

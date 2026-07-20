@@ -1,11 +1,10 @@
-"""Dense / embedding retrieval BASELINE for the retrieval evals — OPTIONAL, eval-only.
+"""Shared dense/embedding retrieval implementation and evaluation drivers — OPTIONAL.
 
 This is the honest *dense* comparison baseline the rest of the project is measured
-against. It is the ONLY module in the repo that touches an embedding model; it is
-never imported from the online RCA path, from ``reasoner``/``factory``/orchestrator,
-or from the default (non-dense) test path. Everything here is gated behind the
-optional ``dense`` extra (sentence-transformers + faiss-cpu + torch); import it only
-from a venv that has those installed (see ``pyproject.toml [project.optional-dependencies] dense``).
+against. :class:`core.memory.hybrid_kb.HybridKBRetriever` lazily reuses the index
+implementation for real knowledge-base retrieval; the comparison drivers remain here.
+Everything is gated behind the optional ``dense`` extra (sentence-transformers +
+faiss-cpu + torch), and merely importing the module does not load those packages.
 
 Why it exists
 -------------
