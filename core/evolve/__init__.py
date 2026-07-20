@@ -1,5 +1,6 @@
 from core.evolve.consolidate import ConsolidationReport, consolidate_run
 from core.evolve.memory_ops import (
+    UtilityWeights,
     apply_route,
     decay_and_forget,
     link_related,
@@ -8,6 +9,9 @@ from core.evolve.memory_ops import (
     reflect,
     route,
     similarity,
+    supersede,
+    utility_evict,
+    utility_scores,
 )
 from core.evolve.observatory import (
     CAPABILITIES,
@@ -21,7 +25,7 @@ from core.evolve.stream import compare_cold_vs_warm, run_evolving_stream
 __all__ = [
     "ConsolidationReport", "consolidate_run", "run_evolving_stream", "compare_cold_vs_warm",
     "route", "apply_route", "link_related", "neighbours", "reflect", "decay_and_forget",
-    "similarity", "memory_health",
+    "similarity", "memory_health", "supersede", "utility_evict", "utility_scores", "UtilityWeights",
     # read-only memory-lifecycle observability
     "CAPABILITIES", "serialize_store", "serialize_record", "recall_row", "quarantine_reason",
 ]

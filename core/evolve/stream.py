@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from typing import Mapping, Protocol, Sequence
 
 from core.evolve.consolidate import CaseLike, _first, consolidate_run
-from core.evolve.memory_ops import memory_health
+from core.evolve.memory_ops import memory_health, utility_evict
 from core.evolve.observatory import CAPABILITIES, recall_row, serialize_store
 from domains.network_rca.factory import build_network_rca_orchestrator
 
@@ -33,11 +33,18 @@ def run_evolving_stream(
     data_source: str = "mock",
     real_stats_path: str | Path | None = None,
     reasoner_mode: str = "rule",
+    capacity_budget: int | None = None,
+    resolve_conflicts: bool = False,
 ) -> dict:
     """Process `cases` `passes` times in order (recurring incidents over time).
 
     Returns per-event metrics + a per-pass summary. Memory starts EMPTY so the
     only thing that changes across passes is what the agent has learned.
+
+    `capacity_budget` (when set) caps the warm store: after each consolidation the
+    lowest-*utility* memories are evicted back to the budget (utility_evict) — this is
+    what makes eviction actually fire. `resolve_conflicts` turns on the SUPERSEDE path
+    so a re-diagnosis that renames the root cause retires the stale prior.
     """
     with TemporaryDirectory() as tmp:
         orch = build_network_rca_orchestrator(
@@ -78,8 +85,13 @@ def run_evolving_stream(
                 run_id = orch.last_run_id
                 ops: list[dict] = []
                 report = consolidate_run(
-                    events, case, orch.memory, orch.skills, orch._last_evidence, recorder=ops,
+                    events, case, orch.memory, orch.skills, orch._last_evidence,
+                    resolve_conflicts=resolve_conflicts, recorder=ops,
                 )
+                if capacity_budget is not None:
+                    # capacity-budgeted utility eviction — the wired firing point. EVICT
+                    # ops flow into the same observability stream as every other op.
+                    utility_evict(orch.memory, budget=capacity_budget, recorder=ops)
                 obs_recall.append(recall_row(
                     events, seq=len(obs_recall), pass_no=i // n,
                     case_id=case.id, run_id=run_id, probes=probes,
@@ -95,6 +107,7 @@ def run_evolving_stream(
                     "seq": len(obs_reports), "pass": i // n, "case_id": case.id,
                     "run_id": report.run_id, "passed": report.passed,
                     "added": list(report.added), "updated": list(report.updated),
+                    "superseded": list(report.superseded),
                     "reinforced": list(report.reinforced), "quarantined": list(report.quarantined),
                     "linked": list(report.linked), "insights": list(report.insights),
                     "skills_success": list(report.skills_success),

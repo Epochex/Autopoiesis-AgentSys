@@ -1,0 +1,250 @@
+{
+  "tiered (this repo)": {
+    "1": {
+      "n": 500,
+      "k": 1,
+      "scored": 500,
+      "recall_at_k": 0.722,
+      "answer_string_hit": 0.312,
+      "by_type": {
+        "knowledge-update": 0.8077,
+        "multi-session": 0.8271,
+        "single-session-assistant": 0.875,
+        "single-session-preference": 0.2333,
+        "single-session-user": 0.4429,
+        "temporal-reasoning": 0.7594
+      }
+    },
+    "3": {
+      "n": 500,
+      "k": 3,
+      "scored": 500,
+      "recall_at_k": 0.838,
+      "answer_string_hit": 0.404,
+      "by_type": {
+        "knowledge-update": 0.8974,
+        "multi-session": 0.9173,
+        "single-session-assistant": 0.8929,
+        "single-session-preference": 0.3667,
+        "single-session-user": 0.6857,
+        "temporal-reasoning": 0.8872
+      }
+    },
+    "5": {
+      "n": 500,
+      "k": 5,
+      "scored": 500,
+      "recall_at_k": 0.906,
+      "answer_string_hit": 0.432,
+      "by_type": {
+        "knowledge-update": 0.9487,
+        "multi-session": 0.9549,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.5667,
+        "single-session-user": 0.7857,
+        "temporal-reasoning": 0.9398
+      }
+    },
+    "10": {
+      "n": 500,
+      "k": 10,
+      "scored": 500,
+      "recall_at_k": 0.954,
+      "answer_string_hit": 0.474,
+      "by_type": {
+        "knowledge-update": 0.9744,
+        "multi-session": 0.985,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.7667,
+        "single-session-user": 0.9,
+        "temporal-reasoning": 0.9699
+      }
+    }
+  },
+  "BM25 (lexical floor)": {
+    "1": {
+      "n": 500,
+      "k": 1,
+      "scored": 500,
+      "recall_at_k": 0.874,
+      "answer_string_hit": 0.37,
+      "by_type": {
+        "knowledge-update": 0.9615,
+        "multi-session": 0.8571,
+        "single-session-assistant": 1.0,
+        "single-session-preference": 0.5333,
+        "single-session-user": 0.8857,
+        "temporal-reasoning": 0.8571
+      }
+    },
+    "3": {
+      "n": 500,
+      "k": 3,
+      "scored": 500,
+      "recall_at_k": 0.944,
+      "answer_string_hit": 0.452,
+      "by_type": {
+        "knowledge-update": 0.9872,
+        "multi-session": 0.9474,
+        "single-session-assistant": 1.0,
+        "single-session-preference": 0.7667,
+        "single-session-user": 0.9571,
+        "temporal-reasoning": 0.9248
+      }
+    },
+    "5": {
+      "n": 500,
+      "k": 5,
+      "scored": 500,
+      "recall_at_k": 0.97,
+      "answer_string_hit": 0.474,
+      "by_type": {
+        "knowledge-update": 0.9872,
+        "multi-session": 0.9699,
+        "single-session-assistant": 1.0,
+        "single-session-preference": 0.8667,
+        "single-session-user": 0.9857,
+        "temporal-reasoning": 0.9624
+      }
+    },
+    "10": {
+      "n": 500,
+      "k": 10,
+      "scored": 500,
+      "recall_at_k": 0.986,
+      "answer_string_hit": 0.482,
+      "by_type": {
+        "knowledge-update": 0.9872,
+        "multi-session": 0.985,
+        "single-session-assistant": 1.0,
+        "single-session-preference": 0.9333,
+        "single-session-user": 1.0,
+        "temporal-reasoning": 0.985
+      }
+    }
+  },
+  "flat vector (same embedder)": {
+    "1": {
+      "n": 500,
+      "k": 1,
+      "scored": 500,
+      "recall_at_k": 0.756,
+      "answer_string_hit": 0.314,
+      "by_type": {
+        "knowledge-update": 0.7949,
+        "multi-session": 0.8346,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.6,
+        "single-session-user": 0.5286,
+        "temporal-reasoning": 0.7143
+      }
+    },
+    "3": {
+      "n": 500,
+      "k": 3,
+      "scored": 500,
+      "recall_at_k": 0.876,
+      "answer_string_hit": 0.416,
+      "by_type": {
+        "knowledge-update": 0.9231,
+        "multi-session": 0.9323,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.8,
+        "single-session-user": 0.7143,
+        "temporal-reasoning": 0.8496
+      }
+    },
+    "5": {
+      "n": 500,
+      "k": 5,
+      "scored": 500,
+      "recall_at_k": 0.916,
+      "answer_string_hit": 0.436,
+      "by_type": {
+        "knowledge-update": 0.9744,
+        "multi-session": 0.9474,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.8333,
+        "single-session-user": 0.7857,
+        "temporal-reasoning": 0.9098
+      }
+    },
+    "10": {
+      "n": 500,
+      "k": 10,
+      "scored": 500,
+      "recall_at_k": 0.966,
+      "answer_string_hit": 0.466,
+      "by_type": {
+        "knowledge-update": 1.0,
+        "multi-session": 0.9925,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.9667,
+        "single-session-user": 0.8857,
+        "temporal-reasoning": 0.9549
+      }
+    }
+  },
+  "Reflexion (reflective retrieval)": {
+    "1": {
+      "n": 500,
+      "k": 1,
+      "scored": 500,
+      "recall_at_k": 0.732,
+      "answer_string_hit": 0.296,
+      "by_type": {
+        "knowledge-update": 0.7692,
+        "multi-session": 0.8195,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.5,
+        "single-session-user": 0.4857,
+        "temporal-reasoning": 0.6992
+      }
+    },
+    "3": {
+      "n": 500,
+      "k": 3,
+      "scored": 500,
+      "recall_at_k": 0.872,
+      "answer_string_hit": 0.41,
+      "by_type": {
+        "knowledge-update": 0.8974,
+        "multi-session": 0.9323,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.7667,
+        "single-session-user": 0.7143,
+        "temporal-reasoning": 0.8571
+      }
+    },
+    "5": {
+      "n": 500,
+      "k": 5,
+      "scored": 500,
+      "recall_at_k": 0.918,
+      "answer_string_hit": 0.432,
+      "by_type": {
+        "knowledge-update": 1.0,
+        "multi-session": 0.9398,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.8333,
+        "single-session-user": 0.8,
+        "temporal-reasoning": 0.9023
+      }
+    },
+    "10": {
+      "n": 500,
+      "k": 10,
+      "scored": 500,
+      "recall_at_k": 0.966,
+      "answer_string_hit": 0.466,
+      "by_type": {
+        "knowledge-update": 1.0,
+        "multi-session": 1.0,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.9333,
+        "single-session-user": 0.8857,
+        "temporal-reasoning": 0.9549
+      }
+    }
+  }
+}

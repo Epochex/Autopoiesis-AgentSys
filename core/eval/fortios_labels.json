@@ -1,0 +1,84 @@
+{
+  "about": "Non-circular relevance labels for the FortiOS ops-KB RAG eval (core/eval/fortios_corpus.py).",
+  "corpus": "FortiOS 7.4.0 Administration Guide (docs.fortinet.com), 1145 sections / ~9000 chunks.",
+  "labeling_rule": [
+    "For each real R230 FortiGate incident, a manual SECTION is labelled RELEVANT iff its prose",
+    "explains the MECHANISM behind that incident's documented root cause (the section a network",
+    "operator would open to understand or confirm the cause). Relevance was decided by READING the",
+    "section content, not by running any retriever. section_id values are the docs.fortinet.com",
+    "administration-guide numeric ids; a retrieval that surfaces any chunk of a relevant section",
+    "counts as retrieving that section (passage->document collapse)."
+  ],
+  "why_noncircular": [
+    "The invalidated IODA +334% defined relevance by the retriever's own entity+time join key, so",
+    "the 'structured' retriever trivially reconstructed it. Here the labels are the SEMANTIC match",
+    "between an operator's incident wording and a manual section's meaning. Every retriever in the",
+    "pipeline scores on query<->chunk TEXT (BM25 term overlap / bge cosine / cross-encoder pair",
+    "score); the labels use neither the query string nor any such score — they use the section's",
+    "root-cause meaning. There is no shared key (no join, no title match, no term-overlap threshold)",
+    "a retriever could reconstruct to earn the label, so a high score is only obtainable by genuine",
+    "query<->section semantic matching. Several relevant sections (e.g. 279661, 38214) barely share",
+    "surface terms with the incident query, which is why BM25 alone misses them."
+  ],
+  "query_note": "query_fallback is authored here (operator phrasing) so the eval runs on a fresh checkout; when domains/network_rca/fixtures/real/heldout_cases.json is present the eval uses the REAL incident query text instead (never committed).",
+  "labels": [
+    {
+      "incident_id": "real_admin_bruteforce_lockout",
+      "root_cause": "admin_bruteforce_lockout",
+      "query_fallback": "FortiGate logged many failed administrator login attempts and then admin login was locked out; what is the root cause?",
+      "relevant_sections": ["631730", "279661"],
+      "rationale": {
+        "631730": "System > Settings > 'Setting the administrator password retries and lockout time' — documents admin-lockout-threshold / admin-lockout-duration: after N failed admin password retries the admin is locked out. This IS the mechanism that disabled admin login after the brute-force flood.",
+        "279661": "User & Authentication > 'Configuring the maximum log in attempts and lockout period' — 'Failed log in attempts can indicate malicious attempts...' and auth-lockout-threshold/duration. The manual's general treatment of failed-login-driven lockout behind this incident."
+      }
+    },
+    {
+      "incident_id": "real_internal_deny_flood",
+      "root_cause": "internal_policy_deny_expected",
+      "query_fallback": "A very high volume of flows from internal hosts is being denied by the FortiGate; what is the root cause?",
+      "relevant_sections": ["656084", "525166"],
+      "rationale": {
+        "656084": "Policy and Objects > Policies > 'Firewall policy' — 'Any traffic going through a FortiGate has to be associated with a policy ... even whether or not it's allowed to pass.' Traffic matching no accept policy is denied (implicit deny). This is why internal-host flows are denied.",
+        "525166": "Troubleshooting > 'Verifying the correct firewall policy is being used' — the runbook to confirm which policy is handling (and denying) the traffic via the policy Count column and packet-flow debug. This is how an operator confirms the deny is policy-expected."
+      }
+    },
+    {
+      "incident_id": "real_session_clash_benign",
+      "root_cause": "benign_session_clash",
+      "query_fallback": "The FortiGate event log shows repeated session-clash entries; what is the root cause?",
+      "relevant_sections": ["562859"],
+      "rationale": {
+        "562859": "Troubleshooting > 'Using a session table' — defines what a session is, the session table, and each session's entry (the 5-tuple/state). A 'session clash' is a session-table collision event; this is the manual content that explains sessions and the session table behind it. The admin guide has no literal 'session clash' page, so this is the semantically-correct section (and BM25 cannot reach it from the word 'clash')."
+      }
+    },
+    {
+      "incident_id": "real_dhcp_service_health",
+      "root_cause": "dhcp_service_healthy",
+      "query_fallback": "The FortiGate is emitting many DHCP ACK and statistics events; what is the state of DHCP address allocation?",
+      "relevant_sections": ["783526", "38214"],
+      "rationale": {
+        "783526": "Network > 'DHCP servers and relays' — 'A DHCP server dynamically assigns IP addresses ... define up to ten address ranges ... lease time.' The mechanism of DHCP address allocation the ACK events reflect.",
+        "38214": "Dashboards and Monitors > Network dashboard > 'DHCP monitor' — 'shows all the addresses leased out by FortiGate's DHCP servers ... revoke a lease'. This is the exact runbook for 'the state of DHCP address allocation' the incident asks about."
+      }
+    },
+    {
+      "incident_id": "real_security_posture_current",
+      "root_cause": "security_posture_current",
+      "query_fallback": "FortiGuard updates are succeeding and security-rating summaries appear; what is the security posture?",
+      "relevant_sections": ["292634", "783883"],
+      "rationale": {
+        "292634": "Fortinet Security Fabric > 'Security rating' — the Security Posture / Fabric Coverage / Optimization scorecards that summarize security posture. Directly the 'security-rating summary' in the incident.",
+        "783883": "System > FortiGuard > 'Configuring FortiGuard updates' — the FortiGuard update mechanism whose success ('updates are succeeding') is part of the posture assessment."
+      }
+    },
+    {
+      "incident_id": "real_device_port_probe",
+      "root_cause": "device_service_port_probe_contained",
+      "query_fallback": "Many denied flows target camera/DVR service ports such as 37777 and 37809; what is the root cause?",
+      "relevant_sections": ["656084"],
+      "rationale": {
+        "656084": "Policy and Objects > Policies > 'Firewall policy' — the probes to device service ports (e.g. Dahua 37777) match no accept policy and are denied/contained by the firewall policy. Shares this section with real_internal_deny_flood because both root causes ARE policy deny; this overlap is honest (the manual has no camera-port-specific page), not label inflation."
+      }
+    }
+  ]
+}

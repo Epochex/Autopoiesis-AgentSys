@@ -256,10 +256,13 @@ def test_cold_runs_have_no_observatory_and_capabilities_stay_honest():
     assert "observatory" not in cold  # evolve=False has no memory lifecycle to report
 
     warm = run_evolving_stream(cases, gt, passes=2, evolve=True)["observatory"]
-    # decay_and_forget has zero production callers; claiming otherwise would be a lie
     assert warm["capabilities"] == CAPABILITIES
-    assert CAPABILITIES["decay_wired"] is False
-    assert all(v is False for v in CAPABILITIES.values())
+    # eviction + conflict-resolving update are now WIRED (utility_evict / SUPERSEDE run in
+    # the consolidation loop); the still-dormant observability signals stay honestly False.
+    assert CAPABILITIES["eviction_wired"] is True
+    assert CAPABILITIES["conflict_update_wired"] is True
+    assert CAPABILITIES["retrieval_scores"] is False
+    assert CAPABILITIES["context_drop_reason"] is False
 
 
 def test_records_carry_real_text_and_include_quarantined():

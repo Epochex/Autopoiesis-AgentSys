@@ -25,8 +25,18 @@ _QUARANTINE_PREFIX = "quarantine:"
 # provenance + a human-readable gist, so we trim fields (never invent them).
 _MAX_SUMMARY_CHARS = 240
 
-# What the kernel does NOT expose today. Each flag is a fact about the code, not a toggle:
-#   decay_wired          — decay_and_forget() has zero production callers (tests only).
+# A fact about the code, not a toggle: does the kernel actually run this lifecycle path?
+#   decay_wired          — strength-based forgetting runs in the consolidation loop. Now
+#                          TRUE: run_evolving_stream(capacity_budget=B) calls utility_evict
+#                          each pass, so memories are forgotten under a budget (EVICT ops
+#                          appear in the observatory event stream). decay_and_forget() is
+#                          the time-decay baseline it is measured against.
+#   eviction_wired       — capacity-budgeted UTILITY eviction (utility_evict) is the wired
+#                          path — worth (importance+access+recency+centrality), not age
+#                          alone, decides what is forgotten.
+#   conflict_update_wired— route(resolve_conflicts=True) resolves contradictions: a memory
+#                          that renames the root cause on the same entity SUPERSEDEs the
+#                          stale prior instead of merging into it. Emits SUPERSEDE ops.
 #   retrieval_scores     — TieredMemoryStore.retrieve() computes a score but returns
 #                          only records; the score never reaches the trace.
 #   context_drop_reason  — ContextCompiler drops memory lines by cap/budget without
@@ -34,7 +44,9 @@ _MAX_SUMMARY_CHARS = 240
 #   update_text_mutation — apply_route()'s UPDATE merges tags/assets/confidence but
 #                          never rewrites target.text, so there is no text diff.
 CAPABILITIES: dict[str, bool] = {
-    "decay_wired": False,
+    "decay_wired": True,
+    "eviction_wired": True,
+    "conflict_update_wired": True,
     "retrieval_scores": False,
     "context_drop_reason": False,
     "update_text_mutation": False,

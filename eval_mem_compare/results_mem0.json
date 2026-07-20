@@ -1,0 +1,64 @@
+{
+  "Mem0 (mem0ai, infer=False)": {
+    "1": {
+      "n": 500,
+      "k": 1,
+      "scored": 500,
+      "recall_at_k": 0.756,
+      "answer_string_hit": 0.314,
+      "by_type": {
+        "knowledge-update": 0.7949,
+        "multi-session": 0.8346,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.6,
+        "single-session-user": 0.5286,
+        "temporal-reasoning": 0.7143
+      }
+    },
+    "3": {
+      "n": 500,
+      "k": 3,
+      "scored": 500,
+      "recall_at_k": 0.876,
+      "answer_string_hit": 0.416,
+      "by_type": {
+        "knowledge-update": 0.9231,
+        "multi-session": 0.9323,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.8,
+        "single-session-user": 0.7143,
+        "temporal-reasoning": 0.8496
+      }
+    },
+    "5": {
+      "n": 500,
+      "k": 5,
+      "scored": 500,
+      "recall_at_k": 0.916,
+      "answer_string_hit": 0.436,
+      "by_type": {
+        "knowledge-update": 0.9744,
+        "multi-session": 0.9474,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.8333,
+        "single-session-user": 0.7857,
+        "temporal-reasoning": 0.9098
+      }
+    },
+    "10": {
+      "n": 500,
+      "k": 10,
+      "scored": 500,
+      "recall_at_k": 0.966,
+      "answer_string_hit": 0.466,
+      "by_type": {
+        "knowledge-update": 1.0,
+        "multi-session": 0.9925,
+        "single-session-assistant": 0.9821,
+        "single-session-preference": 0.9667,
+        "single-session-user": 0.8857,
+        "temporal-reasoning": 0.9549
+      }
+    }
+  }
+}

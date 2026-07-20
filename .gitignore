@@ -19,3 +19,19 @@ frontend/dist/
 key/
 *.pem
 id_ed25519*
+
+# memory-comparison eval (isolated)
+.venv-memcmp/
+eval_mem_compare/mem0_shards/
+eval_mem_compare/results_mem0_shard*.json
+eval_mem_compare/qdrant_shards/
+eval_mem_compare/chunk_shards/
+eval_mem_compare/results_chunked_shard*.json
+eval_mem_compare/*.log
+
+# isolated eval venv (mem-evo)
+.venv-memevo/
+
+# optional dense/reranker eval
+.venv-dense/
+.dense_cache/
