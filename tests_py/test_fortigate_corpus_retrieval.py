@@ -14,6 +14,20 @@ import pytest
 from core.eval import fortigate_corpus_retrieval as fc
 
 
+def _real_corpus_fixtures_present() -> bool:
+    has_syslog = any(fc.DEFAULT_SYSLOG_DIR.glob("*.log")) or any(fc.DEFAULT_SYSLOG_DIR.glob("*.log.gz"))
+    return has_syslog and fc.DEFAULT_TRAIN.is_file() and fc.DEFAULT_HELDOUT.is_file()
+
+
+_requires_real_corpus = pytest.mark.skipif(
+    not _real_corpus_fixtures_present(),
+    reason=(
+        "real FortiGate corpus fixtures absent: requires real/syslog/*.log[.gz], "
+        "real/train_cases.json, and real/heldout_cases.json"
+    ),
+)
+
+
 # ── 1. deterministic parser ────────────────────────────────────────────────────
 _ADMIN_LINE = (
     'Apr  8 00:01:06 _gateway date=2026-04-08 time=00:01:06 devname="DAHUA_FORTIGATE" '
@@ -64,6 +78,11 @@ def test_classify_uses_structured_fields():
 # ── 3. mined corpus is large and two-tiered ─────────────────────────────────────
 @pytest.fixture(scope="module")
 def units():
+    if not _real_corpus_fixtures_present():
+        pytest.skip(
+            "real FortiGate corpus fixtures absent: requires real/syslog/*.log[.gz], "
+            "real/train_cases.json, and real/heldout_cases.json"
+        )
     return fc.build_corpus()
 
 
@@ -123,6 +142,7 @@ def test_unit_text_is_built_from_real_log_vocabulary(units):
 
 
 # ── 6. eval is well-formed, bounded and deterministic ───────────────────────────
+@_requires_real_corpus
 def test_eval_shapes_and_bounds():
     res = fc.run_corpus_retrieval_eval(mode="base")
     assert res["n_cases"] == 8
@@ -142,12 +162,14 @@ def test_eval_shapes_and_bounds():
                    res["methods"][method][k]["canonical_recall"]
 
 
+@_requires_real_corpus
 def test_eval_is_deterministic():
     a = fc.run_corpus_retrieval_eval(mode="base")
     b = fc.run_corpus_retrieval_eval(mode="base")
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
+@_requires_real_corpus
 def test_rrf_not_worse_than_bm25_on_canonical_headline():
     res = fc.run_corpus_retrieval_eval(mode="base")
     k = fc._HEADLINE_K

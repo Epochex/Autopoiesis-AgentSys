@@ -1,9 +1,20 @@
 """Property tests for the BM25 + RRF skill-retrieval eval (LLM-free, deterministic)."""
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from core.memory.bm25 import BM25Index, tokenize
 from core.memory.rrf import rrf_fuse
 from core.eval.skill_retrieval import run_skill_retrieval_eval, build_retrievers
+
+
+_REAL_HELDOUT = Path("domains/network_rca/fixtures/real/heldout_cases.json")
+_requires_real_heldout = pytest.mark.skipif(
+    not _REAL_HELDOUT.is_file(),
+    reason="real FortiGate held-out fixture absent: domains/network_rca/fixtures/real/heldout_cases.json",
+)
 
 
 def test_bm25_ranks_term_bearing_doc_first():
@@ -41,6 +52,7 @@ def test_rrf_nonpositive_k():
     assert rrf_fuse([["a", "b"]], 0) == []
 
 
+@_requires_real_heldout
 def test_eval_runs_on_real_heldout_and_is_bounded():
     res = run_skill_retrieval_eval()
     assert res["n_queries"] == 6
@@ -52,10 +64,12 @@ def test_eval_runs_on_real_heldout_and_is_bounded():
             assert 0.0 <= row["false_retrieval"] <= 1.0
 
 
+@_requires_real_heldout
 def test_eval_is_deterministic():
     assert run_skill_retrieval_eval() == run_skill_retrieval_eval()
 
 
+@_requires_real_heldout
 def test_structured_retriever_never_false_retrieves_on_heldout():
     # the honest positive result: curated-tag retrieval picks only relevant probes.
     res = run_skill_retrieval_eval()
