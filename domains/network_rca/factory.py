@@ -53,6 +53,7 @@ def build_network_rca_orchestrator(
     data_source: str = "mock",
     real_stats_path: str | Path | None = None,
     seed_memory: bool = True,
+    context_strategy: str = "structured",
 ) -> SingleAgentRCAOrchestrator:
     memory = TieredMemoryStore(enabled=memory_enabled)
     if seed_memory:
@@ -76,7 +77,11 @@ def build_network_rca_orchestrator(
 
     return SingleAgentRCAOrchestrator(
         memory=memory,
-        context_compiler=ContextCompiler(token_budget=220, enabled=context_enabled),
+        context_compiler=ContextCompiler(
+            token_budget=220,
+            enabled=context_enabled,
+            strategy=context_strategy,
+        ),
         skills=registry,
         skill_controller=SkillAttentionController(enabled=skill_controller_enabled, top_k=top_k),
         verifier=Verifier(enabled=verifier_enabled),

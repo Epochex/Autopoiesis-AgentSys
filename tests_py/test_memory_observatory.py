@@ -259,7 +259,12 @@ def test_cold_runs_have_no_observatory_and_capabilities_stay_honest():
     # decay_and_forget has zero production callers; claiming otherwise would be a lie
     assert warm["capabilities"] == CAPABILITIES
     assert CAPABILITIES["decay_wired"] is False
-    assert all(v is False for v in CAPABILITIES.values())
+    assert CAPABILITIES["context_drop_reason"] is True
+    assert all(
+        value is False
+        for name, value in CAPABILITIES.items()
+        if name != "context_drop_reason"
+    )
 
 
 def test_records_carry_real_text_and_include_quarantined():
@@ -293,6 +298,9 @@ def test_recall_dropped_ids_are_derived_not_guessed():
         assert included <= retrieved  # context can never include a memory recall never returned
         if row["resolved"]:
             assert row["resolved_memory_ids"]
+    drops = [drop for row in obs["recall"] for drop in row["context_drops"]]
+    assert drops
+    assert all(drop["section"] and drop["reason"] == "section_budget" for drop in drops)
 
 
 def test_evolution_events_are_ordered_and_attributed():
