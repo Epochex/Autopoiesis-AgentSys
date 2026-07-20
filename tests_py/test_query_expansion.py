@@ -1,8 +1,19 @@
 """Tests for deterministic query expansion + its lift on the real held-out set."""
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from core.memory.query_expansion import stem, stem_tokens, expand_tokens, make_transform
 from core.eval.skill_retrieval import run_skill_retrieval_eval
+
+
+_REAL_HELDOUT = Path("domains/network_rca/fixtures/real/heldout_cases.json")
+_requires_real_heldout = pytest.mark.skipif(
+    not _REAL_HELDOUT.is_file(),
+    reason="real FortiGate held-out fixture absent: domains/network_rca/fixtures/real/heldout_cases.json",
+)
 
 
 def test_stem_strips_inflection_symmetrically():
@@ -36,6 +47,7 @@ def test_make_transform_modes():
         make_transform("nope")
 
 
+@_requires_real_heldout
 def test_stemming_lifts_real_heldout_recall():
     # the honest, no-domain-lexicon result: symmetric stemming > raw.
     base = run_skill_retrieval_eval(mode="base")["methods"]["rrf"][3]["recall_at_k"]
@@ -44,6 +56,7 @@ def test_stemming_lifts_real_heldout_recall():
     assert round(base, 3) == 0.833 and round(stemmed, 3) == 0.917
 
 
+@_requires_real_heldout
 def test_expand_reaches_full_recall_on_heldout():
     expanded = run_skill_retrieval_eval(mode="expand")["methods"]["rrf"][3]["recall_at_k"]
     assert round(expanded, 3) == 1.0
