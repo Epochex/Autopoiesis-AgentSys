@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from domains.network_rca.eval import compare_baselines
+from domains.network_rca.eval import compare_baselines, compare_context_strategies
 from domains.network_rca.real_dataset import (
     load_real_case_bundle,
     resolve_stats_path,
@@ -30,11 +30,18 @@ def main() -> None:
         data_source="real",
         real_stats_path=resolve_stats_path(args.manifest),
     )
+    context_rows = compare_context_strategies(
+        cases,
+        ground_truth,
+        data_source="real",
+        real_stats_path=resolve_stats_path(args.manifest),
+    )
     print(
         json.dumps(
             {
                 "validation": validation.model_dump(),
                 "heldout_baselines": [row.model_dump() for row in rows],
+                "context_comparison": [row.model_dump() for row in context_rows],
                 "warning": "Only dataset_kind=real and split=heldout rows should be used as real RCA metrics.",
             },
             indent=2,

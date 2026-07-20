@@ -44,6 +44,7 @@ class ConsolidationReport:
     passed: bool
     added: list[str] = field(default_factory=list)
     updated: list[str] = field(default_factory=list)
+    superseded: list[str] = field(default_factory=list)
     reinforced: list[str] = field(default_factory=list)
     quarantined: list[str] = field(default_factory=list)
     linked: list[str] = field(default_factory=list)
@@ -70,6 +71,7 @@ def consolidate_run(
     freeze_after: int = 4,
     misuse_thresh: float = 0.5,
     conf_cap: float = 3.0,
+    resolve_conflicts: bool = False,
     recorder: list[dict] | None = None,
 ) -> ConsolidationReport:
     """Consume one run's trace and write durable learning back into the store.
@@ -133,27 +135,37 @@ def consolidate_run(
             )
             # Mem0 write router: a genuinely new incident is ADDed (and linked into its
             # family, A-MEM); a re-observed variant UPDATEs the prior instead of duplicating.
-            decision = route(memory, epi)
-            # observability only: read the target's state either side of the in-place
-            # merge, so the UI can show the REAL diff apply_route would otherwise lose.
-            target = memory.get(decision.target_id) if decision.target_id else None
-            before = _snap(target) if target is not None else None
-            held_id = apply_route(memory, epi, decision)
-            held = memory.get(held_id)
-            _emit(
-                recorder, decision.op, held_id, held.tier if held is not None else epi.tier,
-                similarity=decision.similarity, target_id=decision.target_id,
-                before=before, after=_snap(held) if held is not None else None,
-            )
-            if decision.op == "ADD":
+            decision = route(memory, epi, resolve_conflicts=resolve_conflicts)
+            if decision.op == "SUPERSEDE":
+                # conflict-resolving UPDATE: the new incident renames the root cause on the
+                # same entity, so the prior is stale. supersede() retires the old, promotes
+                # the new, and emits its own SUPERSEDE op (on the retired record).
+                held_id = apply_route(memory, epi, decision, recorder=recorder)
+                report.superseded.append(str(decision.target_id))
                 report.added.append(held_id)
-                # link_related emits its own LINK ops (both sides, with snapshots).
                 linked = link_related(memory, epi, recorder=recorder)
                 report.linked.extend(linked)
-            elif decision.op == "UPDATE":
-                report.updated.append(held_id)
             else:
-                report.reinforced.append(held_id)
+                # observability only: read the target's state either side of the in-place
+                # merge, so the UI can show the REAL diff apply_route would otherwise lose.
+                target = memory.get(decision.target_id) if decision.target_id else None
+                before = _snap(target) if target is not None else None
+                held_id = apply_route(memory, epi, decision)
+                held = memory.get(held_id)
+                _emit(
+                    recorder, decision.op, held_id, held.tier if held is not None else epi.tier,
+                    similarity=decision.similarity, target_id=decision.target_id,
+                    before=before, after=_snap(held) if held is not None else None,
+                )
+                if decision.op == "ADD":
+                    report.added.append(held_id)
+                    # link_related emits its own LINK ops (both sides, with snapshots).
+                    linked = link_related(memory, epi, recorder=recorder)
+                    report.linked.extend(linked)
+                elif decision.op == "UPDATE":
+                    report.updated.append(held_id)
+                else:
+                    report.reinforced.append(held_id)
 
         # semantic: the recurring pattern (dedupe by root cause), reinforced on reuse
         sem_id = f"sem-{root_key}"

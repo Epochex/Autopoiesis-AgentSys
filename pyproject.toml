@@ -15,6 +15,25 @@ ingestor = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
 ]
+# OPTIONAL. The deterministic core stays zero-dependency; this extra powers the
+# production HybridKBRetriever dense/HNSW stage and the dense evaluation drivers.
+# Heavy imports remain lazy. Install into a dedicated venv, e.g.:
+#   python3 -m venv .venv-dense && . .venv-dense/bin/activate
+#   pip install sentence-transformers faiss-cpu torch
+dense = [
+  "sentence-transformers>=2.2",
+  "faiss-cpu>=1.7",
+  "torch>=2.0",
+]
+# OPTIONAL. Powers the HybridKBRetriever cross-encoder stage and reranker evals.
+# Like `dense`, imports remain lazy and tests importorskip it. The CrossEncoder ships with
+# sentence-transformers, so this reuses that dep; torch is its runtime. The public
+# BEIR SciFact benchmark it evaluates on is downloaded with the stdlib (no extra pkg).
+#   pip install sentence-transformers torch     # (already present in .venv-dense)
+rerank = [
+  "sentence-transformers>=2.2",
+  "torch>=2.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests_py"]

@@ -1,0 +1,254 @@
+{
+  "BM25 floor (rank_bm25)": {
+    "recall": {
+      "1": 0.874,
+      "3": 0.944,
+      "5": 0.97,
+      "10": 0.986
+    },
+    "by_type": {
+      "1": {
+        "single-session-user": 0.8857,
+        "multi-session": 0.8571,
+        "single-session-preference": 0.5333,
+        "temporal-reasoning": 0.8571,
+        "knowledge-update": 0.9615,
+        "single-session-assistant": 1.0
+      },
+      "3": {
+        "single-session-user": 0.9571,
+        "multi-session": 0.9474,
+        "single-session-preference": 0.7667,
+        "temporal-reasoning": 0.9248,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "5": {
+        "single-session-user": 0.9857,
+        "multi-session": 0.9699,
+        "single-session-preference": 0.8667,
+        "temporal-reasoning": 0.9624,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "10": {
+        "single-session-user": 1.0,
+        "multi-session": 0.985,
+        "single-session-preference": 0.9333,
+        "temporal-reasoning": 0.985,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      }
+    }
+  },
+  "store / core (lexical only)": {
+    "recall": {
+      "1": 0.876,
+      "3": 0.94,
+      "5": 0.97,
+      "10": 0.984
+    },
+    "by_type": {
+      "1": {
+        "single-session-user": 0.8714,
+        "multi-session": 0.8797,
+        "single-session-preference": 0.4,
+        "temporal-reasoning": 0.8647,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "3": {
+        "single-session-user": 0.9429,
+        "multi-session": 0.9474,
+        "single-session-preference": 0.7333,
+        "temporal-reasoning": 0.9248,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "5": {
+        "single-session-user": 0.9714,
+        "multi-session": 0.9774,
+        "single-session-preference": 0.8667,
+        "temporal-reasoning": 0.9624,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "10": {
+        "single-session-user": 1.0,
+        "multi-session": 0.985,
+        "single-session-preference": 0.9333,
+        "temporal-reasoning": 0.9774,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      }
+    }
+  },
+  "store / +recency": {
+    "recall": {
+      "1": 0.874,
+      "3": 0.944,
+      "5": 0.97,
+      "10": 0.984
+    },
+    "by_type": {
+      "1": {
+        "single-session-user": 0.8714,
+        "multi-session": 0.8797,
+        "single-session-preference": 0.4,
+        "temporal-reasoning": 0.8647,
+        "knowledge-update": 0.9744,
+        "single-session-assistant": 1.0
+      },
+      "3": {
+        "single-session-user": 0.9429,
+        "multi-session": 0.9474,
+        "single-session-preference": 0.8,
+        "temporal-reasoning": 0.9248,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "5": {
+        "single-session-user": 0.9714,
+        "multi-session": 0.9774,
+        "single-session-preference": 0.8667,
+        "temporal-reasoning": 0.9624,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "10": {
+        "single-session-user": 1.0,
+        "multi-session": 0.985,
+        "single-session-preference": 0.9333,
+        "temporal-reasoning": 0.9774,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      }
+    }
+  },
+  "store / +centrality (kNN)": {
+    "recall": {
+      "1": 0.872,
+      "3": 0.944,
+      "5": 0.972,
+      "10": 0.984
+    },
+    "by_type": {
+      "1": {
+        "single-session-user": 0.8714,
+        "multi-session": 0.8647,
+        "single-session-preference": 0.4,
+        "temporal-reasoning": 0.8647,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "3": {
+        "single-session-user": 0.9429,
+        "multi-session": 0.9474,
+        "single-session-preference": 0.8,
+        "temporal-reasoning": 0.9248,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "5": {
+        "single-session-user": 0.9857,
+        "multi-session": 0.9774,
+        "single-session-preference": 0.8667,
+        "temporal-reasoning": 0.9624,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "10": {
+        "single-session-user": 1.0,
+        "multi-session": 0.985,
+        "single-session-preference": 0.9333,
+        "temporal-reasoning": 0.9774,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      }
+    }
+  },
+  "store / +amem@0.34 +recency": {
+    "recall": {
+      "1": 0.874,
+      "3": 0.944,
+      "5": 0.97,
+      "10": 0.984
+    },
+    "by_type": {
+      "1": {
+        "single-session-user": 0.8714,
+        "multi-session": 0.8797,
+        "single-session-preference": 0.4,
+        "temporal-reasoning": 0.8647,
+        "knowledge-update": 0.9744,
+        "single-session-assistant": 1.0
+      },
+      "3": {
+        "single-session-user": 0.9429,
+        "multi-session": 0.9474,
+        "single-session-preference": 0.8,
+        "temporal-reasoning": 0.9248,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "5": {
+        "single-session-user": 0.9714,
+        "multi-session": 0.9774,
+        "single-session-preference": 0.8667,
+        "temporal-reasoning": 0.9624,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "10": {
+        "single-session-user": 1.0,
+        "multi-session": 0.985,
+        "single-session-preference": 0.9333,
+        "temporal-reasoning": 0.9774,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      }
+    }
+  },
+  "store / +full (recency+central)": {
+    "recall": {
+      "1": 0.876,
+      "3": 0.944,
+      "5": 0.97,
+      "10": 0.984
+    },
+    "by_type": {
+      "1": {
+        "single-session-user": 0.8714,
+        "multi-session": 0.8797,
+        "single-session-preference": 0.4333,
+        "temporal-reasoning": 0.8647,
+        "knowledge-update": 0.9744,
+        "single-session-assistant": 1.0
+      },
+      "3": {
+        "single-session-user": 0.9429,
+        "multi-session": 0.9474,
+        "single-session-preference": 0.8,
+        "temporal-reasoning": 0.9248,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "5": {
+        "single-session-user": 0.9714,
+        "multi-session": 0.9774,
+        "single-session-preference": 0.8667,
+        "temporal-reasoning": 0.9624,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      },
+      "10": {
+        "single-session-user": 1.0,
+        "multi-session": 0.985,
+        "single-session-preference": 0.9333,
+        "temporal-reasoning": 0.9774,
+        "knowledge-update": 0.9872,
+        "single-session-assistant": 1.0
+      }
+    }
+  }
+}

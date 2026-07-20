@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from domains.network_rca.adapters.real_syslog_adapter import RealSyslogAdapter
-from domains.network_rca.eval import compare_baselines
+from domains.network_rca.eval import compare_baselines, compare_context_strategies
 from domains.network_rca.real_data_readiness import probe_r230_readiness
 from domains.network_rca.schema import RCAGroundTruth, RCASeedCase
 
@@ -78,6 +78,38 @@ def test_skill_control_matters_on_dominant_signal(tmp_path):
     assert rows["autopoiesis_light_path"].root_cause_accuracy == 1.0
     # No skill control -> dominant brute-force evidence swamps the deny case.
     assert rows["full_tools"].root_cause_accuracy < 1.0
+
+
+def test_context_comparison_runs_on_real_shaped_heldout_path(tmp_path):
+    cases = [
+        _case(
+            "bf",
+            ["admin", "login", "failed", "lockout", "bruteforce"],
+            ["check_admin_auth_failures", "check_admin_lockout"],
+        )
+    ]
+    ground_truth = {
+        "bf": _gt(
+            "bf",
+            ["ev-admin-auth-failures", "ev-admin-lockout"],
+            "admin_bruteforce_lockout",
+        )
+    }
+
+    rows = compare_context_strategies(
+        cases,
+        ground_truth,
+        data_source="real",
+        real_stats_path=_stats_path(tmp_path),
+    )
+
+    assert [row.strategy for row in rows] == ["flat", "structured"]
+    assert {row.dataset_kind for row in rows} == {"real"}
+    assert {row.split for row in rows} == {"heldout"}
+    assert {row.reasoner_mode for row in rows} == {"rule"}
+    assert rows[0].estimated_tokens_before == rows[1].estimated_tokens_before
+    assert rows[0].root_cause_accuracy == rows[1].root_cause_accuracy == 1.0
+    assert rows[0].citation_verify_pass_rate == rows[1].citation_verify_pass_rate == 1.0
 
 
 def test_benign_event_only_case_is_not_misclassified(tmp_path):

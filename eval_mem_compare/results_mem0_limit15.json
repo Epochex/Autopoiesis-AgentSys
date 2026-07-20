@@ -1,0 +1,44 @@
+{
+  "Mem0 (mem0ai, infer=False)": {
+    "1": {
+      "n": 15,
+      "k": 1,
+      "scored": 15,
+      "recall_at_k": 0.4667,
+      "answer_string_hit": 0.4,
+      "by_type": {
+        "single-session-user": 0.4667
+      }
+    },
+    "3": {
+      "n": 15,
+      "k": 3,
+      "scored": 15,
+      "recall_at_k": 0.5333,
+      "answer_string_hit": 0.4667,
+      "by_type": {
+        "single-session-user": 0.5333
+      }
+    },
+    "5": {
+      "n": 15,
+      "k": 5,
+      "scored": 15,
+      "recall_at_k": 0.5333,
+      "answer_string_hit": 0.4667,
+      "by_type": {
+        "single-session-user": 0.5333
+      }
+    },
+    "10": {
+      "n": 15,
+      "k": 10,
+      "scored": 15,
+      "recall_at_k": 0.8,
+      "answer_string_hit": 0.6667,
+      "by_type": {
+        "single-session-user": 0.8
+      }
+    }
+  }
+}

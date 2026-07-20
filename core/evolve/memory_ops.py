@@ -35,7 +35,7 @@ _SKIP_PREFIX = ("skill:", "quarantine:", "root:")
 _SIM_TAG_WEIGHT = 0.6
 _SIM_ASSET_WEIGHT = 0.4
 
-RouteOp = Literal["ADD", "UPDATE", "NOOP"]
+RouteOp = Literal["ADD", "UPDATE", "NOOP", "SUPERSEDE"]
 
 
 def _emit_change(
@@ -80,10 +80,31 @@ class RouteDecision:
     similarity: float = 0.0
 
 
-def route(memory: TieredMemoryStore, candidate: MemoryRecord, *, update_thresh: float = 0.62, noop_thresh: float = 0.97) -> RouteDecision:
+def _root_keys(tags: Iterable[str]) -> set[str]:
+    """The diagnosed root-cause keys carried on a memory (``root:<key>`` tags). A memory
+    can only *contradict* another about the same entity if it names a DIFFERENT root."""
+    return {t[len("root:"):] for t in tags if t.startswith("root:")}
+
+
+def route(
+    memory: TieredMemoryStore,
+    candidate: MemoryRecord,
+    *,
+    update_thresh: float = 0.62,
+    noop_thresh: float = 0.97,
+    resolve_conflicts: bool = False,
+) -> RouteDecision:
     """Mem0-style write router: is a candidate memory genuinely new (ADD), a variant
-    of one we already hold (UPDATE — reinforce + merge), or already fully captured
-    (NOOP)? Compared only within the same tier; the earliest best match wins ties."""
+    of one we already hold (UPDATE — reinforce + merge), already fully captured (NOOP),
+    or a CONTRADICTION of a prior we must retire (SUPERSEDE)? Compared only within the
+    same tier; the earliest best match wins ties.
+
+    With ``resolve_conflicts`` the router goes *beyond* similar→reinforce: when the
+    candidate is about the same entity as a prior (same asset / high similarity) but
+    names a DIFFERENT diagnosed root cause, the fact has changed — the prior is stale.
+    That returns SUPERSEDE (retire the old, promote the new) instead of UPDATE (which
+    would merge the stale root into the live memory and keep contradicting itself).
+    """
     best: MemoryRecord | None = None
     best_sim = 0.0
     for rec in memory.active():
@@ -94,24 +115,66 @@ def route(memory: TieredMemoryStore, candidate: MemoryRecord, *, update_thresh: 
             best, best_sim = rec, s
     if best is None or best_sim < update_thresh:
         return RouteDecision("ADD", None, best_sim)
+    if resolve_conflicts:
+        cand_roots, targ_roots = _root_keys(candidate.tags), _root_keys(best.tags)
+        # same entity (they matched at update_thresh), but the candidate diagnoses a root
+        # the prior does not — a genuine contradiction, not a reinforcing variant. Checked
+        # BEFORE the NOOP gate: root:* tags are excluded from the content-similarity blend,
+        # so a pure root flip can otherwise look like an identical re-observation.
+        if cand_roots and targ_roots and (cand_roots - targ_roots):
+            return RouteDecision("SUPERSEDE", best.memory_id, best_sim)
     new_info = bool((_tagset(candidate.tags) - _tagset(best.tags)) or (set(candidate.asset_ids) - set(best.asset_ids)))
     if best_sim >= noop_thresh and not new_info:
         return RouteDecision("NOOP", best.memory_id, best_sim)
     return RouteDecision("UPDATE", best.memory_id, best_sim)
 
 
-def apply_route(memory: TieredMemoryStore, candidate: MemoryRecord, decision: RouteDecision, *, conf_cap: float = 3.0) -> str:
+def supersede(
+    memory: TieredMemoryStore,
+    old_id: str,
+    candidate: MemoryRecord,
+    *,
+    recorder: list[dict] | None = None,
+) -> str:
+    """Conflict-resolving UPDATE: ``candidate`` contradicts the prior ``old_id`` on the
+    same entity, so the prior is now stale. Retire the old (quarantine reason
+    ``superseded``), promote the new as the live memory, and record the supersession
+    both ways (old.superseded_by / new links to old) for an auditable provenance chain.
+    Returns the id of the live memory. Idempotent-safe: a missing/duplicate id degrades
+    to a plain ADD rather than raising."""
+    old = memory.get(old_id)
+    if memory.get(candidate.memory_id) is None:
+        candidate.strength = 1.0
+        memory.add(candidate)
+    if old is None or old.quarantined:
+        return candidate.memory_id
+    before = _snap(old)
+    if old_id not in candidate.links:
+        candidate.links.append(old_id)      # provenance: what this memory replaced
+    old.superseded_by = candidate.memory_id
+    memory.quarantine(old_id, "superseded")
+    # quarantine flips a flag _snap() does not track, so emit the op explicitly rather
+    # than via _emit_change (whose before==after guard would swallow it).
+    _emit(recorder, "SUPERSEDE", old_id, old.tier, target_id=candidate.memory_id,
+          before=before, after=_snap(old))
+    return candidate.memory_id
+
+
+def apply_route(memory: TieredMemoryStore, candidate: MemoryRecord, decision: RouteDecision, *, conf_cap: float = 3.0, recorder: list[dict] | None = None) -> str:
     """Execute a RouteDecision; returns the memory_id that now holds the information."""
     if decision.op == "ADD":
         candidate.strength = 1.0
         memory.add(candidate)
         return candidate.memory_id
+    if decision.op == "SUPERSEDE" and decision.target_id:
+        return supersede(memory, decision.target_id, candidate, recorder=recorder)
     target = memory.get(decision.target_id) if decision.target_id else None
     if target is None:                       # target vanished (forgotten) — treat as ADD
         candidate.strength = 1.0
         memory.add(candidate)
         return candidate.memory_id
     target.strength = 1.0                     # any hit refreshes retrievability
+    target.access_count += 1                  # reuse: feeds utility-driven eviction
     if decision.op == "UPDATE":
         for t in candidate.tags:
             if t not in target.tags:
@@ -258,6 +321,91 @@ def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floo
         if rec.strength < floor:
             memory.quarantine(rec.memory_id, "forgotten")
             forgotten.append(rec.memory_id)
+    return forgotten
+
+
+@dataclass(frozen=True)
+class UtilityWeights:
+    """Blend weights for the per-memory utility used by eviction. Equal by default —
+    deliberately *not* tuned on any eval label, so the eviction is honest."""
+    importance: float = 0.25   # Generative-Agents salience (reflection)
+    access: float = 0.25       # recall frequency — how often it has been reused
+    recency: float = 0.25      # Ebbinghaus retrievability (strength), reset on reuse
+    centrality: float = 0.25   # A-MEM link degree — how many families it bridges
+
+
+_EVICT_PROTECT = ("seed", "asset", "insight")
+
+
+def utility_scores(
+    memory: TieredMemoryStore,
+    *,
+    weights: UtilityWeights = UtilityWeights(),
+    protect: tuple[str, ...] = _EVICT_PROTECT,
+) -> dict[str, float]:
+    """Per-memory utility in [0,1]: a max-normalised blend of importance, access
+    frequency, recency (strength) and A-MEM centrality (link degree). This is a real
+    function of four independent lifecycle signals — NOT a relabelled time-decay: two
+    memories of equal age get different utility if one is more reused, more salient, or
+    more central. Protected priors are omitted (never evicted, so never scored)."""
+    active = [r for r in memory.active() if not r.memory_id.startswith(protect)]
+    if not active:
+        return {}
+
+    def _norm(values: dict[str, float]) -> dict[str, float]:
+        hi = max(values.values(), default=0.0)
+        return {k: (v / hi if hi > 0 else 0.0) for k, v in values.items()}
+
+    imp = _norm({r.memory_id: max(0.0, r.importance) for r in active})
+    acc = _norm({r.memory_id: float(r.access_count) for r in active})
+    rec = _norm({r.memory_id: max(0.0, r.strength) for r in active})
+    cen = _norm({r.memory_id: float(len(r.links)) for r in active})
+    w = weights
+    return {
+        r.memory_id: round(
+            w.importance * imp[r.memory_id] + w.access * acc[r.memory_id]
+            + w.recency * rec[r.memory_id] + w.centrality * cen[r.memory_id],
+            6,
+        )
+        for r in active
+    }
+
+
+def utility_evict(
+    memory: TieredMemoryStore,
+    *,
+    budget: int,
+    weights: UtilityWeights = UtilityWeights(),
+    protect: tuple[str, ...] = _EVICT_PROTECT,
+    recorder: list[dict] | None = None,
+) -> list[str]:
+    """Capacity-budgeted eviction: while the active store exceeds ``budget``, forget the
+    LOWEST-utility non-protected memories (quarantine reason ``evicted``). Protected
+    priors (seeded / asset-profile / reflected insights) are never evicted and always
+    count against the budget. Returns the ids evicted this call.
+
+    This is the wired, non-trivial counterpart to :func:`decay_and_forget`: eviction is
+    driven by *learned worth* (utility), not by age alone. Budget binds only when the
+    store has grown past it — on a store that fits, this is a no-op."""
+    if budget < 0:
+        raise ValueError(f"budget must be >= 0, got {budget}")
+    active = memory.active()
+    if len(active) <= budget:
+        return []
+    protected = [r for r in active if r.memory_id.startswith(protect)]
+    evictable = [r for r in active if not r.memory_id.startswith(protect)]
+    keep = max(0, budget - len(protected))              # protected priors count vs budget
+    scores = utility_scores(memory, weights=weights, protect=protect)
+    # lowest utility first; ties broken by lower strength then insertion order (stable).
+    order = sorted(evictable, key=lambda r: (scores.get(r.memory_id, 0.0), r.strength))
+    to_evict = order[: max(0, len(evictable) - keep)]
+    forgotten: list[str] = []
+    for rec in to_evict:
+        before = _snap(rec)
+        memory.quarantine(rec.memory_id, "evicted")
+        _emit(recorder, "EVICT", rec.memory_id, rec.tier, before=before, after=_snap(rec),
+              similarity=scores.get(rec.memory_id, 0.0))
+        forgotten.append(rec.memory_id)
     return forgotten
 
 
