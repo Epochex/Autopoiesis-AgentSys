@@ -257,12 +257,14 @@ def test_cold_runs_have_no_observatory_and_capabilities_stay_honest():
 
     warm = run_evolving_stream(cases, gt, passes=2, evolve=True)["observatory"]
     assert warm["capabilities"] == CAPABILITIES
-    # eviction + conflict-resolving update are now WIRED (utility_evict / SUPERSEDE run in
-    # the consolidation loop); the still-dormant observability signals stay honestly False.
+    # Lifecycle operations and structured context-drop provenance are wired; retrieval
+    # score tracing and UPDATE text mutation remain deliberately absent.
+    assert CAPABILITIES["decay_wired"] is True
     assert CAPABILITIES["eviction_wired"] is True
     assert CAPABILITIES["conflict_update_wired"] is True
     assert CAPABILITIES["retrieval_scores"] is False
-    assert CAPABILITIES["context_drop_reason"] is False
+    assert CAPABILITIES["context_drop_reason"] is True
+    assert CAPABILITIES["update_text_mutation"] is False
 
 
 def test_records_carry_real_text_and_include_quarantined():
@@ -296,6 +298,9 @@ def test_recall_dropped_ids_are_derived_not_guessed():
         assert included <= retrieved  # context can never include a memory recall never returned
         if row["resolved"]:
             assert row["resolved_memory_ids"]
+    drops = [drop for row in obs["recall"] for drop in row["context_drops"]]
+    assert drops
+    assert all(drop["section"] and drop["reason"] == "section_budget" for drop in drops)
 
 
 def test_evolution_events_are_ordered_and_attributed():

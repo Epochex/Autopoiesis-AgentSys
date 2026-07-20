@@ -6,11 +6,11 @@ throws the store away. This module *only serializes what already happened*:
 
   * it never decides anything, never mutates a record, never changes control flow;
   * every number it emits was produced by the real kernel on the real run;
-  * where the kernel genuinely does not expose a value (per-link scores, retrieval
-    scores, context drop reasons) it emits ``None`` rather than inventing one.
+  * where the kernel genuinely does not expose a value (per-link and retrieval
+    scores) it emits ``None`` rather than inventing one.
 
-``CAPABILITIES`` states, honestly, which lifecycle signals the kernel does *not*
-currently produce — so the UI can grey those affordances out instead of faking them.
+``CAPABILITIES`` states, honestly, which lifecycle signals the kernel currently
+produces — so the UI can grey unsupported affordances out instead of faking them.
 """
 from __future__ import annotations
 
@@ -39,8 +39,8 @@ _MAX_SUMMARY_CHARS = 240
 #                          stale prior instead of merging into it. Emits SUPERSEDE ops.
 #   retrieval_scores     — TieredMemoryStore.retrieve() computes a score but returns
 #                          only records; the score never reaches the trace.
-#   context_drop_reason  — ContextCompiler drops memory lines by cap/budget without
-#                          recording which rule dropped which line.
+#   context_drop_reason  — ContextCompiler records section, reason, text fragment,
+#                          identity, and whether a drop was a partial truncation.
 #   update_text_mutation — apply_route()'s UPDATE merges tags/assets/confidence but
 #                          never rewrites target.text, so there is no text diff.
 CAPABILITIES: dict[str, bool] = {
@@ -48,7 +48,7 @@ CAPABILITIES: dict[str, bool] = {
     "eviction_wired": True,
     "conflict_update_wired": True,
     "retrieval_scores": False,
-    "context_drop_reason": False,
+    "context_drop_reason": True,
     "update_text_mutation": False,
 }
 
@@ -187,8 +187,8 @@ def recall_row(
     """What one run retrieved, what survived into context, and what was dropped.
 
     ``dropped_memory_ids`` is a real derivation (retrieved minus included), not a
-    guess: the compiler reports exactly which memory ids it kept. *Why* a given id
-    was dropped is not recorded anywhere — see CAPABILITIES["context_drop_reason"].
+    guess. ``context_drops`` carries the compiler's section-local provenance,
+    including partial truncations of items that also appear in the included list.
     """
     mem_read = _first(events, "memory_read")
     context = _first(events, "context_compiled")
@@ -198,6 +198,13 @@ def recall_row(
     included = list(context.payload.get("included_memory_ids", [])) if context else []
     included_set = set(included)
     dropped = [mid for ids in retrieved.values() for mid in ids if mid not in included_set]
+    memory_kinds = {"asset_profile", "semantic", "procedural", "episodic"}
+    context_drops = []
+    if context is not None:
+        for section in context.payload.get("sections", []):
+            for item in section.get("dropped", []):
+                if item.get("kind") in memory_kinds:
+                    context_drops.append({"section": section.get("name"), **item})
 
     resolved_ids: list[str] = []
     if resolved_ev is not None and resolved_ev.payload.get("memory_id"):
@@ -211,6 +218,7 @@ def recall_row(
         "retrieved": retrieved,
         "included_memory_ids": included,
         "dropped_memory_ids": dropped,
+        "context_drops": context_drops,
         "probes": probes,
         "shortcut": any(e.kind == "memory_shortcut" for e in events),
         "resolved": resolved_ev is not None,
