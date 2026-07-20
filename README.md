@@ -1,6 +1,6 @@
 # Autopoiesis-AgentSys
 
-长周期 Agent 的自演化内核。被测量的系统是 [`core/`](./core) 和 [`domains/`](./domains) 下的 Python 实现,首个落地场景是基于真实 FortiGate/R230 内网日志的根因分析(RCA)。
+长周期 Agent 的自演化内核。项目分两部分:被基准测量的 [`core/`](./core) + [`domains/`](./domains) Python 内核,以及把它可视化的 [`frontend/`](./frontend) 前端;首个落地场景是基于真实 FortiGate/R230 内网日志的根因分析(RCA)。所有可复现的数字都出自 Python 内核。
 
 这个仓库不解决通用编排。它针对的是 Agent 连续运行数周后才暴露的失效模式:记忆变旧或被污染、上下文无节制增长、技能太多干扰模型、有用的经验始终沉淀不成稳定策略。
 
@@ -64,6 +64,12 @@ python3 examples/benchmarks.py        # §1–§3,真实 R230 集
 python3 -m pytest tests_py/ -q        # 全量测试
 ```
 
+## 前端与可观测
+
+[`frontend/`](./frontend) 是 React/Vite 的战术态势界面(态势 / 长轨迹 / 渗透 三页)+ 能力门控的记忆 observatory + FastAPI 网关(`frontend/gateway/`)。它把 agent 正在诊断的真实 R230 网络可视化——证据面、拓扑、记忆生命周期、只读自渗透——每条线、每个计数都读自真实保留集抓包,不是示意图。默认服务在 `http://<host>:2026`。
+
+observatory 与内核共用同一条诚实原则:内核证明不了自己产出的值一律置灰,不在界面上假装在跑。`frontend/script/vreview.mjs` 用 Playwright 驱动真实浏览器做可测量的前端验证(实际裁切、axe 对比度、横向滚动、console 错误、像素 diff),而不是靠眯眼看截图。
+
 ## 数据
 
 - 真实:FortiGate R230 syslog、FortiOS 7.4 管理手册语料、IODA v2 断网事件池、LongMemEval-500。
@@ -83,6 +89,7 @@ core/llm/           OpenAI 兼容 provider(DeepSeek API / 本地 GPU 隧道)
 domains/network_rca 首个落地域:内网 RCA
 domains/active_recon 只读侦察 / 加固报告
 domains/enterprise_ops 企业运维/定价工作流(合成 fixture)
+frontend/           React/Vite 战术态势界面 + 记忆 observatory + FastAPI 网关
 ```
 
 ## 推理后端
