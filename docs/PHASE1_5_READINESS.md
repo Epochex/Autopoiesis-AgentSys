@@ -21,7 +21,7 @@ Phase 1 proves only that the pipeline is wired. Its 1.0 mock metrics are not RCA
 
 | baseline | root-cause acc | evidence recall |
 |---|---|---|
-| selfevo_light_path | 1.00 | 1.00 |
+| autopoiesis_light_path | 1.00 | 1.00 |
 | full_context | 1.00 | 1.00 |
 | full_tools (no skill control) | **0.50** | **0.50** |
 | no_memory | 1.00 | 1.00 |
@@ -42,7 +42,7 @@ The command prints `real_data_readiness.blocked=true` until real syslog fixtures
 Validate a real dataset manifest with:
 
 ```bash
-SELFEVO_REAL_DATASET_MANIFEST=/path/to/manifest.json python3 -m domains.network_rca.validate_real_dataset
+AUTOPOIESIS_REAL_DATASET_MANIFEST=/path/to/manifest.json python3 -m domains.network_rca.validate_real_dataset
 ```
 
 Run real held-out baselines only after the manifest validates:
@@ -64,7 +64,7 @@ R230_FORTIGATE_LOG_PATHS=/data/fortigate-runtime/input/fortigate.log \
 - 3-7 days of FortiGate syslog captured from R230 through a readonly export or ingestor.
 - Train and held-out eval split stored separately.
 - Human-labeled or independently validated ground truth for held-out cases.
-- Baseline table over the same held-out cases: selfevo light path, full context, full tools, and no memory.
+- Baseline table over the same held-out cases: Autopoiesis light path, full context, full tools, and no memory.
 
 Mock baseline rows are allowed only as pipeline checks and must be labeled `dataset_kind=mock`.
 

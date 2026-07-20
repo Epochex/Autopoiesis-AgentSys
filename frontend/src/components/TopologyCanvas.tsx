@@ -1,12 +1,16 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import type { DataStats, Device, GraphAnalysis, GraphDevice, Subnet, SubnetGraph, Topology } from '../types'
+import type { DataStats, Device, GraphAnalysis, Subnet, SubnetGraph, Topology } from '../types'
 import { Scramble } from './Motion'
 import { SubnetGraphLayer } from './SubnetGraph'
 import { Analyzing, type Threat, type WanThreat } from './ThreatCard'
 import type { Lang } from '../i18n'
 
 type Pt = { x: number; y: number }
-const VBW = 1360
+/* The plate is a ~1.9:1 letterbox at every supported viewport (1920x1006,
+ * 1440x826). The old 1360x1000 viewBox (1.36:1) could only ever be fitted by
+ * HEIGHT, so ~550px of the 1920 plate was structural letterboxing — the "dead
+ * space" was the viewBox, not the layout. 1920x1000 fits the plate. */
+const VBW = 1920
 const VBH = 1000
 const bez = (a: Pt, b: Pt) => `M${a.x} ${a.y} C ${(a.x + b.x) / 2} ${a.y}, ${(a.x + b.x) / 2} ${b.y}, ${b.x} ${b.y}`
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
@@ -55,142 +59,109 @@ function Float({ x, y, w, lines, tone }: { x: number; y: number; w: number; line
   )
 }
 
-// ── tactical HUD geometry helpers ──────────────────────────────────────────
-const polar = (c: Pt, r: number, deg: number): Pt => {
-  const a = (deg * Math.PI) / 180
-  return { x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r }
-}
+type Atk = { ip: string; v: number; p: Pt }
 
-/** Annular-sector (wedge) path from an inner to an outer radius across [a1,a2]°. */
-function annularSector(c: Pt, rIn: number, rOut: number, a1: number, a2: number): string {
-  const large = a2 - a1 > 180 ? 1 : 0
-  const p1 = polar(c, rOut, a1)
-  const p2 = polar(c, rOut, a2)
-  const p3 = polar(c, rIn, a2)
-  const p4 = polar(c, rIn, a1)
-  return `M ${p1.x} ${p1.y} A ${rOut} ${rOut} 0 ${large} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${rIn} ${rIn} 0 ${large} 0 ${p4.x} ${p4.y} Z`
-}
+/* WAN ingress geometry — the tally block sits in the open WAN field, left of
+ * the target it converges on. */
+const TALLY = { x: 96, y: 214, cols: 26, cell: 8 }
 
-/** Ambient sector-radar watermark centred on the focal core: range rings,
- *  coordinate crosshair, azimuth ticks. Pure decoration. */
-function HudRadar({ core }: { core: Pt }) {
-  const rings = [136, 244, 352]
+/** WAN INGRESS — the credential assault, stated as facts.
+ *
+ *  The previous version scattered 84 dots through a polar annulus with a hash
+ *  (`r = 268 + (hash % 1000)/1000 * 168`) to stand in for the 573 real sources.
+ *  Every one of those positions was invented, and the field read as a map — a
+ *  spatial claim the data cannot support. That is the exact failure the honesty
+ *  rules name ("never synthesize positions-as-meaning").
+ *
+ *  This is a UNIT TALLY instead: ONE mark per real distinct source, laid out on
+ *  a neutral grid that makes no spatial claim at all — the grid is admittedly a
+ *  reading order, and it is labelled as such ("1 mark = 1 source"). The count is
+ *  the message, and the count is real (`dataStats.distinctSrc`).
+ *
+ *  Severity is carried by ink weight and structure, never by hue: the assault is
+ *  ink, the containment is stated in words + the real lockout count. */
+function WanSiege({
+  core, atk, distinctSrc, lockouts, lang, wan, onWan,
+}: {
+  core: Pt; atk: Atk[]; distinctSrc: number; lockouts: number; lang: Lang
+  wan: WanThreat | null; onWan: (ip: string) => void
+}) {
+  const zh = lang === 'zh'
+  const T: Pt = { x: core.x - 190, y: core.y } // the besieged admin-login focal point
+  const gwFace: Pt = { x: core.x - 86, y: core.y }
+  const brackets = (c: Pt, s: number, len: number) =>
+    ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(
+      ([sx, sy]) => `M ${c.x + sx * s} ${c.y + sy * s - sy * len} L ${c.x + sx * s} ${c.y + sy * s} L ${c.x + sx * s - sx * len} ${c.y + sy * s}`,
+    )
+  // one mark per real source — no sampling, no invented coordinates
+  const rows = Math.ceil(distinctSrc / TALLY.cols)
+  const tallyW = TALLY.cols * TALLY.cell
+  const tallyH = rows * TALLY.cell
+  const dim = !!wan
   return (
-    <g className="hud-radar" pointerEvents="none">
-      <line x1={44} y1={core.y} x2={1316} y2={core.y} className="hud-axis" />
-      <line x1={core.x} y1={26} x2={core.x} y2={974} className="hud-axis" />
-      {rings.map((r) => (
-        <circle key={r} cx={core.x} cy={core.y} r={r} className="hud-ring" />
-      ))}
-      {Array.from({ length: 36 }).map((_, i) => {
-        const deg = i * 10
-        const r2 = i % 3 === 0 ? 338 : 345
-        const p1 = polar(core, r2, deg)
-        const p2 = polar(core, 352, deg)
-        return <line key={i} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} className="hud-azi" />
-      })}
-      {['000', '090', '180', '270'].map((b, i) => {
-        const p = polar(core, 366, i * 90)
-        return (
-          <text key={b} x={p.x} y={p.y + 3} className="hud-bearing" textAnchor="middle">{b}</text>
-        )
-      })}
-    </g>
-  )
-}
-
-/** WAN-ingress THREAT CONE — the region the internet is actively attacking through.
- *  Hazard-striped caution fill + range-ring "incoming waves" that converge on the
- *  FortiGate + an oscillating radar sweep. Motion speed tracks the live event rate
- *  (tempo), so a busier hour visibly hammers harder. Reads as "under fire", not decor. */
-function ThreatCone({ core, tempo, active }: { core: Pt; tempo: number; active: boolean }) {
-  const a1 = 158
-  const a2 = 216
-  const rIn = 104
-  const rOut = 398
-  const wedge = annularSector(core, rIn, rOut, a1, a2)
-  const waveDur = Math.max(2.0, 3.8 / tempo)
-  const sweepDur = Math.max(2.8, 5.4 / tempo)
-  return (
-    <g className={`threat-cone ${active ? 'live' : ''}`} pointerEvents="none">
-      <defs>
-        <clipPath id="tc-clip"><path d={wedge} /></clipPath>
-        <pattern id="tc-haz" width="16" height="16" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
-          <rect width="8" height="16" className="tc-haz-stripe" />
-        </pattern>
-      </defs>
-      <path d={wedge} fill="url(#tc-haz)" className="tc-fill" />
-      <path d={wedge} className="tc-edge" />
-      <g clipPath="url(#tc-clip)">
-        {[0, 1, 2, 3].map((i) => (
-          <circle key={i} cx={core.x} cy={core.y} className="tc-wave" r={rOut}>
-            <animate attributeName="r" values={`${rOut};${rIn}`} dur={`${waveDur}s`} begin={`${(i * waveDur) / 4}s`} repeatCount="indefinite" />
-            <animate attributeName="opacity" values="0;0.6;0" dur={`${waveDur}s`} begin={`${(i * waveDur) / 4}s`} repeatCount="indefinite" />
-          </circle>
+    <g className={`wan-siege ${dim ? 'dim' : ''}`}>
+      {/* the source tally: 573 marks, one per distinct source IP */}
+      <g className="ws-tally" pointerEvents="none">
+        <text x={TALLY.x} y={TALLY.y - 26} className="ws-kicker">{zh ? '外网入口 · 管理登录暴力破解' : 'WAN INGRESS · ADMIN BRUTE-FORCE'}</text>
+        <text x={TALLY.x} y={TALLY.y - 9} className="ws-tally-cap">
+          {zh ? `${distinctSrc} 个来源 · 每格 1 个` : `${distinctSrc} sources · 1 mark = 1 source`}
+        </text>
+        {Array.from({ length: distinctSrc }).map((_, i) => (
+          <rect
+            key={i}
+            x={TALLY.x + (i % TALLY.cols) * TALLY.cell}
+            y={TALLY.y + Math.floor(i / TALLY.cols) * TALLY.cell}
+            width={4}
+            height={4}
+            className="ws-src"
+          />
         ))}
-        <line x1={core.x + rIn} y1={core.y} x2={core.x + rOut} y2={core.y} className="tc-sweep">
-          <animateTransform attributeName="transform" type="rotate" dur={`${sweepDur}s`} repeatCount="indefinite"
-            calcMode="spline" keyTimes="0;0.5;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
-            values={`${a1} ${core.x} ${core.y};${a2} ${core.x} ${core.y};${a1} ${core.x} ${core.y}`} />
-        </line>
+        {/* the whole tally funnels onto ONE point: the admin login */}
+        {[0, 0.5, 1].map((f, i) => (
+          <path
+            key={i}
+            d={`M ${TALLY.x + tallyW + 6} ${TALLY.y + tallyH * f} Q ${(TALLY.x + tallyW + T.x) / 2} ${TALLY.y + tallyH * f} ${T.x - 14} ${T.y}`}
+            className="ws-thread"
+          />
+        ))}
+      </g>
+
+      {/* top-3 named sources — the only ones the payload names, each clickable */}
+      <g className="ws-nodes">
+        {atk.map((a, i) => {
+          const sel = wan?.ip === a.ip
+          return (
+            <g key={i} className={`ws-node ${sel ? 'sel' : ''} ${wan && !sel ? 'mute' : ''}`} style={{ cursor: 'pointer' }} onClick={() => onWan(a.ip)}>
+              <rect x={a.p.x - 3} y={a.p.y - 3} width="6" height="6" className="ws-node-dot" />
+              <text x={a.p.x + 14} y={a.p.y - 1} className="ws-node-ip" textAnchor="start">{a.ip}</text>
+              <text x={a.p.x + 14} y={a.p.y + 12} className="ws-node-v" textAnchor="start">{short(a.v)} {zh ? '次尝试' : 'attempts'}<tspan className="ws-node-hint"> ▸ {zh ? '研判' : 'ANALYZE'}</tspan></text>
+            </g>
+          )
+        })}
+      </g>
+      <g className="ws-vectors" pointerEvents="none">
+        {atk.map((a, i) => <line key={i} x1={a.p.x + 6} y1={a.p.y} x2={T.x - 12} y2={T.y} className={`ws-vector ${wan && wan.ip !== a.ip ? 'mute' : ''}`} />)}
+        <line x1={T.x} y1={T.y} x2={gwFace.x} y2={gwFace.y} className="ws-breach" />
+      </g>
+
+      {/* the besieged target — admin login. Structure (brackets), not a rotating reticle. */}
+      <g className="ws-target" pointerEvents="none">
+        {brackets(T, 13, 6).map((d, i) => <path key={i} d={d} className="ws-lock-bracket" />)}
+        <circle cx={T.x} cy={T.y} r={3} className="ws-lock-dot" />
+        <text x={T.x} y={T.y - 24} className="ws-lock-label" textAnchor="middle">{zh ? '管理登录 · 目标' : 'ADMIN LOGIN · TARGET'}</text>
+        <text x={T.x} y={T.y + 30} className="ws-contain" textAnchor="middle">{zh ? `已遏制 · ${lockouts} 次锁定` : `CONTAINED · ${lockouts} LOCKOUTS`}</text>
       </g>
     </g>
   )
 }
 
-/** One WAN attacker → FortiGate TRACER BEAM: a source→target gradient beam under a
- *  soft glow, with a streaking comet volley (bright head + fading trail) racing
- *  inbound. This is the "incoming fire" — the thing the old thin static curve never
- *  conveyed. */
-function AttackBeam({ a, b, i, attempts, tempo, dim }: { a: Pt; b: Pt; i: number; attempts: number; tempo: number; dim: boolean }) {
-  const d = bez(a, b)
-  const gid = `beam-grad-${i}`
-  const dur = Math.max(0.85, 1.7 / tempo)
-  const w = Math.max(2.4, Math.min(5, 1.7 + Math.log10(attempts + 1)))
-  const trail = 4
-  return (
-    <g className={`atk-beam ${dim ? 'dim' : ''}`} pointerEvents="none">
-      <defs>
-        <linearGradient id={gid} gradientUnits="userSpaceOnUse" x1={a.x} y1={a.y} x2={b.x} y2={b.y}>
-          <stop offset="0" className="beam-stop-0" />
-          <stop offset="0.6" className="beam-stop-1" />
-          <stop offset="1" className="beam-stop-2" />
-        </linearGradient>
-      </defs>
-      <path d={d} className="beam-halo" style={{ strokeWidth: w + 7 }} />
-      <path d={d} stroke={`url(#${gid})`} className="beam-core" style={{ strokeWidth: w }} />
-      {/* two staggered comet volleys, each a bright head trailed by fading motes */}
-      {[0, 1].flatMap((v) =>
-        Array.from({ length: trail }).map((_, h) => (
-          <circle key={`${v}-${h}`} className={`beam-mote ${h === 0 ? 'head' : ''}`} r={Math.max(1.1, 3.6 - h * 0.8)} style={{ opacity: 0.95 - h * 0.22 }}>
-            <animateMotion dur={`${dur}s`} repeatCount="indefinite" path={d} begin={`${(v * dur) / 2 + h * 0.05}s`} />
-          </circle>
-        )),
-      )}
-    </g>
-  )
-}
-
-/** Impact shockwave at the FortiGate where the volleys land — coral rings bursting
- *  outward in time with the comet cadence. */
-function CoreImpact({ core, tempo }: { core: Pt; tempo: number }) {
-  const dur = Math.max(0.85, 1.7 / tempo)
-  return (
-    <g className="core-impact" pointerEvents="none">
-      {[0, 1].map((i) => (
-        <circle key={i} cx={core.x} cy={core.y} className="impact-ring" r={4}>
-          <animate attributeName="r" values="6;34" dur={`${dur}s`} begin={`${(i * dur) / 2}s`} repeatCount="indefinite" />
-          <animate attributeName="opacity" values="0.7;0" dur={`${dur}s`} begin={`${(i * dur) / 2}s`} repeatCount="indefinite" />
-        </circle>
-      ))}
-    </g>
-  )
-}
-
-/** The FortiGate core as a reticle-locked hero: angular corner brackets, a
- *  rotating crimson lock ring, crosshair ticks and the ONE acid focal accent.
- *  No caption — the reticle itself says "locked target"; a tiny padlock glyph
- *  is the only marker. */
+/** The FortiGate core, framed as the focal node: angular corner brackets, ticks,
+ *  and the ONE acid focal accent.
+ *
+ *  The rotating crimson "lock ring" is gone. It was permanent decorative motion
+ *  (an 18s infinite spin that encoded nothing) in a second accent family, on a
+ *  page whose design law allows neither. The brackets already say "this is the
+ *  focal node" structurally — which is what the law asks for. */
 function CoreReticle({ core }: { core: Pt }) {
   const bx = 82
   const by = 54
@@ -203,9 +174,6 @@ function CoreReticle({ core }: { core: Pt }) {
   ]
   return (
     <g className="core-reticle" pointerEvents="none">
-      <circle cx={core.x} cy={core.y} r={104} className="core-lockring">
-        <animateTransform attributeName="transform" type="rotate" from={`0 ${core.x} ${core.y}`} to={`360 ${core.x} ${core.y}`} dur="18s" repeatCount="indefinite" />
-      </circle>
       {corners.map((d, i) => (
         <path key={i} d={d} className="core-bracket" />
       ))}
@@ -214,37 +182,82 @@ function CoreReticle({ core }: { core: Pt }) {
       <line x1={core.x - bx} y1={core.y} x2={core.x - bx + 9} y2={core.y} className="core-tick" />
       <line x1={core.x + bx} y1={core.y} x2={core.x + bx - 9} y2={core.y} className="core-tick" />
       <rect x={core.x - 32} y={core.y - by - 5} width={64} height={5} className="core-acid" />
-      {/* tiny padlock = locked target; replaces the old text caption */}
-      <g className="core-lock">
-        <path d={`M ${core.x - 3.5} ${core.y - by - 14} v -3 a 3.5 3.5 0 0 1 7 0 v 3`} className="core-lock-shackle" />
-        <rect x={core.x - 5.5} y={core.y - by - 14} width={11} height={8} className="core-lock-body" />
-      </g>
     </g>
   )
 }
 
 /** Corner situational read-outs — plain-language big picture: data window,
- *  attack-source / lockout counts, device / link / subnet counts, one status line. */
-function HudReadouts({ stats, meshCount, ifCount, subCount, lang, showStatus }: { stats: DataStats; meshCount: number; ifCount: number; subCount: number; lang: Lang; showStatus: boolean }) {
+ *  attack-source / lockout counts, device / link / subnet counts.
+ *
+ *  The window label used to read "近 48 小时 / LAST 48H", hardcoded. The payload's
+ *  real window (`dataStats.windowDays`) is a fixed 2-day HELD-OUT capture, not a
+ *  trailing 48h from now — on 2026-07-17 it still reports 2026-06-16..17, a month
+ *  stale. "LAST 48H" was simply false, and it was the page's loudest recency
+ *  claim. It now prints the dates the payload actually carries. */
+function HudReadouts({ stats, meshCount, ifCount, subCount, lang }: { stats: DataStats; meshCount: number; ifCount: number; subCount: number; lang: Lang }) {
   const zh = lang === 'zh'
+  const days = stats.windowDays ?? []
+  const window = days.length ? (days.length > 1 ? `${days[0]} → ${days[days.length - 1]}` : days[0]) : (zh ? '窗口未知' : 'WINDOW UNKNOWN')
   return (
     <g className="hud-readouts" pointerEvents="none">
       <g textAnchor="end">
-        <text x={1316} y={30} className="hud-r-dim">{zh ? '近 48 小时' : 'LAST 48H'}</text>
-        <text x={1316} y={50} className="hud-r-line"><tspan className="hot">{short(stats.distinctSrc)}</tspan> {zh ? '攻击来源' : 'sources'} · <tspan className="hot">{stats.lockouts ?? 0}</tspan> {zh ? '次锁定' : 'lockouts'}</text>
-        <text x={1316} y={67} className="hud-r-line"><tspan className="acc">{meshCount}</tspan> {zh ? '设备' : 'devices'} · {ifCount} {zh ? '接口' : 'links'} · {subCount} {zh ? '网段' : 'subnets'}</text>
+        <text x={VBW - 44} y={30} className="hud-r-dim">{zh ? '保留集窗口' : 'HELD-OUT WINDOW'} · {window}</text>
+        <text x={VBW - 44} y={50} className="hud-r-line"><tspan className="hot">{short(stats.distinctSrc)}</tspan> {zh ? '攻击来源' : 'sources'} · <tspan className="hot">{stats.lockouts ?? 0}</tspan> {zh ? '次锁定' : 'lockouts'}</text>
+        <text x={VBW - 44} y={67} className="hud-r-line"><tspan className="acc">{meshCount}</tspan> {zh ? '设备' : 'devices'} · {ifCount} {zh ? '接口' : 'links'} · {subCount} {zh ? '网段' : 'subnets'}</text>
       </g>
-      {showStatus ? (
-        <text x={44} y={642} className="hud-status">
-          <tspan className="hot">◆ {zh ? '威胁升高' : 'THREAT RISING'}</tspan>
-          <tspan className="dim"> · {zh ? '外网暴力破解' : 'INTERNET BRUTE-FORCE'}</tspan>
-        </text>
-      ) : null}
+    </g>
+  )
+}
+
+/** THE THESIS — what this page is, in the words the payload can support.
+ *
+ *  Page 1 never said what it was; it read as a generic network map. Pages 2 and 3
+ *  share a spine (trace → evidence → verdict), and page 1 is the EVIDENCE surface:
+ *  the real network the agent reasons over. Every value here is lifted straight
+ *  from the payload — `dataStats.source`, `dataStats.windowDays`, `note`'s reasoner
+ *  — and the read-path sentence describes triggers this component actually wires.
+ *
+ *  It occupies the resting state only: open a source or a segment and this space
+ *  becomes the analysis surface, which is why the console has a bottom band at all.
+ *
+ *  NOTE: the reasoner that produced the case diagnosis (`snapshot.reasonerMode`)
+ *  would belong on this block, but it is not passed to this component and App.tsx
+ *  is owned elsewhere. It is omitted rather than guessed. */
+function Thesis({ stats, lang }: { stats: DataStats; lang: Lang }) {
+  const zh = lang === 'zh'
+  const days = stats.windowDays ?? []
+  const window = days.length > 1 ? `${days[0]} → ${days[days.length - 1]}` : days[0] ?? '—'
+  return (
+    <g className="thesis" pointerEvents="none">
+      <line x1={96} y1={772} x2={780} y2={772} className="th-rule" />
+      <text x={96} y={808} className="th-kicker">{zh ? '态势 · 证据面' : 'CONSOLE · THE EVIDENCE SURFACE'}</text>
+      <text x={96} y={850} className="th-lede">
+        {zh ? '这是 agent 正在诊断的真实网络。' : 'The real network the agent is diagnosing.'}
+      </text>
+      <text x={96} y={886} className="th-body">
+        {zh
+          ? '每条线、每个计数都读自这份保留集抓包，不是示意图。'
+          : 'Every line and count is read from the held-out capture — not an illustration.'}
+      </text>
+      <text x={96} y={922} className="th-meta">
+        <tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{stats.source}
+      </text>
+      <text x={96} y={942} className="th-meta">
+        <tspan className="th-k">{zh ? '窗口 ' : 'WINDOW '}</tspan>{window}
+      </text>
+      <text x={96} y={972} className="th-read">
+        {zh
+          ? '点来源 → 入侵研判 · 点网段 → 展开设备关系图'
+          : 'click a source → intrusion verdict · click a segment → its device graph'}
+      </text>
     </g>
   )
 }
 
 const THREAT_DX: Record<string, number> = { high: 0, watch: 30, ok: 56 }
+const ROLE_ZH: Record<string, string> = {
+  camera: '摄像头', intercom: '门禁对讲', mobile: '移动端', workstation: '工作站', server: '服务器', unknown: '未识别',
+}
 const KILLCHAIN: { k: string; zh: string; en: string }[] = [
   { k: 'recon', zh: '踩点', en: 'recon' },
   { k: 'credential-access', zh: '盗密码', en: 'steal creds' },
@@ -319,7 +332,10 @@ export function TopologyCanvas({
   onPentest?: () => void
 }) {
   const g = group(activeKey)
-  const core: Pt = { x: 452, y: 340 }
+  /* Flow reads left→right across the full plate: WAN tally → admin target →
+   * FortiGate → interfaces → segments. The old core sat at (452,340) of a 1360
+   * box, which pinned every mark into the upper-left quadrant. */
+  const core: Pt = { x: 700, y: 430 }
   const ref = useRef<SVGSVGElement | null>(null)
   // ── viewport: wheel-zoom about the cursor, drag-to-pan anywhere on the plate ──
   const [view, setView] = useState({ k: 1, x: 0, y: 0 })
@@ -368,6 +384,43 @@ export function TopologyCanvas({
   }
   const resetView = () => setView({ k: 1, x: 0, y: 0 })
 
+  // ── ego-focus: click any host to promote its relation sub-graph to the whole
+  //    field. We reframe the viewport onto {node ∪ neighbours} and the graph layer
+  //    fades every unrelated host, so a dense community becomes one legible ego net. */
+  const [focusDev, setFocusDev] = useState<string | null>(null)
+  // opening/closing a segment resets both the ego-focus and the viewport. This is
+  // the "adjust state when a prop changes" pattern (compare during render), not an
+  // effect — so it stays in sync without a post-render flash.
+  const [prevDrill, setPrevDrill] = useState(drillSub)
+  if (prevDrill !== drillSub) {
+    setPrevDrill(drillSub)
+    if (focusDev !== null) setFocusDev(null)
+    if (view.k !== 1 || view.x !== 0 || view.y !== 0) setView({ k: 1, x: 0, y: 0 })
+  }
+  const focusOn = (ip: string | null, pos: Record<string, Pt>) => {
+    setFocusDev(ip)
+    if (!ip || !graph) {
+      resetView()
+      return
+    }
+    const ego = new Set<string>([ip])
+    for (const e of graph.edges) {
+      if (e.src === ip) ego.add(e.dst)
+      if (e.dst === ip) ego.add(e.src)
+    }
+    const pts = [...ego].map((x) => pos[x]).filter(Boolean)
+    if (!pts.length) return
+    const xs = pts.map((p) => p.x)
+    const ys = pts.map((p) => p.y)
+    const pad = 150
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2
+    const cy = (Math.min(...ys) + Math.max(...ys)) / 2
+    const bw = Math.max(Math.max(...xs) - Math.min(...xs) + pad * 2, 260)
+    const bh = Math.max(Math.max(...ys) - Math.min(...ys) + pad * 2, 260)
+    const k = Math.max(0.6, Math.min(3.4, Math.min(VBW / bw, VBH / bh)))
+    setView({ k, x: VBW / 2 - cx * k, y: VBH / 2 - cy * k })
+  }
+
   const zoomBy = (f: number) =>
     setView((v) => {
       const k = Math.max(0.45, Math.min(6, v.k * f))
@@ -377,13 +430,14 @@ export function TopologyCanvas({
     })
 
   const layout = useMemo(() => {
-    const atk = stats.topAttackerSrc.slice(0, 3).map((d, i) => ({ ip: d[0], v: d[1], p: { x: 70, y: 170 + i * 110 } as Pt }))
+    // named sources sit under their own tally, still in the WAN column
+    const atk = stats.topAttackerSrc.slice(0, 3).map((d, i) => ({ ip: d[0], v: d[1], p: { x: 102, y: 468 + i * 46 } as Pt }))
     const lan = topo.interfaces.filter((it) => it.kind === 'lan')
-    const ys = [120, 300, 470, 600]
+    const ys = [150, 330, 512, 692]
     const ifs = lan.map((it, i) => {
-      const p: Pt = { x: 700, y: ys[i] ?? 120 + i * 150 }
+      const p: Pt = { x: 1090, y: ys[i] ?? 150 + i * 182 }
       const sub = topo.subnets.find((s) => s.intf === it.name && s.hosts > 1)
-      return { it, p, sub, subP: { x: 900, y: p.y } as Pt }
+      return { it, p, sub, subP: { x: 1350, y: p.y } as Pt }
     })
     return { atk, ifs }
   }, [topo, stats])
@@ -393,9 +447,9 @@ export function TopologyCanvas({
   // Expanding a segment hands it the ENTIRE plate: the gateway chain collapses to
   // a breadcrumb and the ~120 hosts spread across a wide ellipse that fills the
   // whole field (kept clear of the bottom-left agent panel).
-  const meshCenter: Pt = { x: 706, y: 446 }
-  const meshRX = 606
-  const meshRY = 384
+  const meshCenter: Pt = { x: 1016, y: 424 }
+  const meshRX = 830
+  const meshRY = 368
   const devPos: Record<string, Pt> = {}
   if (drilled && graph) {
     for (const dv of graph.devices) {
@@ -403,7 +457,7 @@ export function TopologyCanvas({
     }
   } else if (openSub) {
     ;(openSub.devices ?? []).slice(0, 7).forEach((dv, j) => {
-      devPos[dv.ip] = { x: 1066 + (THREAT_DX[dv.threat] ?? 40), y: 90 + j * 80 }
+      devPos[dv.ip] = { x: 1560 + (THREAT_DX[dv.threat] ?? 40), y: 90 + j * 80 }
     })
   }
   const anchor = threat ? devPos[threat.ip] : undefined
@@ -422,17 +476,16 @@ export function TopologyCanvas({
       onContextMenu={(e) => e.preventDefault()}
       style={{ cursor: panning ? 'grabbing' : 'grab' }}
     >
-      <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
-        {/* Drilling into a segment hands the whole field to that LAN: the ambient
-            radar, the WAN-attack fan and the sibling interfaces fall away so the
-            eye analyses one subnet's device relations, not the whole console. */}
-        {!drilled ? <HudRadar core={core} /> : null}
-        {!drilled && !wan ? <ThreatCone core={core} tempo={tempo} active /> : null}
-        {!drilled
-          ? layout.atk.map((a, i) => (
-              <AttackBeam key={`ea${i}`} a={a.p} b={core} i={i} attempts={a.v} tempo={tempo} dim={!!wan && wan.ip !== a.ip} />
-            ))
-          : null}
+      <g
+        transform={`translate(${view.x} ${view.y}) scale(${view.k})`}
+        style={{ transition: panning ? 'none' : 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)' }}
+      >
+        {/* Drilling into a segment hands the whole field to that LAN: the WAN
+            ingress and the sibling interfaces fall away so the eye analyses one
+            subnet's device relations, not the whole console. */}
+        {!drilled ? (
+          <WanSiege core={core} atk={layout.atk} distinctSrc={stats.distinctSrc} lockouts={stats.lockouts ?? 0} lang={lang} wan={wan} onWan={onWan} />
+        ) : null}
         {!drilled
           ? layout.ifs.map((f, i) => {
               const focused = drillSub === f.sub?.cidr
@@ -454,13 +507,19 @@ export function TopologyCanvas({
               <text x={core.x} y={core.y + 14} className="n-sub">{topo.core.ip}</text>
             </g>
             <CoreReticle core={core} />
-            <CoreImpact core={core} tempo={tempo} />
           </>
         ) : null}
 
-        {/* drilled breadcrumb — the collapsed gateway chain, one click back to全网 */}
-        {drilled && graph ? (
+        {/* drilled breadcrumb — the collapsed gateway chain, one click back to全网
+            (hidden during ego focus, which shows its own "返回网段" control) */}
+        {drilled && graph && !focusDev ? (
           <g className="mesh-crumb" onClick={() => onSub(null)} style={{ cursor: 'pointer' }}>
+            {/* SVG <text> only takes pointer events on the glyphs themselves, so
+                this control's own bounding-box centre (the gap between its two
+                lines) fell through to the canvas — aiming at the breadcrumb and
+                missing it was the default outcome, for a person and for a driver.
+                An explicit transparent hit target gives the trigger a real box. */}
+            <rect x={24} y={182} width={230} height={48} fill="transparent" />
             <text x={30} y={200} className="mesh-crumb-t">
               ◂ {topo.core.name} · {layout.ifs.find((f) => f.sub?.cidr === graph.cidr)?.it.name ?? 'LAN'}
             </text>
@@ -468,31 +527,9 @@ export function TopologyCanvas({
           </g>
         ) : null}
 
-        {!drilled
-          ? layout.atk.map((a, i) => {
-          const sel = wan?.ip === a.ip
-          return (
-            <g
-              key={`an${i}`}
-              className={`node appear atk-node ${g === 'attack' ? '' : 'node-dim'} ${sel ? 'sel' : ''}`}
-              style={{ animationDelay: `${i * 0.05}s`, cursor: 'pointer' }}
-              onClick={() => onWan(a.ip)}
-            >
-              {sel ? <circle cx={a.p.x} cy={a.p.y} r="15" className="atk-halo" /> : null}
-              <rect x={a.p.x - 7} y={a.p.y - 7} width="14" height="14" className="m-attack" transform={`rotate(45 ${a.p.x} ${a.p.y})`} />
-              <text x={a.p.x + 16} y={a.p.y - 1} className="n-ip" textAnchor="start">{a.ip}</text>
-              <text x={a.p.x + 16} y={a.p.y + 12} className="n-v" textAnchor="start">{short(a.v)}<tspan className="probe-hint"> ▸ {lang === 'zh' ? '分析' : 'ANALYZE'}</tspan></text>
-            </g>
-          )
-            })
-          : null}
-        {!drilled ? (
-          <text x={70} y={120} className="zone-tag appear">
-            {lang === 'zh'
-              ? `外网入口 · ${short(stats.distinctSrc)} 来源 · ${stats.lockouts ?? 0} 次锁定`
-              : `INTERNET IN · ${short(stats.distinctSrc)} sources · ${stats.lockouts ?? 0} lockouts`}
-          </text>
-        ) : null}
+        {/* The thesis owns the resting state's bottom band; an open analysis takes
+            the same space, so they are mutually exclusive by construction. */}
+        {!drilled && !threat && !wan ? <Thesis stats={stats} lang={lang} /> : null}
 
         {layout.ifs.map((f, i) => {
           const focused = drillSub === f.sub?.cidr
@@ -543,20 +580,16 @@ export function TopologyCanvas({
                     center={meshCenter}
                     rx={meshRX}
                     ry={meshRY}
+                    vbw={VBW}
+                    vbh={VBH}
                     lang={lang}
                     hoverIp={hoverDev}
                     selectedIp={drillDev}
+                    focusIp={focusDev}
                     marks={marks}
                     showPanel={!threat}
                     onHover={onHoverDev}
-                    onPick={(dv: GraphDevice) =>
-                      onDev(
-                        drillDev === dv.ip
-                          ? null
-                          : { ip: dv.ip, flows: dv.flows, deny: dv.deny, accept: dv.accept, threat: dv.threat, top_ports: dv.topPorts },
-                        graph.cidr,
-                      )
-                    }
+                    onFocus={(ip) => focusOn(ip, devPos)}
                     onAnalyze={() => onGraphAnalyze(graph.cidr)}
                     onCloseAnalysis={onCloseGraphAnalysis}
                   />
@@ -583,7 +616,7 @@ export function TopologyCanvas({
               </g>
               {devs.map((dv, j) => {
                 const dy = 90 + j * 80
-                const dp: Pt = { x: 1066 + (THREAT_DX[dv.threat] ?? 40), y: dy }
+                const dp: Pt = { x: 1560 + (THREAT_DX[dv.threat] ?? 40), y: dy }
                 const open = drillDev === dv.ip
                 const mark = marks[dv.ip]
                 const alert = !!mark && (mark.severity === 'high' || mark.severity === 'medium')
@@ -630,21 +663,32 @@ export function TopologyCanvas({
 
         {/* 3D constellation portal — hidden while the WAN pivots or a segment mesh own the right field */}
         {meshCount > 0 && !wan && !drilled ? (
-          <g className="portal3d" onClick={onOpen3D} style={{ cursor: 'pointer' }}>
-            {layout.ifs.map((f, i) => (f.sub ? <path key={i} d={bez(f.subP, { x: 1252, y: 372 })} className="portal-link" /> : null))}
-            <circle cx={1252} cy={372} r="30" className="portal-halo" />
-            <circle cx={1252} cy={372} r="20" className="portal-ring" />
-            <text x={1252} y={377} className="portal-glyph" textAnchor="middle">⬡</text>
-            <text x={1252} y={418} className="portal-label" textAnchor="middle">{meshLoading ? (lang === 'zh' ? '载入中…' : 'loading…') : lang === 'zh' ? '3D 全网视图' : '3D NETWORK VIEW'}</text>
-            <text x={1252} y={433} className="portal-sub" textAnchor="middle">{meshCount} {lang === 'zh' ? '设备' : 'devices'}</text>
-          </g>
+          <>
+            {/* The connector paths used to live INSIDE the clickable group, which
+                stretched its bounding box from the segment nodes all the way to
+                the portal — so the trigger's own centre landed in empty space
+                between two beziers and the click fell through to the canvas. The
+                links are context, not the control: they render as a sibling that
+                takes no pointer events, and the trigger keeps a real hit target. */}
+            <g className="portal-links" pointerEvents="none">
+              {layout.ifs.map((f, i) => (f.sub ? <path key={i} d={bez(f.subP, { x: 1724, y: 430 })} className="portal-link" /> : null))}
+            </g>
+            <g className="portal3d" onClick={onOpen3D} style={{ cursor: 'pointer' }}>
+              <rect x={1660} y={396} width={128} height={106} fill="transparent" />
+              <circle cx={1724} cy={430} r="30" className="portal-halo" />
+              <circle cx={1724} cy={430} r="20" className="portal-ring" />
+              <text x={1724} y={435} className="portal-glyph" textAnchor="middle">⬡</text>
+              <text x={1724} y={476} className="portal-label" textAnchor="middle">{meshLoading ? (lang === 'zh' ? '载入中…' : 'loading…') : lang === 'zh' ? '3D 全网视图' : '3D NETWORK VIEW'}</text>
+              <text x={1724} y={491} className="portal-sub" textAnchor="middle">{meshCount} {lang === 'zh' ? '设备' : 'devices'}</text>
+            </g>
+          </>
         ) : null}
 
         {/* in-canvas analysis layer: leader line + panel + impact subgraph */}
         {threat && anchor ? (
           (() => {
             const panelTop: Pt = { x: 360, y: 706 }
-            const cx = 980
+            const cx = 1240
             const cy = 824
             const peers = threat.impactPeers ?? []
             return (
@@ -751,13 +795,13 @@ export function TopologyCanvas({
 
                 {/* cross-canvas post-compromise pivots */}
                 {inter.length ? (
-                  <text x={1132} y={112} className="impact-tag" textAnchor="start">
+                  <text x={1560} y={112} className="impact-tag" textAnchor="start">
                     {lang === 'zh' ? '内网扩散' : 'INTERNAL SPREAD'}
                   </text>
                 ) : null}
                 {inter.map((c, k) => {
                   const span = inter.length > 1 ? (VBH - 320) / (inter.length - 1) : 0
-                  const ip_: Pt = { x: 1132, y: clamp(150 + k * span, 130, VBH - 90) }
+                  const ip_: Pt = { x: 1560, y: clamp(150 + k * span, 130, VBH - 90) }
                   return (
                     <g key={c.ip} className="branch-in wan-pivot">
                       <path d={bez(fg, ip_)} className="wan-pivot-link" />
@@ -829,10 +873,64 @@ export function TopologyCanvas({
             ifCount={layout.ifs.length}
             subCount={layout.ifs.filter((f) => f.sub).length}
             lang={lang}
-            showStatus={!threat && !wan}
           />
         ) : null}
       </g>
+
+      {/* ego-network deep-read — pinned to the viewport (OUTSIDE the pan/zoom group,
+          which is why it lives here and not in SubnetGraphLayer): identity + every
+          justified relationship, each row a jump to that neighbour's own ego net. */}
+      {drilled && graph && focusDev
+        ? (() => {
+            const f = graph.devices.find((d) => d.ip === focusDev)
+            if (!f) return null
+            const rel = graph.edges
+              .filter((e) => e.src === focusDev || e.dst === focusDev)
+              .map((e) => ({ ip: e.src === focusDev ? e.dst : e.src, evidence: e.evidence, observed: e.observed, weight: e.weight }))
+              .sort((a, b) => b.weight - a.weight)
+            const nameOf = (ip: string) => graph.devices.find((d) => d.ip === ip)?.name || ip
+            const role = ROLE_ZH[f.role] ? (lang === 'zh' ? ROLE_ZH[f.role] : f.role) : f.role
+            return (
+              <foreignObject x={20} y={90} width={324} height={Math.min(640, 156 + rel.length * 33)} className="ego-fo">
+                <div className="sg-ego">
+                  <div className="sg-ego-h">
+                    <button className="sg-ego-back" onClick={() => focusOn(null, devPos)}>◂ {lang === 'zh' ? '返回网段' : 'BACK'}</button>
+                    <span className="sg-ego-k">{lang === 'zh' ? '关系网 · 深度' : 'EGO NET · DEEP'}</span>
+                  </div>
+                  <div className={`sg-ego-id t-${f.threat}`}>
+                    <b>{f.ip}</b>
+                    <span>{f.name ?? (lang === 'zh' ? '无主机名' : 'no hostname')}</span>
+                  </div>
+                  <div className="sg-ego-meta">
+                    {role}{f.vendor !== 'unknown' ? ` · ${f.vendor}` : ''}{f.os ? ` · ${f.os}` : ''}
+                    {' · '}
+                    {f.seenBy === 'dhcp'
+                      ? (lang === 'zh' ? '静默(仅DHCP)' : 'silent (DHCP)')
+                      : `${short(f.deny)} ${lang === 'zh' ? '拦截' : 'blocked'}`}
+                  </div>
+                  <div className="sg-ego-rel-h">{rel.length} {lang === 'zh' ? '条关联 · 点击跳转' : 'relations · click to pivot'}</div>
+                  <div className="sg-ego-rels">
+                    {rel.length === 0 ? (
+                      <div className="sg-ego-iso">{lang === 'zh' ? '孤立主机 — 无任何可观测关联' : 'isolated — no observable relations'}</div>
+                    ) : rel.map((r, i) => (
+                      <button key={i} className="sg-ego-rel" onClick={() => focusOn(r.ip, devPos)}
+                        onMouseEnter={() => onHoverDev(r.ip)} onMouseLeave={() => onHoverDev(null)}>
+                        <span className={`sg-ego-tag ${r.observed ? 'obs' : 'inf'}`}>{r.observed ? (lang === 'zh' ? '实测' : 'OBS') : (lang === 'zh' ? '推断' : 'INF')}</span>
+                        <span className="sg-ego-ip">{nameOf(r.ip)}</span>
+                        <span className="sg-ego-why">{r.evidence}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {f.threat !== 'ok' ? (
+                    <button className="sg-ego-ai" onClick={() => onDev({ ip: f.ip, flows: f.flows, deny: f.deny, accept: f.accept, threat: f.threat, top_ports: f.topPorts }, graph.cidr)}>
+                      ⚡ {lang === 'zh' ? 'AI 威胁研判' : 'AI THREAT VERDICT'}
+                    </button>
+                  ) : null}
+                </div>
+              </foreignObject>
+            )
+          })()
+        : null}
 
       {/* viewport controls — pinned to the plate (never zoomed), sits above the
           legend on the right so it never collides with the bottom-left agent panel */}

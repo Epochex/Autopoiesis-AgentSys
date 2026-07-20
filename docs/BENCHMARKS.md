@@ -47,7 +47,7 @@ Turn each component off and re-measure root-cause accuracy on the held-out set:
 
 | configuration | memory | compress | skill-ctl | root-cause acc |
 |---|:--:|:--:|:--:|---|
-| SELFEVO full path | on | on | on | **100%** |
+| Autopoiesis full path | on | on | on | **100%** |
 | − evidence compression | on | off | on | 100% |
 | − tiered memory | off | on | on | 100% |
 | **− skill scheduling** | on | on | **off** | **16.7%** |

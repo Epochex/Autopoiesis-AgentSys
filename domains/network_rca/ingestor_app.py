@@ -18,7 +18,7 @@ def create_app(log_paths: list[str | Path] | None = None):
 
     resolved_paths = [Path(item) for item in (log_paths or _paths_from_env())]
     adapter = LocalFixtureLogAdapter(resolved_paths)
-    app = FastAPI(title="SelfEvo R230 readonly FortiGate log ingestor")
+    app = FastAPI(title="Autopoiesis R230 readonly FortiGate log ingestor")
 
     @app.get("/healthz")
     def healthz() -> dict:

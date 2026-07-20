@@ -69,11 +69,14 @@ def _ingest(item: dict) -> tuple[TieredMemoryStore, dict[str, str]]:
             f"for {len(sessions)} haystack_sessions — corrupt dataset item"
         )
     rec_to_sid: dict[str, str] = {}
-    for sid, turns in zip(sids, sessions):
+    # Canonical longmemeval_s repeats a session id inside some items' haystack (15/500,
+    # all non-answer distractors), so key the memory on position to stay unique while
+    # rec_to_sid still maps back to the TRUE session id — recall scoring is unchanged.
+    for i, (sid, turns) in enumerate(zip(sids, sessions)):
         if isinstance(turns, dict):
             turns = turns.get("turns", [])
         text = " ".join(str(t.get("content", "")) for t in turns if isinstance(t, dict))
-        mid = f"lme-{sid}"
+        mid = f"lme-{i}-{sid}"
         mem.add(MemoryRecord(memory_id=mid, tier="episodic", text=text, tags=_terms(text)[:48]))
         rec_to_sid[mid] = sid
     return mem, rec_to_sid

@@ -8,14 +8,18 @@
  */
 
 .mo {
-  --mo-side-w: clamp(360px, 31vw, 600px);
+  /* Wider side column than before: with the ribbon gone the board has the room,
+     and the write-router ruler + field-audit inspector were the cramped panels
+     the extra width buys the most. The graph keeps the 1fr remainder and still
+     nets much larger, because it also absorbed the ribbon's freed height. */
+  --mo-side-w: clamp(400px, 35vw, 700px);
 
   display: grid;
-  /* The timeline and the ribbon carry their own intrinsic heights and their
-     content does not compress — squeezing them just clips the readout. They take
-     what they need; the three-tier space absorbs the remainder, which it can do
-     because its SVG scales. The framing line is the same deal in one text row. */
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  /* Three rows now: the cold-vs-warm ribbon was lifted out to below the fold
+     (TrajectoryPage .fx-evolve) so the observatory owns the full board on open.
+     Head + timeline take their intrinsic height; the three-tier space absorbs the
+     rest, which it can because its SVG scales. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   /* Both zeros are load-bearing. As a grid item .mo defaults to min-width/height

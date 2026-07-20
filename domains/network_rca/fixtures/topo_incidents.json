@@ -33,7 +33,7 @@
     ],
     "anchors": [
       {"ip": "192.168.1.23", "name": "R230", "role": "syslog sink", "intf": "fortilink"},
-      {"ip": "192.168.1.27", "name": "selfevo", "role": "console", "intf": "fortilink"}
+      {"ip": "192.168.1.27", "name": "autopoiesis", "role": "console", "intf": "fortilink"}
     ]
   },
   "records": [
@@ -56,7 +56,7 @@
       "relations": [
         {"target": "FortiGate", "type": "topology"},
         {"target": "R230", "type": "topology"},
-        {"target": "selfevo", "type": "topology"},
+        {"target": "autopoiesis", "type": "topology"},
         {"target": "192.168.1.0/24", "type": "topology"}
       ],
       "attrs": {"role": "device net", "flows": 583528},

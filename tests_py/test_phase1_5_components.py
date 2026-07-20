@@ -147,7 +147,7 @@ def test_llm_reasoner_mode_uses_provider_response_and_missing_config_fails(tmp_p
 def test_phase15_mock_baselines_are_labeled_mock_not_real():
     rows = compare_baselines(load_seed_cases(), load_ground_truth())
 
-    assert {row.name for row in rows} == {"selfevo_light_path", "full_context", "full_tools", "no_memory"}
+    assert {row.name for row in rows} == {"autopoiesis_light_path", "full_context", "full_tools", "no_memory"}
     assert {row.dataset_kind for row in rows} == {"mock"}
     assert {row.split for row in rows} == {"seed"}
 
@@ -161,7 +161,7 @@ def test_real_data_readiness_reports_blocked_without_dataset(tmp_path):
 
 
 def test_real_dataset_manifest_validator_rejects_missing_and_template():
-    missing = validate_real_dataset_manifest("/tmp/does-not-exist-selfevo-real-manifest.json")
+    missing = validate_real_dataset_manifest("/tmp/does-not-exist-autopoiesis-real-manifest.json")
     assert not missing.ready
     assert "does not exist" in missing.errors[0]
 
@@ -247,7 +247,7 @@ def test_real_manifest_ready_requires_real_train_and_heldout_splits(tmp_path):
 
 def test_real_heldout_eval_command_refuses_missing_manifest():
     result = run(
-        [sys.executable, "-m", "domains.network_rca.eval_real_heldout", "/tmp/missing-selfevo-real-manifest.json"],
+        [sys.executable, "-m", "domains.network_rca.eval_real_heldout", "/tmp/missing-autopoiesis-real-manifest.json"],
         text=True,
         capture_output=True,
         check=False,

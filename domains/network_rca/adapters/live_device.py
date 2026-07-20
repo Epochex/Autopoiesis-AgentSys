@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 
+from core.env import autopoiesis_env
+
 
 class LiveDeviceAdapter:
     """Feature-flagged placeholder. It never runs unless explicitly enabled."""
 
     def __init__(self):
-        if os.getenv("SELFEVO_ENABLE_LIVE_DEVICE_ADAPTER") != "1":
+        if autopoiesis_env("ENABLE_LIVE_DEVICE_ADAPTER") != "1":
             raise RuntimeError("LiveDeviceAdapter is disabled by default")
         self.host = os.environ["FORTIGATE_HOST"]
         self.user = os.environ["FORTIGATE_USER"]

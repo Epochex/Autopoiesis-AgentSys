@@ -248,7 +248,7 @@ function App() {
     <div className="stage" data-view={view}>
       <header className="top">
         <div className="mark">
-          selfevo<span className="mark-dot" />
+          autopoiesis<span className="mark-dot" />
         </div>
         <div className="top-right">
           <div className="pager">

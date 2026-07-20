@@ -83,9 +83,11 @@ def test_core_components_can_be_disabled_for_ablation(tmp_path):
 
 
 def test_live_adapter_is_feature_flagged_off_by_default(monkeypatch):
+    monkeypatch.delenv("AUTOPOIESIS_ENABLE_LIVE_DEVICE_ADAPTER", raising=False)
     monkeypatch.delenv("SELFEVO_ENABLE_LIVE_DEVICE_ADAPTER", raising=False)
     with pytest.raises(RuntimeError):
         LiveDeviceAdapter()
+    monkeypatch.delenv("AUTOPOIESIS_ENABLE_R230_INGESTOR", raising=False)
     monkeypatch.delenv("SELFEVO_ENABLE_R230_INGESTOR", raising=False)
     with pytest.raises(RuntimeError):
         R230IngestorLogAdapter()

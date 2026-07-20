@@ -345,3 +345,9 @@
   .traj-page .fx-footer > .fx-conv { border-right: none; border-bottom: 2px solid var(--ink); }
   .traj-page .fx-transport { grid-template-columns: 1fr; gap: 10px; }
 }
+
+/* ── self-evolution payoff, relocated below the observatory's first screen ──
+   The cold-vs-warm ribbon used to sit inside .fx-first and ate into the memory
+   space; it now flows here, below the fold, so the observatory fills the board
+   on open. A hairline rule marks it as a distinct read, not a squeezed footer. */
+.traj-page .fx-evolve { margin: 4px 0 16px; padding-top: 14px; border-top: 1.5px solid var(--rule); }

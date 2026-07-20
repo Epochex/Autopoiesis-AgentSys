@@ -10,6 +10,8 @@ import os
 import socket
 from urllib.parse import urlparse
 
+from .config import autopoiesis_env
+
 
 def _tcp_open(host: str, port: int, timeout: float = 2.5) -> bool:
     try:
@@ -39,9 +41,9 @@ def _deepseek_cfg() -> dict:
 
 def _gpu_cfg() -> dict:
     return {
-        "base_url": os.getenv("SELFEVO_GPU_BASE_URL", "http://127.0.0.1:28000/v1"),
-        "model": os.getenv("SELFEVO_GPU_MODEL", "glm-fast"),
-        "api_key": os.getenv("SELFEVO_GPU_API_KEY", "sk-local"),
+        "base_url": autopoiesis_env("GPU_BASE_URL", "http://127.0.0.1:28000/v1"),
+        "model": autopoiesis_env("GPU_MODEL", "glm-fast"),
+        "api_key": autopoiesis_env("GPU_API_KEY", "sk-local"),
     }
 
 
@@ -72,7 +74,7 @@ def list_providers() -> list[dict]:
             "kind": "self-hosted-gpu",
             "model": gpu["model"],
             "reachable": _endpoint_reachable(gpu["base_url"]),
-            "note": "Waseda/Pengcheng GPU over SSH tunnel; open the tunnel first.",
+            "note": "Pengcheng GPU over SSH tunnel; open the tunnel first.",
         },
     ]
 
@@ -86,7 +88,7 @@ def resolve_reasoner(provider_id: str) -> tuple[str, dict | None]:
         return "rule", None
     c = cfg()
     return "llm", {
-        "SELFEVO_LLM_BASE_URL": c["base_url"],
-        "SELFEVO_LLM_API_KEY": c["api_key"],
-        "SELFEVO_LLM_MODEL": c["model"],
+        "AUTOPOIESIS_LLM_BASE_URL": c["base_url"],
+        "AUTOPOIESIS_LLM_API_KEY": c["api_key"],
+        "AUTOPOIESIS_LLM_MODEL": c["model"],
     }

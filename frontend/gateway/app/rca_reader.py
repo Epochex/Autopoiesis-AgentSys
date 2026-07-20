@@ -1,6 +1,6 @@
 """Build the console snapshot from the REAL network_rca framework.
 
-Everything served here comes from the actual selfevo pipeline running on the
+Everything served here comes from the actual Autopoiesis pipeline running on the
 real R230 FortiGate held-out dataset: readiness, data stats, the held-out
 baseline/ablation table, and per-case diagnosis + cited evidence + trace.
 No hardcoded incident fixtures.

@@ -198,17 +198,22 @@
   --grid-cell: 46px;
 }
 
-/* flow canvas — a framed plate over a faint modular grid, like page 2 */
+/* flow canvas — a framed plate over a faint modular grid, like page 2.
+   Dark-theme leftover removed: this rule painted `rgba(8,13,12,0.34)` with teal
+   (95,228,209) grid lines — the dark console's ground — on a light page. The
+   console-scoped block further down already re-painted it to --paper, so the
+   dark values were dead weight that only mattered if that override ever lost
+   specificity. The base now states the light ground directly. */
 .canvas-wrap {
   position: relative;
   margin-top: 12px;
   overflow: hidden;
   aspect-ratio: 1360 / 660;
   border: 1px solid var(--line);
-  background-color: rgba(8, 13, 12, 0.34);
+  background-color: var(--paper);
   background-image:
-    linear-gradient(rgba(95, 228, 209, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(95, 228, 209, 0.045) 1px, transparent 1px);
+    linear-gradient(rgba(13, 13, 13, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 13, 13, 0.05) 1px, transparent 1px);
   background-size: var(--grid-cell) var(--grid-cell);
   background-position: -1px -1px;
   transition: aspect-ratio 0.5s var(--ease-guide, cubic-bezier(0.22, 1, 0.36, 1));
@@ -343,19 +348,25 @@
   from { opacity: 0; }
   to { opacity: var(--o, 1); }
 }
+/* The "this segment holds a high-threat host" pip.
+ *
+ * It used to animate its RADIUS forever (`@keyframes pip { r: 3.5 → 4.5 }`).
+ * Two things wrong with that: it is permanent ambient motion that encodes
+ * nothing (the law allows structural motion only), and because it grew the
+ * parent <g class="subnet"> bounding box on every frame, the segment node never
+ * reported a stable box — Playwright literally could not click it ("element is
+ * not stable", 30s timeout). A decorative pulse was making the page's primary
+ * drill-down trigger untestable. It is now a static structural mark. */
 .threat-pip {
   fill: var(--coral);
-  animation: pip 1.4s ease-in-out infinite;
-}
-@keyframes pip {
-  0%, 100% { opacity: 1; r: 3.5px; }
-  50% { opacity: 0.4; r: 4.5px; }
 }
 .subnet:hover .m-host {
-  fill: rgba(255, 192, 77, 0.25);
+  fill: var(--paper-3);
+  stroke: var(--ink);
 }
 .subnet.open .m-host {
-  fill: rgba(255, 192, 77, 0.3);
+  fill: var(--acid);
+  stroke: var(--ink);
   stroke-width: 1.5;
 }
 
@@ -888,35 +899,39 @@
 }
 
 /* 3D constellation portal on the topology */
+/* 3D portal — another dark-theme leftover: this painted a near-black disc
+   (rgba(8,13,12,0.6)) with teal halo/links, an infinite `aura` pulse and a glow
+   drop-shadow on hover, i.e. a dark blob floating on light paper. Flattened to
+   the console's print discipline: hollow ink frame, no glow, no ambient pulse,
+   hover = edge trace. (The 3D view it opens is itself recommended for removal —
+   see the Constellation3D report; this only stops the trigger from reading as
+   broken in the meantime.) */
 .portal-link {
   fill: none;
-  stroke: rgba(95, 228, 209, 0.22);
+  stroke: var(--rule);
   stroke-width: 1;
   stroke-dasharray: 2 6;
-  animation: march 1.3s linear infinite;
 }
 .portal-halo {
-  fill: rgba(95, 228, 209, 0.06);
+  fill: none;
   stroke: none;
-  animation: aura 3s ease-in-out infinite;
 }
 .portal-ring {
-  fill: rgba(8, 13, 12, 0.6);
-  stroke: var(--mint);
+  fill: var(--paper-2);
+  stroke: var(--ink);
   stroke-width: 1.5;
-  transition: stroke-width 0.25s var(--ease-guide, ease), filter 0.25s var(--ease-guide, ease);
+  transition: stroke-width 0.25s var(--ease-guide, ease);
 }
 .portal3d:hover .portal-ring {
-  stroke-width: 2.2;
-  filter: drop-shadow(0 0 8px var(--mint));
+  stroke-width: 2.6;
 }
 .portal-glyph {
-  fill: var(--mint);
+  fill: var(--ink);
   font-size: 22px;
   font-family: 'IBM Plex Mono', monospace;
 }
 .portal-label {
-  fill: var(--mint);
+  fill: var(--ink);
   font-size: 11.5px;
   font-family: 'IBM Plex Mono', monospace;
   letter-spacing: 0.14em;
@@ -1917,22 +1932,52 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   --line:    #cfcfca;
   --acid:    #ccff00;
   --rule:    #cfcfca;
-  /* threat scale, retuned for a paper ground — distinction preserved.
-     These carry TEXT (.hot / .n-v.amber numerals, .dev-tag) as well as dots and
-     bars, so each must clear 4.5:1 on --paper. Same hue, one step darker:
-     the scale still reads crimson / amber / teal at a glance. */
-  --coral:   #b3243c;   /* high / attacker  (crimson) · 5.24:1 (was #cf2f4a 4.07) */
-  --amber:   #8a560e;   /* watch            (dark amber) · 4.96:1 (was #a86a12 3.58) */
-  --mint:    #276b61;   /* ok / healthy     (teal)      · 5.04:1 (was #2f7d72 3.94) */
-  /* hierarchy tiers (poster swatch scale) — structural identity, not threat.
-     NON-TEXT: node fills + strokes on the topology map. Left alone deliberately —
-     WCAG 1.4.3 does not apply to them. (--tier-edge did leak into one numeral,
-     .hud-r-line .acc; that call site is repointed at --mint rather than darkening
-     the map's stroke colour to satisfy a checker.) */
+  /* ── THE ACCENT LAW (AGENTS.md: "one accent family per screen") ──────────
+     This block previously declared a crimson / amber / teal threat scale and
+     called it "distinction preserved". That is three saturated accent families
+     on one screen, plus --acid — exactly what the repository override forbids,
+     and page 2 already settled the question ("coral is dead: collapse =
+     black/hatch"). A first-time viewer read the console as a rainbow and could
+     not tell which red mattered.
+
+     Severity now reads through INK WEIGHT + STRUCTURE, never hue:
+       high   → full ink, filled mark, hatch/ping ring
+       watch  → gray,     filled mark, dashed ring
+       ok     → hollow mark on paper (structure, not colour)
+     Every one of these carries text somewhere, so both stops clear AA on
+     --paper (--ink 17.4:1, --gray 4.94:1). The severity tokens are kept as
+     NAMES so ~60 call sites keep working, but they now resolve into the one
+     neutral ramp. --acid stays the single accent and means one thing on this
+     view: the object the agent is acting on (selection / live signal).
+     ------------------------------------------------------------------------ */
+  --coral:   var(--ink);    /* high / attacker → heaviest ink (was #b3243c) */
+  --amber:   var(--gray);   /* watch           → mid gray     (was #8a560e) */
+  --mint:    var(--gray);   /* ok / contained  → mid gray     (was #276b61) */
+  /* non-text quiet mark (hollow strokes on the map); never carries type */
+  --quiet:   #8c8c88;
+  /* hierarchy tiers — structural identity, not threat. Collapsed onto the same
+     neutral ramp: the teal --tier-edge was the last surviving accent family and
+     it also failed as type (2.58:1 on .hud-r-line .acc, the worst pair on the
+     console). Structure now comes from frame weight and dash, not hue. */
   --tier-core:   #0d0d0d;
-  --tier-edge:   #4c9d94;
-  --tier-subnet: #2b3d38;
+  --tier-edge:   #605f5a;
+  --tier-subnet: #2a2a27;
   --tier-leaf:   #8c8c88;
+  /* ── two semantic mark hues, one per MUTUALLY-EXCLUSIVE screen ──────────────
+     "One accent family per screen" (AGENTS.md) is honoured by reading the two
+     console modes as two screens: the WAN-ingress view and the drilled-in
+     segment view are never on-screen together, so each owns a single family.
+     They are chosen to also carry ONE app-wide meaning so the eye never has to
+     re-learn them:  coral = threat / external / compromised,
+                     teal  = internal network / structure / defence holding.
+     --acid stays reserved for interaction (selected / agent-acted-on) only.
+     Hues are used on MARKS (stroke/fill); type stays ink/gray, so the AA ramp
+     the redesign established is untouched. The *-ink variants are the only
+     tinted TEXT and clear AA on --paper. */
+  --wan:      #c3384a;   /* WAN screen family — external credential assault    */
+  --wan-ink:  #a5233a;   /* crimson as type (5.0:1 on paper)                   */
+  --net:      #1c8f88;   /* segment screen family — the internal device mesh   */
+  --net-ink:  #12615c;   /* teal as type (5.4:1 on paper)                      */
   color-scheme: light;
   /* cover the dark body gradient so the whole console reads as light paper */
   background: var(--paper);
@@ -2049,7 +2094,7 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 
 /* ── hierarchy: each structural tier carries a distinct swatch stroke ── */
 .stage[data-view='console'] .m-attack { fill: var(--coral); stroke: var(--ink); }         /* WAN / external */
-.stage[data-view='console'] .m-attack.sib { fill: #ff7a6b; }
+.stage[data-view='console'] .m-attack.sib { fill: var(--paper-2); stroke: var(--ink); stroke-width: 1.5; }
 .stage[data-view='console'] .m-intf  { fill: var(--paper-2); stroke: var(--tier-edge); stroke-width: 2; }    /* edge / interface */
 .stage[data-view='console'] .m-host  { fill: var(--paper-2); stroke: var(--tier-subnet); stroke-width: 2; }  /* subnet */
 .stage[data-view='console'] .n-leaf  { fill: var(--tier-leaf); }                                             /* leaf / port */
@@ -2069,7 +2114,7 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   text-align: left;
   transition: background 0.16s var(--ease-guide, ease), transform 0.16s var(--ease-guide, ease);
 }
-.stage[data-view='console'] .wan-pentest-cta:hover { background: var(--coral); transform: translateX(2px); }
+.stage[data-view='console'] .wan-pentest-cta:hover { background: var(--ink-2); transform: translateX(2px); }
 .stage[data-view='console'] .wpc-arrow { color: var(--acid); font-size: 12px; }
 .stage[data-view='console'] .wan-pentest-cta:hover .wpc-arrow { color: var(--paper); }
 .stage[data-view='console'] .wpc-txt { flex: 1; color: var(--paper); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
@@ -2088,44 +2133,61 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 /* ── core reticle (the reticle-lock that makes the core the focal point) ── */
 .stage[data-view='console'] .core-reticle { transform-box: fill-box; transform-origin: center; animation: core-lock 0.7s cubic-bezier(0.2, 0, 0, 1) both; }
 @keyframes core-lock { 0% { opacity: 0; transform: scale(1.16); } 60% { opacity: 1; } 100% { opacity: 1; transform: scale(1); } }
-.stage[data-view='console'] .core-lockring { fill: none; stroke: var(--coral); stroke-width: 1.4; stroke-dasharray: 3 8; opacity: 0.85; }
 .stage[data-view='console'] .core-bracket { fill: none; stroke: var(--ink); stroke-width: 2.6; stroke-linecap: square; opacity: 0.92; }
 .stage[data-view='console'] .core-tick { stroke: var(--ink); stroke-width: 2; opacity: 0.6; }
+/* the ONE acid mark on the resting console: the focal node the agent reasons from */
 .stage[data-view='console'] .core-acid { fill: var(--acid); }
-/* tiny padlock glyph above the reticle = locked target (replaces text caption) */
-.stage[data-view='console'] .core-lock-shackle { fill: none; stroke: var(--coral); stroke-width: 2; }
-.stage[data-view='console'] .core-lock-body { fill: var(--coral); }
 
-/* ── sector-radar backdrop watermark (big-picture context, kept subtle) ── */
-.stage[data-view='console'] .hud-axis { stroke: var(--ink); stroke-width: 1; opacity: 0.06; }
-.stage[data-view='console'] .hud-ring { fill: none; stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 7; opacity: 0.09; }
-.stage[data-view='console'] .hud-azi { stroke: var(--ink); stroke-width: 1.2; opacity: 0.16; }
-.stage[data-view='console'] .hud-bearing { fill: var(--ink); opacity: 0.3; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; }
+/* ── WAN INGRESS — a unit tally, not a swarm ─────────────────────────────────
+   The sector-radar watermark that used to sit here (range rings, azimuth ticks,
+   000/090/180/270 bearings) is gone: its own source comment called it "pure
+   decoration", it encoded nothing, and AGENTS.md bans decorative gimmicks while
+   asking for structured negative space. Removing it also unclutters the field
+   the thesis block now occupies.
 
-/* ── WAN THREAT CONE — active "incoming fire" ingress ────────────────────────
-   Hazard-striped caution fill + range-ring waves converging on the FortiGate +
-   an oscillating radar sweep. The whole cone breathes so the sector reads as a
-   live attack corridor, not a static watermark. */
-.stage[data-view='console'] .tc-haz-stripe { fill: var(--coral); opacity: 0.16; }
-.stage[data-view='console'] .tc-fill { animation: tc-breathe 3.2s ease-in-out infinite; }
-.stage[data-view='console'] .tc-edge { fill: none; stroke: var(--coral); stroke-width: 1.5; stroke-dasharray: 2 6; opacity: 0.42; animation: tc-march 1.1s linear infinite; }
-.stage[data-view='console'] .tc-wave { fill: none; stroke: var(--coral); stroke-width: 2.4; }
-.stage[data-view='console'] .tc-sweep { stroke: var(--coral); stroke-width: 2.2; opacity: 0.55; filter: drop-shadow(0 0 7px var(--coral)); }
-@keyframes tc-breathe { 0%, 100% { opacity: 0.62; } 50% { opacity: 1; } }
-@keyframes tc-march { to { stroke-dashoffset: -16; } }
+   The tally is ONE mark per real distinct source (see WanSiege). All ink — the
+   assault does not get its own colour family; the count and the convergence are
+   the message. Motion is one slow ingress march on the breach line only. */
+.stage[data-view='console'] .wan-siege.dim { opacity: 0.14; transition: opacity 0.3s ease; }
 
-/* ── attacker → FortiGate TRACER BEAMS ── */
-.stage[data-view='console'] .beam-halo { fill: none; stroke: var(--coral); opacity: 0.14; stroke-linecap: round; filter: blur(3px); }
-.stage[data-view='console'] .beam-core { fill: none; stroke-linecap: round; }
-.stage[data-view='console'] .beam-mote { fill: var(--coral); }
-.stage[data-view='console'] .beam-mote.head { filter: drop-shadow(0 0 5px var(--coral)) drop-shadow(0 0 2px var(--coral)); }
-.stage[data-view='console'] .atk-beam.dim { opacity: 0.16; }
-.stage[data-view='console'] .beam-stop-0 { stop-color: var(--coral); stop-opacity: 0.04; }
-.stage[data-view='console'] .beam-stop-1 { stop-color: var(--coral); stop-opacity: 0.45; }
-.stage[data-view='console'] .beam-stop-2 { stop-color: var(--coral); stop-opacity: 0.95; }
+.stage[data-view='console'] .ws-kicker { fill: var(--ink); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 500; }
+.stage[data-view='console'] .ws-tally-cap { fill: var(--gray); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+/* WAN screen = the coral (--wan) family: the assault is the whole screen, so it
+   carries the threat hue on every mark. The lone teal note is ws-contain — the
+   firewall's 51 lockouts holding the line (coral assault vs teal defence). */
+.stage[data-view='console'] .ws-src { fill: var(--wan); opacity: 0.72; }
+.stage[data-view='console'] .ws-thread { fill: none; stroke: var(--wan); stroke-width: 0.6; opacity: 0.28; }
 
-/* ── impact shockwave where volleys land on the gateway ── */
-.stage[data-view='console'] .impact-ring { fill: none; stroke: var(--coral); stroke-width: 2.2; filter: drop-shadow(0 0 4px var(--coral)); }
+.stage[data-view='console'] .ws-vector { fill: none; stroke: var(--wan); stroke-width: 1.3; opacity: 0.6; stroke-dasharray: 2 5; }
+.stage[data-view='console'] .ws-vector.mute { opacity: 0.14; }
+.stage[data-view='console'] .ws-breach { stroke: var(--wan); stroke-width: 2.8; opacity: 0.95; stroke-dasharray: 5 4; stroke-linecap: round; animation: ws-march 0.9s linear infinite; }
+@keyframes ws-march { to { stroke-dashoffset: -14; } }
+
+.stage[data-view='console'] .ws-lock-bracket { fill: none; stroke: var(--wan); stroke-width: 1.8; }
+.stage[data-view='console'] .ws-lock-ring { fill: none; stroke: var(--wan); stroke-width: 1.4; opacity: 0.6; }
+.stage[data-view='console'] .ws-lock-cross { stroke: var(--wan); stroke-width: 1; opacity: 0.7; }
+.stage[data-view='console'] .ws-lock-dot { fill: var(--wan); }
+.stage[data-view='console'] .ws-lock-label { fill: var(--wan-ink); font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 500; }
+.stage[data-view='console'] .ws-contain { fill: var(--net-ink); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; }
+
+.stage[data-view='console'] .ws-node-dot { fill: var(--wan); stroke: var(--paper); stroke-width: 1; }
+.stage[data-view='console'] .ws-node.mute { opacity: 0.28; }
+.stage[data-view='console'] .ws-node-ip { fill: var(--ink); font-family: var(--font-mono); font-size: 11px; }
+.stage[data-view='console'] .ws-node-v { fill: var(--gray); font-family: var(--font-mono); font-size: 10px; font-variant-numeric: tabular-nums; }
+/* acid = "the agent is acting on this" — the one interaction accent, both screens */
+.stage[data-view='console'] .ws-node-hint { fill: var(--wan-ink); font-size: 9px; opacity: 0; transition: opacity 0.2s; }
+.stage[data-view='console'] .ws-node:hover .ws-node-hint { opacity: 1; }
+.stage[data-view='console'] .ws-node:hover .ws-node-ip { text-decoration: underline; text-underline-offset: 3px; }
+.stage[data-view='console'] .ws-node.sel .ws-node-dot { fill: var(--wan); stroke: var(--acid); stroke-width: 4; paint-order: stroke; }
+
+/* ── the thesis: what this page is, in the resting state ── */
+.stage[data-view='console'] .th-rule { stroke: var(--ink); stroke-width: 2; }
+.stage[data-view='console'] .th-kicker { fill: var(--ink); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 500; }
+.stage[data-view='console'] .th-lede { fill: var(--ink); font-family: var(--font-display); font-size: 27px; letter-spacing: 0.01em; }
+.stage[data-view='console'] .th-body { fill: var(--ink-soft); font-family: var(--font-display); font-size: 15px; }
+.stage[data-view='console'] .th-meta { fill: var(--gray); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; }
+.stage[data-view='console'] .th-meta .th-k { fill: var(--ink); letter-spacing: 0.12em; }
+.stage[data-view='console'] .th-read { fill: var(--gray); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; }
 
 /* ── ambient corner read-outs (window, sources/lockouts, device counts) ── */
 .stage[data-view='console'] .hud-readouts text { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -2136,22 +2198,46 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
    console, and axe cannot see it because it is an SVG tspan). The numeral takes
    the teal TEXT token instead; --tier-edge itself stays put for the map. */
 .stage[data-view='console'] .hud-r-line .acc { fill: var(--mint); font-weight: 500; }
-.stage[data-view='console'] .hud-status { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
-.stage[data-view='console'] .hud-status .hot { fill: var(--coral); font-weight: 500; }
-.stage[data-view='console'] .hud-status .dim { fill: var(--ink); opacity: 0.55; }
-
-/* ── zone label: crisp HUD readout, not a washed-out whisper ── */
-.stage[data-view='console'] .zone-tag { fill: var(--ink); opacity: 0.68; font-weight: 500; }
 
 /* ── flat-print discipline: strip SVG glows/blurs on the light ground ── */
 .stage[data-view='console'] .pulse { filter: none !important; }
 .stage[data-view='console'] .wan-spine { filter: none; }
 .stage[data-view='console'] .rate-dot { background: var(--ink); box-shadow: none; }
-.stage[data-view='console'] .m-dev.high  { fill: var(--paper-2); stroke: var(--coral); animation: devpulse-flat 1.5s ease-in-out infinite; }
-.stage[data-view='console'] .m-dev.watch { fill: var(--paper-2); stroke: var(--amber); }
-.stage[data-view='console'] .m-dev.ok    { fill: var(--paper-2); stroke: var(--mint); }
-.stage[data-view='console'] .m-dev.alert { fill: var(--coral); stroke: var(--ink); animation: devpulse-flat 1.1s ease-in-out infinite; }
+/* ── SEVERITY BY STRUCTURE ───────────────────────────────────────────────────
+   Collapsing crimson/amber/teal onto one neutral ramp removes the hue channel,
+   so the three-way threat tier has to be carried by form instead — and it must
+   be, both because AGENTS.md allows one accent family and because "do not hide
+   essential state in colour alone" was already binding. The vocabulary:
+
+     high   solid ink fill, heaviest stroke     (reads darkest / densest)
+     watch  hollow, dashed ink ring             (reads provisional)
+     ok     hollow, thin quiet ring             (reads as ground)
+     alert  solid ink + acid ring               (the agent marked THIS one)
+
+   Tier is therefore legible in greyscale, and acid keeps its single meaning. */
+.stage[data-view='console'] .m-dev.high  { fill: var(--ink); stroke: var(--ink); stroke-width: 2; animation: none; }
+.stage[data-view='console'] .m-dev.watch { fill: var(--paper-2); stroke: var(--ink); stroke-width: 1.8; stroke-dasharray: 2.5 2; }
+.stage[data-view='console'] .m-dev.ok    { fill: var(--paper-2); stroke: var(--quiet); stroke-width: 1.4; }
+.stage[data-view='console'] .m-dev.alert { fill: var(--ink); stroke: var(--acid); stroke-width: 3.5; paint-order: stroke; animation: none; }
 @keyframes devpulse-flat { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* the same vocabulary for the branch links + subnet threat pip */
+.stage[data-view='console'] .branch.high  { stroke: var(--ink); opacity: 0.75; }
+.stage[data-view='console'] .branch.watch { stroke: var(--gray); stroke-dasharray: 3 3; }
+.stage[data-view='console'] .branch.ok    { stroke: var(--quiet); }
+.stage[data-view='console'] .threat-pip   { fill: var(--ink); }
+
+/* severity chips in the analysis panels: ink weight + fill, never hue */
+.stage[data-view='console'] .sev-dot.high   { background: var(--ink); }
+.stage[data-view='console'] .sev-dot.medium { background: var(--paper-2); box-shadow: inset 0 0 0 2px var(--ink); }
+.stage[data-view='console'] .sev-dot.low    { background: var(--paper-2); box-shadow: inset 0 0 0 1.5px var(--quiet); }
+.stage[data-view='console'] .sev-tag.high,
+.stage[data-view='console'] .sev-tag.critical { color: var(--paper); background: var(--ink); }
+.stage[data-view='console'] .sev-tag.medium { color: var(--ink); background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); }
+.stage[data-view='console'] .sev-tag.low    { color: var(--gray); background: transparent; box-shadow: inset 0 0 0 1.5px var(--quiet); }
+.stage[data-view='console'] .float-panel.alert,
+.stage[data-view='console'] .float-panel.high  { border-left-color: var(--ink); }
+.stage[data-view='console'] .float-panel.watch { border-left-color: var(--gray); }
 
 /* ── live-rate throughput chip: stronger tactical badge ── */
 .stage[data-view='console'] .live-rate {
@@ -2195,54 +2281,66 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
    ═══════════════════════════════════════════════════════════════════════════ */
 .sg-trunk { fill: none; stroke: var(--tier-edge); stroke-width: 2; opacity: 0.5; stroke-dasharray: 5 5; }
 
-.sg-hull { fill: rgba(13, 13, 13, 0.035); stroke: rgba(13, 13, 13, 0.16); stroke-width: 1; stroke-dasharray: 3 4; }
-.sg-cluster.hot .sg-hull { fill: rgba(207, 47, 74, 0.06); stroke: rgba(207, 47, 74, 0.3); }
+/* Segment screen = the teal (--net) family: the internal mesh is the environment,
+   so its structure (territories, capillaries, healthy hosts) carries teal, and the
+   THREAT marks inside it (high/watch hosts, pivot corridors, anomalies) carry coral
+   (--wan) — the same coral-vs-teal law as the WAN screen, now inverted: a cool net
+   with warm problems. A "hot" community (deny-heavy) tints its whole territory coral. */
+.sg-hull { fill: rgba(28, 143, 136, 0.06); stroke: rgba(28, 143, 136, 0.32); stroke-width: 1; stroke-dasharray: 3 4; }
+.sg-cluster.hot .sg-hull { fill: rgba(195, 56, 74, 0.07); stroke: rgba(195, 56, 74, 0.42); stroke-width: 1.6; stroke-dasharray: none; }
+/* community label. --net-ink teal type clears AA (5.4:1); hot → coral --wan-ink. */
 .sg-hull-label {
   font-family: var(--font-mono, 'IBM Plex Mono', monospace);
   font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
-  fill: var(--fog); opacity: 0.85;
+  fill: var(--net-ink); opacity: 1;
 }
-.sg-cluster.hot .sg-hull-label { fill: var(--coral); opacity: 1; }
+.sg-cluster.hot .sg-hull-label { fill: var(--wan-ink); opacity: 1; font-weight: 500; }
 
-.sg-edge { fill: none; stroke-linecap: round; transition: opacity 0.25s ease; }
-.sg-edge.inf { stroke-dasharray: 2 4; opacity: 0.4; }
-.sg-edge.obs { opacity: 0.85; }
-.sg-edge.dim { opacity: 0.07; }
-.sg-edge.k-clash  { stroke: var(--coral); }
-.sg-edge.k-bcast  { stroke: #b4732b; }
-.sg-edge.k-codst  { stroke: var(--tier-edge); }
-.sg-edge.k-lease  { stroke: #7f8f8b; }
-.sg-edge.k-fleet  { stroke: #9a93b8; }
-.sg-edge.k-family { stroke: #8c8c88; }
-.sg-edge.k-portfp { stroke: var(--amber); }
-.sg-drip { fill: var(--tier-edge); }
-.sg-drip.k-clash { fill: var(--coral); }
-.sg-drip.k-bcast { fill: #b4732b; }
+/* Relation evidence: the claim the map is entitled to make is OBSERVED vs
+   INFERRED, and that is carried structurally (solid vs dashed) — it already was.
+   The seven per-kind hues layered on top (crimson/ochre/teal/slate/violet/gray/
+   amber) were a rainbow chart palette (AGENTS.md bans them) encoding a category
+   the viewer cannot decode without the legend anyway; the kind is named in plain
+   words on hover ("关联 / LINKS"), where it is actually readable. */
+.sg-edge { fill: none; stroke: var(--net); stroke-linecap: round; transition: opacity 0.25s ease; }
+.sg-edge.inf { stroke: var(--net); opacity: 0.32; stroke-dasharray: 2 4; }
+.sg-edge.obs { opacity: 0.72; }
+.sg-edge.dim { opacity: 0.06; }
+.sg-drip { fill: var(--net); opacity: 0.85; }
 
+/* pivot corridor = a lateral-movement PATH the agent found → threat, so coral */
 .sg-corridor {
-  fill: none; stroke: var(--coral); stroke-width: 2.4; opacity: 0.9;
+  fill: none; stroke: var(--wan); stroke-width: 2.6; opacity: 0.9;
   stroke-dasharray: 7 5; animation: sg-march 1.1s linear infinite;
 }
 @keyframes sg-march { to { stroke-dashoffset: -24; } }
-.sg-corridor-drip { fill: var(--coral); }
+.sg-corridor-drip { fill: var(--wan); }
 
-.sg-dot { fill: var(--paper-2); stroke: var(--tier-subnet); stroke-width: 1.6; transition: opacity 0.25s ease; }
-.sg-node.traffic .sg-dot { fill: var(--tier-subnet); }
-.sg-node.t-watch .sg-dot { fill: var(--amber); stroke: var(--amber); }
-.sg-node.t-high  .sg-dot { fill: var(--coral); stroke: var(--coral); }
-.sg-node.sel .sg-dot { stroke: var(--ink); stroke-width: 3; }
+/* Host marks, same structural vocabulary as the topology tier:
+     dhcp-only  hollow, thin quiet ring  — the firewall only ever saw a lease
+     routes     filled quiet             — carries traffic, unremarkable
+     watch      hollow, dashed ink ring  — provisional
+     high       solid ink                — densest mark on the plate
+   (Radius already encodes real mass: log10(deny+flows) + degree.) */
+.sg-dot { fill: var(--paper-2); stroke: var(--net); stroke-width: 1.4; transition: opacity 0.25s ease; }
+.sg-node.traffic .sg-dot { fill: var(--net); stroke: var(--net); }
+.sg-node.t-watch .sg-dot { fill: var(--paper-2); stroke: var(--wan); stroke-width: 1.8; stroke-dasharray: 2.5 2; }
+.sg-node.t-high  .sg-dot { fill: var(--wan); stroke: var(--wan); stroke-width: 1.6; stroke-dasharray: none; }
+.sg-node.sel .sg-dot { stroke: var(--acid); stroke-width: 3.5; paint-order: stroke; stroke-dasharray: none; }
 .sg-node.dim { opacity: 0.22; }
-.sg-node:hover .sg-dot { stroke: var(--ink); stroke-width: 2.4; }
+.sg-node:hover .sg-dot { stroke: var(--net-ink); stroke-width: 2.4; }
+.sg-node.t-high:hover .sg-dot, .sg-node.t-watch:hover .sg-dot { stroke: var(--wan-ink); }
 .sg-ip {
   font-family: var(--font-mono, 'IBM Plex Mono', monospace);
   font-size: 8.5px; fill: var(--fog);
 }
-.sg-node.t-high .sg-ip, .sg-node.t-watch .sg-ip { fill: var(--ink); }
-.sg-anom { fill: none; stroke: var(--amber); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: 0.9; }
+.sg-node.t-high .sg-ip, .sg-node.t-watch .sg-ip { fill: var(--wan-ink); }
+.sg-anom { fill: none; stroke: var(--wan); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: 0.6; }
 .sg-flag { fill: none; stroke-width: 1.6; }
-.sg-flag.sev-high { stroke: var(--coral); animation: sg-ping 1.8s ease-out infinite; }
-.sg-flag.sev-medium { stroke: var(--amber); opacity: 0.8; }
-.sg-flag.sev-low { stroke: var(--tier-edge); opacity: 0.6; }
+/* the agent named this host in a pattern → acid, the one accent, one meaning */
+.sg-flag.sev-high { stroke: var(--acid); stroke-width: 2.6; animation: sg-ping 1.8s ease-out infinite; }
+.sg-flag.sev-medium { stroke: var(--acid); stroke-width: 2; opacity: 0.85; }
+.sg-flag.sev-low { stroke: var(--acid); stroke-width: 1.4; opacity: 0.5; }
 @keyframes sg-ping {
   0% { opacity: 0.9; transform: scale(1); }
   70%, 100% { opacity: 0; transform: scale(1.5); }
@@ -2257,8 +2355,8 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   font-size: 10px; color: var(--text); padding: 7px 9px;
   box-shadow: 3px 3px 0 rgba(13, 13, 13, 0.12);
 }
-.sg-tip.t-high { border-color: var(--coral); }
-.sg-tip.t-watch { border-color: var(--amber); }
+.sg-tip.t-high { border-color: var(--wan); border-width: 2.5px; }
+.sg-tip.t-watch { border-color: var(--wan); }
 .sg-tip-h { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
 .sg-tip-h b { font-size: 11px; }
 .sg-tip-h span { color: var(--fog); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
@@ -2293,12 +2391,12 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .sg-panel-h button { background: none; border: none; color: var(--paper); cursor: pointer; font-size: 11px; }
 .sg-panel-b { padding: 8px 10px; overflow: auto; }
 .sg-wait, .sg-err { font-size: 11px; color: var(--fog); }
-.sg-err { color: var(--coral); }
+.sg-err { color: var(--ink); font-weight: 500; }
 .sg-sum { margin: 0 0 7px; font-size: 11.5px; line-height: 1.55; }
 .sg-pats { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
 .sg-pats li { border-left: 3px solid var(--fog); padding: 3px 0 3px 8px; }
-.sg-pats li.sev-high { border-color: var(--coral); }
-.sg-pats li.sev-medium { border-color: var(--amber); }
+.sg-pats li.sev-high { border-color: var(--wan); border-left-width: 4px; }
+.sg-pats li.sev-medium { border-color: var(--wan); opacity: 0.85; }
 .sg-pat-h { display: flex; align-items: baseline; gap: 7px; }
 .sg-pat-t { font-size: 11px; font-weight: 600; }
 .sg-pat-k { font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fog); }
@@ -2310,7 +2408,7 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   font-style: normal; color: var(--fog); margin-right: 6px;
   font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase;
 }
-.sg-foot i.bad { color: var(--coral); }
+.sg-foot i.bad { color: var(--ink); }
 
 .sg-legend {
   border: 1.5px solid var(--line); background: var(--paper-2); padding: 6px 8px;
@@ -2318,14 +2416,66 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 }
 .sg-lg-t { color: var(--ink); letter-spacing: 0.1em; margin-bottom: 4px; font-size: 8.5px; }
 .sg-lg-r { display: flex; align-items: center; gap: 6px; line-height: 1.55; }
-.sg-lg-line { width: 18px; height: 0; border-top: 2px solid var(--fog); flex: 0 0 18px; }
-.sg-lg-line.inf { border-top-style: dashed; }
-.sg-lg-line.k-clash { border-color: var(--coral); }
-.sg-lg-line.k-bcast { border-color: #b4732b; }
-.sg-lg-line.k-codst { border-color: var(--tier-edge); }
-.sg-lg-line.k-lease { border-color: #7f8f8b; }
-.sg-lg-line.k-fleet { border-color: #9a93b8; }
-.sg-lg-line.k-family { border-color: #8c8c88; }
+.sg-lg-line { width: 18px; height: 0; border-top: 2px solid var(--net); flex: 0 0 18px; }
+.sg-lg-line.obs { border-color: var(--net); }
+.sg-lg-line.inf { border-color: var(--net); opacity: 0.5; border-top-style: dashed; }
+
+/* ── EGO FOCUS ── click a host → its relation sub-graph is promoted to the whole
+   field: the viewport reframes onto {node ∪ neighbours} and everything unrelated
+   fades to a ghost so a dense community collapses to one legible ego network. */
+.sg.is-ego .sg-node.ego-off { opacity: 0.05; pointer-events: none; transition: opacity 0.4s ease; }
+.sg.is-ego .sg-node.ego-in { opacity: 1; }
+.sg.is-ego .sg-cluster.ego-off { opacity: 0.04; }
+.sg.is-ego .sg-cluster.ego-in .sg-hull { opacity: 0.5; }
+.sg-focus-ring { fill: none; stroke: var(--acid); stroke-width: 2.6; paint-order: stroke; animation: sg-ping 1.9s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+.sg-edge.ego-edge { opacity: 0.95; }
+.sg-drip.ego-edge { opacity: 1; }
+.sg-edge-lbl {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 8px; letter-spacing: 0.04em; fill: var(--net-ink);
+  paint-order: stroke; stroke: var(--paper); stroke-width: 2.5px;
+}
+
+.ego-fo { overflow: visible; }
+.sg-ego {
+  border: 2px solid var(--net-ink); background: var(--paper-2);
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace); color: var(--text);
+  box-shadow: 4px 4px 0 rgba(18, 97, 92, 0.16);
+  display: flex; flex-direction: column; max-height: 100%;
+}
+.sg-ego-h {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 8px; background: var(--net-ink); color: var(--paper);
+}
+.sg-ego-back { background: none; border: none; color: var(--paper); cursor: pointer; font-family: inherit; font-size: 9.5px; letter-spacing: 0.08em; padding: 0; }
+.sg-ego-back:hover { text-decoration: underline; }
+.sg-ego-k { font-size: 8.5px; letter-spacing: 0.14em; opacity: 0.85; }
+.sg-ego-id { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 2px; }
+.sg-ego-id b { font-size: 14px; letter-spacing: 0.02em; }
+.sg-ego-id.t-high b { color: var(--wan-ink); }
+.sg-ego-id span { color: var(--fog); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sg-ego-meta { padding: 0 10px 8px; font-size: 10px; color: var(--gray); border-bottom: 1px solid var(--line); }
+.sg-ego-rel-h { padding: 7px 10px 4px; font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--net-ink); }
+.sg-ego-rels { overflow: auto; padding: 0 6px 4px; display: grid; gap: 2px; }
+.sg-ego-rel {
+  display: grid; grid-template-columns: 34px 1fr; gap: 2px 8px; align-items: baseline;
+  background: none; border: none; border-left: 2px solid var(--net); text-align: left;
+  padding: 3px 6px; cursor: pointer; font-family: inherit; color: var(--text);
+}
+.sg-ego-rel:hover { background: rgba(28, 143, 136, 0.08); }
+.sg-ego-tag { grid-row: span 2; font-size: 7.5px; letter-spacing: 0.06em; padding: 1px 0; align-self: center; }
+.sg-ego-tag.obs { color: var(--net-ink); font-weight: 600; }
+.sg-ego-tag.inf { color: var(--gray); }
+.sg-ego-ip { font-size: 10.5px; color: var(--ink); }
+.sg-ego-why { grid-column: 2; font-size: 9px; color: var(--fog); line-height: 1.35; }
+.sg-ego-iso { padding: 6px 10px; font-size: 10px; color: var(--fog); }
+.sg-ego-ai {
+  margin: 6px 8px 8px; padding: 5px; border: 1.5px solid var(--wan);
+  background: var(--paper-2); color: var(--wan-ink); cursor: pointer;
+  font-family: inherit; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.sg-ego-ai:hover { background: var(--wan); color: var(--paper); }
+.sg-lg-k { color: var(--gray); line-height: 1.5; padding-left: 24px; font-size: 8.5px; }
 
 /* drilled breadcrumb (collapsed gateway chain) */
 .mesh-crumb-t {
@@ -2336,4 +2486,4 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   font-family: var(--font-mono, 'IBM Plex Mono', monospace);
   font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--fog);
 }
-.mesh-crumb:hover .mesh-crumb-t { fill: var(--coral); }
+.mesh-crumb:hover .mesh-crumb-t { text-decoration: underline; text-underline-offset: 3px; }

@@ -75,7 +75,7 @@ def test_skill_control_matters_on_dominant_signal(tmp_path):
     }
     rows = {r.name: r for r in compare_baselines(cases, gt, data_source="real", real_stats_path=_stats_path(tmp_path))}
     # Skill controller present -> both cases correct.
-    assert rows["selfevo_light_path"].root_cause_accuracy == 1.0
+    assert rows["autopoiesis_light_path"].root_cause_accuracy == 1.0
     # No skill control -> dominant brute-force evidence swamps the deny case.
     assert rows["full_tools"].root_cause_accuracy < 1.0
 

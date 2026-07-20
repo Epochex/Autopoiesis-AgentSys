@@ -27,4 +27,4 @@ The demo writes a replayable trace to `artifacts/network_rca_phase1_trace.jsonl`
 
 ## Safety Boundary
 
-The default path uses `MockDeviceAdapter` and fixture logs only. Live FortiGate access is behind `SELFEVO_ENABLE_LIVE_DEVICE_ADAPTER=1`, and credentials are read from environment variables. No code path stores device credentials in source, prompt text, fixtures, or trace output.
+The default path uses `MockDeviceAdapter` and fixture logs only. Live FortiGate access is behind `AUTOPOIESIS_ENABLE_LIVE_DEVICE_ADAPTER=1`, and credentials are read from environment variables. No code path stores device credentials in source, prompt text, fixtures, or trace output.

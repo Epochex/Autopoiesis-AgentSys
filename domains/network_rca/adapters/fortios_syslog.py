@@ -9,6 +9,8 @@ from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from core.env import autopoiesis_env
+
 from pydantic import BaseModel, Field
 
 
@@ -81,7 +83,7 @@ class R230IngestorLogAdapter:
     """Readonly HTTP client for the R230 ingestor; disabled unless constructed by caller."""
 
     def __init__(self, base_url: str | None = None, bearer_token: str | None = None):
-        if os.getenv("SELFEVO_ENABLE_R230_INGESTOR") != "1":
+        if autopoiesis_env("ENABLE_R230_INGESTOR") != "1":
             raise RuntimeError("R230IngestorLogAdapter is disabled by default")
         resolved_base_url = base_url or os.environ["R230_INGESTOR_URL"]
         self.base_url = resolved_base_url.rstrip("/")

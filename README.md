@@ -1,4 +1,4 @@
-# selfevo-orchiter
+# Autopoiesis-AgentSys
 
 > **Read this first — which layer is measured.** The **current, measured system is the
 > Python kernel** in [`core/`](./core) + [`domains/`](./domains): a self-evolving
@@ -7,12 +7,12 @@
 > ablation 100%→16.7%, managed 3-tier memory) and the commands to reproduce them live in
 > **[docs/BENCHMARKS.md](./docs/BENCHMARKS.md)**; résumé-ready bullets in
 > **[docs/RESUME.md](./docs/RESUME.md)**. Run `python3 examples/benchmarks.py` and
-> `python3 -m pytest tests_py/ -q` (40 tests).
+> `python3 -m pytest tests_py/ -q`.
 >
 > The TypeScript `src/` tree and the `npm` commands described below are an **earlier
 > prototype**, kept for history — they are not the system the benchmarks measure.
 
-`selfevo-orchiter` is a self-evolution kernel for long-running agents. Its core problem is not generic orchestration. It focuses on the failure mode that appears after agents run for weeks: memory becomes stale or polluted, context grows without discipline, too many skills distract the model, and useful experience never becomes a stable policy.
+`Autopoiesis-AgentSys` is a self-evolution kernel for long-running agents. Its core problem is not generic orchestration. It focuses on the failure mode that appears after agents run for weeks: memory becomes stale or polluted, context grows without discipline, too many skills distract the model, and useful experience never becomes a stable policy.
 
 The online path stays small. The background path learns.
 
@@ -54,7 +54,7 @@ Domain adapters such as `office`, `netops`, `coding`, and `decision` are stress 
 RAG:
 query -> retrieve chunks -> append to prompt
 
-selfevo-orchiter:
+Autopoiesis-AgentSys:
 trace -> memory note -> contamination check -> tiered retrieval
       -> context compilation -> skill shortlist -> verifier
       -> reflection -> promotion gate -> GRPO-ready group rewards
@@ -75,15 +75,17 @@ npm run typecheck
 npm test
 node --test dist/tests/memorySkillEvolution.test.js
 npm run harness:replay -- examples/suites/portable-work-items.json
-npm run harness:gate -- /tmp/selfevo-report.json examples/policies/local-strict.json
+npm run harness:gate -- /tmp/autopoiesis-report.json examples/policies/local-strict.json
 ```
 
 Provider smoke testing is opt-in:
 
 ```bash
 npm run provider:smoke
-SELFEVO_RUN_PROVIDER_SMOKE=1 npm run test:provider
+AUTOPOIESIS_RUN_PROVIDER_SMOKE=1 npm run test:provider
 ```
+
+Pengcheng GPU tunnel configuration is documented in [docs/PENGCHENG_PROVIDER.md](./docs/PENGCHENG_PROVIDER.md).
 
 ## Research Backbone
 

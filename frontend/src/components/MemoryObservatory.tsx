@@ -9,7 +9,6 @@ import type { MemEvent, MemRecall, Observatory } from '../types'
 import { MemoryGraph } from './MemoryGraph'
 import { MemoryInspector } from './MemoryInspector'
 import { RouteRuler } from './RouteRuler'
-import { CausalRibbon } from './CausalRibbon'
 import { MemoryTimeline } from './MemoryTimeline'
 import './memory-observatory.css'
 
@@ -34,11 +33,9 @@ const reducedMotion = () =>
 
 export function MemoryObservatory({
   obs,
-  byPass,
   zh,
 }: {
   obs: Observatory
-  byPass: ObsByPass[]
   zh: boolean
 }) {
   const last = obs.events.length - 1
@@ -210,12 +207,6 @@ export function MemoryObservatory({
         onCursor={scrub}
         playing={running}
         onTogglePlay={toggle}
-        zh={zh}
-      />
-      <CausalRibbon
-        recall={obs.recall}
-        byPass={byPass}
-        capabilities={obs.capabilities}
         zh={zh}
       />
     </section>

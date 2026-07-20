@@ -71,13 +71,16 @@ export function SubnetGraphLayer({
   center,
   rx,
   ry,
+  vbw,
+  vbh,
   lang,
   hoverIp,
   selectedIp,
+  focusIp,
   marks,
   showPanel,
   onHover,
-  onPick,
+  onFocus,
   onAnalyze,
   onCloseAnalysis,
 }: {
@@ -86,13 +89,19 @@ export function SubnetGraphLayer({
   center: Pt
   rx: number
   ry: number
+  /** canvas viewBox extent — read-outs pin to the plate edges, so they must
+   *  follow the canvas rather than a duplicated 1360x1000 literal. */
+  vbw: number
+  vbh: number
   lang: Lang
   hoverIp: string | null
   selectedIp: string | null
+  /** the host promoted to an isolated ego-network (click a node). */
+  focusIp: string | null
   marks: Record<string, { severity: string; verdict: string }>
   showPanel: boolean
   onHover: (ip: string | null) => void
-  onPick: (dev: GraphDevice) => void
+  onFocus: (ip: string | null) => void
   onAnalyze: () => void
   onCloseAnalysis: () => void
 }) {
@@ -126,6 +135,18 @@ export function SubnetGraphLayer({
   }, [analysis])
 
   const anomalyIps = useMemo(() => new Set(graph.anomalies.flatMap((a) => a.members)), [graph])
+
+  /* Legend content is derived from the edges this segment actually has, not from
+     a fixed list of the seven kinds the miner can emit — 192.168.1.0/24 carries
+     only five of them, and naming absent evidence classes invites the reader to
+     look for marks that are not on the map. `observed` is the payload's own flag
+     (build_device_graph.py: clash/bcast/codst are measured; the rest inferred). */
+  const kindsPresent = useMemo(() => {
+    const obs = new Set<string>()
+    const inf = new Set<string>()
+    for (const e of graph.edges) (e.observed ? obs : inf).add(e.kind)
+    return { obs: [...obs].sort(), inf: [...inf].sort() }
+  }, [graph])
   const degree = useMemo(() => {
     const d: Record<string, number> = {}
     for (const e of graph.edges) {
@@ -151,10 +172,26 @@ export function SubnetGraphLayer({
     return s
   }, [hoverIp, graph])
 
+  // ── ego-network of the focused host: itself, its neighbours, and every edge
+  //    that touches it (each carrying the evidence for why the two are linked). */
+  const ego = useMemo(() => {
+    if (!focusIp) return null
+    const edges = graph.edges.filter((e) => e.src === focusIp || e.dst === focusIp)
+    const members = new Set<string>([focusIp])
+    const rel: { ip: string; kind: string; evidence: string; observed: boolean; weight: number }[] = []
+    for (const e of edges) {
+      const other = e.src === focusIp ? e.dst : e.src
+      members.add(other)
+      rel.push({ ip: other, kind: e.kind, evidence: e.evidence, observed: e.observed, weight: e.weight })
+    }
+    rel.sort((a, b) => b.weight - a.weight)
+    return { members, edges, rel }
+  }, [focusIp, graph])
+
   const st = graph.stats
 
   return (
-    <g className="sg">
+    <g className={`sg ${ego ? 'is-ego' : ''}`}>
       {/* ── community territories ── */}
       {graph.clusters.map((c) => {
         const pts = c.members.map((m) => pos[m]).filter(Boolean)
@@ -162,8 +199,9 @@ export function SubnetGraphLayer({
         const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length
         const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length
         const label = labelOf[c.id] ?? `${c.vendor || (zh ? ROLE_ZH[c.role] ?? c.role : c.role)} ×${c.size}`
+        const egoHome = ego ? c.members.some((m) => ego.members.has(m)) : false
         return (
-          <g key={c.id} className={`sg-cluster ${c.deny > 20000 ? 'hot' : ''}`} pointerEvents="none">
+          <g key={c.id} className={`sg-cluster ${c.deny > 20000 ? 'hot' : ''} ${ego ? (egoHome ? 'ego-in' : 'ego-off') : ''}`} pointerEvents="none">
             <path d={hull(pts, 22)} className="sg-hull" />
             <text x={cx} y={cy - Math.max(30, radius * 0.06)} className="sg-hull-label" textAnchor="middle">
               {label}
@@ -178,18 +216,22 @@ export function SubnetGraphLayer({
           const a = pos[e.src]
           const b = pos[e.dst]
           if (!a || !b) return null
-          const dim = !!hoverIp && !(e.src === hoverIp || e.dst === hoverIp)
-          const w = Math.max(0.5, Math.min(2.6, e.weight * 0.7))
+          const touchesFocus = !!focusIp && (e.src === focusIp || e.dst === focusIp)
+          const dim = (!ego && !!hoverIp && !(e.src === hoverIp || e.dst === hoverIp)) || (!!ego && !touchesFocus)
+          const w = Math.max(0.5, Math.min(2.6, e.weight * 0.7)) * (touchesFocus ? 1.8 : 1)
           const mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.09
           const my = (a.y + b.y) / 2 - (b.x - a.x) * 0.09
           const d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
           return (
             <g key={i}>
-              <path d={d} className={`sg-edge k-${e.kind} ${e.observed ? 'obs' : 'inf'} ${dim ? 'dim' : ''}`} style={{ strokeWidth: w }} />
-              {e.observed && !dim ? (
-                <circle r={1.7} className={`sg-drip k-${e.kind}`}>
+              <path d={d} className={`sg-edge k-${e.kind} ${e.observed ? 'obs' : 'inf'} ${dim ? 'dim' : ''} ${touchesFocus ? 'ego-edge' : ''}`} style={{ strokeWidth: w }} />
+              {(e.observed && !dim) || touchesFocus ? (
+                <circle r={touchesFocus ? 2.4 : 1.7} className={`sg-drip k-${e.kind} ${touchesFocus ? 'ego-edge' : ''}`}>
                   <animateMotion dur={`${Math.max(1.6, 5 - e.weight)}s`} repeatCount="indefinite" path={d} />
                 </circle>
+              ) : null}
+              {touchesFocus && e.observed ? (
+                <text x={mx} y={my - 3} className="sg-edge-lbl" textAnchor="middle">{kindLabel[e.kind]}</text>
               ) : null}
             </g>
           )
@@ -219,28 +261,33 @@ export function SubnetGraphLayer({
         {graph.devices.map((d) => {
           const p = pos[d.ip]
           if (!p) return null
-          const r = size(d)
-          const dim = !!hoverIp && hoverIp !== d.ip && !neighbours?.has(d.ip)
+          const isFocus = focusIp === d.ip
+          const inEgo = ego?.members.has(d.ip) ?? false
+          const r = size(d) * (isFocus ? 1.55 : 1)
+          const dim = !ego && !!hoverIp && hoverIp !== d.ip && !neighbours?.has(d.ip)
+          const egoCls = ego ? (isFocus ? 'ego-focus' : inEgo ? 'ego-in' : 'ego-off') : ''
           const mark = marks[d.ip]
           const fl = flagged[d.ip]
           const sev = fl?.sev ?? (mark?.severity === 'high' ? 'high' : mark?.severity === 'medium' ? 'medium' : '')
+          const labelled = d.threat !== 'ok' || selectedIp === d.ip || hoverIp === d.ip || (ego ? inEgo : false)
           return (
             <g
               key={d.ip}
-              className={`sg-node t-${d.threat} ${d.seenBy} ${dim ? 'dim' : ''} ${selectedIp === d.ip ? 'sel' : ''}`}
+              className={`sg-node t-${d.threat} ${d.seenBy} ${dim ? 'dim' : ''} ${selectedIp === d.ip ? 'sel' : ''} ${egoCls}`}
               onMouseEnter={() => onHover(d.ip)}
               onMouseLeave={() => onHover(null)}
               onClick={(e) => {
                 e.stopPropagation()
-                onPick(d)
+                onFocus(isFocus ? null : d.ip)
               }}
               style={{ cursor: 'pointer' }}
             >
+              {isFocus ? <circle cx={p.x} cy={p.y} r={r + 9} className="sg-focus-ring" /> : null}
               {sev ? <circle cx={p.x} cy={p.y} r={r + 6} className={`sg-flag sev-${sev}`} /> : null}
               {anomalyIps.has(d.ip) ? <circle cx={p.x} cy={p.y} r={r + 3.5} className="sg-anom" /> : null}
               <circle cx={p.x} cy={p.y} r={r} className="sg-dot" />
-              {d.threat !== 'ok' || selectedIp === d.ip || hoverIp === d.ip ? (
-                <text x={p.x + r + 5} y={p.y + 3} className="sg-ip">{d.ip.split('.').slice(-1)[0]}</text>
+              {labelled ? (
+                <text x={p.x + r + 5} y={p.y + 3} className="sg-ip">{isFocus ? d.ip : d.ip.split('.').slice(-1)[0]}</text>
               ) : null}
               <circle cx={p.x} cy={p.y} r={Math.max(r + 6, 9)} fill="transparent" />
             </g>
@@ -248,15 +295,15 @@ export function SubnetGraphLayer({
         })}
       </g>
 
-      {/* ── hover read-out ── */}
-      {hovered ? (
+      {/* ── hover read-out (suppressed while an ego net owns the field) ── */}
+      {hovered && !ego ? (
         (() => {
           const p = pos[hovered.ip]
           const links = graph.edges.filter((e) => e.src === hovered.ip || e.dst === hovered.ip)
           const kinds = [...new Set(links.map((l) => l.kind))]
           const w = 250
-          const x = Math.min(Math.max(p.x + 18, 8), 1360 - w - 8)
-          const y = Math.min(Math.max(p.y - 40, 6), 1000 - 130)
+          const x = Math.min(Math.max(p.x + 18, 8), vbw - w - 8)
+          const y = Math.min(Math.max(p.y - 40, 6), vbh - 130)
           return (
             <foreignObject x={x} y={y} width={w} height={132} className="sg-tip-fo" pointerEvents="none">
               <div className={`sg-tip t-${hovered.threat}`}>
@@ -286,7 +333,8 @@ export function SubnetGraphLayer({
         })()
       ) : null}
 
-      {/* ── segment read-out + agent trigger ── */}
+      {/* ── segment read-out + agent trigger (yields to the ego panel) ── */}
+      {!ego ? (
       <foreignObject x={center.x - rx + 4} y={Math.max(6, center.y - ry - 74)} width={430} height={92} className="sg-tip-fo">
         <div className="sg-head">
           <div className="sg-head-t">{graph.cidr}</div>
@@ -305,9 +353,10 @@ export function SubnetGraphLayer({
           ) : null}
         </div>
       </foreignObject>
+      ) : null}
 
       {/* ── agent findings (yields the left column to a per-device analysis) ── */}
-      {analysis && showPanel ? (
+      {analysis && showPanel && !ego ? (
         <foreignObject x={20} y={620} width={640} height={372} className="sg-tip-fo">
           <div className="sg-panel">
             <div className="sg-panel-h">
@@ -344,18 +393,37 @@ export function SubnetGraphLayer({
         </foreignObject>
       ) : null}
 
-      {/* ── legend ── */}
-      <foreignObject x={1360 - 218} y={1000 - 132} width={206} height={124} className="sg-tip-fo">
+      {/* ── legend ──
+          Grouped by the distinction the map is entitled to assert: a relation was
+          either MEASURED in the syslog or INFERRED from a shared attribute. That
+          is the line the graph must not blur, and it is the one the eye can read
+          (solid vs dashed). The kinds are listed as words under each class rather
+          than each getting its own hue. */}
+      {!ego ? (
+      <foreignObject x={vbw - 232} y={vbh - 150} width={218} height={132} className="sg-tip-fo">
         <div className="sg-legend">
           <div className="sg-lg-t">{zh ? '关联证据' : 'RELATION EVIDENCE'}</div>
-          {(['clash', 'bcast', 'codst', 'lease', 'fleet', 'family'] as const).map((k) => (
-            <div key={k} className="sg-lg-r">
-              <span className={`sg-lg-line k-${k} ${k === 'clash' || k === 'bcast' || k === 'codst' ? 'obs' : 'inf'}`} />
-              {kindLabel[k]}
-            </div>
-          ))}
+          {kindsPresent.obs.length ? (
+            <>
+              <div className="sg-lg-r">
+                <span className="sg-lg-line obs" />
+                {zh ? '实测' : 'observed'}
+              </div>
+              <div className="sg-lg-k">{kindsPresent.obs.map((k) => kindLabel[k] ?? k).join(' · ')}</div>
+            </>
+          ) : null}
+          {kindsPresent.inf.length ? (
+            <>
+              <div className="sg-lg-r">
+                <span className="sg-lg-line inf" />
+                {zh ? '推断' : 'inferred'}
+              </div>
+              <div className="sg-lg-k">{kindsPresent.inf.map((k) => kindLabel[k] ?? k).join(' · ')}</div>
+            </>
+          ) : null}
         </div>
       </foreignObject>
+      ) : null}
     </g>
   )
 }

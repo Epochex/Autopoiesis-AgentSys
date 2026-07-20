@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 from typing import Protocol
 from urllib import error, request
+
+from core.env import autopoiesis_env
 
 
 class JsonLLMClient(Protocol):
@@ -25,8 +26,8 @@ class LLMResponseError(RuntimeError):
 class OpenAICompatibleClient:
     """Minimal stdlib client for any OpenAI-compatible /chat/completions endpoint.
 
-    Configuration falls back to SELFEVO_LLM_BASE_URL / SELFEVO_LLM_API_KEY /
-    SELFEVO_LLM_MODEL; raises LLMConfigurationError when incomplete.
+    Configuration uses AUTOPOIESIS_LLM_BASE_URL / AUTOPOIESIS_LLM_API_KEY /
+    AUTOPOIESIS_LLM_MODEL; raises LLMConfigurationError when incomplete.
     """
 
     def __init__(
@@ -37,12 +38,15 @@ class OpenAICompatibleClient:
         model: str | None = None,
         timeout_sec: int = 30,
     ):
-        self.base_url = (base_url or os.getenv("SELFEVO_LLM_BASE_URL") or "").rstrip("/")
-        self.api_key = api_key or os.getenv("SELFEVO_LLM_API_KEY")
-        self.model = model or os.getenv("SELFEVO_LLM_MODEL")
+        self.base_url = (base_url or autopoiesis_env("LLM_BASE_URL") or "").rstrip("/")
+        self.api_key = api_key or autopoiesis_env("LLM_API_KEY")
+        self.model = model or autopoiesis_env("LLM_MODEL")
         self.timeout_sec = timeout_sec
         if not self.base_url or not self.api_key or not self.model:
-            raise LLMConfigurationError("LLM mode requires SELFEVO_LLM_BASE_URL, SELFEVO_LLM_API_KEY, and SELFEVO_LLM_MODEL")
+            raise LLMConfigurationError(
+                "LLM mode requires AUTOPOIESIS_LLM_BASE_URL, "
+                "AUTOPOIESIS_LLM_API_KEY, and AUTOPOIESIS_LLM_MODEL"
+            )
 
     def complete_json(self, messages: list[dict[str, str]], *, schema_name: str) -> dict:
         """POST `messages` and return the completion parsed as one JSON object.

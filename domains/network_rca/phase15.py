@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
+from core.env import autopoiesis_env
 from domains.network_rca.eval import compare_baselines
 from domains.network_rca.factory import load_ground_truth, load_seed_cases
 from domains.network_rca.real_data_readiness import probe_r230_readiness
@@ -18,8 +18,8 @@ def main() -> None:
     cases = load_seed_cases()
     ground_truth = load_ground_truth()
     manifest_path = Path(
-        os.getenv(
-            "SELFEVO_REAL_DATASET_MANIFEST",
+        autopoiesis_env(
+            "REAL_DATASET_MANIFEST",
             str(Path(__file__).resolve().parent / "fixtures" / "real" / "manifest.json"),
         )
     )

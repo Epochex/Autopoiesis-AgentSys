@@ -1,15 +1,15 @@
-# Waseda GPU Provider Notes
+# Pengcheng GPU Provider Notes
 
-Autopoiesis-AgentSys can call the Waseda GPU path inherited from the NetOps research environment, but the boundary is intentionally provider-shaped. General agent planning should use an OpenAI-compatible chat backend; incident-specific evidence gateways should stay behind domain adapters.
+Autopoiesis-AgentSys can call the Pengcheng GPU path inherited from the NetOps research environment. All provider identity and Autopoiesis-facing configuration use Pengcheng (SSH host `pengcheng-gpu`, key `netops_pengcheng_gpu`). The boundary is intentionally provider-shaped: general agent planning should use an OpenAI-compatible chat backend, while incident-specific evidence gateways stay behind domain adapters.
 
 ## Direct OpenAI-Compatible Backend
 
 Use this for general model calls:
 
 ```bash
-SELFEVO_LLM_BASE_URL=http://127.0.0.1:28000/v1
-SELFEVO_LLM_MODEL=glm-fast
-SELFEVO_LLM_API_KEY=sk-local          # any non-empty token for a local server
+AUTOPOIESIS_LLM_BASE_URL=http://127.0.0.1:28000/v1
+AUTOPOIESIS_LLM_MODEL=glm-fast
+AUTOPOIESIS_LLM_API_KEY=sk-local          # any non-empty token for a local server
 ```
 
 These are the variables the kernel's `OpenAICompatibleClient` (`core/llm/provider.py`) reads.
@@ -40,11 +40,11 @@ curl http://127.0.0.1:18080/healthz
 Useful scripts from the NetOps repository:
 
 ```bash
-/data/Netops-causality-remediation/ops/waseda_gpu/start_fast_model_service.sh
-/data/Netops-causality-remediation/ops/waseda_gpu/start_gateway.sh
-/data/Netops-causality-remediation/ops/waseda_gpu/open_core_tunnel.sh
-/data/Netops-causality-remediation/ops/waseda_gpu/select_a6000_gpu.py
-/data/Netops-causality-remediation/ops/waseda_gpu/watch_connection_until_verified.sh
+/data/Netops-causality-remediation/ops/pengcheng_gpu/start_fast_model_service.sh
+/data/Netops-causality-remediation/ops/pengcheng_gpu/start_gateway.sh
+/data/Netops-causality-remediation/ops/pengcheng_gpu/open_core_tunnel.sh
+/data/Netops-causality-remediation/ops/pengcheng_gpu/select_a6000_gpu.py
+/data/Netops-causality-remediation/ops/pengcheng_gpu/watch_connection_until_verified.sh
 ```
 
 ## Smoke Command
@@ -53,9 +53,9 @@ Once the OpenAI-compatible backend is reachable, point the kernel's GPU provider
 let the console probe it live:
 
 ```bash
-export SELFEVO_GPU_BASE_URL=http://127.0.0.1:28000/v1
-export SELFEVO_GPU_MODEL=glm-fast
-export SELFEVO_GPU_API_KEY=sk-local          # any non-empty token for a local server
+export AUTOPOIESIS_GPU_BASE_URL=http://127.0.0.1:28000/v1
+export AUTOPOIESIS_GPU_MODEL=glm-fast
+export AUTOPOIESIS_GPU_API_KEY=sk-local          # any non-empty token for a local server
 systemctl restart netops-ops-console-backend
 ```
 

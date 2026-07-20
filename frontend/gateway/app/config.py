@@ -13,6 +13,16 @@ def _split_csv(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+def autopoiesis_env(suffix: str, default: str | None = None) -> str | None:
+    primary = f"AUTOPOIESIS_{suffix}"
+    legacy = f"SELFEVO_{suffix}"
+    if primary in os.environ:
+        return os.environ[primary]
+    if legacy in os.environ:
+        return os.environ[legacy]
+    return default
+
+
 @dataclass(frozen=True)
 class Settings:
     repo_root: Path
@@ -21,9 +31,9 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        repo_root = Path(os.getenv("SELFEVO_REPO_ROOT", str(_default_repo_root()))).resolve()
+        repo_root = Path(autopoiesis_env("REPO_ROOT", str(_default_repo_root()))).resolve()
         frontend_dist = Path(
-            os.getenv("SELFEVO_FRONTEND_DIST", str(repo_root / "frontend" / "dist"))
+            autopoiesis_env("FRONTEND_DIST", str(repo_root / "frontend" / "dist"))
         ).resolve()
-        cors_origins = _split_csv(os.getenv("SELFEVO_CORS_ORIGINS", ""))
+        cors_origins = _split_csv(autopoiesis_env("CORS_ORIGINS", ""))
         return cls(repo_root=repo_root, frontend_dist=frontend_dist, cors_origins=cors_origins)

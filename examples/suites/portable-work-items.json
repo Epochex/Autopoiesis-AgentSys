@@ -1,6 +1,6 @@
 {
   "suite_id": "portable_work_items",
-  "description": "Domain-neutral work items replayed through selfevo-orchiter architecture profiles.",
+  "description": "Domain-neutral work items replayed through Autopoiesis architecture profiles.",
   "scenarios": [
     {
       "scenario_id": "office_launch_handoff",

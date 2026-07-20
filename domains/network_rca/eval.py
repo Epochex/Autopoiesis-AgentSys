@@ -37,7 +37,7 @@ def compare_baselines(
     split = ",".join(splits) if splits else "unknown"
 
     configs = [
-        ("selfevo_light_path", {}, "memory + compressed context + skill controller"),
+        ("autopoiesis_light_path", {}, "memory + compressed context + skill controller"),
         ("full_context", {"context_enabled": False}, "no context compression"),
         ("full_tools", {"skill_controller_enabled": False, "top_k": 99}, "all readonly skills exposed"),
         ("no_memory", {"memory_enabled": False}, "memory retrieval disabled"),

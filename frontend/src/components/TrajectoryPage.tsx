@@ -7,6 +7,7 @@ import { CountUp } from './Motion'
 import { FlowGraph, type FxStation, type FxEvidence, type FxMemTier, type FxReadout, type FxSkills } from './FlowGraph'
 import { EvolutionStream, type EvoData } from './EvolutionStream'
 import { MemoryObservatory } from './MemoryObservatory'
+import { CausalRibbon } from './CausalRibbon'
 import './trajectory.css'
 
 /* ── real ledger → typed viz per step ── */
@@ -448,9 +449,24 @@ export function TrajectoryPage({
           the execution replay below is one run inside this loop. */}
       <section className="fx-first">
         {evo?.ready && evo.observatory
-          ? <MemoryObservatory obs={evo.observatory} byPass={evo.warm.by_pass} zh={zh} />
+          ? <MemoryObservatory obs={evo.observatory} zh={zh} />
           : <div className="fx-first-wait">{zh ? '正在跑真实自我进化流…' : 'RUNNING REAL SELF-EVOLUTION STREAM…'}</div>}
       </section>
+
+      {/* ── the self-evolution PAYOFF, moved below the first screen so the
+          observatory owns the full board on open: cold-start probes vs the warm
+          run — recurring incidents resolve from memory, probes fall to zero at
+          unchanged accuracy. Real cold-vs-warm numbers off the held-out stream. */}
+      {evo?.ready && evo.observatory ? (
+        <section className="fx-evolve">
+          <CausalRibbon
+            recall={evo.observatory.recall}
+            byPass={evo.warm.by_pass}
+            capabilities={evo.observatory.capabilities}
+            zh={zh}
+          />
+        </section>
+      ) : null}
 
       {/* ── legend key: node type ⇒ system component ── */}
       <div className="fx-key">

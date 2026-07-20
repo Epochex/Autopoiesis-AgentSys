@@ -377,6 +377,55 @@ def _layout(ips: list[str], edges: list[dict], clusters: list[dict]) -> dict[str
     return {ip: [round(pos[i][0] / mxx, 4), round(pos[i][1] / mxy, 4)] for ip, i in idx.items()}
 
 
+# The console renders the normalized layout at these pixel extents (mirror of
+# TopologyCanvas meshRX/meshRY). The plate is ~2.25× wider than tall, so the map is
+# squashed vertically — which is exactly why two nodes an equal graph-distance apart
+# look far closer on the Y axis. Keep these in sync if the frontend extents change.
+_RENDER_RX = 830.0
+_RENDER_RY = 368.0
+
+
+def _render_radius(d: dict, degree: int) -> float:
+    """The on-screen node radius the frontend draws — mass (deny+flows) + degree.
+    Mirrors SubnetGraph.size() so the de-overlap pass reasons in true pixels."""
+    mass = math.log10(d["deny"] + d["flows"] + 1)
+    return max(3.2, min(11.0, 3.2 + mass * 1.9 + degree * 0.22))
+
+
+def _separate(pos: dict[str, list[float]], radius: dict[str, float], pad: float = 3.0, iters: int = 90) -> dict[str, list[float]]:
+    """Collision relaxation in RENDER space: the force layout sets *relatedness*
+    (linked, heavier-weighted nodes rest closer), but nothing stopped two marks
+    from landing on top of each other — a strong tie (e.g. 56↔129 share a
+    broadcast domain) pulled them into the same spot. This nudges any overlapping
+    pair apart by just enough that discs never intersect, WITHOUT re-running the
+    layout, so the meaning (distance ≈ relatedness) is preserved."""
+    ips = list(pos)
+    P = {ip: [pos[ip][0] * _RENDER_RX, pos[ip][1] * _RENDER_RY] for ip in ips}
+    for _ in range(iters):
+        moved = 0.0
+        for i in range(len(ips)):
+            a = ips[i]
+            for j in range(i + 1, len(ips)):
+                b = ips[j]
+                dx = P[a][0] - P[b][0]
+                dy = P[a][1] - P[b][1]
+                d = math.hypot(dx, dy) or 0.01
+                need = radius[a] + radius[b] + pad
+                if d < need:
+                    push = (need - d) / 2
+                    ux, uy = dx / d, dy / d
+                    P[a][0] += ux * push
+                    P[a][1] += uy * push
+                    P[b][0] -= ux * push
+                    P[b][1] -= uy * push
+                    moved += push
+        if moved < 0.4:
+            break
+    # back to normalized space; a couple of rim nodes may now sit a hair past ±1,
+    # which is fine (the plate is larger than the layout ellipse) — clamp for safety.
+    return {ip: [max(-1.08, min(1.08, P[ip][0] / _RENDER_RX)), max(-1.08, min(1.08, P[ip][1] / _RENDER_RY))] for ip in ips}
+
+
 def _clusters(ips: list[str], edges: list[dict], dev: dict) -> list[dict[str, Any]]:
     """Weighted label propagation — communities, not one giant connected blob.
 
@@ -500,6 +549,12 @@ def build(log_paths: list[Path] | None = None) -> dict[str, Any]:
         edges = _edges_for(cidr, ips, dev, mined)
         clusters = _clusters(ips, edges, dev)
         pos = _layout(ips, edges, clusters)
+        # de-overlap: no two rendered discs may intersect (see _separate)
+        degree: Counter[str] = Counter()
+        for e in edges:
+            degree[e["src"]] += 1
+            degree[e["dst"]] += 1
+        pos = _separate(pos, {ip: _render_radius(dev[ip], degree[ip]) for ip in ips})
         devices = []
         for ip in ips:
             e = dev[ip]
