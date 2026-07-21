@@ -8,6 +8,13 @@ import subprocess
 import time
 from typing import Any
 
+from .evidence_gate import (
+    evidence_fact,
+    relationship_evidence,
+    verify_graph_claims,
+    verify_pair_claims,
+)
+
 # ---- real-time event rate (poll R230 syslog tail) ----
 _rate_cache: dict[str, Any] = {"at": 0.0, "val": None}
 _RATE_TTL = 4.0
@@ -68,10 +75,40 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh", peers: lis
     )
     want_lang = "Chinese" if lang == "zh" else "English"
     candidates = [
-        {"ip": p["ip"], "ports": p.get("top_ports"), "deny": p.get("deny"), "threat": p.get("threat")}
+        {"ip": p["ip"], "ports": p.get("top_ports") or p.get("topPorts"), "deny": p.get("deny"), "threat": p.get("threat"), "role": p.get("role")}
         for p in (peers or [])
         if p.get("ip") != ip
     ][:8]
+    source_profile = {
+        "ip": ip,
+        "top_ports": device.get("top_ports") or device.get("topPorts") or [],
+        "deny": device.get("deny"),
+        "threat": device.get("threat"),
+        "role": device.get("role"),
+    }
+    relation_evidence = [
+        fact
+        for candidate in candidates
+        if (fact := relationship_evidence(source_profile, candidate)) is not None
+    ]
+    supported_candidates = {
+        subject
+        for fact in relation_evidence
+        for subject in fact["subjects"]
+        if subject != ip
+    }
+    candidates = [
+        {
+            **candidate,
+            "evidence_ids": [
+                fact["evidence_id"]
+                for fact in relation_evidence
+                if candidate["ip"] in fact["subjects"]
+            ],
+        }
+        for candidate in candidates
+        if candidate["ip"] in supported_candidates
+    ]
     instr = (
         f"You are a network threat analyst. Assess this internal host from real FortiGate "
         f"telemetry and predict its blast radius. Respond in {want_lang}, concrete and affirmative. "
@@ -79,7 +116,8 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh", peers: lis
         f"Return JSON {{"
         f'"verdict": <short label>, "severity": "high|medium|low", '
         f'"analysis": <2 sentences>, '
-        f'"impact_peers": [{{"ip": <candidate ip>, "relation": <very short>}}], '
+        f'"impact_peers": [{{"ip": <candidate ip>, "relation": <very short>, '
+        f'"evidence_ids": [<ids from candidate_hosts that support this exact host pair>]}}], '
         f'"most_likely": <1 sentence outcome>, "worst_case": <1 sentence>, '
         f'"recovery": {{"action": <short>, "eta": <e.g. 2-4h>}}}}.'
     )
@@ -92,6 +130,7 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh", peers: lis
         "top_target_ports": device.get("top_ports"),
         "prior_threat_score": device.get("threat"),
         "candidate_hosts": candidates,
+        "relationship_evidence": relation_evidence,
     }
     try:
         out = client.complete_json(
@@ -101,17 +140,29 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh", peers: lis
     except Exception as exc:
         return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
     rec = out.get("recovery") or {}
-    valid = {c["ip"] for c in candidates}
+    peer_claims = [p for p in (out.get("impact_peers") or []) if isinstance(p, dict)]
+    impact_peers, rejected, errors = verify_pair_claims(
+        peer_claims,
+        relation_evidence,
+        source_field="",
+        target_field="ip",
+        fixed_source=ip,
+        field="impactPeers",
+    )
     return {
         "ok": True,
         "ip": ip,
         "verdict": out.get("verdict") or out.get("label") or "",
         "severity": out.get("severity", device.get("threat", "")),
         "analysis": out.get("analysis") or out.get("text") or "",
-        "impactPeers": [p for p in (out.get("impact_peers") or []) if p.get("ip") in valid][:6],
+        "impactPeers": impact_peers[:6],
         "mostLikely": out.get("most_likely", ""),
         "worstCase": out.get("worst_case", ""),
         "recovery": {"action": rec.get("action", ""), "eta": rec.get("eta", "")},
+        "evidence": relation_evidence,
+        "unverified": {"impactPeers": rejected},
+        "verificationErrors": errors,
+        "verificationStatus": "verified" if not errors else "partial",
         "model": cfg["model"],
     }
 
@@ -160,23 +211,50 @@ def assess_mesh(cidr: str, lang: str = "zh") -> dict[str, Any]:
     client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=60)
     want = "Chinese" if lang == "zh" else "English"
     devs = [{"ip": n["ip"], "role": n["role"], "ports": n["ports"], "deny": n["deny"], "out": n["out"], "threat": n["threat"]} for n in nodes_in]
+    relation_evidence = [
+        fact
+        for index, source in enumerate(devs)
+        for target in devs[index + 1 :]
+        if (fact := relationship_evidence(source, target)) is not None
+    ]
+    evidence_by_pair = {tuple(fact["pair"]): fact["evidence_id"] for fact in relation_evidence}
+    profiles = [
+        {
+            **device,
+            "relationship_evidence_ids": [
+                evidence_id for pair, evidence_id in evidence_by_pair.items() if device["ip"] in pair
+            ],
+        }
+        for device in devs
+    ]
     instr = (
         f"You are a SOC analyst modeling subnet {cidr} from real FortiGate device profiles. "
         f"Respond in {want}. Build a relationship model. Use ONLY the given IPs. "
         f"Return JSON {{"
         f'"nodes": [{{"ip": <ip>, "label": <2-4 word role/function>, "severity": "high|medium|low", "summary": <<=10 words>}}], '
-        f'"links": [{{"src": <ip>, "dst": <ip>, "relation": <<=6 words>, "strength": 1-3}}], '
+        f'"links": [{{"src": <ip>, "dst": <ip>, "relation": <<=6 words>, "strength": 1-3, '
+        f'"evidence_ids": [<ids that support this exact pair>]}}], '
         f'"clusters": [{{"name": <short>, "members": [<ip>], "note": <<=12 words>}}]}}. '
         f"Link devices that share scan-target ports or form a campaign; cluster by behaviour/role. "
         f"Keep links to the most meaningful <=24."
     )
     try:
-        out = client.complete_json([{"role": "user", "content": instr + "\n" + json.dumps(devs)}], schema_name="mesh_model")
+        out = client.complete_json(
+            [{"role": "user", "content": instr + "\n" + json.dumps({"profiles": profiles, "relationship_evidence": relation_evidence})}],
+            schema_name="mesh_model",
+        )
     except Exception as exc:
         return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
     valid = {d["ip"] for d in devs}
     nodes = [n for n in (out.get("nodes") or []) if n.get("ip") in valid]
-    links = [l for l in (out.get("links") or []) if l.get("src") in valid and l.get("dst") in valid and l.get("src") != l.get("dst")][:24]
+    link_claims = [link for link in (out.get("links") or []) if isinstance(link, dict)]
+    links, rejected_links, errors = verify_pair_claims(
+        link_claims,
+        relation_evidence,
+        source_field="src",
+        target_field="dst",
+        field="links",
+    )
     clusters = [
         {**c, "members": [m for m in (c.get("members") or []) if m in valid]}
         for c in (out.get("clusters") or [])
@@ -189,7 +267,18 @@ def assess_mesh(cidr: str, lang: str = "zh") -> dict[str, Any]:
         n["deny"] = r.get("deny", 0)
         n["ports"] = r.get("ports", [])
         n["role"] = r.get("role", n.get("label", ""))
-    result = {"ok": True, "cidr": cidr, "nodes": nodes, "links": links, "clusters": clusters, "model": cfg["model"]}
+    result = {
+        "ok": True,
+        "cidr": cidr,
+        "nodes": nodes,
+        "links": links[:24],
+        "clusters": clusters,
+        "evidence": relation_evidence,
+        "unverified": {"links": rejected_links},
+        "verificationErrors": errors,
+        "verificationStatus": "verified" if not errors else "partial",
+        "model": cfg["model"],
+    }
     _mesh_cache[ck] = result
     return result
 
@@ -233,6 +322,64 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
         g["devices"],
         key=lambda d: (-(deg.get(d["ip"], 0)), -d["deny"], -d["flows"]),
     )[:14]
+    strongest_edges = sorted(g["edges"], key=lambda edge: -edge["weight"])[:18]
+    graph_edge_evidence = [
+        evidence_fact(
+            "graph_edge",
+            {
+                "src": edge["src"],
+                "dst": edge["dst"],
+                "kind": edge["kind"],
+                "evidence": edge["evidence"],
+                "observed": edge["observed"],
+            },
+            subjects=[edge["src"], edge["dst"]],
+            pair=(edge["src"], edge["dst"]),
+        )
+        for edge in strongest_edges
+    ]
+    anomaly_evidence = [
+        evidence_fact(
+            "graph_anomaly",
+            anomaly,
+            subjects=[member for member in anomaly.get("members", []) if member in devs],
+        )
+        for anomaly in g["anomalies"]
+    ]
+    community_evidence = [
+        evidence_fact(
+            "graph_community",
+            {
+                "id": community["id"],
+                "role": community["role"],
+                "vendor": community["vendor"],
+                "bound_by": community["boundBy"],
+                "members": community["members"],
+            },
+            subjects=[member for member in community["members"] if member in devs],
+        )
+        for community in g["clusters"][:12]
+    ]
+    hub_evidence = [
+        evidence_fact(
+            "device_profile",
+            {
+                "ip": device["ip"],
+                "links": deg.get(device["ip"], 0),
+                "deny": device["deny"],
+                "accept": device["accept"],
+                "ports": device["topPorts"],
+                "seen_by": device["seenBy"],
+            },
+            subjects=[device["ip"]],
+        )
+        for device in hubs
+    ]
+    graph_evidence = graph_edge_evidence + anomaly_evidence + community_evidence + hub_evidence
+    anomaly_ids = {
+        json.dumps(item["fact"], ensure_ascii=False, sort_keys=True): item["evidence_id"]
+        for item in anomaly_evidence
+    }
     payload = {
         "subnet": cidr,
         "stats": g["stats"],
@@ -245,7 +392,13 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
             }
             for c in g["clusters"][:12]
         ],
-        "anomalies": g["anomalies"],
+        "anomalies": [
+            {
+                **anomaly,
+                "evidence_id": anomaly_ids[json.dumps(anomaly, ensure_ascii=False, sort_keys=True)],
+            }
+            for anomaly in g["anomalies"]
+        ],
         "hub_devices": [
             {
                 "ip": d["ip"], "name": d["name"], "vendor": d["vendor"], "role": d["role"],
@@ -255,9 +408,17 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
             for d in hubs
         ],
         "strongest_relations": [
-            {"a": e["src"], "b": e["dst"], "kind": e["kind"], "evidence": e["evidence"], "observed": e["observed"]}
-            for e in sorted(g["edges"], key=lambda e: -e["weight"])[:18]
+            {
+                "a": edge["src"],
+                "b": edge["dst"],
+                "kind": edge["kind"],
+                "evidence": edge["evidence"],
+                "observed": edge["observed"],
+                "evidence_id": fact["evidence_id"],
+            }
+            for edge, fact in zip(strongest_edges, graph_edge_evidence)
         ],
+        "evidence_registry": graph_evidence,
         "evidence_key": {
             "clash": "same L3 tuple claimed by two hosts (duplicate IP / NAT reuse) — OBSERVED",
             "bcast": "both hosts broadcast to the same discovery target — OBSERVED",
@@ -283,8 +444,9 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
         f'"communities": [{{"id": <community id>, "label": <2-5 word functional name>, "note": <<=12 words>}}], '
         f'"patterns": [{{"title": <short>, "kind": "shadow-fleet|misconfig|duplicate-ip|lateral-corridor|blind-spot|exposure", '
         f'"members": [<ip>], "why": <1 sentence citing the evidence kind>, "severity": "high|medium|low", '
-        f'"confidence": <0-1>}}], '
-        f'"corridors": [{{"src": <ip>, "dst": <ip>, "why": <<=8 words: why this pair is a pivot path>}}], '
+        f'"confidence": <0-1>, "evidence_ids": [<ids covering every member>]}}], '
+        f'"corridors": [{{"src": <ip>, "dst": <ip>, "path": [<ordered IPs from src to dst>], '
+        f'"why": <<=8 words: why this is a pivot path>, "evidence_ids": [<one graph_edge id per path edge>]}}], '
         f'"flow": <1 sentence: where traffic converges / what the capillary pattern is>, '
         f'"blind_spot": <1 sentence: what this graph still cannot see>, '
         f'"actions": [<concrete action>, <concrete action>, <concrete action>]}}. '
@@ -303,6 +465,14 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
 
     valid = set(devs)
     ids = {c["id"] for c in g["clusters"]}
+    pattern_claims = [p for p in (out.get("patterns") or []) if isinstance(p, dict) and p.get("title")]
+    corridor_claims = [c for c in (out.get("corridors") or []) if isinstance(c, dict)]
+    patterns, corridors, rejected, errors = verify_graph_claims(
+        pattern_claims,
+        corridor_claims,
+        graph_evidence,
+        valid,
+    )
     result = {
         "ok": True,
         "cidr": cidr,
@@ -311,25 +481,15 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
             {"id": c.get("id"), "label": c.get("label", ""), "note": c.get("note", "")}
             for c in (out.get("communities") or []) if c.get("id") in ids
         ],
-        "patterns": [
-            {
-                "title": p.get("title", ""),
-                "kind": p.get("kind", ""),
-                "members": [m for m in (p.get("members") or []) if m in valid][:24],
-                "why": p.get("why", ""),
-                "severity": p.get("severity", "medium"),
-                "confidence": p.get("confidence"),
-            }
-            for p in (out.get("patterns") or []) if p.get("title")
-        ][:6],
-        "corridors": [
-            {"src": c.get("src"), "dst": c.get("dst"), "why": c.get("why", "")}
-            for c in (out.get("corridors") or [])
-            if c.get("src") in valid and c.get("dst") in valid and c.get("src") != c.get("dst")
-        ][:8],
+        "patterns": patterns[:6],
+        "corridors": corridors[:8],
         "flow": out.get("flow", ""),
         "blindSpot": out.get("blind_spot", ""),
         "actions": [a for a in (out.get("actions") or []) if a][:4],
+        "evidence": graph_evidence,
+        "unverified": rejected,
+        "verificationErrors": errors,
+        "verificationStatus": "verified" if not errors else "partial",
         "model": cfg["model"],
     }
     _graph_cache[ck] = result

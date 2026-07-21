@@ -33,6 +33,7 @@ def test_phase0_single_case_produces_complete_trace(tmp_path):
     assert kinds == [
         "alert_received",
         "memory_read",
+        "memory_candidates_ranked",
         "skills_exposed",
         "tool_called",
         "tool_called",

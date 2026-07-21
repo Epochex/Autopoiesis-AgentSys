@@ -265,6 +265,17 @@ export interface MemRecall {
   case_id: string
   run_id: string
   retrieved: Partial<Record<MemTier, string[]>>
+  retrieval_candidates: {
+    memory_id: string
+    tier: MemTier
+    lexical_score: number
+    vector_score: number
+    asset_hits: number
+    graph_hop: number
+    graph_parent_id: string | null
+    structural_prior: number
+    final_score: number
+  }[]
   included_memory_ids: string[]
   /** Derived set-difference retrieved − included. The kernel does not record WHY. */
   dropped_memory_ids: string[]
@@ -278,9 +289,17 @@ export interface MemRecall {
  *  never render a capability that is false as though it were live. */
 export interface MemCapabilities {
   decay_wired: boolean
+  eviction_wired?: boolean
+  conflict_update_wired?: boolean
   retrieval_scores: boolean
   context_drop_reason: boolean
   update_text_mutation: boolean
+}
+
+export interface RuntimeCapabilityStatus {
+  implemented: boolean
+  configured: boolean
+  fired: boolean
 }
 
 export interface Observatory {
@@ -288,6 +307,7 @@ export interface Observatory {
   events: MemEvent[]
   recall: MemRecall[]
   capabilities: MemCapabilities
+  capability_status?: Record<string, RuntimeCapabilityStatus>
 }
 
 export interface RcaSnapshot {

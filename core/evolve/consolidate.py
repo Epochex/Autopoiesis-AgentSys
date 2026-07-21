@@ -8,8 +8,8 @@ trace ledger of one run and writes back into the warm memory store:
   * procedural— for this pattern, the skills that actually mattered (the shortcut
                 the online path reuses next time to probe less)
   * skills    — success/misuse counts updated; consistently useless skills frozen
-  * memory    — records that contributed to a verified answer are reinforced;
-                records cited by a rejected answer are quarantined
+  * memory    — explicitly attributed context memories are reinforced; episodic
+                hypotheses need two independent, fresh contradictions to quarantine
 
 Nothing here is synthesized: every field is derived from the real run events.
 """
@@ -46,6 +46,8 @@ class ConsolidationReport:
     updated: list[str] = field(default_factory=list)
     superseded: list[str] = field(default_factory=list)
     reinforced: list[str] = field(default_factory=list)
+    accessed: list[str] = field(default_factory=list)
+    contradiction_strikes: list[str] = field(default_factory=list)
     quarantined: list[str] = field(default_factory=list)
     linked: list[str] = field(default_factory=list)
     insights: list[str] = field(default_factory=list)
@@ -58,6 +60,99 @@ def _first(events: list[TraceEvent], kind: str) -> TraceEvent | None:
     for event in events:
         if event.kind == kind:
             return event
+    return None
+
+
+_CONTRADICTION_TRACE_PREFIX = "contradiction:"
+_ACCESS_TRACE_PREFIX = "access:"
+_CREDIT_TRACE_PREFIX = "credit:"
+
+
+def _unique_strings(values) -> list[str]:
+    return list(dict.fromkeys(str(value) for value in values if value))
+
+
+def _context_memory_ids(events: list[TraceEvent]) -> list[str]:
+    context = _first(events, "context_compiled")
+    if context is None:
+        return []
+    return _unique_strings(context.payload.get("included_memory_ids", []))
+
+
+def _attributed_memory_ids(events: list[TraceEvent]) -> list[str]:
+    """Read explicit runtime attribution, with the older resolved event as fallback."""
+    attributed: list[str] = []
+    for event in events:
+        if event.kind == "memory_attributed":
+            attributed.extend(event.payload.get("memory_ids", []))
+            attributed.extend(
+                item.get("memory_id")
+                for item in event.payload.get("items", [])
+                if isinstance(item, dict)
+            )
+        elif event.kind == "memory_resolved" and event.payload.get("memory_id"):
+            # ``memory_resolved`` has always been an explicit one-memory
+            # attribution backed by fresh evidence, so old ledgers stay valid.
+            attributed.append(event.payload["memory_id"])
+    return _unique_strings(attributed)
+
+
+def _credited_memory_ids(events: list[TraceEvent]) -> list[str]:
+    """Attributions that demonstrably affected a successful run.
+
+    An episodic hypothesis is eligible for contradiction feedback but earns
+    positive credit only after ``memory_resolved`` confirms it. A procedural
+    shortcut earns credit because it changed the executed probe set.
+    """
+    credited: list[str] = []
+    for event in events:
+        if event.kind == "memory_attributed":
+            items = [item for item in event.payload.get("items", []) if isinstance(item, dict)]
+            credited.extend(
+                item.get("memory_id")
+                for item in items
+                if item.get("role") in {"procedural_shortcut", "diagnosis_support"}
+            )
+            # Compatibility for an explicitly-attributed older/custom producer
+            # that emitted only memory_ids and no role-bearing items.
+            if not items:
+                credited.extend(event.payload.get("memory_ids", []))
+        elif event.kind == "memory_resolved" and event.payload.get("memory_id"):
+            credited.append(event.payload["memory_id"])
+    return _unique_strings(credited)
+
+
+def _fresh_cited_contradictions(
+    events: list[TraceEvent],
+    diagnosis: TraceEvent,
+    evidence: list[dict],
+) -> set[str]:
+    """Root keys contradicted by cited evidence produced by a successful tool call."""
+    produced_ids = {
+        str(evidence_id)
+        for event in events
+        if event.kind == "tool_called" and not event.payload.get("blocked")
+        for evidence_id in event.payload.get("evidence_ids", [])
+        if evidence_id
+    }
+    cited_ids = {
+        str(item.get("evidence_id"))
+        for item in diagnosis.payload.get("evidence", [])
+        if isinstance(item, dict) and item.get("evidence_id")
+    }
+    return {
+        str(item["contradicts"])
+        for item in evidence
+        if str(item.get("evidence_id")) in produced_ids
+        and str(item.get("evidence_id")) in cited_ids
+        and item.get("contradicts")
+    }
+
+
+def _root_tag(record: MemoryRecord) -> str | None:
+    for tag in record.tags:
+        if tag.startswith("root:") and len(tag) > len("root:"):
+            return tag[len("root:"):]
     return None
 
 
@@ -77,8 +172,10 @@ def consolidate_run(
     """Consume one run's trace and write durable learning back into the store.
 
     Verified runs add/reinforce episodic + semantic + procedural memories and
-    credit the skills whose evidence the verdict cited; rejected runs quarantine
-    the memories they leaned on. Pure trace-derived — nothing is synthesized.
+    credit the skills whose evidence the verdict cited. A rejected run does not
+    punish every retrieval candidate: only an explicitly attributed episodic
+    hypothesis can receive a contradiction strike, and two distinct run traces
+    carrying fresh, cited counter-evidence are required before quarantine.
     Returns the audit report of every id touched.
 
     Pass an optional `recorder` list to also collect the item-level lifecycle ops
@@ -88,20 +185,50 @@ def consolidate_run(
     """
     diag = _first(events, "diagnosis_completed")
     verif = _first(events, "verifier_result")
-    mem_read = _first(events, "memory_read")
     exposed_ev = _first(events, "skills_exposed")
     run_id = events[0].run_id if events else ""
     report = ConsolidationReport(run_id=run_id, passed=False)
+
+    # Access accounting measures actual context consumption, not first-stage
+    # retrieval. It happens once per memory even if a malformed packet repeats an
+    # id, and it is intentionally separate from positive credit.
+    included_memory_ids = _context_memory_ids(events)
+    for memory_id in included_memory_ids:
+        record = memory.get(memory_id)
+        if record is None or record.quarantined:
+            continue
+        access_marker = f"{_ACCESS_TRACE_PREFIX}{run_id}"
+        if run_id and access_marker in record.source_trace_ids:
+            continue
+        record.access_count += 1
+        if run_id:
+            record.source_trace_ids.append(access_marker)
+        report.accessed.append(memory_id)
+
     if diag is None:
+        memory.flush()
         return report
 
     passed = bool(verif and verif.payload.get("passed"))
     report.passed = passed
     root_key = str(diag.payload.get("root_cause_key", ""))
+    observed_at = diag.timestamp
     cited = {e.get("evidence_id") for e in diag.payload.get("evidence", [])}
     confidence = float(diag.payload.get("confidence", 0.0))
     exposed = list(exposed_ev.payload.get("skills", [])) if exposed_ev else []
     resolved_from_memory = _first(events, "memory_resolved") is not None
+    attributed = set(_attributed_memory_ids(events))
+    attributed_memory_ids = [mid for mid in included_memory_ids if mid in attributed]
+    credit_attribution = set(_credited_memory_ids(events))
+    credited_memory_ids = [mid for mid in included_memory_ids if mid in credit_attribution]
+    contradicted_roots = _fresh_cited_contradictions(events, diag, evidence or [])
+    contradicted_memory_ids = {
+        mid
+        for mid in attributed_memory_ids
+        if (record := memory.get(mid)) is not None
+        and record.tier == "episodic"
+        and _root_tag(record) in contradicted_roots
+    }
     terms = [t.lower() for t in case.query_terms]
     # root_key carried as a distinguishable tag so reflection can recover a family's
     # distinct root causes regardless of later tag merges.
@@ -132,6 +259,9 @@ def consolidate_run(
                 tags=tags_base, asset_ids=list(case.assets), evidence_ids=sorted(x for x in cited if x),
                 confidence=max(0.8, confidence), source_trace_ids=[run_id],
                 evidence_snapshot=snapshot,
+                first_observed_at=observed_at,
+                last_observed_at=observed_at,
+                event_type=f"diagnosis:{root_key}",
             )
             # Mem0 write router: a genuinely new incident is ADDed (and linked into its
             # family, A-MEM); a re-observed variant UPDATEs the prior instead of duplicating.
@@ -175,12 +305,15 @@ def consolidate_run(
             sem.confidence = min(conf_cap, sem.confidence + 0.3)
             sem.importance += 1.0
             sem.strength = 1.0
+            sem.last_observed_at = observed_at
             report.reinforced.append(sem_id)
             _emit(recorder, "REINFORCE", sem_id, sem.tier, before=before, after=_snap(sem))
         else:
             sem_rec = MemoryRecord(
                 memory_id=sem_id, tier="semantic", text=f"pattern: {root_key}",
                 tags=tags_base, asset_ids=list(case.assets), confidence=1.2, source_trace_ids=[run_id],
+                first_observed_at=observed_at, last_observed_at=observed_at,
+                event_type=f"pattern:{root_key}",
             )
             memory.add(sem_rec)
             report.added.append(sem_id)
@@ -197,6 +330,7 @@ def consolidate_run(
             proc.confidence = min(conf_cap, proc.confidence + 0.4)
             proc.importance += 1.0
             proc.strength = 1.0
+            proc.last_observed_at = observed_at
             for st in skill_tags:
                 if st not in proc.tags:
                     proc.tags.append(st)
@@ -211,36 +345,62 @@ def consolidate_run(
                 text=f"for {root_key}, probe {', '.join(winning)}",
                 tags=[*tags_base, *skill_tags], asset_ids=list(case.assets),
                 confidence=1.5, source_trace_ids=[run_id],
+                first_observed_at=observed_at, last_observed_at=observed_at,
+                event_type=f"procedure:{root_key}",
             )
             memory.add(proc_rec)
             report.added.append(proc_id)
             _emit(recorder, "ADD", proc_id, "procedural", after=_snap(proc_rec))
 
-        # reinforce the retrieved memories that contributed to a verified answer
-        if mem_read:
-            for ids in mem_read.payload.values():
-                for mid in ids:
-                    rec = memory.get(mid)
-                    if rec is not None and rec.memory_id not in report.added:
-                        before = _snap(rec)
-                        rec.confidence = min(conf_cap, rec.confidence + 0.1)
-                        rec.importance += 0.5
-                        rec.strength = 1.0     # reuse refreshes retrievability (vs. Ebbinghaus decay)
-                        report.reinforced.append(mid)
-                        _emit(recorder, "REINFORCE", mid, rec.tier, before=before, after=_snap(rec))
-    else:
-        # a rejected answer: distrust the memories it leaned on
-        if mem_read:
-            for ids in mem_read.payload.values():
-                for mid in ids:
-                    rec = memory.get(mid)
-                    before = _snap(rec) if rec is not None else None
-                    memory.quarantine(mid, "contradicted")
-                    report.quarantined.append(mid)
-                    _emit(
-                        recorder, "QUARANTINE", mid, rec.tier if rec is not None else None,
-                        before=before, after=_snap(rec) if rec is not None else None,
-                    )
+        # Positive credit requires both compiler inclusion and an explicit runtime
+        # attribution. Retrieval alone is not evidence that the answer used a memory.
+        for mid in credited_memory_ids:
+            rec = memory.get(mid)
+            credit_marker = f"{_CREDIT_TRACE_PREFIX}{run_id}"
+            if (
+                rec is not None
+                and rec.memory_id not in report.added
+                and mid not in contradicted_memory_ids
+                and (not run_id or credit_marker not in rec.source_trace_ids)
+            ):
+                before = _snap(rec)
+                rec.confidence = min(conf_cap, rec.confidence + 0.1)
+                rec.importance += 0.5
+                rec.strength = 1.0
+                if run_id:
+                    rec.source_trace_ids.append(credit_marker)
+                report.reinforced.append(mid)
+                _emit(recorder, "REINFORCE", mid, rec.tier, before=before, after=_snap(rec))
+
+    # Contradiction feedback is independent of verdict shape: a valid diagnosis
+    # may overturn an old hypothesis. The evidence still has to be current-tool
+    # output, explicitly cited, and tied to an attributed episodic root. A replay
+    # of one run cannot manufacture a second strike.
+    for mid in sorted(contradicted_memory_ids):
+        rec = memory.get(mid)
+        if rec is None or rec.quarantined or not run_id:
+            continue
+        strike = f"{_CONTRADICTION_TRACE_PREFIX}{run_id}"
+        if strike in rec.source_trace_ids:
+            continue
+        rec.source_trace_ids.append(strike)
+        report.contradiction_strikes.append(mid)
+        strikes = sum(
+            trace_id.startswith(_CONTRADICTION_TRACE_PREFIX)
+            for trace_id in rec.source_trace_ids
+        )
+        if strikes >= 2:
+            before = _snap(rec)
+            memory.quarantine(mid, "repeated_explicit_contradiction")
+            report.quarantined.append(mid)
+            _emit(
+                recorder,
+                "QUARANTINE",
+                mid,
+                rec.tier,
+                before=before,
+                after=_snap(rec),
+            )
 
     # skill evolution: reward what worked, penalise the truly useless, prune the persistently bad
     for skill in skills.all():

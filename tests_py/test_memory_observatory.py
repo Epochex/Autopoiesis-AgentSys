@@ -15,6 +15,7 @@ from core.evolve.observatory import (
     CAPABILITIES,
     added,
     quarantine_reason,
+    runtime_capability_status,
     serialize_store,
     snapshot,
 )
@@ -35,25 +36,55 @@ class _Case:
     relevant_skills: list[str] = field(default_factory=list)
 
 
-def _events(case: _Case, *, root: str, passed: bool = True, read: dict | None = None) -> list[TraceEvent]:
+def _events(
+    case: _Case,
+    *,
+    root: str,
+    passed: bool = True,
+    read: dict | None = None,
+    run_id: str = RUN,
+) -> list[TraceEvent]:
     """A minimal but REAL-shaped trace for one run: what consolidate_run consumes."""
+    retrieval = read or {"episodic": []}
+    included = [memory_id for ids in retrieval.values() for memory_id in ids]
     return [
-        TraceEvent(run_id=RUN, case_id=case.id, kind="memory_read", payload=read or {"episodic": []}),
-        TraceEvent(run_id=RUN, case_id=case.id, kind="skills_exposed", payload={"skills": []}),
-        TraceEvent(run_id=RUN, case_id=case.id, kind="verifier_result", payload={"passed": passed}),
+        TraceEvent(run_id=run_id, case_id=case.id, kind="memory_read", payload=retrieval),
         TraceEvent(
-            run_id=RUN, case_id=case.id, kind="diagnosis_completed",
+            run_id=run_id,
+            case_id=case.id,
+            kind="context_compiled",
+            payload={"included_memory_ids": included},
+        ),
+        TraceEvent(
+            run_id=run_id,
+            case_id=case.id,
+            kind="memory_attributed",
+            payload={"memory_ids": included},
+        ),
+        TraceEvent(
+            run_id=run_id,
+            case_id=case.id,
+            kind="tool_called",
+            payload={"skill": "probe", "evidence_ids": ["ev-1"], "blocked": False},
+        ),
+        TraceEvent(run_id=run_id, case_id=case.id, kind="skills_exposed", payload={"skills": []}),
+        TraceEvent(run_id=run_id, case_id=case.id, kind="verifier_result", payload={"passed": passed}),
+        TraceEvent(
+            run_id=run_id, case_id=case.id, kind="diagnosis_completed",
             payload={"root_cause_key": root, "confidence": 0.95,
                      "evidence": [{"evidence_id": "ev-1"}]},
         ),
     ]
 
 
-def _consolidate(case, mem, *, root, passed=True, read=None) -> list[dict]:
+def _consolidate(case, mem, *, root, passed=True, read=None, run_id=RUN, contradicts=None) -> list[dict]:
     ops: list[dict] = []
+    evidence = {"evidence_id": "ev-1", "source": "s", "summary": "obs"}
+    if contradicts:
+        evidence["contradicts"] = contradicts
     consolidate_run(
-        _events(case, root=root, passed=passed, read=read),
-        case, mem, SkillRegistry(), [{"evidence_id": "ev-1", "source": "s", "summary": "obs"}],
+        _events(case, root=root, passed=passed, read=read, run_id=run_id),
+        case, mem, SkillRegistry(), [evidence],
         recorder=ops,
     )
     return ops
@@ -108,15 +139,22 @@ def test_noop_stays_distinct_from_reinforce():
 
 def test_quarantine_reason_parses_from_the_real_tag():
     mem = TieredMemoryStore()
-    mem.add(MemoryRecord(memory_id="m1", tier="episodic", text="prior", tags=["carrier"]))
+    mem.add(MemoryRecord(memory_id="m1", tier="episodic", text="prior", tags=["carrier", "root:carrier_down"]))
     case = _Case("c1", "carrier down", ["carrier", "down"], ["r230"])
-    ops = _consolidate(case, mem, root="carrier_down", passed=False, read={"episodic": ["m1"]})
+    _consolidate(
+        case, mem, root="carrier_down", passed=False, read={"episodic": ["m1"]},
+        run_id="counterexample-1", contradicts="carrier_down",
+    )
+    ops = _consolidate(
+        case, mem, root="carrier_down", passed=False, read={"episodic": ["m1"]},
+        run_id="counterexample-2", contradicts="carrier_down",
+    )
 
     q = [o for o in ops if o["op"] == "QUARANTINE"]
     assert [o["memory_id"] for o in q] == ["m1"]
-    assert q[0]["before"]["tags"] == ["carrier"]
-    assert "quarantine:contradicted" in q[0]["added_tags"]
-    assert quarantine_reason(mem.get("m1")) == "contradicted"
+    assert q[0]["before"]["tags"] == ["carrier", "root:carrier_down"]
+    assert "quarantine:repeated_explicit_contradiction" in q[0]["added_tags"]
+    assert quarantine_reason(mem.get("m1")) == "repeated_explicit_contradiction"
     assert quarantine_reason(MemoryRecord(memory_id="x", tier="episodic", text="t")) is None
 
 
@@ -124,14 +162,21 @@ def test_serialized_store_keeps_quarantined_records_with_their_reason():
     """The seed stream never rejects a run, so this path is proven directly:
     a quarantined record must survive into `records` (audit), flagged and explained."""
     mem = TieredMemoryStore()
-    mem.add(MemoryRecord(memory_id="m1", tier="episodic", text="a prior belief", tags=["carrier"]))
+    mem.add(MemoryRecord(
+        memory_id="m1", tier="episodic", text="a prior belief",
+        tags=["carrier", "root:carrier_down"],
+    ))
     case = _Case("c1", "carrier down", ["carrier", "down"], ["r230"])
-    _consolidate(case, mem, root="carrier_down", passed=False, read={"episodic": ["m1"]})
+    for sequence in (1, 2):
+        _consolidate(
+            case, mem, root="carrier_down", passed=False, read={"episodic": ["m1"]},
+            run_id=f"counterexample-{sequence}", contradicts="carrier_down",
+        )
 
     rows = {r["memory_id"]: r for r in serialize_store(mem)}
     assert "m1" in rows, "active() hides quarantined records; records() must not"
     assert rows["m1"]["quarantined"] is True
-    assert rows["m1"]["quarantine_reason"] == "contradicted"
+    assert rows["m1"]["quarantine_reason"] == "repeated_explicit_contradiction"
     assert rows["m1"]["text"] == "a prior belief"
 
 
@@ -257,14 +302,47 @@ def test_cold_runs_have_no_observatory_and_capabilities_stay_honest():
 
     warm = run_evolving_stream(cases, gt, passes=2, evolve=True)["observatory"]
     assert warm["capabilities"] == CAPABILITIES
+    assert warm["capability_status"]["eviction"] == {
+        "implemented": True,
+        "configured": False,
+        "fired": False,
+    }
+    assert warm["capability_status"]["conflict_update"] == {
+        "implemented": True,
+        "configured": False,
+        "fired": False,
+    }
+    assert warm["capability_status"]["retrieval_scoring"]["implemented"] is True
     # Lifecycle operations and structured context-drop provenance are wired; retrieval
     # score tracing and UPDATE text mutation remain deliberately absent.
     assert CAPABILITIES["decay_wired"] is False
     assert CAPABILITIES["eviction_wired"] is True
     assert CAPABILITIES["conflict_update_wired"] is True
-    assert CAPABILITIES["retrieval_scores"] is False
+    assert CAPABILITIES["retrieval_scores"] is True
     assert CAPABILITIES["context_drop_reason"] is True
     assert CAPABILITIES["update_text_mutation"] is False
+
+
+def test_runtime_capability_status_distinguishes_configuration_from_firing():
+    status = runtime_capability_status(
+        [{"op": "EVICT"}, {"op": "SUPERSEDE"}],
+        [{"retrieval_candidates": [{"memory_id": "m1"}], "context_drops": []}],
+        capacity_budget=10,
+        resolve_conflicts=True,
+    )
+
+    assert status["eviction"] == {
+        "implemented": True,
+        "configured": True,
+        "fired": True,
+    }
+    assert status["conflict_update"] == {
+        "implemented": True,
+        "configured": True,
+        "fired": True,
+    }
+    assert status["retrieval_scoring"]["fired"] is True
+    assert status["context_drop_provenance"]["fired"] is False
 
 
 def test_records_carry_real_text_and_include_quarantined():
@@ -298,8 +376,10 @@ def test_recall_dropped_ids_are_derived_not_guessed():
         assert included <= retrieved  # context can never include a memory recall never returned
         if row["resolved"]:
             assert row["resolved_memory_ids"]
+    # A sufficiently large context budget may fit this small fixture completely;
+    # the observatory must report real drops when they occur, not manufacture one
+    # merely to keep a dashboard non-empty.
     drops = [drop for row in obs["recall"] for drop in row["context_drops"]]
-    assert drops
     assert all(drop["section"] and drop["reason"] == "section_budget" for drop in drops)
 
 

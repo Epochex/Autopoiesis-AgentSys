@@ -333,8 +333,8 @@ primary references, and limitations are in
 ## Full test suite
 
 ```bash
-python3 -m pytest tests_py/ -q      # default: 316 passed, 13 skipped
-# with vector-bench extra: 330 passed, 7 skipped
+python3 -m pytest tests_py/ -q      # FAISS/psycopg environment: 368 passed, 8 skipped
+# PostgreSQL 17 integration subset: 14 passed when its opt-in DSN is supplied
 # opt-in 100k/1m performance regression: 2 passed
 ```
 

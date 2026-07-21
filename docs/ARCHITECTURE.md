@@ -14,17 +14,19 @@ review the dominant signal.
 
 ```text
 alert / task
-  → tiered memory retrieve            (core/memory)
+  → BM25 / asset / HNSW / graph retrieve (core/memory)
   → episodic hypothesis               (historical evidence is provenance, never current state)
   → probe read-only skills             (fresh evidence; procedural memory may narrow the shortlist)
   → evidence-aware context compile     (core/context/compiler.py, to a token budget)
   → reasoner                           (domains/network_rca/reasoner.py — rules by default; optional DeepSeek LLM)
   → citation verifier                  (core/verifier/verifier.py)
-  → append typed events                (core/trace/ledger.py — 22-kind closed vocabulary)
+  → append typed events                (core/trace/ledger.py — closed vocabulary)
 ```
 
-`SingleAgentRCAOrchestrator.diagnose()` ([`core/orchestrator/orchestrator.py`](../core/orchestrator/orchestrator.py))
-is the shipped online entry point. It is deliberately narrow: it exposes only a small,
+`EvolvingRCAService.diagnose()` is the long-lived service entry point. It serializes each
+request because the underlying orchestrator carries run-local trace state, catches up the
+durable memory event stream before reasoning, and consolidates only verifier-approved runs.
+`SingleAgentRCAOrchestrator.diagnose()` remains the immutable evaluation primitive. The path exposes only a small,
 task-relevant skill shortlist and only clean, high-confidence memories. Write-capable
 skills are **hard-blocked** with defense in depth — a relevance filter, a spec-level
 check, and a result-level check (a skill that lies about being read-only is still caught).
@@ -42,9 +44,9 @@ score = topical_relevance + success_rate − 2·misuse_rate − 0.05·cost      
 
 A globally "good" skill can never widen its own scope. `SkillSpec` carries
 `success_count`, `misuse_count`, `cost`, `frozen`, and `risk`.
-[`induction.py`](../core/skills/induction.py) synthesizes a new skill from recurring trace
-signals and promotes it only through a **replay gate** (golden non-regression + handler
-replay).
+[`induction.py`](../core/skills/induction.py) can capture and replay-gate a routing candidate.
+Its generated handler is not a new executable business capability, so production promotion
+still requires an approved handler implementation.
 
 ## Memory model — `core/memory` + `core/evolve`
 
@@ -55,7 +57,8 @@ cause / skill). This is not plain RAG — memory is a *lifecycle*:
 | mechanism | paper | code | status |
 |---|---|---|---|
 | write routing ADD / UPDATE / NOOP | Mem0 | `evolve/memory_ops.py` | ✅ wired |
-| associative links (top-k, bidirectional) | A-MEM | `evolve/memory_ops.py` | ✅ wired |
+| associative links plus bounded multi-hop expansion | A-MEM | `evolve/memory_ops.py`, `memory/store.py` | ✅ wired |
+| typed temporal/causal event-chain reconstruction | trace relations | `memory/evolution.py` | ✅ wired; causal edges require evidence |
 | importance-gated reflection → insight | Generative Agents | `evolve/memory_ops.py` | ✅ wired |
 | decay / forgetting below a floor | Ebbinghaus | `evolve/memory_ops.py` | ⚠️ baseline implemented and tested, not wired into the loop |
 | capacity-budgeted utility eviction | lifecycle signals | `evolve/memory_ops.py` | ✅ wired into the evolving stream |
@@ -73,10 +76,13 @@ When `AUTOPOIESIS_MEMORY_DSN` is configured, `PostgresMemoryRepository` is the d
 of truth. A current-state row and a full-snapshot event are committed in one transaction;
 per-record versions reject lost updates, a database trigger makes events append-only, and
 monotonic consumer checkpoints cannot pass the committed high-water mark. Startup restores
-all records and rebuilds the local lexical index. Consolidation flushes one verified run as a
-single transaction. Without a DSN, the deterministic test/default mode remains in process.
+all records and rebuilds the local indexes. `MemoryIndexProjector` consumes events in offset
+order and advances its checkpoint only after BM25, assets and HNSW accept the event. Store
+flushes carry loaded versions, so concurrent processes cannot silently overwrite one another;
+a failed flush reloads the durable snapshot before another request is served. Without a DSN,
+the deterministic test/default mode remains in process.
 
-Natural-language vector retrieval uses the same lifecycle boundary through
+Online semantic memory retrieval uses the same lifecycle boundary through
 `VectorIndexLifecycle`: immutable FAISS HNSW base, exact Flat delta, version-filtered merged
 search, checksummed snapshots and an atomic `CURRENT` pointer. FAISS HNSW is never modified
 to remove a node. Full research rationale and churn results are in
@@ -90,21 +96,23 @@ simpler tiered retrieve).
 
 ## Background evolution — `core/evolve`
 
-Between events, `consolidate_run` turns a trace into memory notes (routing + links +
-reflection + skill-stat updates), quarantining traces with unsupported claims or verifier
-failures. `compare_cold_vs_warm` / `run_evolving_stream` measure the online path getting
-**cheaper on a recurring stream** (StreamBench-style; the recalled snapshot is re-run
-through the reasoner + verifier, so caching cannot trade correctness for speed).
+After a verified run, `consolidate_run` turns attributed trace facts into memory notes
+(routing + links + reflection + skill-stat updates). Merely retrieved memories receive no
+credit or blame. Only an explicitly attributed episodic hypothesis can accumulate a
+contradiction strike, and two independent runs with cited fresh counter-evidence are required
+before quarantine. `compare_cold_vs_warm` / `run_evolving_stream` remain evaluation drivers.
 [`grpo.py`](../core/evolve/grpo.py) exports group-relative advantages and a
 confidence-update rule — **roadmap: not wired into the online loop, and not LLM/GPU policy
 training.**
 
 ## Verification — `core/verifier`
 
-- **Citation verifier** — every cited fact must have been observed in evidence; also
-  catches contradictions and missing *required* evidence.
+- **Citation verifier** — every cited fact must have been observed; root-cause-specific
+  evidence contracts reject citations that exist but do not support the selected claim.
 - **Contract verifier** ([`contracts.py`](../core/verifier/contracts.py)) — pre/post/
-  invariant conditions plus a grounded read-back, with rollback on violation.
+  invariant conditions plus grounded read-back. Preconditions and single-use human approval
+  are checked before a handler; failed writes are compensated and the restored state is read
+  back, otherwise manual recovery is explicit.
 
 ## Adaptive escalation (opt-in) — `core/orchestrator`
 
@@ -130,9 +138,8 @@ read-only gate at every layer.
   (self-pentest over a labeled RFC-5737 **mock** target), `enterprise_ops` (contract-checked
   anomaly **simulation** on synthetic data).
 
-`python3 -m pytest tests_py/ -q` → **316 passed, 13 skipped** in the zero-dependency
-environment; **330 passed, 7 skipped** with the FAISS benchmark environment. PostgreSQL 17
-integration is enabled separately with `AUTOPOIESIS_TEST_POSTGRES_DSN`.
+The default, FAISS-enabled and PostgreSQL 17 suites are run separately; current counts are
+recorded in the repository claim bank after each release rather than frozen in this document.
 
 ## Research backbone
 

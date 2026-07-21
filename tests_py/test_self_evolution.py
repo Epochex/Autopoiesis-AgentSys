@@ -60,10 +60,18 @@ def test_episodic_memory_is_a_hypothesis_and_never_current_evidence(tmp_path):
 
     diagnosis, report = orch.diagnose(case)
     tool_calls = [event for event in orch._run_events if event.kind == "tool_called" and not event.payload.get("blocked")]
+    ranked = next(event for event in orch._run_events if event.kind == "memory_candidates_ranked")
+    attributed = next(event for event in orch._run_events if event.kind == "memory_attributed")
     confirmed = next(event for event in orch._run_events if event.kind == "memory_resolved")
 
     assert tool_calls
+    assert ranked.payload["candidates"]
+    assert all("lexical_score" in item for item in ranked.payload["candidates"])
     assert report.passed and diagnosis.root_cause_key == truth.expected_root_cause_key
+    assert attributed.payload["memory_ids"] == ["epi-prior"]
+    assert attributed.payload["items"] == [
+        {"memory_id": "epi-prior", "role": "episodic_hypothesis"}
+    ]
     assert stale_id not in {item["evidence_id"] for item in orch._last_evidence}
     assert confirmed.payload["historical_evidence_ids"] == [stale_id]
     assert confirmed.payload["fresh_probe_count"] == len(tool_calls)

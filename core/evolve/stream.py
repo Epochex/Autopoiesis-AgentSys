@@ -14,7 +14,12 @@ from typing import Mapping, Protocol, Sequence
 
 from core.evolve.consolidate import CaseLike, _first, consolidate_run
 from core.evolve.memory_ops import memory_health, utility_evict
-from core.evolve.observatory import CAPABILITIES, recall_row, serialize_store
+from core.evolve.observatory import (
+    CAPABILITIES,
+    recall_row,
+    runtime_capability_status,
+    serialize_store,
+)
 from domains.network_rca.factory import build_network_rca_orchestrator
 
 
@@ -128,6 +133,12 @@ def run_evolving_stream(
                 "recall": obs_recall,
                 "reports": obs_reports,
                 "capabilities": dict(CAPABILITIES),
+                "capability_status": runtime_capability_status(
+                    obs_events,
+                    obs_recall,
+                    capacity_budget=capacity_budget,
+                    resolve_conflicts=resolve_conflicts,
+                ),
             }
         return out
 

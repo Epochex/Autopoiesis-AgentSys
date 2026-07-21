@@ -72,6 +72,10 @@ const L: Record<string, [string, string]> = {
   ctxDrop: ['丢弃', 'DROPPED'],
   ctxRet: ['召回', 'RETRIEVED'],
   ctxRes: ['直接命中', 'RESOLVED BY'],
+  score: ['最终得分', 'FINAL SCORE'],
+  sparse: ['词法得分', 'LEXICAL SCORE'],
+  dense: ['向量得分', 'VECTOR SCORE'],
+  graphHop: ['关联跳数', 'GRAPH HOPS'],
   noteDrop: [
     '内核不记录丢弃原因（context_drop_reason=false）——本条只知道“被丢弃”，不知道“为什么”。已知配置：ContextCompiler 上限 8 条记忆行 / 900 token 预算；这是配置常量，不是本次丢弃被记录下来的原因。',
     'No drop reason is recorded (context_drop_reason=false) — that it was dropped is known, why is not. Known configuration: the ContextCompiler caps at 8 memory lines / a 900-token budget. That is a config constant, not a recorded reason for this drop.',
@@ -298,6 +302,7 @@ export function MemoryInspector({
   const inCtx = recall?.included_memory_ids.includes(id) ?? false
   const wasDropped = recall?.dropped_memory_ids.includes(id) ?? false
   const retrieved = recall ? Object.values(recall.retrieved).some((v) => v?.includes(id)) : false
+  const retrievalDetail = recall?.retrieval_candidates?.find((item) => item.memory_id === id)
   const resolvedBy = recall?.resolved_memory_ids.includes(id) ?? false
   const ctx = !recall ? 'no' : inCtx ? 'in' : wasDropped ? 'drop' : retrieved ? 'ret' : 'miss'
 
@@ -397,6 +402,14 @@ export function MemoryInspector({
             )}
           </div>
           {resolvedBy && <Row k={t('ctxRes', zh)}><span className="mi-mono">shortcut · probes {recall?.probes}</span></Row>}
+          {retrievalDetail && capabilities.retrieval_scores && (
+            <>
+              <Row k={t('score', zh)}><span className="mi-mono">{f2(retrievalDetail.final_score)}</span></Row>
+              <Row k={t('sparse', zh)}><span className="mi-mono">{f2(retrievalDetail.lexical_score)}</span></Row>
+              <Row k={t('dense', zh)}><span className="mi-mono">{f2(retrievalDetail.vector_score)}</span></Row>
+              <Row k={t('graphHop', zh)}><span className="mi-mono">{retrievalDetail.graph_hop}</span></Row>
+            </>
+          )}
           {/* the kernel never records WHY a recalled memory was dropped. Say so. */}
           {ctx === 'drop' && !capabilities.context_drop_reason && <div className="mi-note">{t('noteDrop', zh)}</div>}
           {!capabilities.retrieval_scores && retrieved && <div className="mi-note">{t('noteScores', zh)}</div>}

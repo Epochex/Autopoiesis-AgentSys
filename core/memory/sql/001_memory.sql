@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS memory_records (
         CHECK (record ?& ARRAY[
             'memory_id', 'tier', 'text', 'tags', 'asset_ids', 'evidence_ids',
             'confidence', 'quarantined', 'source_trace_ids', 'evidence_snapshot',
-            'links', 'importance', 'strength', 'access_count', 'superseded_by'
+            'links', 'importance', 'strength', 'access_count', 'superseded_by',
+            'first_observed_at', 'last_observed_at', 'event_type', 'relations',
+            'config_version', 'metric_window', 'baseline_delta'
         ]),
     CONSTRAINT memory_records_tier_ck
         CHECK (record ->> 'tier' IN ('episodic', 'semantic', 'procedural', 'asset_profile')),
@@ -29,6 +31,7 @@ CREATE TABLE IF NOT EXISTS memory_records (
             AND jsonb_typeof(record -> 'source_trace_ids') = 'array'
             AND jsonb_typeof(record -> 'evidence_snapshot') = 'array'
             AND jsonb_typeof(record -> 'links') = 'array'
+            AND jsonb_typeof(record -> 'relations') = 'array'
         )
 );
 
@@ -48,7 +51,9 @@ CREATE TABLE IF NOT EXISTS memory_events (
         CHECK (record ?& ARRAY[
             'memory_id', 'tier', 'text', 'tags', 'asset_ids', 'evidence_ids',
             'confidence', 'quarantined', 'source_trace_ids', 'evidence_snapshot',
-            'links', 'importance', 'strength', 'access_count', 'superseded_by'
+            'links', 'importance', 'strength', 'access_count', 'superseded_by',
+            'first_observed_at', 'last_observed_at', 'event_type', 'relations',
+            'config_version', 'metric_window', 'baseline_delta'
         ]),
     CONSTRAINT memory_events_tier_ck
         CHECK (record ->> 'tier' IN ('episodic', 'semantic', 'procedural', 'asset_profile')),
@@ -62,6 +67,7 @@ CREATE TABLE IF NOT EXISTS memory_events (
             AND jsonb_typeof(record -> 'source_trace_ids') = 'array'
             AND jsonb_typeof(record -> 'evidence_snapshot') = 'array'
             AND jsonb_typeof(record -> 'links') = 'array'
+            AND jsonb_typeof(record -> 'relations') = 'array'
         ),
     CONSTRAINT memory_events_quarantine_type_ck
         CHECK (event_type <> 'QUARANTINE' OR (record ->> 'quarantined')::BOOLEAN)

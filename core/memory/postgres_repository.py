@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 from core.memory.store import MemoryRecord
 
@@ -223,11 +223,20 @@ class PostgresMemoryRepository:
                     skip_unchanged=True,
                 )
 
-    def sync_records(self, records: Sequence[MemoryRecord]) -> list[MemoryWrite]:
+    def sync_records(
+        self,
+        records: Sequence[MemoryRecord],
+        *,
+        expected_versions: Mapping[str, int] | None = None,
+    ) -> list[MemoryWrite]:
         """Flush a consolidation result in one transaction.
 
         Records are locked in stable id order to avoid cross-process deadlocks.
         Byte-independent JSONB equality suppresses unchanged versions/events.
+        Online callers pass an expected version for every record. If any record
+        changed after the caller loaded it, the surrounding transaction rolls
+        back all earlier writes in this batch instead of partially committing a
+        stale snapshot.
         """
         by_id: dict[str, MemoryRecord] = {}
         for record in records:
@@ -236,6 +245,12 @@ class PostgresMemoryRepository:
             by_id[record.memory_id] = record
         if not by_id:
             return []
+        if expected_versions is not None:
+            missing = sorted(set(by_id).difference(expected_versions))
+            if missing:
+                raise ValueError(
+                    "expected_versions is missing memory ids: " + ", ".join(missing)
+                )
 
         writes_by_id: dict[str, MemoryWrite] = {}
         with self._connect() as connection:
@@ -245,7 +260,11 @@ class PostgresMemoryRepository:
                     writes_by_id[memory_id] = self._write_locked(
                         cursor,
                         by_id[memory_id],
-                        expected_version=None,
+                        expected_version=(
+                            expected_versions[memory_id]
+                            if expected_versions is not None
+                            else None
+                        ),
                         requested_event_type=None,
                         skip_unchanged=True,
                     )
@@ -286,11 +305,29 @@ class PostgresMemoryRepository:
                 )
 
     def load_records(self, *, include_quarantined: bool = True) -> list[MemoryRecord]:
+        return [
+            record
+            for record, _version in self.load_versioned_records(
+                include_quarantined=include_quarantined
+            )
+        ]
+
+    def load_versioned_records(
+        self,
+        *,
+        include_quarantined: bool = True,
+    ) -> list[tuple[MemoryRecord, int]]:
+        """Load snapshots together with their optimistic-concurrency versions."""
         where = "" if include_quarantined else "WHERE NOT (record ->> 'quarantined')::boolean"
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(f"SELECT record FROM memory_records {where} ORDER BY memory_id")
-                return [_decode_record(row[0]) for row in cursor.fetchall()]
+                cursor.execute(
+                    f"SELECT record, version FROM memory_records {where} ORDER BY memory_id"
+                )
+                return [
+                    (_decode_record(row[0]), int(row[1]))
+                    for row in cursor.fetchall()
+                ]
 
     def get(self, memory_id: str) -> tuple[MemoryRecord, int] | None:
         with self._connect() as connection:

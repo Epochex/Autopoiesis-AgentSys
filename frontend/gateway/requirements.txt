@@ -1,3 +1,8 @@
 fastapi==0.135.2
 PyYAML==6.0.3
 uvicorn[standard]==0.42.0
+pydantic>=2.0,<3
+psycopg[binary]>=3.2,<4
+numpy>=1.24
+faiss-cpu>=1.7
+sentence-transformers>=2.2

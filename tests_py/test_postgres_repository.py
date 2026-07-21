@@ -81,6 +81,8 @@ def test_local_argument_guards_run_before_database_access():
         repository.quarantine("m1", " ")
     with pytest.raises(ValueError, match="duplicate"):
         repository.sync_records([_record("m1"), _record("m1")])
+    with pytest.raises(ValueError, match="missing memory ids"):
+        repository.sync_records([_record("m1")], expected_versions={})
 
 
 _DSN = os.environ.get("AUTOPOIESIS_TEST_POSTGRES_DSN")
@@ -156,6 +158,33 @@ def test_real_postgres_commit_restart_conflict_replay_and_checkpoint():
             record.memory_id for record in restarted.load_records(include_quarantined=False)
         }
 
+        # Store-level writes carry the versions loaded at startup. Dirty
+        # detection keeps unrelated records out of the CAS batch, so two
+        # processes may safely change different memories.
+        left = TieredMemoryStore.from_repository(restarted)
+        right = TieredMemoryStore.from_repository(restarted)
+        left.get(first_id).text = "left changed first"  # type: ignore[union-attr]
+        right.get(second_id).text = "right changed second"  # type: ignore[union-attr]
+        assert left.flush()[0].written
+        assert right.flush()[0].written
+
+        # Two stores that loaded the same version cannot silently overwrite one
+        # another. A record sorted before the stale one proves that a late
+        # conflict rolls the complete transaction back, including its event.
+        winner = TieredMemoryStore.from_repository(restarted)
+        stale = TieredMemoryStore.from_repository(restarted)
+        winner.get(first_id).text = "winner"  # type: ignore[union-attr]
+        stale.get(first_id).text = "stale"  # type: ignore[union-attr]
+        rollback_id = f"{prefix}-aaa-rollback"
+        stale.add(_record(rollback_id))
+        winner.flush()
+        events_before_conflict = len(restarted.read_events(limit=10_000))
+        with pytest.raises(MemoryVersionConflict):
+            stale.flush()
+        assert restarted.get(rollback_id) is None
+        assert len(restarted.read_events(limit=10_000)) == events_before_conflict
+        assert restarted.get(first_id)[0].text == "winner"  # type: ignore[index]
+
         # Full-snapshot events reconstruct exactly the latest state after restart.
         relevant = [
             event for event in restarted.read_events(after_offset=0, limit=10_000)
@@ -183,6 +212,80 @@ def test_real_postgres_commit_restart_conflict_replay_and_checkpoint():
                     "UPDATE memory_events SET event_type = 'UPSERT' WHERE event_offset = %s",
                     (last_offset,),
                 )
+    finally:
+        with psycopg.connect(_DSN, autocommit=True) as admin_connection:
+            admin_connection.execute(
+                psycopg.sql.SQL("DROP SCHEMA {} CASCADE").format(
+                    psycopg.sql.Identifier(schema_name)
+                )
+            )
+
+
+@pytest.mark.skipif(not _DSN, reason="AUTOPOIESIS_TEST_POSTGRES_DSN is not configured")
+def test_service_restart_recalls_committed_memory_through_hnsw(tmp_path):
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("faiss")
+    psycopg = pytest.importorskip("psycopg")
+    from domains.network_rca.factory import build_network_rca_service, load_seed_cases
+
+    assert _DSN is not None
+    schema_name = f"service_restart_{uuid4().hex}"
+    with psycopg.connect(_DSN, autocommit=True) as admin_connection:
+        admin_connection.execute(
+            psycopg.sql.SQL("CREATE SCHEMA {}").format(psycopg.sql.Identifier(schema_name))
+        )
+    test_dsn = psycopg.conninfo.make_conninfo(_DSN, options=f"-csearch_path={schema_name}")
+
+    class _Embedder:
+        dimension = 8
+        model_id = "postgres-e2e-8d"
+
+        @staticmethod
+        def _encode(texts):
+            rows = []
+            for text in texts:
+                vector = np.ones(8, dtype="float32")
+                for index, value in enumerate(text.encode("utf-8")):
+                    vector[index % 8] += (value % 29) / 29
+                rows.append(vector)
+            return np.asarray(rows, dtype="float32")
+
+        def embed_documents(self, texts):
+            return self._encode(texts)
+
+        def embed_queries(self, texts):
+            return self._encode(texts)
+
+    try:
+        case = load_seed_cases()[0]
+        first = build_network_rca_service(
+            tmp_path / "first.jsonl",
+            memory_dsn=test_dsn,
+            vector_memory_enabled=True,
+            memory_embedder=_Embedder(),
+            start_maintenance=False,
+        )
+        _, first_report = first.diagnose(case)
+        first_run_id = first.last_run_id
+        first.close()
+
+        restarted = build_network_rca_service(
+            tmp_path / "restarted.jsonl",
+            memory_dsn=test_dsn,
+            vector_memory_enabled=True,
+            memory_embedder=_Embedder(),
+            start_maintenance=False,
+        )
+        _, second_report = restarted.diagnose(case)
+        recalled = next(
+            event.payload for event in restarted._run_events if event.kind == "memory_read"
+        )
+
+        assert first_report.passed and second_report.passed
+        assert restarted.last_run_id != first_run_id
+        assert sum(len(ids) for ids in recalled.values()) > 5
+        assert restarted.health()["memory_index"]["vector"]["base"] >= 8
+        restarted.close()
     finally:
         with psycopg.connect(_DSN, autocommit=True) as admin_connection:
             admin_connection.execute(

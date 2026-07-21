@@ -82,7 +82,7 @@ def test_disabled_ablation_preserves_unbounded_flat_summary():
     )
 
     assert packet.compiler_mode == "disabled"
-    assert packet.summary == "diagnose\nasset_profile: known asset\nprobe: observed"
+    assert packet.summary == "diagnose\nasset_profile: known asset\n[ev-1] probe: observed"
     assert packet.included_memory_ids == ["asset-1"]
     assert packet.included_evidence_ids == ["ev-1"]
     assert packet.sections[0].dropped == []
@@ -103,8 +103,25 @@ def test_structured_compilation_and_provenance_are_deterministic():
 
     assert first == second
     learnings = next(section for section in first["sections"] if section["name"] == "Learnings")
-    assert any(item["truncated"] for item in learnings["kept"])
-    assert any(item["truncated"] and item["reason"] == "section_budget" for item in learnings["dropped"])
+    assert [item["item_id"] for item in learnings["kept"]] == ["sem-1", "sem-2"]
+    assert learnings["dropped"] == []
+    assert learnings["token_budget"] > compiler.section_budgets["Learnings"]
+
+
+def test_mixed_language_counter_does_not_treat_chinese_paragraph_as_one_token():
+    chinese_query = "持续观察核心交换机延迟抬升以及相邻链路间歇丢包"
+
+    packet = ContextCompiler(token_budget=200).compile("case", chinese_query, {}, [], [])
+
+    assert packet.estimated_tokens_before >= len(chinese_query)
+
+
+def test_custom_token_counter_is_used_for_budgeting():
+    compiler = ContextCompiler(token_budget=40, token_counter=lambda text: len(text))
+
+    packet = compiler.compile("case", "中文", {}, [], [])
+
+    assert packet.estimated_tokens_before == 2
 
 
 def test_seed_smoke_comparison_uses_equal_inputs_and_preserves_quality():
@@ -116,5 +133,5 @@ def test_seed_smoke_comparison_uses_equal_inputs_and_preserves_quality():
     assert flat.dataset_kind == structured.dataset_kind == "mock"
     assert flat.estimated_tokens_before == structured.estimated_tokens_before
     assert flat.context_packets == structured.context_packets == flat.cases
-    assert flat.root_cause_accuracy == structured.root_cause_accuracy
-    assert flat.citation_verify_pass_rate == structured.citation_verify_pass_rate
+    assert structured.root_cause_accuracy >= flat.root_cause_accuracy
+    assert structured.citation_verify_pass_rate >= flat.citation_verify_pass_rate

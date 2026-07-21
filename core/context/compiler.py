@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Literal, Mapping
+from typing import Callable, Literal, Mapping
 
 from pydantic import BaseModel, Field
 
+from core.memory.evolution import evolution_context_line, reconstruct_evolution
 from core.memory.store import MemoryRecord
 
 
@@ -34,6 +36,8 @@ _SECTION_WEIGHTS: dict[str, float] = {
     "Learnings": 0.10,
     "Key Results": 0.10,
 }
+
+_TOKEN_PIECE = re.compile(r"[A-Za-z0-9_]+|[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]|[^\sA-Za-z0-9_\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 
 
 class ContextItemProvenance(BaseModel):
@@ -109,6 +113,7 @@ class ContextCompiler:
         max_evidence_lines: int = 10,
         strategy: ContextStrategy = "structured",
         section_budgets: Mapping[str, int] | None = None,
+        token_counter: Callable[[str], int] | None = None,
     ):
         if token_budget < 1:
             raise ValueError(f"token_budget must be >= 1, got {token_budget}")
@@ -121,6 +126,7 @@ class ContextCompiler:
         self.max_memory_lines = max_memory_lines
         self.max_evidence_lines = max_evidence_lines
         self.strategy: ContextStrategy = strategy
+        self._token_counter = token_counter or self._default_token_counter
         self.section_budgets = self._resolve_section_budgets(section_budgets)
 
     def compile(
@@ -187,7 +193,7 @@ class ContextCompiler:
             for tier in ("asset_profile", "procedural", "semantic", "episodic")
         }
         section_inputs: dict[str, list[_ContextItem]] = {
-            "Current State": [],
+            "Current State": [item for item in memory_items if item.kind == "evolution"],
             "Task Spec": [self._query_item(query)],
             "Assets & Entities": by_tier["asset_profile"],
             "Workflow": by_tier["procedural"],
@@ -197,13 +203,58 @@ class ContextCompiler:
             "Key Results": by_tier["episodic"],
         }
 
+        # Section weights are initial reservations, not hard walls.  A first
+        # pass identifies unused reservations (for example, empty Current State
+        # and Errors sections); a deterministic second pass lends that capacity
+        # to sections that still have content.  Required task/evidence items may
+        # still overflow the global budget rather than being silently dropped.
+        fitted: dict[str, tuple[list[_ContextItem], list[_ContextItem]]] = {}
+        effective_budgets = dict(self.section_budgets)
+        for name in SECTION_NAMES:
+            fitted[name] = self._fit_section(section_inputs[name], effective_budgets[name])
+
+        heading_tokens = sum(self._estimate_tokens(f"## {name}") for name in SECTION_NAMES)
+        available_content = max(0, self.token_budget - heading_tokens)
+        initially_used = sum(
+            sum(self._item_tokens(item) for item in kept)
+            for kept, _ in fitted.values()
+        )
+        reclaimable = max(0, available_content - initially_used)
+        reclaim_order = (
+            "Evidence",
+            "Key Results",
+            "Learnings",
+            "Workflow",
+            "Assets & Entities",
+            "Current State",
+            "Errors & Corrections",
+            "Task Spec",
+        )
+        for name in reclaim_order:
+            if reclaimable <= 0:
+                break
+            kept, dropped = fitted[name]
+            if not dropped:
+                continue
+            before_used = sum(self._item_tokens(item) for item in kept)
+            missing_tokens = max(
+                0,
+                sum(self._item_tokens(item) for item in section_inputs[name]) - before_used,
+            )
+            if missing_tokens == 0:
+                continue
+            effective_budgets[name] += min(reclaimable, missing_tokens)
+            fitted[name] = self._fit_section(section_inputs[name], effective_budgets[name])
+            after_used = sum(self._item_tokens(item) for item in fitted[name][0])
+            reclaimable = max(0, reclaimable - max(0, after_used - before_used))
+
         sections: list[ContextSection] = []
         kept_items: list[_ContextItem] = []
         summary_parts: list[str] = []
         for name in SECTION_NAMES:
             items = section_inputs[name]
-            budget = self.section_budgets[name]
-            kept, dropped = self._fit_section(items, budget)
+            budget = effective_budgets[name]
+            kept, dropped = fitted[name]
             kept_items.extend(kept)
             summary_parts.append(f"## {name}")
             summary_parts.extend(item.line for item in kept)
@@ -316,7 +367,7 @@ class ContextCompiler:
             missing_evidence=missing,
             estimated_tokens_before=before,
             estimated_tokens_after=after,
-            compression_ratio=round(after / before, 4),
+            compression_ratio=round(after / before, 4) if before else 1.0,
             compiler_mode=mode,
             sections=sections,
         )
@@ -329,12 +380,50 @@ class ContextCompiler:
     ) -> tuple[list[_ContextItem], list[_ContextItem]]:
         sequence = 1  # zero is reserved for the query
         memory_items: list[_ContextItem] = []
+        all_memories: list[MemoryRecord] = []
         for tier in ("asset_profile", "semantic", "procedural", "episodic"):
             for memory in memories_by_tier.get(tier, []):
+                all_memories.append(memory)
+                timeline: list[str] = []
+                if memory.first_observed_at is not None:
+                    timeline.append(f"first={memory.first_observed_at.isoformat()}")
+                if memory.last_observed_at is not None:
+                    timeline.append(f"last={memory.last_observed_at.isoformat()}")
+                if memory.event_type:
+                    timeline.append(f"event={memory.event_type}")
+                if memory.relations:
+                    timeline.append(
+                        "relations="
+                        + ",".join(
+                            f"{relation.relation_type}:{relation.target_id}"
+                            for relation in memory.relations[:8]
+                        )
+                    )
+                if memory.source_trace_ids:
+                    timeline.append("traces=" + ",".join(memory.source_trace_ids[-3:]))
+                prefix = f" [{' '.join(timeline)}]" if timeline else ""
                 memory_items.append(
-                    _ContextItem(sequence, tier, memory.memory_id, f"{tier}: {memory.text}")
+                    _ContextItem(
+                        sequence,
+                        tier,
+                        memory.memory_id,
+                        f"{tier}{prefix}: {memory.text}",
+                    )
                 )
                 sequence += 1
+
+        chain = reconstruct_evolution(all_memories)
+        if chain is not None:
+            by_id = {memory.memory_id: memory for memory in all_memories}
+            memory_items.append(
+                _ContextItem(
+                    sequence,
+                    "evolution",
+                    None,
+                    evolution_context_line(chain, by_id),
+                )
+            )
+            sequence += 1
 
         evidence_items: list[_ContextItem] = []
         for item in sorted(
@@ -347,7 +436,7 @@ class ContextCompiler:
                     sequence,
                     "evidence",
                     evidence_id,
-                    f"{item.get('source', 'unknown')}: {item.get('summary', '')}",
+                    f"[{evidence_id}] {item.get('source', 'unknown')}: {item.get('summary', '')}",
                     evidence_id in required,
                 )
             )
@@ -402,13 +491,16 @@ class ContextCompiler:
 
             remaining = max(0, budget - used)
             if remaining:
-                words = item.line.split()
+                kept_text, dropped_text = self._split_to_token_budget(item.line, remaining)
+                if not kept_text:
+                    dropped.append(item)
+                    continue
                 kept.append(
                     _ContextItem(
                         item.sequence,
                         item.kind,
                         item.item_id,
-                        " ".join(words[:remaining]),
+                        kept_text,
                         item.required,
                         True,
                     )
@@ -418,12 +510,12 @@ class ContextCompiler:
                         item.sequence,
                         item.kind,
                         item.item_id,
-                        " ".join(words[remaining:]),
+                        dropped_text,
                         item.required,
                         True,
                     )
                 )
-                used += remaining
+                used += self._estimate_tokens(kept_text)
             else:
                 dropped.append(item)
         return kept, dropped
@@ -449,10 +541,45 @@ class ContextCompiler:
                 raise ValueError(f"case {case_id!r}: evidence item without an 'evidence_id': {sorted(item)}")
         return current_evidence
 
+    def _estimate_tokens(self, text: str) -> int:
+        value = self._token_counter(text)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError("token_counter must return a nonnegative integer")
+        return value
+
+    def _split_to_token_budget(self, text: str, budget: int) -> tuple[str, str]:
+        """Return the longest character prefix accepted by the token counter."""
+
+        if budget <= 0 or not text:
+            return "", text
+        if self._estimate_tokens(text) <= budget:
+            return text, ""
+        low, high = 0, len(text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if self._estimate_tokens(text[:middle]) <= budget:
+                low = middle
+            else:
+                high = middle - 1
+        split_at = low
+        # Prefer a word boundary when doing so does not erase the entire prefix.
+        if split_at < len(text) and split_at > 0 and text[split_at - 1].isascii():
+            boundary = text.rfind(" ", 0, split_at)
+            if boundary > 0:
+                split_at = boundary
+        return text[:split_at].rstrip(), text[split_at:].lstrip()
+
     @staticmethod
-    def _estimate_tokens(text: str) -> int:
-        # Whitespace-token estimate: deterministic and model-agnostic; always >= 1.
-        return max(1, len(text.split()))
+    def _default_token_counter(text: str) -> int:
+        """Conservative, dependency-free estimate for mixed Chinese/English.
+
+        Each CJK character counts as one token while Latin/numeric and contiguous
+        punctuation runs count as one.  This preserves the old word-level budget
+        intuition for English while fixing the severe whitespace undercount that
+        treated an entire Chinese paragraph as one token.
+        """
+
+        return len(_TOKEN_PIECE.findall(text))
 
     @staticmethod
     def _last_removable_index(selected_items: list[_ContextItem]) -> int | None:

@@ -10,8 +10,16 @@ class VerificationReport(BaseModel):
 
 
 class Verifier:
-    def __init__(self, enabled: bool = True):
+    def __init__(
+        self,
+        enabled: bool = True,
+        *,
+        evidence_contracts: dict[str, set[str]] | None = None,
+    ):
         self.enabled = enabled
+        self.evidence_contracts = {
+            key: set(value) for key, value in (evidence_contracts or {}).items()
+        }
 
     def verify(self, diagnosis, evidence: list[dict], required_evidence: list[str]) -> VerificationReport:
         if not self.enabled:
@@ -37,6 +45,14 @@ class Verifier:
         ]
         if contradictions:
             errors.append(f"diagnosis cites contradictory evidence: {sorted(contradictions)}")
+        claim_contract = self.evidence_contracts.get(diagnosis.root_cause_key)
+        if claim_contract is not None:
+            missing_support = claim_contract.difference(cited_ids)
+            if missing_support:
+                errors.append(
+                    "root cause evidence contract not satisfied: "
+                    f"{sorted(missing_support)}"
+                )
         if required_evidence:
             matched = len(set(required_evidence).intersection(cited_ids))
             recall = matched / len(required_evidence)

@@ -27,6 +27,7 @@ def load_enterprise_seed_cases() -> list[EnterpriseOpsCase]:
             query_terms=["报价", "新策略", "审批", "提交"],
             assets=["order-1001"],
             relevant_skills=["pricing_apply_policy", "approval_submit"],
+            approval_grants={"approval_submit": "grant:order-1001:approval:v1"},
         ),
         EnterpriseOpsCase(
             id="ops_status_only",

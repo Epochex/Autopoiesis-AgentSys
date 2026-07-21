@@ -198,7 +198,7 @@ def test_full_memory_lifecycle_is_observable_and_retrievable(monkeypatch):
         "active": 6,
         "forgotten": 3,  # one superseded record plus two utility evictions
         "insights": 1,
-        "links": 20,
+        "links": 22,  # associative edges plus adjacent same-asset chronology
         "by_tier": {"semantic": 3, "episodic": 3},
         "index": memory.index_health(),
     }

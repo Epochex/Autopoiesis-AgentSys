@@ -6,11 +6,12 @@ throws the store away. This module *only serializes what already happened*:
 
   * it never decides anything, never mutates a record, never changes control flow;
   * every number it emits was produced by the real kernel on the real run;
-  * where the kernel genuinely does not expose a value (per-link and retrieval
-    scores) it emits ``None`` rather than inventing one.
+  * where the kernel genuinely does not expose a value it emits ``None`` rather
+    than inventing one.
 
-``CAPABILITIES`` states, honestly, which lifecycle signals the kernel currently
-produces — so the UI can grey unsupported affordances out instead of faking them.
+``CAPABILITIES`` describes implementation availability.  A stream response also
+reports whether each optional path was configured and whether it actually fired;
+those are different facts and must not be collapsed into one boolean.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ _QUARANTINE_PREFIX = "quarantine:"
 # provenance + a human-readable gist, so we trim fields (never invent them).
 _MAX_SUMMARY_CHARS = 240
 
-# A fact about the code, not a toggle: does the kernel actually run this lifecycle path?
+# A fact about the implementation, not a statement that a particular run fired it.
 #   decay_wired          — whether decay_and_forget() itself runs in the production loop.
 #                          It does not. The loop uses utility_evict(), whose score includes
 #                          recency but is not equivalent to time-decay forgetting.
@@ -35,8 +36,8 @@ _MAX_SUMMARY_CHARS = 240
 #   conflict_update_wired— route(resolve_conflicts=True) resolves contradictions: a memory
 #                          that renames the root cause on the same entity SUPERSEDEs the
 #                          stale prior instead of merging into it. Emits SUPERSEDE ops.
-#   retrieval_scores     — TieredMemoryStore.retrieve() computes a score but returns
-#                          only records; the score never reaches the trace.
+#   retrieval_scores     — sparse, dense, asset, graph-hop and final scores are
+#                          emitted in memory_candidates_ranked.
 #   context_drop_reason  — ContextCompiler records section, reason, text fragment,
 #                          identity, and whether a drop was a partial truncation.
 #   update_text_mutation — apply_route()'s UPDATE merges tags/assets/confidence but
@@ -45,10 +46,58 @@ CAPABILITIES: dict[str, bool] = {
     "decay_wired": False,
     "eviction_wired": True,
     "conflict_update_wired": True,
-    "retrieval_scores": False,
+    "retrieval_scores": True,
     "context_drop_reason": True,
     "update_text_mutation": False,
 }
+
+
+def runtime_capability_status(
+    events: list[dict[str, Any]],
+    recalls: list[dict[str, Any]],
+    *,
+    capacity_budget: int | None,
+    resolve_conflicts: bool,
+) -> dict[str, dict[str, bool]]:
+    """Separate code availability, run configuration, and observed execution.
+
+    A feature can be implemented but dormant for a run.  ``fired`` is derived only
+    from emitted lifecycle/trace data, so clients do not have to infer it from a
+    static capability flag.
+    """
+    operation_kinds = {str(event.get("op", "")) for event in events}
+    return {
+        "decay": {
+            "implemented": CAPABILITIES["decay_wired"],
+            "configured": False,
+            "fired": False,
+        },
+        "eviction": {
+            "implemented": CAPABILITIES["eviction_wired"],
+            "configured": capacity_budget is not None,
+            "fired": "EVICT" in operation_kinds,
+        },
+        "conflict_update": {
+            "implemented": CAPABILITIES["conflict_update_wired"],
+            "configured": resolve_conflicts,
+            "fired": "SUPERSEDE" in operation_kinds,
+        },
+        "retrieval_scoring": {
+            "implemented": CAPABILITIES["retrieval_scores"],
+            "configured": True,
+            "fired": any(row.get("retrieval_candidates") for row in recalls),
+        },
+        "context_drop_provenance": {
+            "implemented": CAPABILITIES["context_drop_reason"],
+            "configured": True,
+            "fired": any(row.get("context_drops") for row in recalls),
+        },
+        "update_text_mutation": {
+            "implemented": CAPABILITIES["update_text_mutation"],
+            "configured": False,
+            "fired": False,
+        },
+    }
 
 
 def _first(events: list[TraceEvent], kind: str) -> TraceEvent | None:
@@ -71,6 +120,7 @@ def snapshot(record: MemoryRecord) -> dict[str, Any]:
         "tags": list(record.tags),
         "asset_ids": list(record.asset_ids),
         "links": list(record.links),
+        "relations": [relation.model_dump(mode="json") for relation in record.relations],
     }
 
 
@@ -164,6 +214,17 @@ def serialize_record(record: MemoryRecord) -> dict[str, Any]:
         "quarantine_reason": quarantine_reason(record),
         "source_trace_ids": list(record.source_trace_ids),
         "links": list(record.links),
+        "relations": [relation.model_dump(mode="json") for relation in record.relations],
+        "first_observed_at": (
+            record.first_observed_at.isoformat() if record.first_observed_at else None
+        ),
+        "last_observed_at": (
+            record.last_observed_at.isoformat() if record.last_observed_at else None
+        ),
+        "event_type": record.event_type,
+        "config_version": record.config_version,
+        "metric_window": dict(record.metric_window),
+        "baseline_delta": dict(record.baseline_delta),
         "evidence_snapshot": _trim_evidence(record.evidence_snapshot),
     }
 
@@ -191,6 +252,7 @@ def recall_row(
     mem_read = _first(events, "memory_read")
     context = _first(events, "context_compiled")
     resolved_ev = _first(events, "memory_resolved")
+    ranked_ev = _first(events, "memory_candidates_ranked")
 
     retrieved = {tier: list(ids) for tier, ids in mem_read.payload.items()} if mem_read else {}
     included = list(context.payload.get("included_memory_ids", [])) if context else []
@@ -214,6 +276,7 @@ def recall_row(
         "case_id": case_id,
         "run_id": run_id,
         "retrieved": retrieved,
+        "retrieval_candidates": list(ranked_ev.payload.get("candidates", [])) if ranked_ev else [],
         "included_memory_ids": included,
         "dropped_memory_ids": dropped,
         "context_drops": context_drops,

@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import time
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from typing import Any
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
+from pydantic import BaseModel, Field
 
 from .config import Settings
 from .live import analyze_graph, assess_device, assess_mesh, assess_subnet, assess_wan, event_rate, subnet_graph
@@ -20,6 +22,15 @@ _CACHE_TTL_SEC = 5.0
 _cache_lock = asyncio.Lock()
 _cache_payload: dict[str, Any] | None = None
 _cache_loaded_at = 0.0
+_evolving_service = None
+_runtime_error: str | None = None
+_diagnosis_cases: dict[str, Any] = {}
+
+
+class RCADiagnosisRequest(BaseModel):
+    """Select a server-validated case without accepting client-authored skills."""
+
+    case_id: str = Field(min_length=1)
 
 
 def _start_prewarm() -> None:
@@ -42,8 +53,40 @@ def _start_prewarm() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    global _diagnosis_cases, _evolving_service, _runtime_error
     _start_prewarm()
-    yield
+    try:
+        from domains.network_rca.factory import build_network_rca_service
+        from domains.network_rca.real_dataset import (
+            load_real_case_bundle,
+            resolve_stats_path,
+            validate_real_dataset_manifest,
+        )
+        from .rca_reader import _MANIFEST
+
+        validation = validate_real_dataset_manifest(_MANIFEST)
+        if validation.ready:
+            cases, _ground_truth = load_real_case_bundle(_MANIFEST, split="heldout")
+            _diagnosis_cases = {case.id: case for case in cases}
+            _evolving_service = await asyncio.to_thread(
+                build_network_rca_service,
+                settings.trace_ledger_path,
+                data_source="real",
+                real_stats_path=resolve_stats_path(_MANIFEST),
+                reasoner_mode="rule",
+                raise_on_evolution_error=False,
+            )
+            _runtime_error = None
+        else:
+            _runtime_error = "validated RCA dataset is unavailable"
+    except Exception as exc:
+        _runtime_error = f"{type(exc).__name__}: {exc}"
+    try:
+        yield
+    finally:
+        if _evolving_service is not None:
+            await asyncio.to_thread(_evolving_service.close)
+        _diagnosis_cases = {}
 
 
 app = FastAPI(
@@ -70,8 +113,15 @@ if settings.cors_origins:
 
 
 @app.get("/api/healthz")
-def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+def healthz() -> dict[str, Any]:
+    if _evolving_service is None:
+        return {"status": "degraded", "runtimeError": _runtime_error}
+    runtime = _evolving_service.health()
+    return {
+        "status": "ok" if runtime.get("last_error") is None else "degraded",
+        "durableMemory": _evolving_service.memory.repository is not None,
+        "runtime": runtime,
+    }
 
 
 _cache_provider = "rule"
@@ -166,6 +216,35 @@ async def rca_graph_analyze(cidr: str, lang: str = "zh") -> dict[str, Any]:
 @app.get("/api/rca/snapshot")
 async def rca_snapshot(provider: str = "rule", refresh: bool = False) -> dict[str, Any]:
     return await _get_snapshot(provider=provider, force=refresh)
+
+
+@app.post("/api/rca/diagnose")
+async def rca_diagnose(request: RCADiagnosisRequest) -> dict[str, Any]:
+    """Run the long-lived verified diagnosis and learning path without notifications."""
+    if _evolving_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_runtime_error or "evolving runtime is unavailable",
+        )
+    case = _diagnosis_cases.get(request.case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="unknown validated RCA case_id")
+    diagnosis, report = await asyncio.to_thread(_evolving_service.diagnose, case)
+    consolidation = _evolving_service.last_consolidation
+    evolution_findings = [
+        event.payload
+        for event in _evolving_service._run_events
+        if event.kind == "system_evolution_analyzed"
+    ]
+    return {
+        "ok": report.passed,
+        "runId": _evolving_service.last_run_id,
+        "diagnosis": diagnosis.model_dump(mode="json"),
+        "verification": report.model_dump(mode="json"),
+        "consolidation": asdict(consolidation) if consolidation is not None else None,
+        "systemEvolution": evolution_findings,
+        "runtime": _evolving_service.health(),
+    }
 
 
 @app.get("/api/rca/evolution")

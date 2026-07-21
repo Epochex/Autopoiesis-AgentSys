@@ -365,11 +365,10 @@ reports this at runtime; **respect it rather than filling the gap**:
 - `decay_wired: false` — `decay_and_forget()` has no production caller. Never
   render a "forgotten"/decay figure as if the loop were forgetting. Note that
   `memory_health()["forgotten"]` counts *quarantined* records, not decayed ones.
-- `retrieval_scores: false` — retrieval computes a score and drops it. There is no
-  "why was this recalled".
-- `context_drop_reason: false` — the compiler drops memory lines by cap/budget
-  without recording which rule fired. A drop may be *shown* (it is derived from
-  real ids); it may not be *explained*.
+- `retrieval_scores: true` — the kernel emits lexical, vector, asset, graph-hop,
+  structural-prior and final scores in `memory_candidates_ranked`.
+- `context_drop_reason: true` — the compiler records section, budget reason,
+  item identity and partial truncation provenance.
 - `strength` is `1.0` on every record because decay never runs. Do not encode a
   constant as though it varied.
 - `UPDATE`, `NOOP` and `QUARANTINE` are real code paths that do not fire on the

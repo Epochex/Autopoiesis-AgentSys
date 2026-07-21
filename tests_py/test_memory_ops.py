@@ -8,6 +8,8 @@ papers they cite claim. Each test guards one mechanism's defining property.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from core.evolve import (
     apply_route,
     decay_and_forget,
@@ -70,6 +72,50 @@ def test_amem_links_same_family_bidirectionally():
     linked = link_related(mem, b)
     assert "a" in linked and "c" not in linked
     assert "b" in mem.get("a").links and "a" in mem.get("b").links   # bidirectional
+
+
+def test_related_events_keep_similarity_distinct_from_temporal_order():
+    mem = TieredMemoryStore()
+    earlier = _epi("early", ["carrier", "interface"], ["r230"], "carrier_down")
+    later = _epi("late", ["carrier", "interface"], ["r230"], "carrier_down")
+    earlier.first_observed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    later.first_observed_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    mem.seed([earlier, later])
+
+    link_related(mem, later)
+
+    early_edges = {(edge.relation_type, edge.target_id) for edge in earlier.relations}
+    late_edges = {(edge.relation_type, edge.target_id) for edge in later.relations}
+    assert ("similar_to", "late") in early_edges
+    assert ("precedes", "late") in early_edges
+    assert ("similar_to", "early") in late_edges
+    assert ("follows", "early") in late_edges
+    assert all(edge.relation_type != "caused_by" for edge in earlier.relations + later.relations)
+
+
+def test_dissimilar_same_asset_events_still_form_a_temporal_chain():
+    mem = TieredMemoryStore()
+    earlier = _epi(
+        "early", ["configuration"], ["shared-edge", "node-a", "port-a"], "config_change"
+    )
+    later = _epi(
+        "late", ["packet", "loss"], ["shared-edge", "node-b", "port-b"], "visible_failure"
+    )
+    earlier.first_observed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    later.first_observed_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    mem.seed([earlier, later])
+
+    linked = link_related(mem, later)
+
+    assert "early" in linked
+    assert "late" in earlier.links
+    assert ("precedes", "late") in {
+        (edge.relation_type, edge.target_id) for edge in earlier.relations
+    }
+    assert all(
+        edge.relation_type != "similar_to"
+        for edge in earlier.relations + later.relations
+    )
 
 
 # ── Generative-Agents reflection ─────────────────────────────────────────────

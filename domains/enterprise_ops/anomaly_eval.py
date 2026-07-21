@@ -4,9 +4,11 @@ import json
 import random
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any
 
 from core.orchestrator.intent_router import CascadingIntentRouter
+from core.orchestrator.planner import execute_chain
 from core.skills.controller import SkillAttentionController
 from core.skills.registry import SkillRegistry
 from core.trace.events import TraceEvent
@@ -120,13 +122,20 @@ def _run_batch(orders: list[dict[str, Any]], *, verify: bool) -> dict[str, Any]:
         registry = SkillRegistry()
         adapter = MockEnterpriseSystem.from_path(fixture)
         register_enterprise_ops_skills(registry, adapter)
+        ledger = _InMemoryLedger()
         router = CascadingIntentRouter(
             registry,
             SkillAttentionController(enabled=True, top_k=4),
-            _InMemoryLedger(),
+            ledger,
             enable_induction=False,
         )
         verifier = ContractVerifier()
+        runtime = SimpleNamespace(
+            skills=registry,
+            ledger=ledger,
+            contract_verifier=verifier,
+            system_adapter=adapter,
+        )
 
         committed = 0
         anomalies = 0
@@ -138,24 +147,24 @@ def _run_batch(orders: list[dict[str, Any]], *, verify: bool) -> dict[str, Any]:
                 query_terms=[],
                 assets=[order["state"]["asset"]],
                 relevant_skills=[],
+                approval_grants={
+                    "approval_submit": f"eval-grant:{order['id']}:approval:v1"
+                },
             )
             outcome = router.route(case)
             if not (outcome.resolved and outcome.chain):
                 raise RuntimeError(f"anomaly batch request failed to route: {order['id']} -> {outcome.tier}")
-            landed_any = False
-            for name in outcome.chain:
-                before = adapter.snapshot(case.id)
-                result = registry.execute(name, case=case)
-                after = adapter.snapshot(case.id)
-                if verify:
-                    verdict = verifier.check_step(registry.get(name), before, {"case": case}, after, result)
-                    if not verdict.passed:
-                        adapter.restore(case.id, before)
-                        break
-                landed_any = True
-            if not landed_any:
-                blocked_orders += 1
-                continue
+            if verify:
+                # Exercise the same production chain runtime as the domain
+                # entrypoint.  In particular, preconditions run before handlers
+                # and failed writes are compensated and read back centrally.
+                chain_result = execute_chain(outcome.chain, case, runtime)
+                if not chain_result["completed"]:
+                    blocked_orders += 1
+                    continue
+            else:
+                for name in outcome.chain:
+                    registry.execute(name, case=case)
             committed += 1
             if _is_anomalous(adapter.snapshot(case.id)):
                 anomalies += 1

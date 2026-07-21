@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import fcntl
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -12,9 +14,18 @@ from core.trace.events import TraceEvent
 class JSONLTraceLedger:
     """Append-only JSONL trace ledger; one JSON object per line, replayable in order.
 
-    Each `append` opens/closes the file so every event is durable immediately and
-    the ledger stays valid even if the process dies mid-run.
+    Writers take an inter-process file lock so JSON records cannot interleave.
+    ``fsync`` uses group-commit semantics at run/decision boundaries rather than
+    forcing a disk flush for every observation; a completed diagnosis is durable
+    together with every event written before it without destroying throughput.
     """
+
+    _SYNC_KINDS = {
+        "diagnosis_completed",
+        "step_verified",
+        "skill_promoted",
+        "step_rolled_back",
+    }
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -22,8 +33,22 @@ class JSONLTraceLedger:
 
     def append(self, event: TraceEvent) -> None:
         """Durably append one event."""
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event.model_dump(mode="json"), sort_keys=True) + "\n")
+        payload = (
+            json.dumps(event.model_dump(mode="json"), sort_keys=True) + "\n"
+        ).encode("utf-8")
+        descriptor = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o640)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            written = 0
+            while written < len(payload):
+                written += os.write(descriptor, payload[written:])
+            if event.kind in self._SYNC_KINDS:
+                os.fsync(descriptor)
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
     def extend(self, events: Iterable[TraceEvent]) -> None:
         """Append events in order."""

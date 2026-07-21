@@ -28,6 +28,7 @@ class Settings:
     repo_root: Path
     frontend_dist: Path
     cors_origins: tuple[str, ...]
+    trace_ledger_path: Path
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -36,4 +37,15 @@ class Settings:
             autopoiesis_env("FRONTEND_DIST", str(repo_root / "frontend" / "dist"))
         ).resolve()
         cors_origins = _split_csv(autopoiesis_env("CORS_ORIGINS", ""))
-        return cls(repo_root=repo_root, frontend_dist=frontend_dist, cors_origins=cors_origins)
+        trace_ledger_path = Path(
+            autopoiesis_env(
+                "TRACE_LEDGER_PATH",
+                "/data/autopoiesis-runtime/network-rca-trace.jsonl",
+            )
+        ).resolve()
+        return cls(
+            repo_root=repo_root,
+            frontend_dist=frontend_dist,
+            cors_origins=cors_origins,
+            trace_ledger_path=trace_ledger_path,
+        )

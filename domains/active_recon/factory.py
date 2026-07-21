@@ -59,7 +59,12 @@ def build_active_recon_orchestrator(
 
     return SingleAgentRCAOrchestrator(
         memory=memory,
-        context_compiler=ContextCompiler(token_budget=220, enabled=context_enabled),
+        context_compiler=ContextCompiler(
+            token_budget=2_048,
+            enabled=context_enabled,
+            max_memory_lines=24,
+            max_evidence_lines=32,
+        ),
         skills=registry,
         skill_controller=SkillAttentionController(enabled=skill_controller_enabled, top_k=top_k),
         verifier=Verifier(enabled=verifier_enabled),

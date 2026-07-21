@@ -27,7 +27,7 @@ from typing import Iterable, Literal
 
 from core.evolve.observatory import emit as _emit
 from core.evolve.observatory import snapshot as _snap
-from core.memory.store import MemoryRecord, TieredMemoryStore
+from core.memory.store import MemoryRecord, MemoryRelation, TieredMemoryStore
 
 _SKIP_PREFIX = ("skill:", "quarantine:", "root:")
 
@@ -84,6 +84,28 @@ def _root_keys(tags: Iterable[str]) -> set[str]:
     """The diagnosed root-cause keys carried on a memory (``root:<key>`` tags). A memory
     can only *contradict* another about the same entity if it names a DIFFERENT root."""
     return {t[len("root:"):] for t in tags if t.startswith("root:")}
+
+
+def _add_relation(
+    source: MemoryRecord,
+    target_id: str,
+    relation_type: str,
+    *,
+    confidence: float,
+) -> None:
+    """Add one typed edge without manufacturing duplicate graph facts."""
+    if any(
+        relation.target_id == target_id and relation.relation_type == relation_type
+        for relation in source.relations
+    ):
+        return
+    source.relations.append(
+        MemoryRelation(
+            target_id=target_id,
+            relation_type=relation_type,
+            confidence=confidence,
+        )
+    )
 
 
 def route(
@@ -175,6 +197,23 @@ def apply_route(memory: TieredMemoryStore, candidate: MemoryRecord, decision: Ro
         return candidate.memory_id
     target.strength = 1.0                     # any hit refreshes retrievability
     target.access_count += 1                  # reuse: feeds utility-driven eviction
+    observed = [
+        value
+        for value in (target.first_observed_at, candidate.first_observed_at)
+        if value is not None
+    ]
+    if observed:
+        target.first_observed_at = min(observed)
+    observed = [
+        value
+        for value in (target.last_observed_at, candidate.last_observed_at)
+        if value is not None
+    ]
+    if observed:
+        target.last_observed_at = max(observed)
+    target.source_trace_ids.extend(
+        trace_id for trace_id in candidate.source_trace_ids if trace_id not in target.source_trace_ids
+    )
     if decision.op == "UPDATE":
         retrieval_changed = False
         for t in candidate.tags:
@@ -187,7 +226,9 @@ def apply_route(memory: TieredMemoryStore, candidate: MemoryRecord, decision: Ro
                 retrieval_changed = True
         target.confidence = min(conf_cap, target.confidence + 0.3)
         target.importance += 1.0
-        target.source_trace_ids.extend(t for t in candidate.source_trace_ids if t not in target.source_trace_ids)
+        for relation in candidate.relations:
+            if relation not in target.relations:
+                target.relations.append(relation)
         if candidate.evidence_snapshot and not target.evidence_snapshot:
             target.evidence_snapshot = candidate.evidence_snapshot
         if retrieval_changed:
@@ -203,13 +244,90 @@ def link_related(
     thresh: float = 0.34,
     recorder: list[dict] | None = None,
 ) -> list[str]:
-    """A-MEM: connect a memory bidirectionally to its k most similar neighbours, so
-    recall can traverse family links from a weak hit to a strong one.
+    """Connect associative neighbours and adjacent, same-asset event history.
+
+    A-MEM similarity edges support weak-hit expansion.  Episodic records also
+    connect to their immediately preceding and following events on a shared
+    asset.  Those edges assert chronology only (``precedes``/``follows``), never
+    causality, and make a real longitudinal sequence reachable even when adjacent
+    incidents use entirely different vocabulary.
 
     `recorder` is write-only observability (see observatory.emit): the link is
     bidirectional, so BOTH sides are mutated and both therefore get their own LINK
     event with a genuine before/after. The neighbour's mutation used to be invisible.
     """
+    linked: list[str] = []
+
+    if record.tier == "episodic" and record.first_observed_at is not None:
+        temporal = [
+            candidate
+            for candidate in memory.active()
+            if candidate.tier == "episodic"
+            and candidate.memory_id != record.memory_id
+            and candidate.first_observed_at is not None
+            and candidate.first_observed_at != record.first_observed_at
+            and set(candidate.asset_ids).intersection(record.asset_ids)
+        ]
+        older = [
+            candidate
+            for candidate in temporal
+            if candidate.first_observed_at < record.first_observed_at
+        ]
+        newer = [
+            candidate
+            for candidate in temporal
+            if candidate.first_observed_at > record.first_observed_at
+        ]
+        temporal_pairs: list[tuple[MemoryRecord, MemoryRecord]] = []
+        if older:
+            temporal_pairs.append(
+                (max(older, key=lambda item: item.first_observed_at), record)
+            )
+        if newer:
+            temporal_pairs.append(
+                (record, min(newer, key=lambda item: item.first_observed_at))
+            )
+        for before_record, after_record in temporal_pairs:
+            before_old = _snap(before_record)
+            before_new = _snap(after_record)
+            if after_record.memory_id not in before_record.links:
+                before_record.links.append(after_record.memory_id)
+            if before_record.memory_id not in after_record.links:
+                after_record.links.append(before_record.memory_id)
+            _add_relation(
+                before_record,
+                after_record.memory_id,
+                "precedes",
+                confidence=1.0,
+            )
+            _add_relation(
+                after_record,
+                before_record.memory_id,
+                "follows",
+                confidence=1.0,
+            )
+            _emit_change(
+                recorder,
+                "LINK",
+                before_record,
+                before_old,
+                target_id=after_record.memory_id,
+            )
+            _emit_change(
+                recorder,
+                "LINK",
+                after_record,
+                before_new,
+                target_id=before_record.memory_id,
+            )
+            neighbour_id = (
+                before_record.memory_id
+                if after_record.memory_id == record.memory_id
+                else after_record.memory_id
+            )
+            if neighbour_id not in linked:
+                linked.append(neighbour_id)
+
     scored: list[tuple[float, MemoryRecord]] = []
     for rec in memory.active():
         if rec.memory_id == record.memory_id:
@@ -218,17 +336,35 @@ def link_related(
         if s >= thresh:
             scored.append((s, rec))
     scored.sort(key=lambda x: x[0], reverse=True)
-    linked: list[str] = []
-    for _, rec in scored[:k]:
+    for score, rec in scored[:k]:
         before_self, before_other = _snap(record), _snap(rec)
         if rec.memory_id not in record.links:
             record.links.append(rec.memory_id)
         if record.memory_id not in rec.links:
             rec.links.append(record.memory_id)
+        _add_relation(record, rec.memory_id, "similar_to", confidence=score)
+        _add_relation(rec, record.memory_id, "similar_to", confidence=score)
+        # Similarity is never upgraded to causality. When two related episodic
+        # events share an asset and have observed times, we can safely add only
+        # the temporal order that the trace proves.
+        if (
+            record.tier == "episodic"
+            and rec.tier == "episodic"
+            and set(record.asset_ids).intersection(rec.asset_ids)
+            and record.first_observed_at is not None
+            and rec.first_observed_at is not None
+            and record.first_observed_at != rec.first_observed_at
+        ):
+            older, newer = sorted(
+                (record, rec), key=lambda item: item.first_observed_at
+            )
+            _add_relation(older, newer.memory_id, "precedes", confidence=1.0)
+            _add_relation(newer, older.memory_id, "follows", confidence=1.0)
         # the A-MEM neighbour score IS real here, unlike the Mem0 route score.
         _emit_change(recorder, "LINK", record, before_self, similarity=s, target_id=rec.memory_id)
         _emit_change(recorder, "LINK", rec, before_other, similarity=s, target_id=record.memory_id)
-        linked.append(rec.memory_id)
+        if rec.memory_id not in linked:
+            linked.append(rec.memory_id)
     return linked
 
 
