@@ -1,10 +1,10 @@
 """Drive the agent over a *stream* of events and measure self-evolution.
 
 The online path stays a single-agent read-only diagnosis; between events the
-consolidation step (offline) evolves the persistent core. On a stream of
-recurring real incidents the agent should handle later occurrences with fewer
-probes / lower cost (via the procedural-memory shortcut) at unchanged accuracy —
-that gap, cold-vs-warm, is the honest, measurable self-evolution signal.
+consolidation step (offline) evolves the warm in-process memory. Historical incidents
+can narrow later probe plans, but every recurrence still requires fresh evidence;
+a dataset only shows an efficiency gain when learned routing removes a check that
+the cold router would otherwise execute.
 """
 from __future__ import annotations
 

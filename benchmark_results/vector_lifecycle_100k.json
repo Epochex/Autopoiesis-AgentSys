@@ -1,0 +1,56 @@
+{
+  "config": {
+    "documents": 100000,
+    "dimension": 128,
+    "updates": 10000,
+    "deletes": 10000,
+    "queries": 50,
+    "k": 10,
+    "seed": 31
+  },
+  "initial_build_seconds": 24.1234,
+  "before_compaction": {
+    "healthy": true,
+    "generation": 1,
+    "applied_offset": 20000,
+    "physical_vectors": 110000,
+    "live": 90000,
+    "tombstones": 10000,
+    "base": 100000,
+    "delta": 10000,
+    "obsolete": 20000,
+    "obsolete_ratio": 0.18181818181818182,
+    "compaction_due": true
+  },
+  "after_compaction": {
+    "healthy": true,
+    "generation": 2,
+    "applied_offset": 20000,
+    "physical_vectors": 90000,
+    "live": 90000,
+    "tombstones": 0,
+    "base": 90000,
+    "delta": 0,
+    "obsolete": 0,
+    "obsolete_ratio": 0.0,
+    "compaction_due": false
+  },
+  "before_query": {
+    "p50_ms": 1.1522,
+    "p95_ms": 1.3421,
+    "qps": 751.3
+  },
+  "after_query": {
+    "p50_ms": 0.7729,
+    "p95_ms": 0.9751,
+    "qps": 1252.19
+  },
+  "recall_at_k_before": 0.898,
+  "recall_at_k_after": 0.912,
+  "compaction_seconds": 19.7916,
+  "physical_vectors_reclaimed": 20000,
+  "snapshot_bytes": 125957711,
+  "load_seconds": 0.7162,
+  "restart_results_equal": true,
+  "snapshot_directory": "/tmp/autopoiesis-vector-lifecycle-100k"
+}

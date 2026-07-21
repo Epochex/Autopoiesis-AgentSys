@@ -16,7 +16,8 @@ reproducible on any machine with no API key.
 Honesty contract
 ----------------
 * The headline evidence for this project is the REAL R230 FortiGate held-out stream
-  (see docs/BENCHMARKS.md): −75% probes at 100% accuracy, ablation 100%→17%.
+  (see docs/BENCHMARKS.md): fresh-evidence memory confirmation at 100% accuracy;
+  the previous −75% probe claim was removed because it reused historical evidence.
 * LongMemEval is the EXTERNAL anchor. Run it yourself on the real dataset:
       python -m core.eval.longmemeval /path/to/longmemeval_s.json
 * A tiny synthetic fixture (tests_py/fixtures/longmemeval_synthetic.json) ships only

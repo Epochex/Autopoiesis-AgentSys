@@ -25,11 +25,12 @@ lexical-then-structural design:
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, Protocol, Sequence
 
 from pydantic import BaseModel, Field
 
-from core.memory.bm25 import BM25Index, tokenize
+from core.memory.bm25 import tokenize
+from core.memory.segmented_bm25 import SegmentedBM25Index
 
 
 MemoryTier = Literal["episodic", "semantic", "procedural", "asset_profile"]
@@ -73,8 +74,8 @@ class MemoryRecord(BaseModel):
     confidence: float = 1.0
     quarantined: bool = False
     source_trace_ids: list[str] = Field(default_factory=list)
-    # provenance-linked snapshot of the evidence observed when this memory was written,
-    # so a recurring incident can be resolved by recall instead of re-investigation.
+    # Provenance-linked historical evidence.  It may explain why a memory exists,
+    # but it is never current-run evidence; a recurrence must be freshly probed.
     evidence_snapshot: list[dict] = Field(default_factory=list)
     # Phase B memory dynamics (see core/evolve/memory_ops.py):
     #   links        — A-MEM associative links to same-family memory_ids (Xu+ 2025)
@@ -87,6 +88,14 @@ class MemoryRecord(BaseModel):
     strength: float = 1.0
     access_count: int = 0
     superseded_by: str | None = None
+
+
+class MemoryRepository(Protocol):
+    """Durable source used only at offline consolidation boundaries."""
+
+    def load_records(self, *, include_quarantined: bool = True) -> list[MemoryRecord]: ...
+
+    def sync_records(self, records: Sequence[MemoryRecord]) -> list[Any]: ...
 
 
 def _structural_prior(record: "MemoryRecord") -> float:
@@ -118,10 +127,87 @@ class TieredMemoryStore:
     excluded from ``active()`` and ``retrieve()``.
     """
 
-    def __init__(self, enabled: bool = True):
+    def __init__(
+        self,
+        enabled: bool = True,
+        *,
+        lexical_seal_threshold: int = 1_000,
+        lexical_compact_segment_threshold: int = 8,
+        repository: MemoryRepository | None = None,
+    ):
         self.enabled = enabled
         self._records: list[MemoryRecord] = []
         self._by_id: dict[str, MemoryRecord] = {}
+        self._indexed_assets: dict[str, set[str]] = {}
+        self._asset_to_ids: dict[str, set[str]] = {}
+        self._repository = repository
+        self._lexical = SegmentedBM25Index(
+            seal_threshold=lexical_seal_threshold,
+            compact_segment_threshold=lexical_compact_segment_threshold,
+        )
+
+    @classmethod
+    def from_repository(
+        cls,
+        repository: MemoryRepository,
+        *,
+        enabled: bool = True,
+        lexical_seal_threshold: int = 1_000,
+        lexical_compact_segment_threshold: int = 8,
+    ) -> "TieredMemoryStore":
+        """Restore complete memory records and rebuild the derived local index."""
+        store = cls(
+            enabled,
+            lexical_seal_threshold=lexical_seal_threshold,
+            lexical_compact_segment_threshold=lexical_compact_segment_threshold,
+            repository=repository,
+        )
+        store.seed(repository.load_records(include_quarantined=True))
+        return store
+
+    def flush(self) -> list[Any]:
+        """Atomically persist the current memory snapshot when a repository exists."""
+        if self._repository is None:
+            return []
+        return self._repository.sync_records(self.records())
+
+    @staticmethod
+    def _lexical_tokens(record: MemoryRecord) -> list[str]:
+        return tokenize(record.text) + [tag.lower() for tag in record.tags]
+
+    def _unindex_assets(self, memory_id: str) -> bool:
+        was_indexed = memory_id in self._indexed_assets
+        for asset_id in self._indexed_assets.pop(memory_id, set()):
+            ids = self._asset_to_ids.get(asset_id)
+            if ids is None:
+                continue
+            ids.discard(memory_id)
+            if not ids:
+                del self._asset_to_ids[asset_id]
+        return was_indexed
+
+    def reindex(self, memory_id: str) -> bool:
+        """Refresh one record after an in-place text, tag, or asset mutation.
+
+        Memory records remain mutable because the evolution operators reinforce
+        them in place.  Those operators call this method whenever a field used by
+        retrieval changes; lifecycle-only fields such as confidence or strength do
+        not require an index write.
+        """
+        record = self._by_id.get(memory_id)
+        if record is None:
+            return False
+        was_indexed = self._unindex_assets(memory_id)
+        if record.quarantined:
+            if was_indexed:
+                self._lexical.delete(memory_id)
+            return True
+        assets = set(record.asset_ids)
+        self._indexed_assets[memory_id] = assets
+        for asset_id in assets:
+            self._asset_to_ids.setdefault(asset_id, set()).add(memory_id)
+        self._lexical.upsert(memory_id, self._lexical_tokens(record))
+        return True
 
     def seed(self, records: list[MemoryRecord]) -> None:
         """Bulk-add prior records (e.g. asset profiles). Same id guard as ``add``."""
@@ -134,6 +220,8 @@ class TieredMemoryStore:
             raise ValueError(f"duplicate memory_id: {record.memory_id}")
         self._records.append(record)
         self._by_id[record.memory_id] = record
+        if not record.quarantined:
+            self.reindex(record.memory_id)
 
     def get(self, memory_id: str) -> MemoryRecord | None:
         """Return the record with this id (quarantined included), or None."""
@@ -151,8 +239,20 @@ class TieredMemoryStore:
         """Mark a record untrusted; it stays for audit with a ``quarantine:<reason>`` tag."""
         record = self._by_id.get(memory_id)
         if record is not None:
+            was_active = not record.quarantined
             record.quarantined = True
             record.tags.append(f"quarantine:{reason}")
+            if was_active:
+                self._unindex_assets(memory_id)
+                self._lexical.delete(memory_id)
+
+    def index_health(self) -> dict[str, int | float | bool]:
+        """Expose measured lexical-index growth and compaction state."""
+        return self._lexical.health()
+
+    def compact_index(self, *, force: bool = False) -> bool:
+        """Compact obsolete lexical versions without changing memory history."""
+        return self._lexical.compact(force=force)
 
     def retrieve(
         self,
@@ -177,19 +277,23 @@ class TieredMemoryStore:
 
         query = [term.lower() for term in query_terms if term]
         assets = set(asset_ids)
-        active = [(index, rec) for index, rec in enumerate(self._records) if not rec.quarantined]
-
-        # Lexical base — Okapi BM25 over each record's full document: the text
-        # tokens plus its tag labels (tags carry non-text signals like skill:ids).
-        # Indexing the full text, not just the (often capped) tag list, is what
-        # gives BM25 the whole session to score — the difference between recall@5
-        # 0.894 (48-tag index) and 0.966 (full text) on LongMemEval.
-        bm25 = BM25Index({rec.memory_id: tokenize(rec.text) + [t.lower() for t in rec.tags] for _, rec in active})
+        insertion_order = {record.memory_id: index for index, record in enumerate(self._records)}
+        lexical_ids = {doc_id for doc_id, _ in self._lexical.rank_with_scores(query)}
+        asset_candidate_ids = {
+            memory_id
+            for asset_id in assets
+            for memory_id in self._asset_to_ids.get(asset_id, ())
+        }
+        candidate_ids = lexical_ids | asset_candidate_ids
 
         scored: list[tuple[float, int, float, MemoryRecord]] = []  # (base, index, struct_prior, rec)
         max_base = 0.0
-        for index, record in active:
-            lexical = bm25.score(query, record.memory_id) if query else 0.0
+        for memory_id in candidate_ids:
+            record = self._by_id[memory_id]
+            if record.quarantined:
+                continue
+            index = insertion_order[memory_id]
+            lexical = self._lexical.score(query, memory_id) if memory_id in lexical_ids else 0.0
             asset_hits = len(assets.intersection(record.asset_ids))
             if lexical <= 0.0 and asset_hits == 0:
                 continue                                   # no overlap, no recall

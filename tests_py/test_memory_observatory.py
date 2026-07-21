@@ -259,7 +259,7 @@ def test_cold_runs_have_no_observatory_and_capabilities_stay_honest():
     assert warm["capabilities"] == CAPABILITIES
     # Lifecycle operations and structured context-drop provenance are wired; retrieval
     # score tracing and UPDATE text mutation remain deliberately absent.
-    assert CAPABILITIES["decay_wired"] is True
+    assert CAPABILITIES["decay_wired"] is False
     assert CAPABILITIES["eviction_wired"] is True
     assert CAPABILITIES["conflict_update_wired"] is True
     assert CAPABILITIES["retrieval_scores"] is False

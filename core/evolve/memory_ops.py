@@ -1,6 +1,6 @@
 """Phase B — richer memory dynamics on top of the Phase A self-evolution loop.
 
-The persistent core is *managed*, not merely appended to. Four rule-based
+The learned memory state is *managed*, not merely appended to. Four rule-based
 mechanisms (no LLM in the hot path), each drawn from the recent agent-memory
 literature and each derived from real run signals — nothing here is synthesized:
 
@@ -176,17 +176,22 @@ def apply_route(memory: TieredMemoryStore, candidate: MemoryRecord, decision: Ro
     target.strength = 1.0                     # any hit refreshes retrievability
     target.access_count += 1                  # reuse: feeds utility-driven eviction
     if decision.op == "UPDATE":
+        retrieval_changed = False
         for t in candidate.tags:
             if t not in target.tags:
                 target.tags.append(t)
+                retrieval_changed = True
         for a in candidate.asset_ids:
             if a not in target.asset_ids:
                 target.asset_ids.append(a)
+                retrieval_changed = True
         target.confidence = min(conf_cap, target.confidence + 0.3)
         target.importance += 1.0
         target.source_trace_ids.extend(t for t in candidate.source_trace_ids if t not in target.source_trace_ids)
         if candidate.evidence_snapshot and not target.evidence_snapshot:
             target.evidence_snapshot = candidate.evidence_snapshot
+        if retrieval_changed:
+            memory.reindex(target.memory_id)
     return target.memory_id
 
 
@@ -269,6 +274,7 @@ def reflect(
         member_ids = [m.memory_id for m in members]
         if existing is not None:                       # keep an existing insight current
             before = _snap(existing)
+            retrieval_changed = False
             existing.strength = 1.0
             existing.importance = salience
             for mid in member_ids:
@@ -277,6 +283,9 @@ def reflect(
             for r in roots:
                 if r not in existing.tags:
                     existing.tags.append(r)
+                    retrieval_changed = True
+            if retrieval_changed:
+                memory.reindex(existing.memory_id)
             # NOT a REINFORCE: that op is a fixed += increment from a recall hit. This
             # re-derives importance ABSOLUTELY from the family's salience, so it can
             # move either way and routinely overwrites a REINFORCE increment. No
@@ -421,4 +430,5 @@ def memory_health(memory: TieredMemoryStore) -> dict[str, object]:
         "insights": sum(1 for r in active if "insight" in r.tags),
         "links": sum(len(r.links) for r in active),
         "by_tier": by_tier,
+        "index": memory.index_health(),
     }

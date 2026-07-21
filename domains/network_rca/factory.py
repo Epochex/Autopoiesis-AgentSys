@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from core.context.compiler import ContextCompiler
+from core.env import autopoiesis_env
 from core.llm.provider import OpenAICompatibleClient
 from core.memory.store import MemoryRecord, TieredMemoryStore
 from core.orchestrator.orchestrator import SingleAgentRCAOrchestrator
@@ -54,10 +55,22 @@ def build_network_rca_orchestrator(
     real_stats_path: str | Path | None = None,
     seed_memory: bool = True,
     context_strategy: str = "structured",
+    memory_dsn: str | None = None,
 ) -> SingleAgentRCAOrchestrator:
-    memory = TieredMemoryStore(enabled=memory_enabled)
-    if seed_memory:
-        memory.seed(load_memory_records())
+    resolved_memory_dsn = memory_dsn or autopoiesis_env("MEMORY_DSN")
+    if resolved_memory_dsn:
+        from core.memory.postgres_repository import PostgresMemoryRepository
+
+        repository = PostgresMemoryRepository(resolved_memory_dsn)
+        repository.initialize_schema()
+        memory = TieredMemoryStore.from_repository(repository, enabled=memory_enabled)
+        if seed_memory and not memory.records():
+            memory.seed(load_memory_records())
+            memory.flush()
+    else:
+        memory = TieredMemoryStore(enabled=memory_enabled)
+        if seed_memory:
+            memory.seed(load_memory_records())
     registry = SkillRegistry()
     if data_source == "mock":
         adapter = MockDeviceAdapter(ROOT / "fixtures" / "mock_device_responses.json")

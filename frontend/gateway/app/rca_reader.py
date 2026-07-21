@@ -192,8 +192,9 @@ def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rul
 def load_evolution(manifest_path: Path | None = None, passes: int = 4) -> dict[str, Any]:
     """Real self-evolution on the held-out stream (cold-vs-warm, StreamBench-style).
 
-    Recurring incidents get resolved from provenance-linked memory instead of
-    re-investigation — probes/cost fall to zero at unchanged accuracy. All real data.
+    Recurring incidents may use provenance-linked memory to narrow the probe plan,
+    but every diagnosis still obtains fresh evidence. Historical snapshots are
+    never replayed as current observations.
     """
     from core.evolve import compare_cold_vs_warm
 

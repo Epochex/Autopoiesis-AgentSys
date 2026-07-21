@@ -11,6 +11,13 @@ dependencies = [
 dev = [
   "pytest>=8.0",
 ]
+vector-bench = [
+  "numpy>=1.24",
+  "faiss-cpu>=1.7",
+]
+postgres = [
+  "psycopg[binary]>=3.2,<4",
+]
 ingestor = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
@@ -38,3 +45,6 @@ rerank = [
 [tool.pytest.ini_options]
 testpaths = ["tests_py"]
 pythonpath = ["."]
+markers = [
+  "performance: opt-in scale and latency benchmarks",
+]

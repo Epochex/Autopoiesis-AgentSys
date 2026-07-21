@@ -31,7 +31,10 @@ class SingleAgentRCAOrchestrator:
     result aborts the run with PermissionError (recorded as a blocked tool call).
     """
 
-    # episodic recall: reuse a prior incident's observed evidence only when the match is strong
+    # Episodic recall proposes a prior incident as a hypothesis only.  Historical
+    # evidence is never accepted as evidence about the current incident; every run
+    # still performs fresh read-only probes before a remembered root cause can be
+    # confirmed.
     EPISODIC_RECALL_MIN_CONFIDENCE = 0.9
     EPISODIC_RECALL_MIN_OVERLAP = 0.8
     # procedural shortcut: narrow probing to remembered skills only on strong, proven patterns
@@ -80,25 +83,10 @@ class SingleAgentRCAOrchestrator:
 
         query = {t.lower() for t in case.query_terms}
         recalled = self._recall_episodic(memories.get("episodic", []), query, case.assets)
-        if recalled is not None:
-            # a strongly-matching prior incident lets us reuse its observed, provenance-linked
-            # evidence and skip fresh probing entirely — the reasoner still re-derives the
-            # verdict and the verifier still checks every citation was observed.
-            evidence = [dict(item) for item in recalled.evidence_snapshot]
-            total_cost = 0.0
-            self._record(
-                run_id,
-                case.id,
-                "memory_resolved",
-                {
-                    "memory_id": recalled.memory_id,
-                    "evidence_ids": [e.get("evidence_id") for e in evidence],
-                    "recalled_confidence": round(recalled.confidence, 3),
-                },
-            )
-            self._record(run_id, case.id, "skills_exposed", {"skills": []})
-        else:
-            evidence, total_cost = self._probe_with_skills(run_id, case, query, memories.get("procedural", []))
+        # Even a strong episodic match is only a prior.  Procedural memory may
+        # narrow the probe list, but the evidence passed to the reasoner always
+        # comes from tools executed in this run.
+        evidence, total_cost = self._probe_with_skills(run_id, case, query, memories.get("procedural", []))
 
         self._last_evidence = evidence
         context = self.context_compiler.compile(
@@ -114,12 +102,38 @@ class SingleAgentRCAOrchestrator:
         report = self.verifier.verify(diagnosis, evidence, [])
         self._record(run_id, case.id, "verifier_result", report.model_dump(mode="json"))
         tool_calls = sum(1 for e in self._run_events if e.kind == "tool_called" and not e.payload.get("blocked"))
+        remembered_root = self._remembered_root(recalled) if recalled is not None else None
+        if (
+            recalled is not None
+            and remembered_root
+            and tool_calls > 0
+            and report.passed
+            and diagnosis.root_cause_key == remembered_root
+        ):
+            # ``memory_resolved`` now means "a recalled hypothesis was confirmed
+            # by fresh evidence", never "old evidence was replayed as current".
+            self._record(
+                run_id,
+                case.id,
+                "memory_resolved",
+                {
+                    "memory_id": recalled.memory_id,
+                    "remembered_root_cause_key": remembered_root,
+                    "historical_evidence_ids": [
+                        item.get("evidence_id") for item in recalled.evidence_snapshot if item.get("evidence_id")
+                    ],
+                    "current_evidence_ids": [item.get("evidence_id") for item in evidence if item.get("evidence_id")],
+                    "fresh_probe_count": tool_calls,
+                    "freshness_verified": True,
+                    "recalled_confidence": round(recalled.confidence, 3),
+                },
+            )
         self._record(run_id, case.id, "cost_observed", {"tool_cost": total_cost, "tool_calls": tool_calls})
         self._record(run_id, case.id, "diagnosis_completed", diagnosis.model_dump(mode="json"))
         return diagnosis, report
 
     def _recall_episodic(self, episodic: list[Any], query: set[str], assets: list[str]) -> Any | None:
-        """Return the first episodic record strong enough to resolve the case from memory."""
+        """Return the first episodic record strong enough to be a current hypothesis."""
         for record in episodic:
             rec_terms = {t.lower() for t in record.tags}
             overlap = len(query & rec_terms) / len(query) if query else 0.0
@@ -130,6 +144,14 @@ class SingleAgentRCAOrchestrator:
                 and set(assets) & set(record.asset_ids)
             ):
                 return record
+        return None
+
+    @staticmethod
+    def _remembered_root(record: Any) -> str | None:
+        """Read the explicitly stored root key; never infer it from prose."""
+        for tag in getattr(record, "tags", []):
+            if tag.startswith("root:") and len(tag) > len("root:"):
+                return tag[len("root:"):]
         return None
 
     def _probe_with_skills(

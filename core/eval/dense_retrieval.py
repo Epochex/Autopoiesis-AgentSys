@@ -58,6 +58,9 @@ from typing import Callable, Sequence
 # constant — does not require the optional extra to be installed.
 
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+DEFAULT_HNSW_M = 32
+DEFAULT_HNSW_EF_CONSTRUCTION = 200
+DEFAULT_HNSW_EF_SEARCH = 128
 # bge-* asymmetric retrieval: the short query gets an instruction prefix, passages do not.
 BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 
@@ -131,7 +134,16 @@ class DenseIndex:
     Deterministic: score ties break on document id, matching the sparse retrievers.
     """
 
-    def __init__(self, doc_ids: Sequence[str], embeddings, index_type: str = "flat", *, hnsw_m: int = 32):
+    def __init__(
+        self,
+        doc_ids: Sequence[str],
+        embeddings,
+        index_type: str = "flat",
+        *,
+        hnsw_m: int = DEFAULT_HNSW_M,
+        hnsw_ef_construction: int = DEFAULT_HNSW_EF_CONSTRUCTION,
+        hnsw_ef_search: int = DEFAULT_HNSW_EF_SEARCH,
+    ):
         import faiss
         import numpy as np
 
@@ -147,8 +159,8 @@ class DenseIndex:
             self.index.add(self._emb)
         elif index_type == "hnsw":
             idx = faiss.IndexHNSWFlat(self.dim, hnsw_m, faiss.METRIC_INNER_PRODUCT)
-            idx.hnsw.efConstruction = 200
-            idx.hnsw.efSearch = 128
+            idx.hnsw.efConstruction = hnsw_ef_construction
+            idx.hnsw.efSearch = hnsw_ef_search
             idx.add(self._emb)
             self.index = idx
         elif index_type == "binary":
@@ -167,9 +179,19 @@ class DenseIndex:
         model_name: str = DEFAULT_MODEL,
         index_type: str = "flat",
         cache_key: str | None = None,
+        hnsw_m: int = DEFAULT_HNSW_M,
+        hnsw_ef_construction: int = DEFAULT_HNSW_EF_CONSTRUCTION,
+        hnsw_ef_search: int = DEFAULT_HNSW_EF_SEARCH,
     ) -> "DenseIndex":
         emb = embed(list(doc_texts), model_name=model_name, is_query=False, cache_key=cache_key)
-        obj = cls(doc_ids, emb, index_type)
+        obj = cls(
+            doc_ids,
+            emb,
+            index_type,
+            hnsw_m=hnsw_m,
+            hnsw_ef_construction=hnsw_ef_construction,
+            hnsw_ef_search=hnsw_ef_search,
+        )
         obj.model_name = model_name
         return obj
 

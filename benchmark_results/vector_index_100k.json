@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "benchmark": "flat-vs-hnsw-scale",
+  "config": {
+    "sizes": [
+      100000
+    ],
+    "dim": 128,
+    "queries": 100,
+    "top_k": 10,
+    "seed": 20260721,
+    "query_noise": 0.02,
+    "hnsw_m": 32,
+    "ef_construction": 200,
+    "ef_search_values": [
+      32,
+      64,
+      128,
+      256
+    ],
+    "build_threads": 8,
+    "latency_threads": 1,
+    "throughput_threads": 8,
+    "warmup_queries": 10,
+    "throughput_repeats": 3
+  },
+  "environment": {
+    "python": "3.10.12",
+    "platform": "Linux-5.15.0-185-generic-x86_64-with-glibc2.35",
+    "cpu_count": 24,
+    "faiss": "1.14.3",
+    "numpy": "2.2.6"
+  },
+  "results": [
+    {
+      "size": 100000,
+      "dim": 128,
+      "queries": 100,
+      "top_k": 10,
+      "dataset": "deterministic normalized Gaussian vectors with perturbed in-corpus queries",
+      "dataset_fingerprint": "4f5617ff3f414624",
+      "query_noise": 0.02,
+      "generation_seconds": 0.2113,
+      "raw_vector_bytes": 51200000,
+      "rss_after_corpus_bytes": 111996928,
+      "flat": {
+        "index": "IndexFlatIP",
+        "recall_at_10_vs_flat": 1.0,
+        "recall_at_k_vs_flat": 1.0,
+        "build_seconds": 0.0346,
+        "build_vectors_per_second": 2890180.26,
+        "serialized_index_bytes": 51200045,
+        "rss_before_build_bytes": 111996928,
+        "rss_after_build_bytes": 167727104,
+        "rss_build_delta_bytes": 55730176,
+        "process_peak_rss_bytes": 270299136,
+        "build_threads": 8,
+        "p50_ms": 3.9126,
+        "p95_ms": 4.8131,
+        "p99_ms": 4.965,
+        "mean_ms": 4.0295,
+        "sequential_qps": 247.64,
+        "latency_threads": 1,
+        "batch_qps_median": 1230.1,
+        "batch_qps_min": 1171.28,
+        "throughput_threads": 8,
+        "repeats": 3
+      },
+      "hnsw": {
+        "index": "IndexHNSWFlat",
+        "m": 32,
+        "ef_construction": 200,
+        "build_seconds": 30.9938,
+        "build_vectors_per_second": 3226.45,
+        "serialized_index_bytes": 78420834,
+        "rss_before_build_bytes": 114241536,
+        "rss_after_build_bytes": 197664768,
+        "rss_build_delta_bytes": 83423232,
+        "process_peak_rss_bytes": 354779136,
+        "build_threads": 8,
+        "search_sweep": [
+          {
+            "ef_search": 32,
+            "recall_at_10_vs_flat": 0.856,
+            "recall_at_k_vs_flat": 0.856,
+            "p50_ms": 0.1897,
+            "p95_ms": 0.236,
+            "p99_ms": 0.2542,
+            "mean_ms": 0.195,
+            "sequential_qps": 5051.27,
+            "latency_threads": 1,
+            "batch_qps_median": 13184.39,
+            "batch_qps_min": 12502.03,
+            "throughput_threads": 8,
+            "repeats": 3
+          },
+          {
+            "ef_search": 64,
+            "recall_at_10_vs_flat": 0.869,
+            "recall_at_k_vs_flat": 0.869,
+            "p50_ms": 0.3313,
+            "p95_ms": 0.3761,
+            "p99_ms": 0.3898,
+            "mean_ms": 0.334,
+            "sequential_qps": 2969.13,
+            "latency_threads": 1,
+            "batch_qps_median": 6866.22,
+            "batch_qps_min": 6729.5,
+            "throughput_threads": 8,
+            "repeats": 3
+          },
+          {
+            "ef_search": 128,
+            "recall_at_10_vs_flat": 0.899,
+            "recall_at_k_vs_flat": 0.899,
+            "p50_ms": 0.6255,
+            "p95_ms": 0.6626,
+            "p99_ms": 0.6789,
+            "mean_ms": 0.6284,
+            "sequential_qps": 1583.95,
+            "latency_threads": 1,
+            "batch_qps_median": 3628.06,
+            "batch_qps_min": 3556.66,
+            "throughput_threads": 8,
+            "repeats": 3
+          },
+          {
+            "ef_search": 256,
+            "recall_at_10_vs_flat": 0.944,
+            "recall_at_k_vs_flat": 0.944,
+            "p50_ms": 1.2103,
+            "p95_ms": 1.262,
+            "p99_ms": 1.2823,
+            "mean_ms": 1.2159,
+            "sequential_qps": 820.3,
+            "latency_threads": 1,
+            "batch_qps_median": 1918.6,
+            "batch_qps_min": 1900.46,
+            "throughput_threads": 8,
+            "repeats": 3
+          }
+        ]
+      },
+      "faiss_version": "1.14.3"
+    }
+  ],
+  "total_seconds": 32.8341
+}

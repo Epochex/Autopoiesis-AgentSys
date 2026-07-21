@@ -105,11 +105,13 @@ def test_supersede_keeps_an_idempotent_two_way_provenance_chain():
 
 
 def test_bm25_backed_store_short_circuits_when_disabled_or_limit_nonpositive(monkeypatch):
-    class UnexpectedIndexConstruction:
-        def __init__(self, *_args, **_kwargs):
-            raise AssertionError("BM25 index must not be built for an abstaining store")
+    def unexpected_index_read(*_args, **_kwargs):
+        raise AssertionError("lexical index must not be queried by an abstaining store")
 
-    monkeypatch.setattr("core.memory.store.BM25Index", UnexpectedIndexConstruction)
+    monkeypatch.setattr(
+        "core.memory.segmented_bm25.SegmentedBM25Index.rank_with_scores",
+        unexpected_index_read,
+    )
 
     disabled = TieredMemoryStore(enabled=False)
     disabled.add(_record("disabled-record", tags=["carrier"]))

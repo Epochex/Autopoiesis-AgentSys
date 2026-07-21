@@ -26,11 +26,9 @@ _QUARANTINE_PREFIX = "quarantine:"
 _MAX_SUMMARY_CHARS = 240
 
 # A fact about the code, not a toggle: does the kernel actually run this lifecycle path?
-#   decay_wired          — strength-based forgetting runs in the consolidation loop. Now
-#                          TRUE: run_evolving_stream(capacity_budget=B) calls utility_evict
-#                          each pass, so memories are forgotten under a budget (EVICT ops
-#                          appear in the observatory event stream). decay_and_forget() is
-#                          the time-decay baseline it is measured against.
+#   decay_wired          — whether decay_and_forget() itself runs in the production loop.
+#                          It does not. The loop uses utility_evict(), whose score includes
+#                          recency but is not equivalent to time-decay forgetting.
 #   eviction_wired       — capacity-budgeted UTILITY eviction (utility_evict) is the wired
 #                          path — worth (importance+access+recency+centrality), not age
 #                          alone, decides what is forgotten.
@@ -44,7 +42,7 @@ _MAX_SUMMARY_CHARS = 240
 #   update_text_mutation — apply_route()'s UPDATE merges tags/assets/confidence but
 #                          never rewrites target.text, so there is no text diff.
 CAPABILITIES: dict[str, bool] = {
-    "decay_wired": True,
+    "decay_wired": False,
     "eviction_wired": True,
     "conflict_update_wired": True,
     "retrieval_scores": False,

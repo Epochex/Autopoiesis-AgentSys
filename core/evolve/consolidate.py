@@ -1,7 +1,7 @@
 """Offline self-evolution: turn a completed trajectory into durable learning.
 
 This is the "background re-evolution" half of the architecture — it consumes the
-trace ledger of one run and writes back into the persistent core:
+trace ledger of one run and writes back into the warm memory store:
 
   * episodic  — this specific incident (query → root cause, cited evidence)
   * semantic  — the recurring pattern (root-cause key), confidence grows on reuse
@@ -122,9 +122,9 @@ def consolidate_run(
                 winning.append(name)
 
     if passed and root_key:
-        # episodic: the concrete incident (with a provenance-linked evidence snapshot so
-        # a future recurrence can be resolved by recall). Skip if this run was ITSELF a
-        # recall — no point storing a duplicate of what we just remembered.
+        # Episodic: the concrete incident with its historical evidence provenance.
+        # A future recurrence may use it as a hypothesis, but must confirm it with
+        # fresh probes. Skip a freshly-confirmed recurrence to avoid a duplicate.
         if not resolved_from_memory:
             epi = MemoryRecord(
                 memory_id=f"epi-{case.id}-{uuid4().hex[:6]}", tier="episodic",
@@ -193,12 +193,16 @@ def consolidate_run(
         proc = memory.get(proc_id)
         if proc is not None:
             before = _snap(proc)
+            retrieval_changed = False
             proc.confidence = min(conf_cap, proc.confidence + 0.4)
             proc.importance += 1.0
             proc.strength = 1.0
             for st in skill_tags:
                 if st not in proc.tags:
                     proc.tags.append(st)
+                    retrieval_changed = True
+            if retrieval_changed:
+                memory.reindex(proc.memory_id)
             report.reinforced.append(proc_id)
             _emit(recorder, "REINFORCE", proc_id, proc.tier, before=before, after=_snap(proc))
         elif winning:
@@ -267,4 +271,7 @@ def consolidate_run(
                 recorder, "INSIGHT", insight_id, insight.tier,
                 after=_snap(insight), source_memory_ids=list(insight.links),
             )
+    # All memory mutations from one verified run cross the durable boundary in a
+    # single repository transaction. With no repository this remains a no-op.
+    memory.flush()
     return report

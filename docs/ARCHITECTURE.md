@@ -15,8 +15,8 @@ review the dominant signal.
 ```text
 alert / task
   → tiered memory retrieve            (core/memory)
-  → episodic recall shortcut          (reuse a provenance-linked evidence snapshot on recurrence)
-    ── or ── probe read-only skills    (attention-selected shortlist)
+  → episodic hypothesis               (historical evidence is provenance, never current state)
+  → probe read-only skills             (fresh evidence; procedural memory may narrow the shortlist)
   → evidence-aware context compile     (core/context/compiler.py, to a token budget)
   → reasoner                           (domains/network_rca/reasoner.py — rules by default; optional DeepSeek LLM)
   → citation verifier                  (core/verifier/verifier.py)
@@ -57,8 +57,30 @@ cause / skill). This is not plain RAG — memory is a *lifecycle*:
 | write routing ADD / UPDATE / NOOP | Mem0 | `evolve/memory_ops.py` | ✅ wired |
 | associative links (top-k, bidirectional) | A-MEM | `evolve/memory_ops.py` | ✅ wired |
 | importance-gated reflection → insight | Generative Agents | `evolve/memory_ops.py` | ✅ wired |
-| decay / forgetting below a floor | Ebbinghaus | `evolve/memory_ops.py` | ⚠️ implemented + unit-tested, **not yet wired into the loop** |
+| decay / forgetting below a floor | Ebbinghaus | `evolve/memory_ops.py` | ⚠️ baseline implemented and tested, not wired into the loop |
+| capacity-budgeted utility eviction | lifecycle signals | `evolve/memory_ops.py` | ✅ wired into the evolving stream |
 | quarantine (kept for audit, excluded from retrieval) | — | `memory/store.py` | ✅ wired |
+
+Memory retrieval no longer constructs a complete BM25 index inside each request.
+`SegmentedBM25Index` maintains a mutable delta, immutable sealed segments, global corpus
+statistics, document versions and tombstones. `TieredMemoryStore.add`, `reindex`, and
+`quarantine` update that index synchronously, so a successful write is immediately visible.
+Compaction builds outside the mutation lock and swaps a complete generation under a short
+lock. `IndexMaintenanceWorker` performs threshold checks outside request handling and exposes
+attempt, abort, failure and duration counters.
+
+When `AUTOPOIESIS_MEMORY_DSN` is configured, `PostgresMemoryRepository` is the durable source
+of truth. A current-state row and a full-snapshot event are committed in one transaction;
+per-record versions reject lost updates, a database trigger makes events append-only, and
+monotonic consumer checkpoints cannot pass the committed high-water mark. Startup restores
+all records and rebuilds the local lexical index. Consolidation flushes one verified run as a
+single transaction. Without a DSN, the deterministic test/default mode remains in process.
+
+Natural-language vector retrieval uses the same lifecycle boundary through
+`VectorIndexLifecycle`: immutable FAISS HNSW base, exact Flat delta, version-filtered merged
+search, checksummed snapshots and an atomic `CURRENT` pointer. FAISS HNSW is never modified
+to remove a node. Full research rationale and churn results are in
+[`INDEX_LIFECYCLE_RESEARCH.md`](./INDEX_LIFECYCLE_RESEARCH.md).
 
 A topology-graph / logical-retrieval variant
 ([`topo_graph.py`](../core/memory/topo_graph.py),
@@ -108,7 +130,9 @@ read-only gate at every layer.
   (self-pentest over a labeled RFC-5737 **mock** target), `enterprise_ops` (contract-checked
   anomaly **simulation** on synthetic data).
 
-`python3 -m pytest tests_py/ -q` → **125 tests**.
+`python3 -m pytest tests_py/ -q` → **316 passed, 13 skipped** in the zero-dependency
+environment; **330 passed, 7 skipped** with the FAISS benchmark environment. PostgreSQL 17
+integration is enabled separately with `AUTOPOIESIS_TEST_POSTGRES_DSN`.
 
 ## Research backbone
 

@@ -1,0 +1,59 @@
+{
+  "config": {
+    "documents": 100000,
+    "updates": 10000,
+    "deletes": 10000,
+    "queries": 100,
+    "seed": 23
+  },
+  "initial_ingest_seconds": 2.7245,
+  "fresh_monolithic_build_seconds": 0.5686,
+  "query": {
+    "p50_ms": 11.1855,
+    "p95_ms": 11.5716,
+    "p99_ms": 11.6686,
+    "qps": 90.03
+  },
+  "legacy_rebuild_per_query": {
+    "samples": 5,
+    "p50_ms": 762.2809,
+    "p95_ms": 908.2604,
+    "p95_speedup_x": 78.49
+  },
+  "before_compaction": {
+    "generation": 120001,
+    "applied_offset": 120000,
+    "live_documents": 90000,
+    "physical_entries": 120000,
+    "obsolete_entries": 30000,
+    "obsolete_ratio": 0.25,
+    "segment_count": 21,
+    "delta_entries": 0,
+    "vocabulary_size": 42050,
+    "average_document_length": 11.0,
+    "compaction_due": true
+  },
+  "after_compaction": {
+    "generation": 120002,
+    "applied_offset": 120000,
+    "live_documents": 90000,
+    "physical_entries": 90000,
+    "obsolete_entries": 0,
+    "obsolete_ratio": 0.0,
+    "segment_count": 1,
+    "delta_entries": 0,
+    "vocabulary_size": 42050,
+    "average_document_length": 11.0,
+    "compaction_due": false
+  },
+  "compacted": true,
+  "compaction_seconds": 0.5903,
+  "physical_entries_reclaimed": 30000,
+  "physical_reduction_percent": 25.0,
+  "snapshot_bytes_before": 22172441,
+  "snapshot_bytes_after": 17403751,
+  "restore_seconds": 1.8973,
+  "ranking_equal_to_monolithic_bm25": true,
+  "restart_ranking_equal": true,
+  "snapshot_directory": "/tmp/autopoiesis-sparse-lifecycle-100k"
+}

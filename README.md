@@ -22,6 +22,8 @@ RAG 是检索原语,不是系统边界。这个仓库把记忆当作一个生命
 - **三层记忆**(情景/语义/程序)+ Mem0 式写入路由(ADD/UPDATE/NOOP)+ A-MEM 关联链 + 重要度门控反思(Generative-Agents 式)。
 - **检索核心是 Okapi BM25 全文 + 有界结构重排**(层级先验、A-MEM 中心度、重要度、recency),结构项只在近似平分时改变排序,不覆盖明显的词法赢家。
 - **写入侧生命周期**:冲突消解 `supersede`(新记忆改写同实体根因时退役旧的)、效用驱逐(容量预算下按效用淘汰,保护先验不动)。
+- **索引生命周期**:BM25 使用热增量倒排、不可变封存段、删除标记和后台压缩，查询按活跃集合的全局统计统一评分；十万条、20% 变更量下相对每次查询重建索引的 P95 快 **78.49 倍**，压缩回收 **25%** 物理条目且 Top-10 完全一致。
+- **事实持久化**:可选 PostgreSQL 当前状态表与只追加事件流在同一事务提交，使用乐观版本拒绝并发覆盖，并用单调事件偏移驱动索引校验和重建；本地 BM25/HNSW 是可丢弃的派生索引，不承担业务事实源。设置 `AUTOPOIESIS_MEMORY_DSN` 后，进程重启会恢复完整记忆并重建检索索引。
 
 在 LongMemEval-500 的同一 LLM-free recall@k 指标下(该 harness 逐位复现仓库自报的数字):
 
@@ -34,6 +36,8 @@ RAG 是检索原语,不是系统边界。这个仓库把记忆当作一个生命
 - **可插拔混合检索器** `core/memory/hybrid_kb.py`:BM25 + dense(bge / faiss-HNSW)+ RRF 融合 + cross-encoder 精排。**按数据类型路由**:自然语言文档用它,日志/事件不用。
   - 真 FortiOS 7.4 管理手册语料(9014 chunk、非循环内容标签)上,混合把 recall@10 从 **0.33 提到 0.42**。
   - IODA 事件检索上,等权 RRF 混合反而**低于**纯 BM25(0.245 vs 0.264)。根因诊断见 [`core/eval/HYBRID_DIAGNOSIS.md`](./core/eval/HYBRID_DIAGNOSIS.md):把 dense 路降权(w≈0.1–0.5)后混合微超 BM25(0.266);dense 的主要失败模式是时序歧义(对实体、错事件,占 86%),不是标识符模糊(11%)。
+- **FAISS 索引规模压测**:同一批确定性向量上以 Flat 精确结果作真值,实测 10 万与 100 万规模的构建时间、索引体积、P95、吞吐和 Recall@10。百万条 128 维向量上,HNSW 在 `efSearch=1024` 时 Recall@10 为 **0.846**、P95 **21.37 ms**,Flat P95 **36.42 ms**;代价是冷构建 **909.70 s**、索引 **784.13 MB**。完整参数曲线与复现命令见 [`docs/HNSW_SCALE_BENCHMARK.md`](./docs/HNSW_SCALE_BENCHMARK.md)。
+- **动态向量索引**:HNSW 只承担不可变基础代际，新版本进入精确增量层，删除由版本表立即过滤，后台锁外重建并原子切换。十万条向量经历一万次更新和一万次删除后，压缩回收两万条旧向量，P95 从 **1.34 ms** 降到 **0.98 ms**，重启结果一致。研究选型与边界见 [`docs/INDEX_LIFECYCLE_RESEARCH.md`](./docs/INDEX_LIFECYCLE_RESEARCH.md)。
 
 ## 上下文压缩
 
@@ -54,7 +58,7 @@ RAG 是检索原语,不是系统边界。这个仓库把记忆当作一个生命
 
 真实 R230 FortiGate 留出集(6 例 × 4 pass,规则推理器)上的头条数字:
 
-- 自演化"越用越省":复现事件由溯源记忆直接召回、零新增探针,探针成本 **−75%**(32→8),根因准确率与引用核验保持 **100%**。
+- 复现事件可命中溯源记忆,但历史 `evidence_snapshot` 只作假设来源;每次诊断仍执行当前只读取证,当前证据通过 verifier 后才标记记忆确认。真实留出流修正后为 **32→32 次取证(Δ0%)**,根因准确率与引用核验均保持 **100%**;原 −75% 数字已作废,因为它来自跳过当前取证。
 - 消融:关掉技能调度,准确率 **100%→16.7%**。
 
 注意口径:N=6 + 确定性规则推理器,这里的 100% 是六类真实事件被正确分类(接线正确 + 权限门控证据路由),不是学到的泛化。复现:
@@ -103,4 +107,4 @@ frontend/           React/Vite 战术态势界面 + 记忆 observatory + FastAPI
 
 ## 研究参考
 
-CoALA(arXiv:2309.02427)· Mem0(2504.19413)· A-MEM(2502.12110)· Generative Agents(2304.03442)· StreamBench(2406.08747)· LongMemEval(2410.10813)。带核对过 arXiv 号的完整引用见 [docs/BENCHMARKS.md](./docs/BENCHMARKS.md)。
+CoALA(arXiv:2309.02427)· Mem0(2504.19413)· A-MEM(2502.12110)· Generative Agents(2304.03442)· StreamBench(2406.08747)· LongMemEval(2410.10813)· FreshDiskANN· SPFresh· Quake。记忆研究引用见 [docs/BENCHMARKS.md](./docs/BENCHMARKS.md)，动态索引研究见 [docs/INDEX_LIFECYCLE_RESEARCH.md](./docs/INDEX_LIFECYCLE_RESEARCH.md)。

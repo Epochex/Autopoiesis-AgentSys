@@ -35,3 +35,6 @@ eval_mem_compare/*.log
 # optional dense/reranker eval
 .venv-dense/
 .dense_cache/
+
+# large, reproducible FAISS scale-benchmark indexes
+benchmark_results/indexes/

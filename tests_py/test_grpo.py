@@ -125,14 +125,16 @@ def test_apply_advantages_skips_quarantined_and_unknown_memories():
 
 
 # ── end-to-end on the real trace format ──────────────────────────────────────
-def test_grpo_over_replayed_real_ledger_credits_the_memory_resolved_rollout(tmp_path):
+def test_grpo_over_replayed_real_ledger_credits_the_memory_confirmed_rollout(tmp_path):
     """Cold rollout probes; after consolidation the warm rollout of the SAME case
-    resolves from episodic memory (cheaper). Replaying the persisted JSONL ledger
+    uses procedural memory to probe less and freshly confirms episodic memory. Replaying the persisted JSONL ledger
     and grouping by case must give the warm rollout the positive group-relative
     advantage, and applying it must reinforce exactly the recalled memory."""
     ledger_path = tmp_path / "grpo_trace.jsonl"
     orch = build_network_rca_orchestrator(ledger_path, seed_memory=False)
-    case = load_seed_cases()[0]
+    # This fixture initially exposes three relevant checks; after one verified
+    # run procedural memory retains the two checks that actually contributed.
+    case = load_seed_cases()[2]
     gt = load_ground_truth()
 
     orch.diagnose(case)                                            # cold: probes
@@ -142,7 +144,7 @@ def test_grpo_over_replayed_real_ledger_credits_the_memory_resolved_rollout(tmp_
     groups = build_groups(JSONLTraceLedger(ledger_path).replay(), gt)
     group = next(g for g in groups if g.case_id == case.id)
     cold, warm = group.samples
-    assert cold.probes > 0 and warm.probes == 0                    # the −probes signal
+    assert 0 < warm.probes < cold.probes                           # cheaper, never stale-evidence-only
     assert warm.resolved_from_memory and not cold.resolved_from_memory
     assert warm.reward > cold.reward                               # cost penalty bites
     assert warm.advantage > 0 > cold.advantage                     # group-relative

@@ -17,21 +17,25 @@ labelled as such in the same sentence.
 
 One agent processes a stream of real incidents over several passes (StreamBench-style
 online protocol). The first encounter is investigated normally; every recurrence is
-resolved from provenance-linked episodic memory (0 fresh probes). The verifier still
-re-checks every citation, so efficiency is never bought with correctness.
+matched against provenance-linked episodic memory, then re-probed against current
+state. Historical snapshots are never admitted as current evidence.
 
 | metric | cold (no learning) | warm (self-evolving) | Δ |
 |---|---|---|---|
-| read-only probes / tool calls | 32 | **8** | **−75.0%** |
-| tool cost | 32.0 | **8.0** | **−75.0%** |
+| read-only probes / tool calls | 32 | **32** | **0.0%** |
+| tool cost | 32.0 | **32.0** | **0.0%** |
 | root-cause accuracy | 1.00 | **1.00** | 0 |
 | citation-verify pass rate | 1.00 | **1.00** | 0 |
-| persistent memories | 0 | **19** | +19 |
+| learned in-process memories | 0 | **19** | +19 |
 
 *Real R230 FortiGate held-out set, 6 cases × 4 passes, rule reasoner, engine-independent.*
 
-The `−75%` is real *transfer over time*: passes 2–4 recall all 6 incidents from memory
-and probe zero times, at unchanged accuracy. This is the "越用越省" claim, measured.
+Passes 2–4 confirm all six recalled incidents using fresh current-run evidence. The
+earlier `−75%` result came from replaying each historical `evidence_snapshot` and skipping
+current probes; it has been removed because that verifies an old incident, not current state.
+On this held-out corpus the cold router already selects the minimal required checks, so safe
+memory confirmation does not reduce tool cost. Efficiency requires a separate measured case
+where procedural memory safely removes unnecessary cold-path checks.
 
 Reproduce (one command — prefers the real held-out, falls back to seed cases and says so):
 ```bash
@@ -75,7 +79,7 @@ Reproduce: `python3 examples/benchmarks.py` (§2 of its output).
 
 ## 3. Memory layer — managed, not just appended (Phase B)
 
-Between events the persistent core is *curated* by four rule-based mechanisms, each
+Between events the warm in-process store is *curated* by four rule-based mechanisms, each
 drawn from the recent agent-memory literature and each derived from real run signals:
 
 | mechanism | paper | what it does | live number |
@@ -278,10 +282,60 @@ python3 -m core.eval.fortios_corpus eval    # four-stage recall@k / nDCG@k table
 
 ---
 
+## 6. Flat versus HNSW at 100k and 1m vectors
+
+`core/eval/vector_index_benchmark.py` isolates index-engine behaviour from embedding-model
+quality. It generates deterministic normalized 128-dimensional vectors, takes exact
+`IndexFlatIP` top-10 as the oracle, and measures the production HNSW configuration
+(`M=32`, `efConstruction=200`) across six `efSearch` values.
+
+| vectors | Flat build | HNSW build | Flat index | HNSW index | HNSW Recall@10 / P95 |
+|---:|---:|---:|---:|---:|---:|
+| 100,000 | 0.03 s | 30.99 s | 51.20 MB | 78.42 MB | 0.899 / 0.66 ms (`ef=128`) |
+| 1,000,000 | 0.31 s | 909.70 s | 512.00 MB | 784.13 MB | 0.846 / 21.37 ms (`ef=1024`) |
+
+The million-vector result exposes the real trade-off: the previous default `efSearch=128`
+has P95 2.33 ms but only 0.532 Recall@10; raising it to 1024 reaches 0.846 Recall@10 while
+remaining faster than Flat's 36.42 ms P95. The 784 MB serialized HNSW index reloads in
+0.57 s, so a serving system should build offline, persist, and atomically swap generations
+instead of rebuilding in a request path.
+
+These are synthetic-vector index measurements, not natural-language relevance or production
+traffic numbers. Full six-point curves, hardware, memory, methodology, commands, and JSON
+artifacts are in [HNSW_SCALE_BENCHMARK.md](./HNSW_SCALE_BENCHMARK.md).
+
+---
+
+## 7. Dynamic index churn and compaction
+
+The lifecycle benchmark begins with 100,000 records, updates 10,000 ids, deletes another
+10,000 ids, then measures query behaviour before and after physical compaction.
+
+| path | before compaction | after compaction | reclaimed | restart |
+|---|---:|---:|---:|---:|
+| segmented BM25 | 120,000 physical / 90,000 live | 90,000 / 90,000 | 25.0% | exact Top-10 preserved |
+| HNSW base + Flat delta | 110,000 physical / 90,000 live | 90,000 / 90,000 | 20,000 vectors | result rows preserved |
+
+The previous memory-store path rebuilt BM25 inside every request. On the churned 90,000-live
+corpus its P95 was 908.26 ms across five samples; the persistent segmented index measured
+11.57 ms P95 across 100 queries, a 78.49x speedup. Compaction took 0.59 s and every pre/post/
+restart Top-10 matched a freshly constructed monolithic BM25.
+
+For 128-dimensional vectors, compaction reduced P95 from 1.34 ms to 0.98 ms and raised batch
+throughput from 751.30 to 1252.19 QPS. Recall@10 against exact Flat was 0.898 before and 0.912
+after the HNSW rebuild; build topology can change approximate results, so generation release
+must gate on a fixed recall target rather than byte reclamation alone. Full methodology,
+primary references, and limitations are in
+[INDEX_LIFECYCLE_RESEARCH.md](./INDEX_LIFECYCLE_RESEARCH.md).
+
+---
+
 ## Full test suite
 
 ```bash
-python3 -m pytest tests_py/ -q      # 125 tests: kernel + self-evolution + memory-ops + domains
+python3 -m pytest tests_py/ -q      # default: 316 passed, 13 skipped
+# with vector-bench extra: 330 passed, 7 skipped
+# opt-in 100k/1m performance regression: 2 passed
 ```
 
 ## References
