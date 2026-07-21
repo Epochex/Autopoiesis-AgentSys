@@ -18,6 +18,11 @@ vector-bench = [
 postgres = [
   "psycopg[binary]>=3.2,<4",
 ]
+# OPTIONAL. The core writes its own complete, replayable node ledger. Langfuse is
+# a downstream OpenTelemetry-backed projection for dashboards and annotation.
+observability = [
+  "langfuse>=4.7,<5",
+]
 ingestor = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",

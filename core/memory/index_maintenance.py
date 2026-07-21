@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import asdict, dataclass
-from typing import Callable
+from typing import Any, Callable
 
 
 @dataclass
@@ -35,6 +35,8 @@ class IndexMaintenanceWorker:
         *,
         check_interval_seconds: float = 60.0,
         name: str = "index-maintenance",
+        around_run: Callable[[str, dict[str, Any] | None, Callable[[], bool]], bool]
+        | None = None,
     ) -> None:
         if check_interval_seconds <= 0:
             raise ValueError("check_interval_seconds must be positive")
@@ -42,18 +44,29 @@ class IndexMaintenanceWorker:
         self._compact = compact
         self._interval = float(check_interval_seconds)
         self._name = name
+        self._around_run = around_run
         self._stats = MaintenanceStats()
         self._stats_lock = threading.Lock()
         self._run_lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._pending_context: dict[str, Any] | None = None
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     def stats(self) -> dict[str, int | float | bool | str | None]:
         with self._stats_lock:
             return asdict(self._stats)
 
-    def run_once(self) -> bool:
+    def run_once(self, context: dict[str, Any] | None = None) -> bool:
+        if self._around_run is not None:
+            return self._around_run(self._name, context, self._run_once)
+        return self._run_once()
+
+    def _run_once(self) -> bool:
         """Perform one policy check; return whether compaction completed."""
         if not self._run_lock.acquire(blocking=False):
             with self._stats_lock:
@@ -101,8 +114,10 @@ class IndexMaintenanceWorker:
         self._thread = threading.Thread(target=self._loop, name=self._name, daemon=True)
         self._thread.start()
 
-    def trigger(self) -> None:
+    def trigger(self, context: dict[str, Any] | None = None) -> None:
         """Request an early check without running compaction on the caller."""
+        with self._stats_lock:
+            self._pending_context = dict(context) if context is not None else None
         self._wake.set()
 
     def stop(self, timeout: float = 5.0) -> bool:
@@ -121,7 +136,10 @@ class IndexMaintenanceWorker:
             self._wake.clear()
             if self._stop.is_set():
                 break
-            self.run_once()
+            with self._stats_lock:
+                context = self._pending_context
+                self._pending_context = None
+            self.run_once(context=context)
 
     def __enter__(self) -> "IndexMaintenanceWorker":
         self.start()

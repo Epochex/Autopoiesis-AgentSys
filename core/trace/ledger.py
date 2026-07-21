@@ -31,6 +31,15 @@ class JSONLTraceLedger:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
+    @classmethod
+    def is_sync_boundary(cls, kind: str) -> bool:
+        """Return whether appending ``kind`` forces the current group to disk.
+
+        Observability and diagnostics use this public contract instead of
+        reaching into the ledger's implementation details.
+        """
+        return kind in cls._SYNC_KINDS
+
     def append(self, event: TraceEvent) -> None:
         """Durably append one event."""
         payload = (
@@ -42,7 +51,7 @@ class JSONLTraceLedger:
             written = 0
             while written < len(payload):
                 written += os.write(descriptor, payload[written:])
-            if event.kind in self._SYNC_KINDS:
+            if self.is_sync_boundary(event.kind):
                 os.fsync(descriptor)
         finally:
             try:

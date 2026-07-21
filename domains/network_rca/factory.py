@@ -65,7 +65,28 @@ def build_network_rca_orchestrator(
     vector_memory_enabled: bool | None = None,
     memory_embedder: Any | None = None,
     vector_options: dict[str, Any] | None = None,
+    observer: Any | None = None,
+    observability_path: str | Path | None = None,
 ) -> SingleAgentRCAOrchestrator:
+    if observer is None:
+        from core.observability import ExecutionObserver, LangfuseTraceExporter
+
+        exporters = []
+        langfuse_exporter = LangfuseTraceExporter.from_environment()
+        if langfuse_exporter is not None:
+            exporters.append(langfuse_exporter)
+        resolved_observability_path = observability_path or autopoiesis_env(
+            "OBSERVABILITY_PATH"
+        )
+        if resolved_observability_path is None:
+            trace_path = Path(ledger_path)
+            resolved_observability_path = trace_path.with_name(
+                f"{trace_path.stem}.observability.jsonl"
+            )
+        observer = ExecutionObserver(
+            resolved_observability_path,
+            exporters=exporters,
+        )
     resolved_memory_dsn = memory_dsn or autopoiesis_env("MEMORY_DSN")
     if resolved_memory_dsn:
         from core.memory.postgres_repository import PostgresMemoryRepository
@@ -138,6 +159,7 @@ def build_network_rca_orchestrator(
         ),
         diagnosis_builder=diagnosis_builder,
         ledger_path=ledger_path,
+        observer=observer,
     )
 
 

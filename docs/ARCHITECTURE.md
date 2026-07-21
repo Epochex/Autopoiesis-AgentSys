@@ -14,7 +14,7 @@ review the dominant signal.
 
 ```text
 alert / task
-  → BM25 / asset / HNSW / graph retrieve (core/memory)
+  → BM25 / asset / graph retrieve; optional HNSW dense route (core/memory)
   → episodic hypothesis               (historical evidence is provenance, never current state)
   → probe read-only skills             (fresh evidence; procedural memory may narrow the shortlist)
   → evidence-aware context compile     (core/context/compiler.py, to a token budget)
@@ -30,6 +30,12 @@ durable memory event stream before reasoning, and consolidates only verifier-app
 task-relevant skill shortlist and only clean, high-confidence memories. Write-capable
 skills are **hard-blocked** with defense in depth — a relevance filter, a spec-level
 check, and a result-level check (a skill that lies about being read-only is still caught).
+
+The service also emits a separate parent/child node trajectory for execution diagnosis.
+It groups one run by `trace_id`, connects repeated runs through `session_id`, and records
+retrieval, tools, context, reasoning, verification, memory writes, index maintenance and
+business-ledger persistence. Local replay is authoritative; optional Langfuse export runs
+through a bounded background queue. See [EXECUTION_OBSERVABILITY.md](./EXECUTION_OBSERVABILITY.md).
 
 ## Skill attention — `core/skills`
 
@@ -77,12 +83,13 @@ of truth. A current-state row and a full-snapshot event are committed in one tra
 per-record versions reject lost updates, a database trigger makes events append-only, and
 monotonic consumer checkpoints cannot pass the committed high-water mark. Startup restores
 all records and rebuilds the local indexes. `MemoryIndexProjector` consumes events in offset
-order and advances its checkpoint only after BM25, assets and HNSW accept the event. Store
+order and advances its checkpoint only after BM25, assets and the enabled vector route accept the event. Store
 flushes carry loaded versions, so concurrent processes cannot silently overwrite one another;
 a failed flush reloads the durable snapshot before another request is served. Without a DSN,
 the deterministic test/default mode remains in process.
 
-Online semantic memory retrieval uses the same lifecycle boundary through
+Online semantic memory retrieval is optional and disabled by default. Setting
+`AUTOPOIESIS_ENABLE_VECTOR_MEMORY=1` enables the same lifecycle boundary through
 `VectorIndexLifecycle`: immutable FAISS HNSW base, exact Flat delta, version-filtered merged
 search, checksummed snapshots and an atomic `CURRENT` pointer. FAISS HNSW is never modified
 to remove a node. Full research rationale and churn results are in

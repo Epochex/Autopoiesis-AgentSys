@@ -1,8 +1,9 @@
 # Résumé bullets: Autopoiesis-AgentSys
 
 Every number here is reproduced by `python3 examples/benchmarks.py` and
-`python3 -m pytest tests_py/ -q` (368 passed, 8 skipped; 14 PostgreSQL 17
-integration tests and 2 scale regressions are opt-in). Full method + citations in
+`python3 -m pytest tests_py/ -q` (383 passed, 8 skipped with the gateway extra). Persistence coverage consists
+of 2 opt-in PostgreSQL 17 container integration tests and 12 event-stream/projector logic
+unit tests; 2 scale regressions are also opt-in. Full method + citations in
 [docs/BENCHMARKS.md](./BENCHMARKS.md). Use these bullets verbatim; do not round up and do
 not drop the measurement scope.
 
@@ -24,7 +25,7 @@ first domain: internal-network root-cause analysis over operational evidence.
   curated real-log incident types and a deterministic rule reasoner; the same relevance
   gate is independently reproduced on synthetic statistics.
 - Engineered a **managed 3-tier memory** with ADD/UPDATE/NOOP write routing,
-  incremental segmented BM25, an online HNSW-base/Flat-delta semantic route,
+  incremental segmented BM25, an optional HNSW-base/Flat-delta semantic route gated off by default,
   bounded two-hop relation expansion, typed event histories, explicit reuse credit,
   utility eviction, and atomic index-generation compaction.
 - Hardened the online path: **CJK-aware context compilation into both rule and LLM reasoning**,
@@ -38,7 +39,7 @@ first domain: internal-network root-cause analysis over operational evidence.
   detection** (synthetic simulation).
 - Conforms to **LongMemEval** (ICLR'25, the external long-term-memory benchmark) via an
   **LLM-free recall@k harness**, reproducible with one command and no API key.
-- 368 passing automated tests, 14 opt-in PostgreSQL 17 integration tests, plus 2 opt-in scale regressions; one-command benchmark reproducer; live FastAPI console visualizing
+- 383 passing automated tests with the gateway extra, 2 opt-in PostgreSQL 17 container integration tests and 12 event-stream/projector logic unit tests, plus 2 opt-in scale regressions; one-command benchmark reproducer; live FastAPI console visualizing
   the real cold-vs-warm evolution curve, ablation, and per-case diagnosis traces.
 
 ## 中文（可直接粘贴）
@@ -52,7 +53,7 @@ first domain: internal-network root-cause analysis over operational evidence.
   根因准确率**从 100% 降至 16.7%**。实验使用 6 类精选真实日志故障和确定性规则推理器，
   同一相关性门控机制已在合成统计数据上独立复现。
 - 构建**受管理的三层记忆**（情景、语义、程序），包含 ADD/UPDATE/NOOP 写入路由、
-  增量分段 BM25、在线 HNSW 基础层与 Flat 增量层、两跳关系展开、类型化事件历史、
+  增量分段 BM25、默认关闭并按配置启用的 HNSW 基础层与 Flat 增量层、两跳关系展开、类型化事件历史、
   显式复用归因、效用驱逐及索引代际原子压缩。
 - 加固在线路径：**中文感知且同时接入规则与大模型推理的结构化上下文**、**三层只读技能硬门控**、**根因证据契约核验器**、
   **契约核验器**（前置、后置、不变量与落地回读）、**可回放类型化轨迹账本**（支撑逐组件回放消融）。
@@ -61,7 +62,7 @@ first domain: internal-network root-cause analysis over operational evidence.
   **契约式异常检测**（合成仿真）。
 - 对齐外部权威记忆基准 **LongMemEval**（ICLR'25）：提供**无需 LLM 的 recall@k 评测脚手架**，
   一条命令可复现、无需密钥。
-- 368 项自动化测试、14 项可选 PostgreSQL 17 集成测试与 2 项十万、百万级性能回归；一键基准复现脚本；FastAPI 控制台实时可视化真实冷热态演化曲线、消融与逐案诊断轨迹。
+- 安装网关依赖后 383 项自动化测试、2 项可选 PostgreSQL 17 容器集成测试、12 项事件流与投影逻辑单测及 2 项十万、百万级性能回归；一键基准复现脚本；FastAPI 控制台实时可视化真实冷热态演化曲线、消融与逐案诊断轨迹。
 
 ## Citations
 

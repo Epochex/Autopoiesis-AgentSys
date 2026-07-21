@@ -285,8 +285,8 @@ python3 -m core.eval.fortios_corpus eval    # four-stage recall@k / nDCG@k table
 ## 6. Flat versus HNSW at 100k and 1m vectors
 
 `core/eval/vector_index_benchmark.py` isolates index-engine behaviour from embedding-model
-quality. It generates deterministic normalized 128-dimensional vectors, takes exact
-`IndexFlatIP` top-10 as the oracle, and measures the production HNSW configuration
+quality. It generates deterministic normalized 128-dimensional Gaussian vectors, takes exact
+`IndexFlatIP` top-10 as the oracle, and measures the benchmark HNSW configuration
 (`M=32`, `efConstruction=200`) across six `efSearch` values.
 
 | vectors | Flat build | HNSW build | Flat index | HNSW index | HNSW Recall@10 / P95 |
@@ -296,9 +296,10 @@ quality. It generates deterministic normalized 128-dimensional vectors, takes ex
 
 The million-vector result exposes the real trade-off: the previous default `efSearch=128`
 has P95 2.33 ms but only 0.532 Recall@10; raising it to 1024 reaches 0.846 Recall@10 while
-remaining faster than Flat's 36.42 ms P95. The 784 MB serialized HNSW index reloads in
-0.57 s, so a serving system should build offline, persist, and atomically swap generations
-instead of rebuilding in a request path.
+remaining faster than Flat's 36.42 ms P95. The committed 1M artifact is a first-build run
+(`cache_hit=false`, `load_seconds=0.0`) and therefore contains no measured 1M reload time.
+A serving system should still build offline, persist, and atomically swap generations instead
+of rebuilding in a request path; the separate 100k lifecycle artifact measured a 0.7162 s load.
 
 These are synthetic-vector index measurements, not natural-language relevance or production
 traffic numbers. Full six-point curves, hardware, memory, methodology, commands, and JSON
@@ -333,8 +334,8 @@ primary references, and limitations are in
 ## Full test suite
 
 ```bash
-python3 -m pytest tests_py/ -q      # FAISS/psycopg environment: 368 passed, 8 skipped
-# PostgreSQL 17 integration subset: 14 passed when its opt-in DSN is supplied
+python3 -m pytest tests_py/ -q      # FAISS/psycopg/FastAPI environment: 383 passed, 8 skipped
+# persistence coverage: 2 opt-in PostgreSQL 17 container integrations + 12 logic unit tests
 # opt-in 100k/1m performance regression: 2 passed
 ```
 

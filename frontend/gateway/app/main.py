@@ -31,6 +31,7 @@ class RCADiagnosisRequest(BaseModel):
     """Select a server-validated case without accepting client-authored skills."""
 
     case_id: str = Field(min_length=1)
+    session_id: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 def _start_prewarm() -> None:
@@ -229,22 +230,75 @@ async def rca_diagnose(request: RCADiagnosisRequest) -> dict[str, Any]:
     case = _diagnosis_cases.get(request.case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="unknown validated RCA case_id")
-    diagnosis, report = await asyncio.to_thread(_evolving_service.diagnose, case)
+    diagnosis, report = await asyncio.to_thread(
+        _evolving_service.diagnose,
+        case,
+        session_id=request.session_id,
+    )
     consolidation = _evolving_service.last_consolidation
     evolution_findings = [
         event.payload
         for event in _evolving_service._run_events
         if event.kind == "system_evolution_analyzed"
     ]
+    runtime = _evolving_service.health()
+    memory_committed = consolidation is not None and runtime.get("last_error") is None
     return {
-        "ok": report.passed,
+        "ok": report.passed and memory_committed,
+        "overallStatus": "ok" if report.passed and memory_committed else "partial_failure",
+        "diagnosisVerified": report.passed,
+        "memoryCommitted": memory_committed,
         "runId": _evolving_service.last_run_id,
+        "sessionId": request.session_id,
         "diagnosis": diagnosis.model_dump(mode="json"),
         "verification": report.model_dump(mode="json"),
         "consolidation": asdict(consolidation) if consolidation is not None else None,
         "systemEvolution": evolution_findings,
-        "runtime": _evolving_service.health(),
+        "runtime": runtime,
     }
+
+
+@app.get("/api/rca/observability/traces")
+def rca_observation_traces(
+    limit: int = Query(default=50, ge=1, le=500),
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Recent complete or interrupted online trajectories with bottlenecks."""
+    if _evolving_service is None:
+        raise HTTPException(status_code=503, detail="evolving runtime is unavailable")
+    from core.observability import TraceAnalyzer
+
+    traces = TraceAnalyzer(_evolving_service.observer.ledger).recent(
+        limit=limit, session_id=session_id
+    )
+    return {
+        "traces": [trace.model_dump(mode="json", exclude={"nodes"}) for trace in traces],
+        "observability": _evolving_service.observer.health(),
+    }
+
+
+@app.get("/api/rca/observability/traces/{trace_id}")
+def rca_observation_trace(trace_id: str) -> dict[str, Any]:
+    """Every parent/child node and metric for one run."""
+    if _evolving_service is None:
+        raise HTTPException(status_code=503, detail="evolving runtime is unavailable")
+    from core.observability import TraceAnalyzer
+
+    try:
+        trace = TraceAnalyzer(_evolving_service.observer.ledger).trace(trace_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return trace.model_dump(mode="json")
+
+
+@app.get("/api/rca/observability/sessions/{session_id}")
+def rca_observation_session(session_id: str) -> dict[str, Any]:
+    """Cross-run node performance and evolution for one long-lived session."""
+    if _evolving_service is None:
+        raise HTTPException(status_code=503, detail="evolving runtime is unavailable")
+    from core.observability import TraceAnalyzer
+
+    return TraceAnalyzer(_evolving_service.observer.ledger).session(session_id)
 
 
 @app.get("/api/rca/evolution")
