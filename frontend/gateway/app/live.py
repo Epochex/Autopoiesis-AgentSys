@@ -607,6 +607,16 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
         # remediation playbook for its device role — NOT as an external WAN attacker.
         return _assess_internal_host(ip, lateral, ev, lang)
     if attacker is None:
+        # theater's bidirectional node analysis: ANY mined internal device is a valid
+        # subject, not just the deny_top_src laterals — its real deny count stands in
+        # for the lateral tuple, and its full graph profile grounds the assessment.
+        from .rca_reader import _load_device_graphs
+
+        for sub in _load_device_graphs().values():
+            devs = sub.get("devices") if isinstance(sub.get("devices"), list) else []
+            for d in devs:
+                if isinstance(d, dict) and d.get("ip") == ip:
+                    return _assess_internal_host(ip, [ip, d.get("deny") or 0], ev, lang, dev_hint=d)
         return {"ok": False, "text": "attacker not in held-out top sources"}
     net = ".".join(ip.split(".")[:3]) + ".0/24"
     block = next((b for b in ev["netblocks"] if b["cidr"] == net), None) or {"cidr": net, "count": attacker[1], "ips": [attacker]}
@@ -706,9 +716,11 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
     }
 
 
-def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str) -> dict[str, Any]:
-    """Assess an internal host (clicked from the lateral-source cluster) as a possible
-    compromised pivot: the attack it received, its weakness, and a role playbook."""
+def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str, dev_hint: dict | None = None) -> dict[str, Any]:
+    """Assess an internal host (clicked from the lateral-source cluster or the theater's
+    full expansion) as a possible compromised pivot: the attack it received, its
+    weakness, and a role playbook. `dev_hint` carries the mined graph profile when the
+    host is not in the exposed set (silent / DHCP-only devices)."""
     from . import providers
     from core.llm.provider import OpenAICompatibleClient
 
@@ -723,6 +735,10 @@ def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str) -> di
                 break
         if dev:
             break
+    if dev is None and dev_hint is not None:
+        _F = ("ip", "mac", "vendor", "os", "role", "flows", "deny", "accept", "topPorts", "threat", "name")
+        dev = {k: dev_hint.get(k) for k in _F if k in dev_hint}
+        dev["cidr"] = ".".join(ip.split(".")[:3]) + ".0/24"
     want = "Chinese" if lang == "zh" else "English"
     client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=50)
     instr = (

@@ -62,6 +62,9 @@
 .ls-fi.suggestion:hover { background: var(--paper-2); }
 .ls-fi.alert { background: var(--paper-2); }
 .ls-fi.on { background: var(--paper-3); border-left-color: var(--acid); }
+/* an alert row that can be promoted to the page-1 topology theater */
+.ls-fi.alert.linkable { cursor: pointer; }
+.ls-fi.alert.linkable:hover { background: var(--paper-3); border-left-color: var(--ink); }
 .ls-fi-top { display: flex; align-items: center; gap: 6px; }
 .ls-fi-kind { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
 .ls-fi-ts { font-family: var(--font-mono); font-size: 8.5px; color: var(--gray); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
@@ -81,6 +84,9 @@
 .ls-d-dev { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--ink); }
 .ls-d-svc { font-family: var(--font-mono); font-size: 10px; color: var(--gray); }
 .ls-d-mode { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.04em; color: var(--ink); border: 1px solid var(--rule); padding: 1px 6px; }
+/* jump: play this incident across the full page-1 topology */
+.ls-theater-cta { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; background: var(--ink); color: var(--paper); border: 1px solid var(--ink); padding: 3px 9px; cursor: pointer; }
+.ls-theater-cta:hover { background: var(--acid); color: var(--acid-ink, #0d0d0d); border-color: var(--acid); }
 .ls-d-sum { margin: 0; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5; color: var(--ink); padding: 8px 10px; background: var(--paper-2); border-left: 2px solid var(--ink); }
 
 .ls-block { display: flex; flex-direction: column; gap: 5px; }

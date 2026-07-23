@@ -14,7 +14,7 @@ type MeshModel = {
   links: { src: string; dst: string; relation: string; strength: number }[]
   nodes: Record<string, { severity: string; label: string; summary: string }>
 }
-import type { Device, GraphAnalysis, SubnetGraph } from './types'
+import type { Device, GraphAnalysis, SubnetGraph, TheaterEvent } from './types'
 
 type View = 'console' | 'trajectory' | 'pentest'
 
@@ -46,6 +46,48 @@ function App() {
   const [graph, setGraph] = useState<SubnetGraph | null>(null)
   const [graphAnalysis, setGraphAnalysis] = useState<GraphAnalysis | null>(null)
   const [hoverDev, setHoverDev] = useState<string | null>(null)
+  // ── event-driven full-chain topology theater ──
+  const [theater, setTheater] = useState<TheaterEvent | null>(null)
+  const [allGraphs, setAllGraphs] = useState<Record<string, SubnetGraph>>({})
+
+  /* the theater expands EVERY subnet at once, so it needs every mined graph */
+  const loadAllGraphs = useCallback(async (cidrs: string[]) => {
+    const entries = await Promise.all(
+      cidrs.map(async (c) => {
+        try {
+          const r = await fetch(`/api/rca/subnet_graph?cidr=${encodeURIComponent(c)}`)
+          const j = await r.json()
+          return j.ok ? ([c, j as SubnetGraph] as const) : null
+        } catch {
+          return null
+        }
+      }),
+    )
+    const next: Record<string, SubnetGraph> = {}
+    for (const e of entries) if (e) next[e[0]] = e[1]
+    setAllGraphs(next)
+  }, [])
+
+  const openTheater = (evt: TheaterEvent) => {
+    setTheater(evt)
+    setView('console')
+    setDrillSub(null)
+    setGraph(null)
+    setGraphAnalysis(null)
+    setDrillDev(null)
+    setThreat(null)
+    setWan(null)
+    setPosture(null)
+    setShow3D(false)
+    if (st.s === 'ok' && st.d.topology && !Object.keys(allGraphs).length) {
+      void loadAllGraphs(st.d.topology.subnets.map((x) => x.cidr))
+    }
+  }
+  const closeTheater = () => {
+    setTheater(null)
+    setWan(null)
+    setThreat(null)
+  }
 
   // Opening a segment loads its FULL device graph — every host the firewall has ever
   // seen on that /24, plus the device<->device relations mined from the raw syslog.
@@ -319,6 +361,7 @@ function App() {
           lang={lang}
           activeId={active}
           onPick={setActive}
+          onTheater={openTheater}
         />
       ) : d.datasetReady && s && c ? (
         <>
@@ -355,6 +398,12 @@ function App() {
                 onDev={researchDevice}
                 onBatch={researchSubnet}
                 onPentest={() => setView('pentest')}
+                theater={theater}
+                allGraphs={allGraphs}
+                onCloseTheater={closeTheater}
+                onOpenTheater={() =>
+                  openTheater({ kind: 'browse', id: `browse-${Date.now()}`, ts: '', device: '', stageIds: [] })
+                }
               />
             ) : null}
             {rate !== null ? (

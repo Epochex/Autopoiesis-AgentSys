@@ -167,6 +167,26 @@ export interface GraphAnalysis {
   model?: string
 }
 
+/* ── event-driven full-chain topology theater ────────────────────────────────
+ * A NetOps live-feed item promoted onto page 1: the console expands the WHOLE
+ * topology (every subnet, every mined device) and plays the event's pipeline
+ * chain across it. `device` is the raw src_device_key from the landed record;
+ * mapping onto a real topology node happens against `topology.anchors` and is
+ * stated in the UI when it fails ("not on the real network"), never invented. */
+export interface TheaterEvent {
+  kind: 'alert' | 'suggestion' | 'browse'
+  id: string
+  ts: string
+  device: string
+  severity?: string
+  priority?: string
+  scenario?: string
+  summary?: string
+  scope?: string
+  /** pipeline stages this event actually lit (from the NetOps stage vocabulary) */
+  stageIds: string[]
+}
+
 export interface Anchor {
   ip: string
   name: string

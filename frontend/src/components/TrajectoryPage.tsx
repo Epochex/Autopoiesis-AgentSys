@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Baseline, RcaCase } from '../types'
+import type { Baseline, RcaCase, TheaterEvent } from '../types'
 import type { Lang } from '../i18n'
 import { rc } from '../i18n'
 import { LiveSituation } from './LiveSituation'
@@ -11,9 +11,10 @@ import './trajectory.css'
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
 
 export function TrajectoryPage({
-  cases, lang, activeId, onPick,
+  cases, lang, activeId, onPick, onTheater,
 }: {
   cases: RcaCase[]; baselines: Baseline[]; reasoner: string; lang: Lang; activeId: string; onPick: (id: string) => void
+  onTheater?: (e: TheaterEvent) => void
 }) {
   const zh = lang === 'zh'
   const c = cases.find((x) => x.id === activeId) ?? cases[0]
@@ -50,7 +51,7 @@ export function TrajectoryPage({
       <div className="tp-grid" />
 
       {/* 实时态势在最上 —— NetOps 流处理此刻正在诊断什么 */}
-      <LiveSituation zh={zh} />
+      <LiveSituation zh={zh} onTheater={onTheater} />
 
       {/* the seam: live diagnosis above, the same store's history below */}
       <div className="tp-seam" role="separator">

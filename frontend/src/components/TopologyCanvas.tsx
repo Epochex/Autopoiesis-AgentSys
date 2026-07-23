@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DataStats, Device, GraphAnalysis, Subnet, SubnetGraph, Topology } from '../types'
+import type { DataStats, Device, GraphAnalysis, Subnet, SubnetGraph, TheaterEvent, Topology } from '../types'
 import { Scramble } from './Motion'
 import { SubnetGraphLayer } from './SubnetGraph'
+import { TheaterStage } from './TheaterStage'
 import { Analyzing, type Threat, type WanThreat } from './ThreatCard'
 import type { Lang } from '../i18n'
 
@@ -443,6 +444,10 @@ export function TopologyCanvas({
   onDev,
   onBatch,
   onPentest,
+  theater,
+  allGraphs,
+  onCloseTheater,
+  onOpenTheater,
 }: {
   topo: Topology
   stats: DataStats
@@ -474,6 +479,11 @@ export function TopologyCanvas({
   onDev: (d: Device | null, cidr: string) => void
   onBatch: (cidr: string) => void
   onPentest?: () => void
+  /* ── event-driven full-chain topology theater ── */
+  theater?: TheaterEvent | null
+  allGraphs?: Record<string, SubnetGraph>
+  onCloseTheater?: () => void
+  onOpenTheater?: () => void
 }) {
   const g = group(activeKey)
   /* Flow reads left→right across the full plate: WAN tally → admin target →
@@ -556,6 +566,12 @@ export function TopologyCanvas({
     if (focusDev !== null) setFocusDev(null)
     if (view.k !== 1 || view.x !== 0 || view.y !== 0) setView({ k: 1, x: 0, y: 0 })
   }
+  // entering/leaving the theater resets the viewport the same way
+  const [prevTheater, setPrevTheater] = useState(theater?.id ?? null)
+  if (prevTheater !== (theater?.id ?? null)) {
+    setPrevTheater(theater?.id ?? null)
+    if (view.k !== 1 || view.x !== 0 || view.y !== 0) setView({ k: 1, x: 0, y: 0 })
+  }
   const focusOn = (ip: string | null, pos: Record<string, Pt>) => {
     setFocusDev(ip)
     if (!ip || !graph) {
@@ -603,6 +619,9 @@ export function TopologyCanvas({
 
   const openSub = layout.ifs.find((f) => f.sub && drillSub === f.sub.cidr)?.sub ?? null
   const drilled = !!graph && drillSub === graph.cidr
+  // Theater mode owns the whole plate: every ordinary console layer yields,
+  // exactly like a drilled segment does.
+  const inTheater = !!theater
   // Expanding a segment hands it the ENTIRE plate: the gateway chain collapses to
   // a breadcrumb and the ~120 hosts spread across a wide ellipse that fills the
   // whole field (kept clear of the bottom-left agent panel).
@@ -642,10 +661,24 @@ export function TopologyCanvas({
         {/* Drilling into a segment hands the whole field to that LAN: the WAN
             ingress and the sibling interfaces fall away so the eye analyses one
             subnet's device relations, not the whole console. */}
-        {!drilled ? (
+        {inTheater && theater ? (
+          <TheaterStage
+            topo={topo}
+            stats={stats}
+            graphs={allGraphs ?? {}}
+            theater={theater}
+            lang={lang}
+            onClose={() => onCloseTheater?.()}
+            onNode={(ip) => onWan(ip)}
+            busyIp={wan?.loading ? wan.ip : null}
+            impactNodes={wan && !wan.loading && !wan.error ? wan.impactNodes ?? [] : []}
+            analysisIp={wan && !wan.loading && !wan.error ? wan.ip : null}
+          />
+        ) : null}
+        {!drilled && !inTheater ? (
           <WanSiege core={core} atk={layout.atk} asData={asData} wanFocus={wanFocus} setWanFocus={setWanFocus} devByIp={devByIp} distinctSrc={stats.distinctSrc} lockouts={stats.lockouts ?? 0} lang={lang} wan={wan} onWan={onWan} />
         ) : null}
-        {!drilled
+        {!drilled && !inTheater
           ? layout.ifs.map((f, i) => {
               const focused = drillSub === f.sub?.cidr
               const fade = g === 'attack' || (drillSub && !focused) || !!wan
@@ -658,7 +691,7 @@ export function TopologyCanvas({
             })
           : null}
 
-        {!drilled ? (
+        {!drilled && !inTheater ? (
           <>
             <g className="node gw-node appear" style={{ animationDelay: '0.3s' }}>
               <rect x={core.x - 60} y={core.y - 32} width="120" height="64" rx="1" />
@@ -688,11 +721,11 @@ export function TopologyCanvas({
 
         {/* The thesis owns the resting state's bottom band; an open analysis takes
             the same space, so they are mutually exclusive by construction. */}
-        {!drilled && !threat && !wan ? <Thesis stats={stats} lang={lang} /> : null}
+        {!drilled && !inTheater && !threat && !wan ? <Thesis stats={stats} lang={lang} /> : null}
 
         {layout.ifs.map((f, i) => {
           const focused = drillSub === f.sub?.cidr
-          if (drilled) return null
+          if (drilled || inTheater) return null
           const dimIf = g === 'attack' || (drillSub && !focused) || !!wan
           const highThreat = f.sub?.devices?.some((dv) => dv.threat === 'high')
           return (
@@ -821,7 +854,7 @@ export function TopologyCanvas({
         })}
 
         {/* 3D constellation portal — hidden while the WAN pivots or a segment mesh own the right field */}
-        {meshCount > 0 && !wan && !drilled ? (
+        {meshCount > 0 && !wan && !drilled && !inTheater ? (
           <>
             {/* The connector paths used to live INSIDE the clickable group, which
                 stretched its bounding box from the segment nodes all the way to
@@ -913,7 +946,9 @@ export function TopologyCanvas({
           })()
         ) : null}
 
-        {/* WAN intrusion deep-analysis: campaign lockstep → admin target → cross-canvas pivots */}
+        {/* WAN intrusion deep-analysis: campaign lockstep → admin target → cross-canvas
+            pivots. In theater mode the geometry belongs to TheaterStage (impact lines
+            on the full expansion) and only the verdict/playbook panel renders here. */}
         {wan ? (
           (() => {
             const wa = layout.atk.find((a) => a.ip === wan.ip)
@@ -924,52 +959,56 @@ export function TopologyCanvas({
             const stage = wan.killChain ?? ''
             return (
               <g className="wan-layer">
-                <path d={bez(anchorP, fg)} className="wan-spine appear" />
-                <text x={(anchorP.x + fg.x) / 2 - 6} y={(anchorP.y + fg.y) / 2 - 10} className="wan-spine-tag" textAnchor="middle">
-                  {short(wan.attempts ?? 0)} {lang === 'zh' ? '次登录尝试' : 'login attempts'}
-                </text>
-
-                {/* /24 lockstep sibling cluster */}
-                <text x={anchorP.x} y={anchorP.y - 26} className="wan-netblock" textAnchor="start">
-                  ◇ {lang === 'zh' ? '整段 IP 协同' : 'whole IP block'} · {short(wan.netblockAttempts ?? 0)}
-                </text>
-                {sibs.map((s, k) => {
-                  const sp: Pt = { x: anchorP.x + 78, y: clamp(anchorP.y - 44 + k * 30, 20, VBH - 20) }
-                  return (
-                    <g key={s.ip} className="branch-in">
-                      <path d={bez(anchorP, sp)} className="wan-sib-link" />
-                      <rect x={sp.x - 5} y={sp.y - 5} width="10" height="10" className="m-attack sib" transform={`rotate(45 ${sp.x} ${sp.y})`} />
-                      <text x={sp.x + 12} y={sp.y + 3} className="wan-sib-ip" textAnchor="start">{s.ip} · {short(s.attempts ?? 0)}</text>
-                    </g>
-                  )
-                })}
-
-                {/* FortiGate admin target + lockout impact */}
-                {!wan.loading && !wan.error ? (
+                {!inTheater ? (
                   <>
-                    <circle cx={fg.x} cy={fg.y} r="34" className="wan-lockring" />
-                    <text x={fg.x} y={fg.y + 54} className="wan-lock" textAnchor="middle">⊘ {wan.lockouts ?? 0} {lang === 'zh' ? '次账号锁定' : 'account lockouts'}</text>
+                    <path d={bez(anchorP, fg)} className="wan-spine appear" />
+                    <text x={(anchorP.x + fg.x) / 2 - 6} y={(anchorP.y + fg.y) / 2 - 10} className="wan-spine-tag" textAnchor="middle">
+                      {short(wan.attempts ?? 0)} {lang === 'zh' ? '次登录尝试' : 'login attempts'}
+                    </text>
+
+                    {/* /24 lockstep sibling cluster */}
+                    <text x={anchorP.x} y={anchorP.y - 26} className="wan-netblock" textAnchor="start">
+                      ◇ {lang === 'zh' ? '整段 IP 协同' : 'whole IP block'} · {short(wan.netblockAttempts ?? 0)}
+                    </text>
+                    {sibs.map((s, k) => {
+                      const sp: Pt = { x: anchorP.x + 78, y: clamp(anchorP.y - 44 + k * 30, 20, VBH - 20) }
+                      return (
+                        <g key={s.ip} className="branch-in">
+                          <path d={bez(anchorP, sp)} className="wan-sib-link" />
+                          <rect x={sp.x - 5} y={sp.y - 5} width="10" height="10" className="m-attack sib" transform={`rotate(45 ${sp.x} ${sp.y})`} />
+                          <text x={sp.x + 12} y={sp.y + 3} className="wan-sib-ip" textAnchor="start">{s.ip} · {short(s.attempts ?? 0)}</text>
+                        </g>
+                      )
+                    })}
+
+                    {/* FortiGate admin target + lockout impact */}
+                    {!wan.loading && !wan.error ? (
+                      <>
+                        <circle cx={fg.x} cy={fg.y} r="34" className="wan-lockring" />
+                        <text x={fg.x} y={fg.y + 54} className="wan-lock" textAnchor="middle">⊘ {wan.lockouts ?? 0} {lang === 'zh' ? '次账号锁定' : 'account lockouts'}</text>
+                      </>
+                    ) : null}
+
+                    {/* cross-canvas post-compromise pivots */}
+                    {inter.length ? (
+                      <text x={1560} y={112} className="impact-tag" textAnchor="start">
+                        {lang === 'zh' ? '内网扩散' : 'INTERNAL SPREAD'}
+                      </text>
+                    ) : null}
+                    {inter.map((c, k) => {
+                      const span = inter.length > 1 ? (VBH - 320) / (inter.length - 1) : 0
+                      const ip_: Pt = { x: 1560, y: clamp(150 + k * span, 130, VBH - 90) }
+                      return (
+                        <g key={c.ip} className="branch-in wan-pivot">
+                          <path d={bez(fg, ip_)} className="wan-pivot-link" />
+                          <circle cx={ip_.x} cy={ip_.y} r="6" className="m-dev high" />
+                          <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip} · {short(c.deny ?? 0)} {lang === 'zh' ? '次拦截' : 'blocked'}</text>
+                          <text x={ip_.x + 12} y={ip_.y + 12} className="wan-rel" textAnchor="start">{clipS(c.relation, 26)}</text>
+                        </g>
+                      )
+                    })}
                   </>
                 ) : null}
-
-                {/* cross-canvas post-compromise pivots */}
-                {inter.length ? (
-                  <text x={1560} y={112} className="impact-tag" textAnchor="start">
-                    {lang === 'zh' ? '内网扩散' : 'INTERNAL SPREAD'}
-                  </text>
-                ) : null}
-                {inter.map((c, k) => {
-                  const span = inter.length > 1 ? (VBH - 320) / (inter.length - 1) : 0
-                  const ip_: Pt = { x: 1560, y: clamp(150 + k * span, 130, VBH - 90) }
-                  return (
-                    <g key={c.ip} className="branch-in wan-pivot">
-                      <path d={bez(fg, ip_)} className="wan-pivot-link" />
-                      <circle cx={ip_.x} cy={ip_.y} r="6" className="m-dev high" />
-                      <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip} · {short(c.deny ?? 0)} {lang === 'zh' ? '次拦截' : 'blocked'}</text>
-                      <text x={ip_.x + 12} y={ip_.y + 12} className="wan-rel" textAnchor="start">{clipS(c.relation, 26)}</text>
-                    </g>
-                  )
-                })}
 
                 {/* deep-analysis panel */}
                 {wan.loading ? (
@@ -1052,7 +1091,7 @@ export function TopologyCanvas({
           })()
         ) : null}
 
-        {!drilled ? (
+        {!drilled && !inTheater ? (
           <HudReadouts
             stats={stats}
             meshCount={meshCount}
@@ -1060,6 +1099,16 @@ export function TopologyCanvas({
             subCount={layout.ifs.filter((f) => f.sub).length}
             lang={lang}
           />
+        ) : null}
+
+        {/* direct door into the full-chain theater (event-less browse mode) */}
+        {!drilled && !inTheater && !wan && onOpenTheater ? (
+          <g className="theater-door" onClick={onOpenTheater} style={{ cursor: 'pointer' }}>
+            <rect x={VBW - 262} y={84} width={220} height={24} fill="transparent" />
+            <text x={VBW - 44} y={100} className="theater-door-t" textAnchor="end">
+              ⧉ {lang === 'zh' ? '全链路拓扑剧场' : 'FULL-CHAIN THEATER'} ▸
+            </text>
+          </g>
         ) : null}
       </g>
 

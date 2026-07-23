@@ -11,17 +11,9 @@
  * share a process — they meet only at that read-only file boundary.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { TheaterEvent } from '../types'
+import { PIPELINE } from './netops-pipeline'
 import './live-situation.css'
-
-/* The fixed NetOps pipeline, named once. A delta lights a contiguous run of it. */
-const PIPELINE: { id: string; zh: string; en: string }[] = [
-  { id: 'correlator', zh: '关联器', en: 'CORRELATOR' },
-  { id: 'alerts-topic', zh: '告警流', en: 'ALERTS' },
-  { id: 'cluster-window', zh: '簇窗口', en: 'CLUSTER' },
-  { id: 'aiops-agent', zh: 'AIOps 推理', en: 'AIOPS' },
-  { id: 'suggestions-topic', zh: '建议流', en: 'SUGGEST' },
-  { id: 'remediation', zh: '处置预案', en: 'REMEDIATE' },
-]
 
 interface Stage { stageId: string; label: string; provider: string; ts: string; detail: string }
 interface TPt { ts: string; label: string; kind: string }
@@ -76,7 +68,20 @@ const hotStages = (s: Suggestion | null): Set<string> => {
     : new Set(['aiops-agent', 'suggestions-topic', 'remediation'])
 }
 
-export function LiveSituation({ zh }: { zh: boolean }) {
+/* feed item / selected suggestion → the theater event page 1 will play out */
+const alertEvent = (f: FeedItem): TheaterEvent => ({
+  kind: 'alert', id: f.id, ts: f.ts, device: f.device || '', severity: f.severity,
+  scenario: f.scenario, stageIds: ['correlator', 'alerts-topic', 'cluster-window'],
+})
+const suggestionEvent = (s: Suggestion): TheaterEvent => ({
+  kind: 'suggestion', id: s.id, ts: s.ts, device: s.device, severity: s.severity,
+  priority: s.priority, summary: s.summary, scope: s.scope,
+  stageIds: s.scope === 'cluster'
+    ? ['correlator', 'alerts-topic', 'cluster-window', 'aiops-agent', 'suggestions-topic', 'remediation']
+    : ['aiops-agent', 'suggestions-topic', 'remediation'],
+})
+
+export function LiveSituation({ zh, onTheater }: { zh: boolean; onTheater?: (e: TheaterEvent) => void }) {
   const [snap, setSnap] = useState<LiveSnapshot | null>(null)
   const [state, setState] = useState<'load' | 'ok' | 'empty' | 'err'>('load')
   const [selId, setSelId] = useState<string | null>(null)
@@ -153,9 +158,10 @@ export function LiveSituation({ zh }: { zh: boolean }) {
               return (
                 <button
                   key={f.id}
-                  className={`ls-fi ${f.kind} ${on ? 'on' : ''}`}
-                  disabled={!isSug}
-                  onClick={() => isSug && setSelId(`${f.id}`.replace('feed-suggestion-', ''))}
+                  className={`ls-fi ${f.kind} ${on ? 'on' : ''} ${!isSug && onTheater ? 'linkable' : ''}`}
+                  disabled={!isSug && !onTheater}
+                  title={!isSug && onTheater ? (zh ? '在全链路拓扑剧场中展开' : 'Open in the topology theater') : undefined}
+                  onClick={() => (isSug ? setSelId(`${f.id}`.replace('feed-suggestion-', '')) : onTheater?.(alertEvent(f)))}
                 >
                   <span className="ls-fi-top">
                     <span className={`ls-tag sev${sevRank(f.severity)}`}>{isSug ? f.priority || 'P?' : (zh ? '告警' : 'ALERT')}</span>
@@ -178,6 +184,11 @@ export function LiveSituation({ zh }: { zh: boolean }) {
               <span className="ls-d-dev">{selected.device}</span>
               <span className="ls-d-svc">{selected.service}</span>
               <span className="ls-d-mode">{selected.adaptiveMode} · {selected.impactLevel}</span>
+              {onTheater ? (
+                <button className="ls-theater-cta" onClick={() => onTheater(suggestionEvent(selected))}>
+                  ⧉ {zh ? '全链路拓扑剧场' : 'TOPOLOGY THEATER'} ▸
+                </button>
+              ) : null}
             </div>
             <p className="ls-d-sum">{selected.summary}</p>
 
