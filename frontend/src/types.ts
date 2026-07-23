@@ -301,6 +301,9 @@ export interface MemRecall {
   included_memory_ids: string[]
   /** Derived set-difference retrieved − included. The kernel does not record WHY. */
   dropped_memory_ids: string[]
+  /** Per-memory drop records when the ContextCompiler evicts a retrieved memory
+   *  from the assembled packet (budget/cap). Empty when nothing was dropped. */
+  context_drops?: { memory_id: string; reason?: string; stage?: string }[]
   probes: number
   shortcut: boolean
   resolved: boolean

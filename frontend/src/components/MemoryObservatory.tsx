@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MemEvent, MemRecall, Observatory } from '../types'
 import { MemoryGraph } from './MemoryGraph'
 import { MemoryInspector } from './MemoryInspector'
+import { ContextPacket } from './ContextPacket'
 import { RouteRuler } from './RouteRuler'
 import { MemoryTimeline } from './MemoryTimeline'
 import './memory-observatory.css'
@@ -136,6 +137,22 @@ export function MemoryObservatory({
 
   const currentRecall = atCursor ? recallByRun.get(atCursor.run_id) ?? null : null
 
+  /* the recall immediately before the current one (by seq) — the baseline the
+   * context packet diffs against so its growth run-to-run is legible. */
+  const recallsBySeq = useMemo(
+    () => [...obs.recall].sort((a, b) => a.seq - b.seq),
+    [obs.recall],
+  )
+  const prevRecall = useMemo(() => {
+    if (!currentRecall) return null
+    let prev: MemRecall | null = null
+    for (const r of recallsBySeq) {
+      if (r.seq >= currentRecall.seq) break
+      prev = r
+    }
+    return prev
+  }, [recallsBySeq, currentRecall])
+
   /** Until the viewer pins a record, the inspector follows the cursor. */
   const selectedId = pinned ?? atCursor?.memory_id ?? null
   const selected = useMemo(
@@ -200,6 +217,16 @@ export function MemoryObservatory({
           />
         </aside>
       </div>
+      {/* the assembled context handed to the reasoner — follows the cursor and
+          shows content + growth + why each memory earned its place */}
+      <ContextPacket
+        recall={currentRecall}
+        prevRecall={prevRecall}
+        records={obs.records}
+        capabilities={obs.capabilities}
+        zh={zh}
+      />
+
       <MemoryTimeline
         events={obs.events}
         cursorSeq={cursor}

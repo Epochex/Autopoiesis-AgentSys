@@ -79,6 +79,46 @@ function hullPath(pts: Pt[], pad: number): string {
   return d + ' Z'
 }
 
+/** Collision relaxation: the mined community layout packs a dense community into a
+ *  tight blob, which — scaled down into a region — piles dots and labels on top of
+ *  each other. This nudges overlapping nodes apart with a few passes of pairwise
+ *  repulsion, preserving the mined RELATIVE structure (near stays near) while
+ *  enforcing a legible minimum gap, and clamps every node back inside its ellipse.
+ *  Deterministic: no randomness, so a given graph always relaxes to the same frame. */
+function relax(pos: Record<string, Pt>, cx: number, cy: number, rx: number, ry: number, min: number): Record<string, Pt> {
+  const ips = Object.keys(pos)
+  const P = ips.map((ip) => ({ ...pos[ip] }))
+  const min2 = min * min
+  for (let it = 0; it < 70; it++) {
+    for (let i = 0; i < P.length; i++) {
+      for (let j = i + 1; j < P.length; j++) {
+        let dx = P[j].x - P[i].x
+        let dy = P[j].y - P[i].y
+        let d2 = dx * dx + dy * dy
+        if (d2 >= min2) continue
+        // stable jitter for the exact-overlap case (shared coords), keyed by index
+        if (d2 < 1e-6) { dx = ((i * 13 + 7) % 11) - 5; dy = ((j * 17 + 3) % 11) - 5; d2 = dx * dx + dy * dy }
+        const d = Math.sqrt(d2) || 1
+        const push = ((min - d) / d) * 0.5
+        const ox = dx * push
+        const oy = dy * push
+        P[i].x -= ox; P[i].y -= oy
+        P[j].x += ox; P[j].y += oy
+      }
+    }
+    // keep every node within the region ellipse (a hair inside the border)
+    for (const p of P) {
+      const nx = (p.x - cx) / (rx * 0.98)
+      const ny = (p.y - cy) / (ry * 0.98)
+      const r = Math.hypot(nx, ny)
+      if (r > 1) { p.x = cx + (nx / r) * rx * 0.98; p.y = cy + (ny / r) * ry * 0.98 }
+    }
+  }
+  const out: Record<string, Pt> = {}
+  ips.forEach((ip, i) => { out[ip] = P[i] })
+  return out
+}
+
 /** a small train of pulses flowing along a path (the stage-2 motion language) */
 function Flow({ d, n = 3, dur = 2.6, cls = '' }: { d: string; n?: number; dur?: number; cls?: string }) {
   return (
@@ -140,7 +180,11 @@ export function TheaterStage({
       const g = graphs[s.cidr]
       const pos: Record<string, Pt> = {}
       for (const d of g.devices) pos[d.ip] = { x: r.c.x + d.x * r.rx * 0.88, y: r.c.y + d.y * r.ry * 0.86 }
-      return { sub: s, g, ...r, pos }
+      // de-overlap: a denser cluster earns a tighter floor, but never below what a
+      // dot + its label needs to stay readable.
+      const minGap = Math.max(22, Math.min(34, Math.sqrt((r.rx * r.ry) / Math.max(1, g.devices.length)) * 0.9))
+      const spread = relax(pos, r.c.x, r.c.y, r.rx, r.ry, minGap)
+      return { sub: s, g, ...r, pos: spread }
     })
     const stubNodes = stubs.map((s, i) => ({ sub: s, p: { x: 700 + i * 190, y: 905 } as Pt }))
 
