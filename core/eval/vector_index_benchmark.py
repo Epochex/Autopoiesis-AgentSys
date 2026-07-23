@@ -48,6 +48,7 @@ class BenchmarkConfig:
     top_k: int = 10
     seed: int = 20260721
     query_noise: float = 0.02
+    query_mode: str = "perturbed_in_corpus"
     hnsw_m: int = DEFAULT_HNSW_M
     ef_construction: int = DEFAULT_HNSW_EF_CONSTRUCTION
     ef_search_values: tuple[int, ...] = (32, 64, DEFAULT_HNSW_EF_SEARCH, 256, 512, 1024)
@@ -56,6 +57,7 @@ class BenchmarkConfig:
     throughput_threads: int = 8
     warmup_queries: int = 10
     throughput_repeats: int = 3
+    recall_targets: tuple[float, ...] = (0.95, 0.99)
     index_cache_dir: str | None = None
 
     def validate(self) -> None:
@@ -83,8 +85,12 @@ class BenchmarkConfig:
             raise ValueError("top_k cannot exceed the smallest corpus")
         if self.query_noise < 0:
             raise ValueError("query_noise must be non-negative")
+        if self.query_mode not in {"perturbed_in_corpus", "independent"}:
+            raise ValueError("query_mode must be perturbed_in_corpus or independent")
         if self.warmup_queries < 0:
             raise ValueError("warmup_queries must be non-negative")
+        if any(not 0.0 < target <= 1.0 for target in self.recall_targets):
+            raise ValueError("recall_targets must be in (0, 1]")
 
 
 def generate_vectors(count: int, dim: int, seed: int):
@@ -110,6 +116,17 @@ def generate_queries(vectors, count: int, seed: int, noise: float):
     norms = np.linalg.norm(queries, axis=1, keepdims=True)
     queries /= np.maximum(norms, np.float32(1e-12))
     return np.ascontiguousarray(queries), source_ids.astype("int64")
+
+
+def generate_independent_queries(count: int, dim: int, seed: int):
+    """Generate held-out normalized queries that are not copied from the corpus."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    queries = rng.standard_normal((count, dim), dtype=np.float32)
+    norms = np.linalg.norm(queries, axis=1, keepdims=True)
+    queries /= np.maximum(norms, np.float32(1e-12))
+    return np.ascontiguousarray(queries)
 
 
 def recall_at_k(actual, expected, k: int) -> float:
@@ -284,10 +301,41 @@ def _fingerprint(config: BenchmarkConfig, size: int, source_ids) -> str:
         "dim": config.dim,
         "seed": config.seed,
         "query_noise": config.query_noise,
+        "query_mode": config.query_mode,
         "source_ids": [int(item) for item in source_ids],
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def matched_recall_summary(
+    flat_result: dict[str, Any],
+    hnsw_rows: Sequence[dict[str, Any]],
+    recall_targets: Sequence[float],
+) -> list[dict[str, Any]]:
+    """Select the lowest-latency measured HNSW row that reaches each recall target."""
+    summary: list[dict[str, Any]] = []
+    for target in recall_targets:
+        eligible = [row for row in hnsw_rows if row["recall_at_k_vs_flat"] >= target]
+        if not eligible:
+            summary.append({"target_recall_at_k": target, "reached": False})
+            continue
+        best = min(eligible, key=lambda row: (row["p95_ms"], row["ef_search"]))
+        summary.append({
+            "target_recall_at_k": target,
+            "reached": True,
+            "ef_search": best["ef_search"],
+            "observed_recall_at_k": best["recall_at_k_vs_flat"],
+            "hnsw_p95_ms": best["p95_ms"],
+            "flat_p95_ms": flat_result["p95_ms"],
+            "p95_speedup_vs_flat": round(flat_result["p95_ms"] / best["p95_ms"], 4),
+            "hnsw_batch_qps": best["batch_qps_median"],
+            "flat_batch_qps": flat_result["batch_qps_median"],
+            "batch_qps_speedup_vs_flat": round(
+                best["batch_qps_median"] / flat_result["batch_qps_median"], 4
+            ),
+        })
+    return summary
 
 
 def run_size_benchmark(size: int, config: BenchmarkConfig) -> dict[str, Any]:
@@ -297,12 +345,22 @@ def run_size_benchmark(size: int, config: BenchmarkConfig) -> dict[str, Any]:
     config.validate()
     generated_at = time.perf_counter()
     vectors = generate_vectors(size, config.dim, config.seed + size)
-    queries, source_ids = generate_queries(
-        vectors,
-        config.queries,
-        config.seed + size + 1,
-        config.query_noise,
-    )
+    if config.query_mode == "independent":
+        queries = generate_independent_queries(
+            config.queries,
+            config.dim,
+            config.seed + size + 1,
+        )
+        source_ids = [-1] * config.queries
+        dataset = "deterministic normalized Gaussian corpus with independent held-out queries"
+    else:
+        queries, source_ids = generate_queries(
+            vectors,
+            config.queries,
+            config.seed + size + 1,
+            config.query_noise,
+        )
+        dataset = "deterministic normalized Gaussian vectors with perturbed in-corpus queries"
     generation_seconds = time.perf_counter() - generated_at
     corpus_rss = _rss_bytes()
 
@@ -366,7 +424,7 @@ def run_size_benchmark(size: int, config: BenchmarkConfig) -> dict[str, Any]:
         "dim": config.dim,
         "queries": config.queries,
         "top_k": config.top_k,
-        "dataset": "deterministic normalized Gaussian vectors with perturbed in-corpus queries",
+        "dataset": dataset,
         "dataset_fingerprint": _fingerprint(config, size, source_ids),
         "query_noise": config.query_noise,
         "generation_seconds": round(generation_seconds, 4),
@@ -379,6 +437,11 @@ def run_size_benchmark(size: int, config: BenchmarkConfig) -> dict[str, Any]:
             "ef_construction": config.ef_construction,
             **hnsw_build,
             "search_sweep": hnsw_rows,
+            "matched_recall": matched_recall_summary(
+                flat_result,
+                hnsw_rows,
+                config.recall_targets,
+            ),
         },
         "faiss_version": faiss_version,
     }
@@ -405,7 +468,7 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, Any]:
     started = time.perf_counter()
     rows = [run_size_benchmark(size, config) for size in config.sizes]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "benchmark": "flat-vs-hnsw-scale",
         "config": asdict(config),
         "environment": environment_metadata(),
@@ -429,6 +492,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260721)
     parser.add_argument("--query-noise", type=float, default=0.02)
+    parser.add_argument(
+        "--query-mode",
+        choices=["perturbed_in_corpus", "independent"],
+        default="perturbed_in_corpus",
+    )
     parser.add_argument("--hnsw-m", type=int, default=DEFAULT_HNSW_M)
     parser.add_argument("--ef-construction", type=int, default=DEFAULT_HNSW_EF_CONSTRUCTION)
     parser.add_argument("--ef-search", type=int, nargs="+", default=[32, 64, 128, 256, 512, 1024])
@@ -436,6 +504,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--latency-threads", type=int, default=1)
     parser.add_argument("--throughput-threads", type=int, default=min(8, os.cpu_count() or 1))
     parser.add_argument("--throughput-repeats", type=int, default=3)
+    parser.add_argument("--warmup-queries", type=int, default=10)
+    parser.add_argument("--recall-targets", type=float, nargs="+", default=[0.95, 0.99])
     parser.add_argument("--index-cache-dir", type=Path)
     parser.add_argument("--output", type=Path)
     return parser.parse_args(argv)
@@ -450,6 +520,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         top_k=args.top_k,
         seed=args.seed,
         query_noise=args.query_noise,
+        query_mode=args.query_mode,
         hnsw_m=args.hnsw_m,
         ef_construction=args.ef_construction,
         ef_search_values=tuple(args.ef_search),
@@ -457,6 +528,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         latency_threads=args.latency_threads,
         throughput_threads=args.throughput_threads,
         throughput_repeats=args.throughput_repeats,
+        warmup_queries=args.warmup_queries,
+        recall_targets=tuple(args.recall_targets),
         index_cache_dir=str(args.index_cache_dir) if args.index_cache_dir else None,
     )
     report = run_benchmark(config)

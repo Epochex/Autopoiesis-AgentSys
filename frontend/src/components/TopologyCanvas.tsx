@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DataStats, Device, GraphAnalysis, Subnet, SubnetGraph, Topology } from '../types'
 import { Scramble } from './Motion'
 import { SubnetGraphLayer } from './SubnetGraph'
@@ -61,6 +61,22 @@ function Float({ x, y, w, lines, tone }: { x: number; y: number; w: number; line
 
 type Atk = { ip: string; v: number; p: Pt }
 
+/* WAN attack-surface deep data (lazy-loaded from /api/rca/attack_surface) powering
+ * the in-place drill-down: /24 netblock clustering, per-IP attempt counts, deny-port
+ * and Dahua-probe distributions, and the internal device exposure an attacker row
+ * cross-links into. */
+interface AsDevice { ip: string; vendor: string | null; role: string | null; deny: number | null; accept: number | null; topPorts: string[] | null; threat: string | null }
+interface AsData {
+  netblocks: { cidr: string; count: number; ips: [string, number][] }[]
+  internalDenySrc: [string, number][]
+  denyPorts: [string, number][]
+  devicePortTop: [string, number][]; devicePortDeny: number
+  adminLoginFailed: number; distinctSrc: number; lockouts: number
+  assetExposure: { subnets: { cidr: string; exposed: AsDevice[] }[] }
+}
+/* the in-place offense drill focus — the topology reshapes itself per level */
+type WanFocus = null | { kind: 'sources' } | { kind: 'attacker'; ip: string } | { kind: 'target' }
+
 /* WAN ingress geometry — the tally block sits in the open WAN field, left of
  * the target it converges on. */
 const TALLY = { x: 96, y: 214, cols: 26, cell: 8 }
@@ -80,77 +96,215 @@ const TALLY = { x: 96, y: 214, cols: 26, cell: 8 }
  *
  *  Severity is carried by ink weight and structure, never by hue: the assault is
  *  ink, the containment is stated in words + the real lockout count. */
+const nfmt = (n: number) => (n ?? 0).toLocaleString('en-US')
+/* deterministic per-ip jitter so the attacker field reads as an organic swarm, not
+ * a rigid matrix — the same ip always lands in the same spot (no Math.random). */
+const jit = (s: string, seed: number) => { let h = seed >>> 0; for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0; return (h % 1000) / 1000 - 0.5 }
+const PORT_LAB: Record<string, string> = { '137': 'NetBIOS', '138': 'NetBIOS', '445': 'SMB', '53': 'DNS', '37777': 'Dahua DVR', '37809': 'Dahua', '37810': 'Dahua', '8000': 'HTTP-alt' }
+const roleZh: Record<string, string> = { camera: '摄像头', workstation: '工作站', intercom: '门禁', mobile: '移动端', unknown: '未知' }
+
+/** WAN INGRESS — the credential assault, now an in-place drill-down. The left field
+ *  reshapes itself across focus levels rather than opening a side panel:
+ *    null      the 573-mark tally + 3 named sources, whole tally clickable
+ *    sources   the tally bursts into its two /24 netblocks, each IP a node
+ *    attacker  one IP blooms a profile card, its attack line lit, and — when the
+ *              same IP is an internal device — a cross-link drawn to the LAN side
+ *    target    the admin-login target unfolds its deny-port + Dahua-probe evidence
+ *  Every number is real (attack_surface); the geometry of the netblock burst is a
+ *  reading layout, labelled as such, never a spatial claim. */
 function WanSiege({
-  core, atk, distinctSrc, lockouts, lang, wan, onWan,
+  core, atk, asData, wanFocus, setWanFocus, devByIp, distinctSrc, lockouts, lang, wan, onWan,
 }: {
-  core: Pt; atk: Atk[]; distinctSrc: number; lockouts: number; lang: Lang
+  core: Pt; atk: Atk[]; asData: AsData | null
+  wanFocus: WanFocus; setWanFocus: (f: WanFocus) => void
+  devByIp: Map<string, AsDevice & { cidr: string }>
+  distinctSrc: number; lockouts: number; lang: Lang
   wan: WanThreat | null; onWan: (ip: string) => void
 }) {
   const zh = lang === 'zh'
-  const T: Pt = { x: core.x - 190, y: core.y } // the besieged admin-login focal point
+  const T: Pt = { x: core.x - 190, y: core.y }
   const gwFace: Pt = { x: core.x - 86, y: core.y }
   const brackets = (c: Pt, s: number, len: number) =>
     ([[-1, -1], [1, -1], [1, 1], [-1, 1]] as const).map(
       ([sx, sy]) => `M ${c.x + sx * s} ${c.y + sy * s - sy * len} L ${c.x + sx * s} ${c.y + sy * s} L ${c.x + sx * s - sx * len} ${c.y + sy * s}`,
     )
-  // one mark per real source — no sampling, no invented coordinates
   const rows = Math.ceil(distinctSrc / TALLY.cols)
   const tallyW = TALLY.cols * TALLY.cell
   const tallyH = rows * TALLY.cell
-  const dim = !!wan
-  return (
-    <g className={`wan-siege ${dim ? 'dim' : ''}`}>
-      {/* the source tally: 573 marks, one per distinct source IP */}
-      <g className="ws-tally" pointerEvents="none">
-        <text x={TALLY.x} y={TALLY.y - 26} className="ws-kicker">{zh ? '外网入口 · 管理登录暴力破解' : 'WAN INGRESS · ADMIN BRUTE-FORCE'}</text>
-        <text x={TALLY.x} y={TALLY.y - 9} className="ws-tally-cap">
-          {zh ? `${distinctSrc} 个来源 · 每格 1 个` : `${distinctSrc} sources · 1 mark = 1 source`}
-        </text>
-        {Array.from({ length: distinctSrc }).map((_, i) => (
-          <rect
-            key={i}
-            x={TALLY.x + (i % TALLY.cols) * TALLY.cell}
-            y={TALLY.y + Math.floor(i / TALLY.cols) * TALLY.cell}
-            width={4}
-            height={4}
-            className="ws-src"
-          />
-        ))}
-        {/* the whole tally funnels onto ONE point: the admin login */}
-        {[0, 0.5, 1].map((f, i) => (
-          <path
-            key={i}
-            d={`M ${TALLY.x + tallyW + 6} ${TALLY.y + tallyH * f} Q ${(TALLY.x + tallyW + T.x) / 2} ${TALLY.y + tallyH * f} ${T.x - 14} ${T.y}`}
-            className="ws-thread"
-          />
-        ))}
-      </g>
 
-      {/* top-3 named sources — the only ones the payload names, each clickable */}
-      <g className="ws-nodes">
-        {atk.map((a, i) => {
-          const sel = wan?.ip === a.ip
-          return (
-            <g key={i} className={`ws-node ${sel ? 'sel' : ''} ${wan && !sel ? 'mute' : ''}`} style={{ cursor: 'pointer' }} onClick={() => onWan(a.ip)}>
+  const focus = wanFocus
+  const expanded = focus?.kind === 'sources' || focus?.kind === 'attacker'
+  const blocks = asData?.netblocks ?? []
+  // netblock burst: two blocks stacked in the WAN field, IPs in a row under each
+  const blockGeom = blocks.map((b, bi) => {
+    const cy = 190 + bi * 250
+    const coordinated = b.ips.length >= 2 && b.ips.every((x) => x[1] === b.ips[0][1])
+    return {
+      cidr: b.cidr, count: b.count, coordinated,
+      labelP: { x: 70, y: cy - 40 } as Pt,
+      ips: b.ips.map((ip, j) => ({ ip: ip[0], v: ip[1], p: { x: 108 + j * 132 + jit(ip[0], 7) * 48, y: cy + jit(ip[0], 131) * 56 } as Pt })),
+    }
+  })
+  // internal lateral sources sit below the two WAN /24s; those matched in the device
+  // graph carry the cross-link that ties an external row to an internal device.
+  const latGeom = (asData?.internalDenySrc ?? []).slice(0, 5).map((s, j) => ({ ip: s[0], v: s[1], p: { x: 108 + j * 116 + jit(s[0], 17) * 40, y: 600 + jit(s[0], 251) * 36 } as Pt, linked: devByIp.has(s[0]) }))
+  const allIps = [...blockGeom.flatMap((b) => b.ips), ...latGeom]
+  const selIp = focus?.kind === 'attacker' ? focus.ip : null
+  const selNode = allIps.find((x) => x.ip === selIp)
+  const linkedDev = selIp ? devByIp.get(selIp) : undefined
+  const linkP: Pt = { x: 1240, y: T.y - 150 }
+
+  return (
+    <g className={`wan-siege ${wan ? 'dim' : ''}`}>
+      {/* ── OVERVIEW: the tally (whole block clickable → sources) ── */}
+      {!expanded && (
+        <g className="ws-tally">
+          <text x={TALLY.x} y={TALLY.y - 26} className="ws-kicker">{zh ? '外网入口 · 管理登录暴力破解' : 'WAN INGRESS · ADMIN BRUTE-FORCE'}</text>
+          <text x={TALLY.x} y={TALLY.y - 9} className="ws-tally-cap">
+            {zh ? `${distinctSrc} 个来源 · 每格 1 个 · ` : `${distinctSrc} sources · `}<tspan className="ws-drill-hint">{zh ? '点击展开攻击网段 ↴' : 'CLICK TO EXPAND NETBLOCKS ↴'}</tspan>
+          </text>
+          <g style={{ cursor: 'pointer' }} onClick={() => setWanFocus({ kind: 'sources' })}>
+            {Array.from({ length: distinctSrc }).map((_, i) => (
+              <rect key={i} x={TALLY.x + (i % TALLY.cols) * TALLY.cell} y={TALLY.y + Math.floor(i / TALLY.cols) * TALLY.cell} width={4} height={4} className="ws-src" />
+            ))}
+            <rect x={TALLY.x - 4} y={TALLY.y - 4} width={tallyW + 8} height={tallyH + 8} className="ws-tally-hit" />
+          </g>
+          {[0, 0.5, 1].map((f, i) => (
+            <path key={i} d={`M ${TALLY.x + tallyW + 6} ${TALLY.y + tallyH * f} Q ${(TALLY.x + tallyW + T.x) / 2} ${TALLY.y + tallyH * f} ${T.x - 14} ${T.y}`} className="ws-thread" pointerEvents="none" />
+          ))}
+        </g>
+      )}
+
+      {/* ── OVERVIEW named sources → attacker profile ── */}
+      {!expanded && (
+        <g className="ws-nodes">
+          {atk.map((a, i) => (
+            <g key={i} className="ws-node" style={{ cursor: 'pointer' }} onClick={() => setWanFocus({ kind: 'attacker', ip: a.ip })}>
               <rect x={a.p.x - 3} y={a.p.y - 3} width="6" height="6" className="ws-node-dot" />
               <text x={a.p.x + 14} y={a.p.y - 1} className="ws-node-ip" textAnchor="start">{a.ip}</text>
-              <text x={a.p.x + 14} y={a.p.y + 12} className="ws-node-v" textAnchor="start">{short(a.v)} {zh ? '次尝试' : 'attempts'}<tspan className="ws-node-hint"> ▸ {zh ? '研判' : 'ANALYZE'}</tspan></text>
+              <text x={a.p.x + 14} y={a.p.y + 12} className="ws-node-v" textAnchor="start">{short(a.v)} {zh ? '次尝试' : 'attempts'}<tspan className="ws-node-hint"> ▸ {zh ? '画像' : 'PROFILE'}</tspan></text>
             </g>
-          )
-        })}
-      </g>
-      <g className="ws-vectors" pointerEvents="none">
-        {atk.map((a, i) => <line key={i} x1={a.p.x + 6} y1={a.p.y} x2={T.x - 12} y2={T.y} className={`ws-vector ${wan && wan.ip !== a.ip ? 'mute' : ''}`} />)}
-        <line x1={T.x} y1={T.y} x2={gwFace.x} y2={gwFace.y} className="ws-breach" />
-      </g>
+          ))}
+          {atk.map((a, i) => <line key={`v${i}`} x1={a.p.x + 6} y1={a.p.y} x2={T.x - 12} y2={T.y} className="ws-vector" pointerEvents="none" />)}
+        </g>
+      )}
 
-      {/* the besieged target — admin login. Structure (brackets), not a rotating reticle. */}
-      <g className="ws-target" pointerEvents="none">
+      {/* ── SOURCES / ATTACKER: the netblock burst ── */}
+      {expanded && (
+        <g className="ws-blocks">
+          {/* the 573 real distinct sources stay as a faint field behind the burst, so
+              the density of the whole campaign is never lost when a few IPs are named */}
+          <g className="ws-srcfield" pointerEvents="none">
+            {Array.from({ length: distinctSrc }).map((_, i) => (
+              <rect key={i} x={556 + (i % 22) * 5} y={92 + Math.floor(i / 22) * 5} width={2.6} height={2.6} className="ws-src faint" />
+            ))}
+            <text x={556} y={86} className="ws-field-lab">{zh ? `${distinctSrc} 个真实来源 · 6 个已具名` : `${distinctSrc} REAL SOURCES · 6 NAMED`}</text>
+          </g>
+          <text x={70} y={96} className="ws-back" style={{ cursor: 'pointer' }} onClick={() => setWanFocus(null)}>← {zh ? '收起 · 返回总览' : 'COLLAPSE'}</text>
+          <text x={70} y={124} className="ws-kicker">{zh ? '攻击者网段 · /24 聚类 · 点 IP 看画像' : 'ATTACKER NETBLOCKS · CLICK AN IP'}</text>
+          {/* two coordinated /24s hitting in identical lockstep → one botnet family */}
+          {blockGeom.length >= 2 && blockGeom.every((b) => b.coordinated) && (() => {
+            const c0 = blockGeom[0].ips[Math.floor(blockGeom[0].ips.length / 2)]?.p ?? blockGeom[0].ips[0].p
+            const c1 = blockGeom[1].ips[Math.floor(blockGeom[1].ips.length / 2)]?.p ?? blockGeom[1].ips[0].p
+            return (
+              <g pointerEvents="none">
+                <path d={`M${c0.x} ${c0.y} C ${c0.x - 40} ${(c0.y + c1.y) / 2}, ${c1.x - 40} ${(c0.y + c1.y) / 2}, ${c1.x} ${c1.y}`} className="ws-botnet-link" />
+                <text x={c0.x - 46} y={(c0.y + c1.y) / 2} className="ws-botnet-lab">{zh ? '⟲ 同源' : '⟲ SAME'}</text>
+              </g>
+            )
+          })()}
+          {blockGeom.map((b) => (
+            <g key={b.cidr}>
+              <text x={b.labelP.x} y={b.labelP.y} className="ws-block-cidr">{b.cidr} · {nfmt(b.count)}</text>
+              {b.coordinated && <text x={b.labelP.x} y={b.labelP.y + 15} className="ws-coord">{zh ? `⚠ 每 IP 恰好 ${nfmt(b.ips[0].v)} 次 · 协同僵尸网络` : `⚠ EXACTLY ${nfmt(b.ips[0].v)}/IP · BOTNET`}</text>}
+              {/* lockstep link: the sibling IPs move as ONE — draw them interlinked */}
+              {b.coordinated && b.ips.length >= 2 && (
+                <path d={`M${b.ips[0].p.x} ${b.ips[0].p.y} ${b.ips.slice(1).map((ip) => `L${ip.p.x} ${ip.p.y}`).join(' ')}`} className="ws-coord-link" pointerEvents="none" />
+              )}
+              {b.ips.map((ip) => {
+                const on = ip.ip === selIp
+                return (
+                  <g key={ip.ip} className={`ws-ipnode ${on ? 'on' : ''} ${selIp && !on ? 'mute' : ''}`} style={{ cursor: 'pointer' }} onClick={() => setWanFocus({ kind: 'attacker', ip: ip.ip })}>
+                    <line x1={ip.p.x} y1={ip.p.y} x2={T.x - 12} y2={T.y} className={`ws-atk-line ${on ? 'hot' : ''}`} pointerEvents="none" />
+                    <rect x={ip.p.x - 5} y={ip.p.y - 5} width={10} height={10} className="ws-ip-mark" transform={`rotate(45 ${ip.p.x} ${ip.p.y})`} />
+                    <text x={ip.p.x} y={ip.p.y - 12} className="ws-ip-lab" textAnchor="middle">{ip.ip}</text>
+                    <text x={ip.p.x} y={ip.p.y + 22} className="ws-ip-v" textAnchor="middle">{nfmt(ip.v)}{devByIp.has(ip.ip) ? (zh ? ' · 内网设备' : ' · DEV') : ''}</text>
+                  </g>
+                )
+              })}
+            </g>
+          ))}
+          {latGeom.length > 0 && (
+            <g className="ws-latgroup">
+              <text x={70} y={562} className="ws-block-cidr">{zh ? '内网横向源' : 'LATERAL SRC'} <tspan className="ws-coord">{zh ? '· 同子网聚类 · 点击看内外关联' : '· CLUSTERED · CROSS-LINK'}</tspan></text>
+              {/* cluster the lateral sources by their /24 — the internal spread structure */}
+              {(() => {
+                const groups = new Map<string, typeof latGeom>()
+                for (const s of latGeom) { const k = s.ip.split('.').slice(0, 3).join('.'); const g = groups.get(k) ?? []; g.push(s); groups.set(k, g) }
+                return [...groups.values()].filter((g) => g.length >= 2).map((grp, gi) => (
+                  <path key={gi} d={`M${grp[0].p.x} ${grp[0].p.y + 15} ${grp.slice(1).map((s) => `L${s.p.x} ${s.p.y + 15}`).join(' ')}`} className="ws-lat-cluster" pointerEvents="none" />
+                ))
+              })()}
+              {latGeom.map((s) => {
+                const on = s.ip === selIp
+                return (
+                  <g key={s.ip} className={`ws-ipnode ${on ? 'on' : ''} ${selIp && !on ? 'mute' : ''}`} style={{ cursor: 'pointer' }} onClick={() => setWanFocus({ kind: 'attacker', ip: s.ip })}>
+                    <rect x={s.p.x - 5} y={s.p.y - 5} width={10} height={10} className="ws-ip-mark lat" />
+                    <text x={s.p.x} y={s.p.y - 12} className="ws-ip-lab" textAnchor="middle">{s.ip}</text>
+                    <text x={s.p.x} y={s.p.y + 22} className="ws-ip-v" textAnchor="middle">{nfmt(s.v)}{s.linked ? (zh ? ' · 设备✓' : ' · DEV✓') : ''}</text>
+                  </g>
+                )
+              })}
+            </g>
+          )}
+          {/* attacker profile card + cross-link */}
+          {selNode && (
+            <>
+              {linkedDev && (
+                <g pointerEvents="none">
+                  <path d={bez({ x: selNode.p.x, y: selNode.p.y }, linkP)} className="ws-crosslink" />
+                  <line x1={linkP.x} y1={linkP.y} x2={linkP.x} y2={linkP.y} className="ws-crosslink" />
+                </g>
+              )}
+              <foreignObject x={clamp(selNode.p.x - 90, 40, VBW - 240)} y={selNode.p.y + 34} width={230} height={linkedDev ? 150 : 108} className="ws-card-fo">
+                <div className={`ws-card ${zh ? '' : 'en'}`}>
+                  <div className="ws-card-h"><b>{selNode.ip}</b><span>{selNode.v.toLocaleString()} {zh ? '次尝试' : 'hits'}</span></div>
+                  <div className="ws-card-row">{zh ? '网段/子网' : 'net'} {blockGeom.find((b) => b.ips.some((x) => x.ip === selNode.ip))?.cidr ?? linkedDev?.cidr ?? '—'}</div>
+                  <div className="ws-card-row">{zh ? '目标 · FortiGate 管理登录 · 已锁定 ' : 'target · admin login · '}{lockouts}{zh ? ' 次' : ' locks'}</div>
+                  {linkedDev && <div className="ws-card-corr">⚠ {zh ? `内外同一实体:${linkedDev.cidr} 的${roleZh[linkedDev.role ?? ''] ?? linkedDev.role}·威胁${(linkedDev.threat ?? 'ok').toUpperCase()}·被拒${nfmt(linkedDev.deny ?? 0)}` : `same entity: ${linkedDev.role} on ${linkedDev.cidr} · ${linkedDev.threat}`}</div>}
+                  <button className="ws-card-btn" onClick={() => onWan(selNode.ip)}>{zh ? 'DeepSeek 深度研判 ▸' : 'DEEPSEEK ANALYZE ▸'}</button>
+                </div>
+              </foreignObject>
+            </>
+          )}
+        </g>
+      )}
+
+      <line x1={T.x} y1={T.y} x2={gwFace.x} y2={gwFace.y} className="ws-breach" pointerEvents="none" />
+
+      {/* ── TARGET: admin login, clickable → its evidence unfolds ── */}
+      <g className={`ws-target ${focus?.kind === 'target' ? 'on' : ''}`} style={{ cursor: 'pointer' }} onClick={() => setWanFocus(focus?.kind === 'target' ? null : { kind: 'target' })}>
         {brackets(T, 13, 6).map((d, i) => <path key={i} d={d} className="ws-lock-bracket" />)}
         <circle cx={T.x} cy={T.y} r={3} className="ws-lock-dot" />
         <text x={T.x} y={T.y - 24} className="ws-lock-label" textAnchor="middle">{zh ? '管理登录 · 目标' : 'ADMIN LOGIN · TARGET'}</text>
-        <text x={T.x} y={T.y + 30} className="ws-contain" textAnchor="middle">{zh ? `已遏制 · ${lockouts} 次锁定` : `CONTAINED · ${lockouts} LOCKOUTS`}</text>
+        <text x={T.x} y={T.y + 30} className="ws-contain" textAnchor="middle">{zh ? `已遏制 · ${lockouts} 次锁定 · 点击展开` : `CONTAINED · ${lockouts} LOCKOUTS · CLICK`}</text>
       </g>
+
+      {/* target evidence unfold */}
+      {focus?.kind === 'target' && asData && (
+        <foreignObject x={T.x - 130} y={T.y + 48} width={280} height={210} className="ws-card-fo">
+          <div className="ws-tcard">
+            <div className="ws-tcard-h">{zh ? '被攻击详情 · 管理登录' : 'TARGET EVIDENCE · ADMIN LOGIN'}</div>
+            <div className="ws-tcard-funnel"><b>{nfmt(asData.adminLoginFailed)}</b> {zh ? '失败' : 'failed'} → <b>{nfmt(asData.distinctSrc)}</b> {zh ? '源' : 'src'} → <b>{nfmt(asData.lockouts)}</b> {zh ? '锁定' : 'locks'}</div>
+            <div className="ws-tcard-lab">{zh ? '被拒端口 TOP' : 'TOP DENY PORTS'}</div>
+            {asData.denyPorts.slice(0, 4).map((p) => (
+              <div key={p[0]} className="ws-tcard-bar"><span>:{p[0]} {PORT_LAB[p[0]] ?? ''}</span><i style={{ width: `${(p[1] / Math.max(1, asData.denyPorts[0][1])) * 100}%` }} /><em>{nfmt(p[1])}</em></div>
+            ))}
+            <div className="ws-tcard-lab">{zh ? `大华设备端口探测 · 被拒 ${nfmt(asData.devicePortDeny)}` : `DAHUA PROBES · ${nfmt(asData.devicePortDeny)}`}</div>
+            <div className="ws-tcard-dahua">{asData.devicePortTop.slice(0, 4).map((p) => <span key={p[0]}>:{p[0]}·{nfmt(p[1])}</span>)}</div>
+          </div>
+        </foreignObject>
+      )}
     </g>
   )
 }
@@ -231,21 +385,11 @@ function Thesis({ stats, lang }: { stats: DataStats; lang: Lang }) {
     <g className="thesis" pointerEvents="none">
       <line x1={96} y1={772} x2={780} y2={772} className="th-rule" />
       <text x={96} y={808} className="th-kicker">{zh ? '态势 · 证据面' : 'CONSOLE · THE EVIDENCE SURFACE'}</text>
-      <text x={96} y={850} className="th-lede">
-        {zh ? '这是 agent 正在诊断的真实网络。' : 'The real network the agent is diagnosing.'}
-      </text>
-      <text x={96} y={886} className="th-body">
-        {zh
-          ? '每条线、每个计数都读自这份保留集抓包，不是示意图。'
-          : 'Every line and count is read from the held-out capture — not an illustration.'}
-      </text>
-      <text x={96} y={922} className="th-meta">
+      <text x={96} y={852} className="th-meta">
         <tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{stats.source}
+        <tspan className="th-k">{zh ? '  窗口 ' : '   WINDOW '}</tspan>{window}
       </text>
-      <text x={96} y={942} className="th-meta">
-        <tspan className="th-k">{zh ? '窗口 ' : 'WINDOW '}</tspan>{window}
-      </text>
-      <text x={96} y={972} className="th-read">
+      <text x={96} y={888} className="th-read">
         {zh
           ? '点来源 → 入侵研判 · 点网段 → 展开设备关系图'
           : 'click a source → intrusion verdict · click a segment → its device graph'}
@@ -336,6 +480,21 @@ export function TopologyCanvas({
    * FortiGate → interfaces → segments. The old core sat at (452,340) of a 1360
    * box, which pinned every mark into the upper-left quadrant. */
   const core: Pt = { x: 700, y: 430 }
+  // WAN attack-surface deep data + the in-place offense drill focus. The topology
+  // itself reshapes across focus levels (sources → attacker → target); this is the
+  // interactive offense layer the left WAN field expands into, not a side panel.
+  const [asData, setAsData] = useState<AsData | null>(null)
+  const [wanFocus, setWanFocus] = useState<WanFocus>(null)
+  useEffect(() => {
+    let gone = false
+    fetch('/api/rca/attack_surface').then((r) => (r.ok ? r.json() : null)).then((d: AsData | null) => { if (!gone && d) setAsData(d) }).catch(() => {})
+    return () => { gone = true }
+  }, [])
+  const devByIp = useMemo(() => {
+    const m = new Map<string, AsDevice & { cidr: string }>()
+    for (const s of asData?.assetExposure.subnets ?? []) for (const e of s.exposed) m.set(e.ip, { ...e, cidr: s.cidr })
+    return m
+  }, [asData])
   const ref = useRef<SVGSVGElement | null>(null)
   // ── viewport: wheel-zoom about the cursor, drag-to-pan anywhere on the plate ──
   const [view, setView] = useState({ k: 1, x: 0, y: 0 })
@@ -484,7 +643,7 @@ export function TopologyCanvas({
             ingress and the sibling interfaces fall away so the eye analyses one
             subnet's device relations, not the whole console. */}
         {!drilled ? (
-          <WanSiege core={core} atk={layout.atk} distinctSrc={stats.distinctSrc} lockouts={stats.lockouts ?? 0} lang={lang} wan={wan} onWan={onWan} />
+          <WanSiege core={core} atk={layout.atk} asData={asData} wanFocus={wanFocus} setWanFocus={setWanFocus} devByIp={devByIp} distinctSrc={stats.distinctSrc} lockouts={stats.lockouts ?? 0} lang={lang} wan={wan} onWan={onWan} />
         ) : null}
         {!drilled
           ? layout.ifs.map((f, i) => {
@@ -825,7 +984,7 @@ export function TopologyCanvas({
                     <div className="an-panel wan-panel"><div className="an-body err">{wan.error}</div></div>
                   </foreignObject>
                 ) : (
-                  <foreignObject x={28} y={628} width={660} height={364}>
+                  <foreignObject x={28} y={520} width={700} height={472}>
                     <div className={`an-panel wan-panel sev-${wan.severity}`}>
                       <div className="an-head">
                         <span className="an-kicker">{lang === 'zh' ? 'AI 分析 · 入侵判定' : 'AI · INTRUSION'} · {wan.ip}</span>
@@ -847,7 +1006,34 @@ export function TopologyCanvas({
                         <span><i>{lang === 'zh' ? '疑似来自' : 'SOURCE'}</i>{wan.attribution}</span>
                         <span><i className="bad">{lang === 'zh' ? '影响' : 'IMPACT'}</i>{wan.blast}</span>
                       </div>
-                      {wan.actions && wan.actions.length ? (
+                      {/* impact surface: every node on the attack path (the panel names them; the
+                          matching topology nodes carry the .impact class while this panel is open) */}
+                      {wan.impactNodes && wan.impactNodes.length ? (
+                        <div className="wan-impact">
+                          <span className="wan-impact-lab">{lang === 'zh' ? '影响面 · 攻击链节点' : 'IMPACT SURFACE'}</span>
+                          {wan.impactNodes.map((n, i) => <span key={i} className={`wan-impact-node ${n === '192.168.1.1' ? 'fw' : ''}`}>{n}</span>)}
+                        </div>
+                      ) : null}
+                      {/* runnable playbook, display-only — the console never executes any of it */}
+                      {wan.playbook && wan.playbook.length ? (
+                        <div className="wan-pb">
+                          <div className="wan-pb-h">
+                            <span>{lang === 'zh' ? '处置预案 · 可运行剧本' : 'REMEDIATION PLAYBOOK'}</span>
+                            <span className="wan-pb-gate">🔒 {lang === 'zh' ? '仅供审阅 · 系统不执行' : 'REVIEW ONLY · NOT EXECUTED'}</span>
+                          </div>
+                          {wan.playbook.map((s, i) => (
+                            <div key={i} className={`wan-pb-step layer-${s.layer}`}>
+                              <div className="wan-pb-step-h">
+                                <span className="wan-pb-seq">{String(i + 1).padStart(2, '0')}</span>
+                                <span className="wan-pb-target">▸ {s.target}</span>
+                                <span className="wan-pb-layer">{s.layer}</span>
+                                <span className="wan-pb-why">{s.why}</span>
+                              </div>
+                              <pre className="wan-pb-cmds">{s.commands.join('\n')}</pre>
+                            </div>
+                          ))}
+                        </div>
+                      ) : wan.actions && wan.actions.length ? (
                         <ol className="wan-actions">
                           {wan.actions.map((a, i) => (<li key={i}>{a}</li>))}
                         </ol>

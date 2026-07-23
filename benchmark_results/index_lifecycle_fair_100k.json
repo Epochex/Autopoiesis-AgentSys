@@ -1,0 +1,82 @@
+{
+  "schema_version": 2,
+  "benchmark": "segmented-vs-resident-monolithic-bm25",
+  "config": {
+    "documents": 100000,
+    "updates": 10000,
+    "deletes": 10000,
+    "queries": 300,
+    "seed": 23
+  },
+  "environment": {
+    "python": "3.10.12",
+    "platform": "Linux-5.15.0-185-generic-x86_64-with-glibc2.35",
+    "cpu_count": 24
+  },
+  "initial_ingest_seconds": 2.6737,
+  "maintenance": {
+    "incremental_mutation_seconds": 0.2064,
+    "background_compaction_seconds": 0.6079,
+    "incremental_plus_compaction_seconds": 0.8143,
+    "fresh_monolithic_rebuild_seconds": 0.5723
+  },
+  "resident_query": {
+    "segmented_before_compaction": {
+      "p50_ms": 11.2608,
+      "p95_ms": 11.8876,
+      "p99_ms": 13.9469,
+      "qps": 88.76
+    },
+    "segmented_after_compaction": {
+      "p50_ms": 10.974,
+      "p95_ms": 11.4861,
+      "p99_ms": 12.5061,
+      "qps": 91.34
+    },
+    "monolithic_full_scan": {
+      "p50_ms": 105.1326,
+      "p95_ms": 143.3912,
+      "p99_ms": 149.3652,
+      "qps": 9.12
+    },
+    "before_p95_speedup_vs_monolithic": 12.0622,
+    "after_p95_speedup_vs_monolithic": 12.4839
+  },
+  "before_compaction": {
+    "generation": 120001,
+    "applied_offset": 120000,
+    "live_documents": 90000,
+    "physical_entries": 120000,
+    "obsolete_entries": 30000,
+    "obsolete_ratio": 0.25,
+    "segment_count": 21,
+    "delta_entries": 0,
+    "vocabulary_size": 42050,
+    "average_document_length": 11.0,
+    "compaction_due": true
+  },
+  "after_compaction": {
+    "generation": 120002,
+    "applied_offset": 120000,
+    "live_documents": 90000,
+    "physical_entries": 90000,
+    "obsolete_entries": 0,
+    "obsolete_ratio": 0.0,
+    "segment_count": 1,
+    "delta_entries": 0,
+    "vocabulary_size": 42050,
+    "average_document_length": 11.0,
+    "compaction_due": false
+  },
+  "compacted": true,
+  "compaction_seconds": 0.6079,
+  "physical_entries_reclaimed": 30000,
+  "physical_reduction_percent": 25.0,
+  "snapshot_bytes_before": 22172441,
+  "snapshot_bytes_after": 17403751,
+  "restore_seconds": 1.6381,
+  "ranking_equal_to_monolithic_bm25": true,
+  "post_compaction_ranking_equal_to_monolithic_bm25": true,
+  "restart_ranking_equal": true,
+  "snapshot_directory": "/tmp/autopoiesis-sparse-fair-100k"
+}

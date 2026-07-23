@@ -5,6 +5,7 @@ import json
 import pytest
 
 from core.eval.replay import evaluate_trace, run_and_evaluate_replay
+from core.memory.hybrid_kb import KBDocument
 from core.skills.spec import SkillResult, SkillSpec
 from core.trace.ledger import JSONLTraceLedger
 from domains.network_rca.adapters.fortios_syslog import (
@@ -14,6 +15,21 @@ from domains.network_rca.adapters.fortios_syslog import (
 )
 from domains.network_rca.adapters.live_device import LiveDeviceAdapter
 from domains.network_rca.factory import build_network_rca_orchestrator, load_ground_truth, load_seed_cases
+
+
+class _StaticKnowledgeRetriever:
+    rerank = False
+
+    def retrieve(self, query, k=None):
+        assert query
+        assert k == 2
+        return [
+            KBDocument(
+                id="carrier-runbook",
+                text="Loss of carrier requires a current interface and physical-link check.",
+                metadata={"source": "runbook://carrier"},
+            )
+        ]
 
 
 def test_phase0_single_case_produces_complete_trace(tmp_path):
@@ -60,6 +76,39 @@ def test_phase1_all_seed_cases_pass_with_evidence(tmp_path):
     events = JSONLTraceLedger(ledger_path).replay()
     assert len([event for event in events if event.kind == "diagnosis_completed"]) == 5
     assert len([event for event in events if event.kind == "tool_called"]) <= 15
+
+
+def test_online_knowledge_retrieval_enters_context_without_replacing_live_evidence(tmp_path):
+    ledger_path = tmp_path / "knowledge_trace.jsonl"
+    orchestrator = build_network_rca_orchestrator(
+        ledger_path,
+        knowledge_retriever=_StaticKnowledgeRetriever(),
+        knowledge_top_k=2,
+    )
+
+    diagnosis, report = orchestrator.diagnose(load_seed_cases()[0])
+
+    assert report.passed
+    assert {item.evidence_id for item in diagnosis.evidence} == {
+        "ev-eno1-oper-down",
+        "ev-eno1-no-phy",
+    }
+    assert [item["evidence_id"] for item in orchestrator._last_knowledge_evidence] == [
+        "kb:carrier-runbook"
+    ]
+    assert "kb:carrier-runbook" not in {
+        item["evidence_id"] for item in orchestrator._last_evidence
+    }
+    events = JSONLTraceLedger(ledger_path).replay()
+    compiled = next(event for event in events if event.kind == "context_compiled")
+    assert "kb:carrier-runbook" in compiled.payload["included_evidence_ids"]
+    observations = orchestrator.observer.ledger.replay()
+    finished = next(
+        event
+        for event in observations
+        if event.node_name == "knowledge.retrieve" and event.phase == "finished"
+    )
+    assert finished.output["document_ids"] == ["carrier-runbook"]
 
 
 def test_core_components_can_be_disabled_for_ablation(tmp_path):

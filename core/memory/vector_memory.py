@@ -2,7 +2,7 @@
 
 ``VectorIndexLifecycle`` deliberately owns vectors rather than text.  This
 module is the thin online boundary that embeds memory text and queries, while
-preserving the lifecycle's immutable HNSW base, exact Flat delta, version table,
+preserving the lifecycle's immutable Flat-by-default base, exact Flat delta, version table,
 tombstones and atomic compaction semantics.
 
 Heavy retrieval dependencies stay optional.  Importing this module does not
@@ -134,7 +134,7 @@ def _first_embedding(batch: Any, *, operation: str) -> Any:
 
 
 class VectorMemoryIndex:
-    """Online semantic memory index over HNSW base and exact mutable delta.
+    """Online semantic memory index over an immutable base and exact mutable delta.
 
     The adapter contains no authoritative memory text or metadata.  PostgreSQL
     or :class:`TieredMemoryStore` remains the source of truth; this object is a
@@ -239,7 +239,7 @@ class VectorMemoryIndex:
             _translate_optional_dependency(exc)
 
     def compact(self) -> int:
-        """Rebuild the HNSW base from live versions and atomically install it."""
+        """Rebuild the configured base from live versions and atomically install it."""
         try:
             return self.lifecycle.compact()
         except ModuleNotFoundError as exc:

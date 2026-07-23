@@ -75,6 +75,14 @@ async def _lifespan(app: FastAPI):
                 data_source="real",
                 real_stats_path=resolve_stats_path(_MANIFEST),
                 reasoner_mode="rule",
+                knowledge_corpus_path=settings.knowledge_corpus_path,
+                adaptive_multiagent_enabled=True,
+                adaptive_options={
+                    "max_rounds": 2,
+                    "planner_batch_size": 4,
+                    "max_parallel_agents": 4,
+                    "reject_on_insufficient_evidence": True,
+                },
                 raise_on_evolution_error=False,
             )
             _runtime_error = None
@@ -190,6 +198,14 @@ async def rca_threat(ip: str, cidr: str = "", lang: str = "zh") -> dict[str, Any
 @app.get("/api/rca/wan_threat")
 async def rca_wan_threat(ip: str, lang: str = "zh") -> dict[str, Any]:
     return await asyncio.to_thread(assess_wan, ip, lang)
+
+
+@app.get("/api/rca/attack_surface")
+async def rca_attack_surface() -> dict[str, Any]:
+    # Resident deep attack-surface analysis: full real held-out WAN evidence
+    # (brute-force funnel, /24 attacker netblocks, deny ports, Dahua device probes).
+    from .live import wan_attack_surface
+    return await asyncio.to_thread(wan_attack_surface)
 
 
 @app.get("/api/rca/threat_subnet")
@@ -313,6 +329,16 @@ async def rca_pentest(lang: str = "zh") -> dict[str, Any]:
     # Intrusive weak-cred/exploit probes are approval-gated and never executed.
     from domains.active_recon.pentest import build_pentest_report
     return await asyncio.to_thread(build_pentest_report, lang)
+
+
+@app.get("/api/rca/live-situation")
+async def rca_live_situation() -> dict[str, Any]:
+    # Read-only tail of the NetOps real-time subsystem's landed sink files (alerts +
+    # AIOps suggestions + cluster-state). The gateway never joins the Redpanda topic;
+    # the two subsystems meet only at this disk boundary. Returns empty collections
+    # when the runtime dir is absent, so the panel degrades to "no live data".
+    from .runtime_reader import load_runtime_snapshot
+    return await asyncio.to_thread(load_runtime_snapshot, settings)
 
 
 @app.get("/", include_in_schema=False)

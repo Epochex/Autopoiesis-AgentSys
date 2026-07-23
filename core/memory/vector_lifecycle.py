@@ -1,9 +1,11 @@
 """Crash-safe lifecycle for a mutable corpus backed by immutable FAISS indexes.
 
-FAISS HNSW is treated as an immutable serving snapshot.  New document versions
-are appended to a small exact (``IndexFlatIP``) delta.  A version table makes
-superseded and deleted vectors invisible immediately; compaction rebuilds a new
-HNSW from only the live versions and swaps it in after the build succeeds.
+An exact FAISS Flat index is the default immutable serving snapshot.  New
+document versions are appended to a small exact (``IndexFlatIP``) delta.  A
+version table makes superseded and deleted vectors invisible immediately;
+compaction rebuilds a new base from only the live versions and swaps it in after
+the build succeeds.  HNSW remains an explicit alternative for deployments whose
+measured throughput requires approximate search.
 
 The class deliberately accepts embeddings rather than text.  Embedding/model
 versioning belongs to the caller, while this module owns vector visibility,
@@ -147,7 +149,7 @@ class VectorIndexLifecycle:
         self,
         dimension: int,
         *,
-        base_index_type: str = "hnsw",
+        base_index_type: str = "flat",
         delta_max_entries: int = 10_000,
         delta_ratio_threshold: float = 0.10,
         obsolete_ratio_threshold: float = 0.15,

@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "benchmark": "same-work-multiagent-parallel-execution",
+  "scope": "orchestration and I/O overlap only; excludes model quality and remote provider variance",
+  "config": {
+    "worker_values": [
+      1,
+      2,
+      4
+    ],
+    "repeats": 30,
+    "warmups": 3
+  },
+  "environment": {
+    "python": "3.10.12",
+    "platform": "Linux-5.15.0-185-generic-x86_64-with-glibc2.35",
+    "cpu_count": 24
+  },
+  "results": [
+    {
+      "scenario": "balanced_io",
+      "role_delays_ms": [
+        100.0,
+        100.0,
+        100.0,
+        100.0
+      ],
+      "same_work_at_every_concurrency": true,
+      "rows": [
+        {
+          "workers": 1,
+          "p50_ms": 402.3519,
+          "p95_ms": 402.5867,
+          "p99_ms": 402.5874,
+          "mean_ms": 402.3593,
+          "observed_peak_overlap": 1,
+          "evidence_count": 4,
+          "tool_cost": 1.0,
+          "p95_speedup_vs_serial": 1.0,
+          "parallel_efficiency": 1.0
+        },
+        {
+          "workers": 2,
+          "p50_ms": 202.1228,
+          "p95_ms": 202.2747,
+          "p99_ms": 202.2904,
+          "mean_ms": 202.1142,
+          "observed_peak_overlap": 2,
+          "evidence_count": 4,
+          "tool_cost": 1.0,
+          "p95_speedup_vs_serial": 1.9903,
+          "parallel_efficiency": 0.9951
+        },
+        {
+          "workers": 4,
+          "p50_ms": 102.7857,
+          "p95_ms": 103.0349,
+          "p99_ms": 103.0665,
+          "mean_ms": 102.7665,
+          "observed_peak_overlap": 4,
+          "evidence_count": 4,
+          "tool_cost": 1.0,
+          "p95_speedup_vs_serial": 3.9073,
+          "parallel_efficiency": 0.9768
+        }
+      ]
+    },
+    {
+      "scenario": "straggler_io",
+      "role_delays_ms": [
+        20.0,
+        40.0,
+        80.0,
+        160.0
+      ],
+      "same_work_at_every_concurrency": true,
+      "rows": [
+        {
+          "workers": 1,
+          "p50_ms": 302.2171,
+          "p95_ms": 302.459,
+          "p99_ms": 302.489,
+          "mean_ms": 302.2466,
+          "observed_peak_overlap": 1,
+          "evidence_count": 4,
+          "tool_cost": 1.0,
+          "p95_speedup_vs_serial": 1.0,
+          "parallel_efficiency": 1.0
+        },
+        {
+          "workers": 2,
+          "p50_ms": 202.1806,
+          "p95_ms": 202.3992,
+          "p99_ms": 202.6109,
+          "mean_ms": 202.1952,
+          "observed_peak_overlap": 2,
+          "evidence_count": 4,
+          "tool_cost": 1.0,
+          "p95_speedup_vs_serial": 1.4944,
+          "parallel_efficiency": 0.7472
+        },
+        {
+          "workers": 4,
+          "p50_ms": 163.0449,
+          "p95_ms": 163.4179,
+          "p99_ms": 163.6325,
+          "mean_ms": 163.04,
+          "observed_peak_overlap": 4,
+          "evidence_count": 4,
+          "tool_cost": 1.0,
+          "p95_speedup_vs_serial": 1.8508,
+          "parallel_efficiency": 0.4627
+        }
+      ]
+    }
+  ],
+  "total_seconds": 45.3781
+}

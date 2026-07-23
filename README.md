@@ -89,7 +89,7 @@ core/context/       结构化预算上下文压缩
 core/orchestrator/  级联意图路由、自适应编排、技能调度
 core/skills/        技能注册表、技能诱导、契约
 core/verifier/      契约验证、引用核验
-core/eval/          LLM-free 评测、检索基准、混合检索根因诊断
+core/eval/          确定性基准、混合检索评测、独立模型证据评审与配对消融
 core/llm/           OpenAI 兼容 provider(DeepSeek API / 本地 GPU 隧道)
 domains/network_rca 首个落地域:内网 RCA
 domains/active_recon 只读侦察 / 加固报告
@@ -99,7 +99,7 @@ frontend/           React/Vite 战术态势界面 + 记忆 observatory + FastAPI
 
 ## 推理后端
 
-生产推理走 DeepSeek API(`core/llm/provider.py`,`DS_V4_*` 环境变量),LLM-free 评测走内置规则推理器。鹏城 GPU 隧道配置见 [docs/PENGCHENG_PROVIDER.md](./docs/PENGCHENG_PROVIDER.md)。所有配置读 `AUTOPOIESIS_*` 变量,旧 `SELFEVO_*` 作为兼容回退保留。
+生产推理走 DeepSeek API(`core/llm/provider.py`,`DS_V4_*` 环境变量),确定性基准走内置规则推理器；语义支持评测可使用隔离的模型评审接口，边界与配对口径见 [docs/LLM_GROUNDING_JUDGE.md](./docs/LLM_GROUNDING_JUDGE.md)。鹏城 GPU 隧道配置见 [docs/PENGCHENG_PROVIDER.md](./docs/PENGCHENG_PROVIDER.md)。所有配置读 `AUTOPOIESIS_*` 变量,旧 `SELFEVO_*` 作为兼容回退保留。
 
 ## 边界与 roadmap
 

@@ -32,7 +32,10 @@ import './memory-timeline.css'
 const W_RARE = 5 // units per rare op — buys it a clickable slot
 const W_INSIGHT = 22 // the reflection also buys paper for its annotation
 const W_DENSE = 1 // units per REINFORCE
-const weight = (op: MemOp) => (op === 'REINFORCE' ? W_DENSE : op === 'INSIGHT' ? W_INSIGHT : W_RARE)
+// DECAY is a passive per-pass retrievability tick: it drives the inspector's real
+// strength drop, but it is aggregated like REINFORCE so it never litters the ledger
+// with fat clickable slots. FORGET (a record crossing the floor) stays rare.
+const weight = (op: MemOp) => (op === 'REINFORCE' || op === 'DECAY' ? W_DENSE : op === 'INSIGHT' ? W_INSIGHT : W_RARE)
 /** marks are always drawn W_RARE wide — a wide slot buys space, never a fat dot */
 const markUnits = (s: { ev: MemEvent; u0: number; u1: number }) =>
   s.ev.op === 'INSIGHT' ? s.u0 + W_RARE / 2 : (s.u0 + s.u1) / 2
@@ -69,14 +72,16 @@ const OP_LABEL: Record<MemOp, [string, string]> = {
   INSIGHT: ['洞见', 'INSIGHT'],
   INSIGHT_REFRESH: ['洞见重算', 'REFLECT+'],
   LINK: ['连接', 'LINK'],
+  DECAY: ['衰减', 'DECAY'],
+  FORGET: ['遗忘', 'FORGET'],
 }
 const opLabel = (op: MemOp, zh: boolean) => OP_LABEL[op]?.[zh ? 0 : 1] ?? op
 /** css modifier per op — dense ops are never marked individually.
  *  Underscores would not survive as a class modifier, so INSIGHT_REFRESH maps to
  *  `refresh`; it is drawn as a hollow diamond against INSIGHT's solid one, since
  *  it is the same reflection re-deriving itself, not a second kind of thing. */
-const opClass = (op: MemOp) => (op === 'REINFORCE' ? 'dense' : op === 'INSIGHT_REFRESH' ? 'refresh' : op.toLowerCase())
-const isRare = (op: MemOp) => op !== 'REINFORCE'
+const opClass = (op: MemOp) => (op === 'REINFORCE' || op === 'DECAY' ? 'dense' : op === 'INSIGHT_REFRESH' ? 'refresh' : op.toLowerCase())
+const isRare = (op: MemOp) => op !== 'REINFORCE' && op !== 'DECAY'
 const shortCase = (id: string) => id.replace(/^real_/, '')
 const pad = (n: number, w: number) => String(n).padStart(w, '0')
 

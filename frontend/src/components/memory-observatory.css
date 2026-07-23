@@ -2,10 +2,11 @@
  * Panel-internal styling lives in memory-graph.css / memory-inspector.css /
  * memory-timeline.css. Tokens come from .traj-page (App.css:1494-1551).
  *
- * Height budget is the whole point: the observatory must resolve inside one
- * 1920x1080 screen with no page scroll, and still hold together at 1440x900.
- * Everything below is expressed against the viewport so neither is a special case.
- */
+ * Height contract (2026-07): the graph is NOT squeezed into the viewport any
+ * more. The three-tier space renders at its natural width-driven height — the
+ * SVG keeps its viewBox aspect — and the page scrolls the little it overruns.
+ * The old one-screen budget scaled the semantic cards below legibility, which
+ * defeated the panel it was protecting. */
 
 .mo {
   /* Wider side column than before: with the ribbon gone the board has the room,
@@ -15,11 +16,11 @@
   --mo-side-w: clamp(400px, 35vw, 700px);
 
   display: grid;
-  /* Three rows now: the cold-vs-warm ribbon was lifted out to below the fold
-     (TrajectoryPage .fx-evolve) so the observatory owns the full board on open.
-     Head + timeline take their intrinsic height; the three-tier space absorbs the
-     rest, which it can because its SVG scales. */
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* All rows take their intrinsic height: the three-tier space is sized by the
+     graph's own aspect ratio (width-driven), not squeezed to fit a viewport
+     budget. On very tall screens the leftover space simply trails after the
+     route band instead of being forced into the board. */
+  grid-template-rows: auto auto auto;
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   /* Both zeros are load-bearing. As a grid item .mo defaults to min-width/height
@@ -79,40 +80,41 @@
   min-width: 0;
 }
 
-/* The graph carries a fixed viewBox, so left to itself it derives height from
-   width and overflows a short row. Its default preserveAspectRatio (xMidYMid
-   meet) already letterboxes correctly — it just has to be told to fill the box
-   it was given rather than the one it wants. */
-.mo-space {
-  display: grid;
-  overflow: hidden;
-}
-.traj-page .mo-space .mg-root {
-  min-height: 0;
-  height: 100%;
-}
-.traj-page .mo-space .mg-canvas {
-  height: 100%;
-  max-height: 100%;
-}
+/* The graph derives its height from its width via the viewBox (memory-graph.css
+   gives .mg-canvas height:auto). That IS the intended size now — no 100%-height
+   override squeezing it into a leftover row, no letterbox margins. The body row
+   is exactly as tall as the graph renders. */
 
-/* Inspector + route ruler stack; only the inspector may scroll, and it scrolls
- * inside itself — the page never grows to accommodate it. */
+/* The side column is now the record inspector alone (the route ruler moved to its
+ * own full-width band under the replay bar). It scrolls inside itself — the page
+ * never grows to accommodate it. `contain: size` keeps it from bidding on the
+ * body row's height: the graph alone decides how tall the row is, and a long
+ * record scrolls inside the inspector instead of stretching the board. */
 .mo-side {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   gap: 10px;
+  contain: size;
 }
 
+/* Write router: full-width band under the replay bar. Its viewBox is unchanged, so
+ * going full width scales the whole ruler up — larger type, longer axis, readable
+ * gate labels. Capped so it enlarges without taking over the screen. */
+.mo-route { margin-top: 10px; display: flex; justify-content: center; }
+.mo-route .mi-ruler { width: 100%; max-width: 1240px; padding: 10px 14px 8px; }
+
 /* Below the trajectory footer breakpoint the side column would be unusably
- * narrow, so the inspector drops under the space rather than being squeezed. */
+ * narrow, so the inspector drops under the space rather than being squeezed.
+ * Stacked, the inspector must size itself again — containment would collapse
+ * an auto row to zero. */
 @media (max-width: 1180px) {
   .mo-body {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
   }
   .mo-side {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto;
+    contain: none;
   }
 }

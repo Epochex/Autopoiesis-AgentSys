@@ -38,6 +38,17 @@ class Verifier:
         missing_citations = cited_ids.difference(evidence_ids)
         if missing_citations:
             errors.append(f"cited evidence not observed: {sorted(missing_citations)}")
+        current_observation_ids = {
+            item["evidence_id"]
+            for item in evidence
+            if item.get("evidence_kind") != "knowledge_document"
+            and item.get("current_observation", True) is not False
+        }
+        if cited_ids and not cited_ids.intersection(current_observation_ids):
+            errors.append(
+                "diagnosis cites no current operational observation; "
+                "knowledge documents cannot establish current device state"
+            )
         contradictions = [
             item["evidence_id"]
             for item in evidence

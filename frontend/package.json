@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:gateway": "PYTHONPATH=/data/.local/contexthelix-console-py:$PYTHONPATH python3 -m uvicorn gateway.app.main:app --app-dir . --host 0.0.0.0 --port 8026 --reload",
+    "dev:gateway": "PYTHONPATH=/data/.local/contexthelix-console-py:$PYTHONPATH python3 -m uvicorn gateway.app.main:app --app-dir . --host 0.0.0.0 --port 8026 --reload --reload-dir gateway",
     "serve:gateway": "PYTHONPATH=/data/.local/contexthelix-console-py:$PYTHONPATH python3 -m uvicorn gateway.app.main:app --app-dir . --host 0.0.0.0 --port 8026",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

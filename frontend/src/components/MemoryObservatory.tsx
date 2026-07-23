@@ -165,8 +165,8 @@ export function MemoryObservatory({
    * it names actually fires on this run (ADD 18 · INSIGHT 1 · REINFORCE 235 ·
    * INSIGHT_REFRESH 22 · LINK 8); the ones that never fire are not mentioned. */
   const thesis = zh
-    ? `回放一次真实内核运行：记忆从空开始，${obs.records.length} 条记录经 ${obs.events.length} 次生命周期事件写入 → 加固 → 抽象为洞察`
-    : `ONE REAL KERNEL RUN, REPLAYED FROM EMPTY MEMORY — ${obs.records.length} RECORDS WRITTEN, REINFORCED AND ABSTRACTED ACROSS ${obs.events.length} LIFECYCLE EVENTS`
+    ? `记忆从空开始，${obs.records.length} 条记录写入、加固并抽象为洞察，共 ${obs.events.length} 次生命周期事件`
+    : `From empty memory — ${obs.records.length} records written, reinforced and abstracted into insight across ${obs.events.length} lifecycle events`
 
   return (
     <section className="mo" ref={rootRef} aria-label={zh ? '记忆观测舱' : 'Memory observatory'}>
@@ -198,7 +198,6 @@ export function MemoryObservatory({
             onUnpin={() => setPinned(null)}
             zh={zh}
           />
-          <RouteRuler decisions={decisions} zh={zh} />
         </aside>
       </div>
       <MemoryTimeline
@@ -209,6 +208,12 @@ export function MemoryObservatory({
         onTogglePlay={toggle}
         zh={zh}
       />
+      {/* The write router reads as a scale, so it belongs on a full-width band under
+          the replay bar rather than squeezed into the side column. That also leaves
+          the whole right column to the record inspector. */}
+      <div className="mo-route">
+        <RouteRuler decisions={decisions} zh={zh} />
+      </div>
     </section>
   )
 }

@@ -12,7 +12,7 @@ import type { MemCapabilities, MemEvent, MemRecall, MemRecord, MemSnapshot, MemT
       Prose notes use .mi-note, which deliberately does NOT uppercase. ── */
 const L: Record<string, [string, string]> = {
   kick: ['记忆条目 · 逐字段可审计', 'MEMORY RECORD · FIELD-LEVEL AUDIT'],
-  real: ['真实 · R230', 'REAL · R230'],
+  real: ['R230 · 内网', 'R230 · LAN'],
   emptyT: ['未选中条目', 'NO RECORD SELECTED'],
   emptyB: [
     '在左侧记忆图中选中一个节点，这里会显示它的全文、来源、每一步的字段级变更，以及内核未记录的部分。',
@@ -20,8 +20,8 @@ const L: Record<string, [string, string]> = {
   ],
   text: ['全文', 'TEXT'],
   noteText: [
-    '文本在 ADD 时写入一次，之后从未改写 —— 内核没有文本改写路径（update_text_mutation=false）。',
-    'Text written once at ADD, never rewritten — the kernel has no text-mutation path (update_text_mutation=false).',
+    '全文在写入时确定，之后仅更新标签、资产与置信度。',
+    'The text is fixed at write time; later updates touch tags, assets and confidence.',
   ],
 
   unborn: ['此刻尚不存在', 'NOT YET IN MEMORY'],
@@ -41,7 +41,7 @@ const L: Record<string, [string, string]> = {
   last: ['最近一次变更', 'LAST CHANGE'],
   noChg: ['本步该条目未变', 'UNTOUCHED AT THIS STEP'],
   created: ['创建', 'CREATED'],
-  noPrior: ['无前态 —— 这是写入，不是变更', 'No prior state — this is a creation, not a diff.'],
+  noPrior: ['首次写入 · 无前值可比', 'First write · no prior value'],
   initial: ['初始值', 'INITIAL'],
   route: ['写入路由', 'WRITE ROUTER'],
   edge: ['新增连接', 'EDGE CREATED'],

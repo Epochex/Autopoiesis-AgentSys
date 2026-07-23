@@ -517,6 +517,8 @@ def _wan_evidence() -> dict[str, Any]:
         key=lambda b: -b["count"],
     )
     return {
+        "source": "DAHUA_FORTIGATE (FG100E) · R230 192.168.1.23",
+        "windowDays": s.get("window_days", []),
         "adminLoginFailed": s.get("admin_login_failed", 0),
         "distinctSrc": s.get("admin_login_failed_distinct_src", 0),
         "lockouts": s.get("admin_login_disabled_lockouts", 0),
@@ -525,7 +527,59 @@ def _wan_evidence() -> dict[str, Any]:
         "internalDenySrc": s.get("deny_top_src", []),
         "denyPorts": s.get("deny_top_dstports", []),
         "denyCount": s.get("deny_count", 0),
+        "acceptPermit": s.get("accept_permit_count", 0),
+        # Dahua device service-port probing (37777/37809/…): the vendor-specific
+        # scan surface, distinct from the generic deny ports above.
+        "devicePortTop": s.get("device_service_port_top", []),
+        "devicePortDeny": s.get("device_service_port_deny", 0),
+        "sessionClash": s.get("session_clash", 0),
     }
+
+
+def _asset_exposure() -> dict[str, Any]:
+    """Internal exposure face from the real device graph, for the drill-down's asset
+    dimension: per-subnet role/vendor mix + the actually-exposed devices (threat, open
+    ports, or accepted traffic), so the panel can pivot an external attacker IP to the
+    same IP's internal device profile."""
+    from .rca_reader import _load_device_graphs
+
+    graphs = _load_device_graphs()
+    _FIELDS = ("ip", "mac", "vendor", "os", "role", "flows", "deny", "accept", "topPorts", "threat")
+    subnets = []
+    for cidr, sub in graphs.items():
+        stats = sub.get("stats", {})
+        devs = sub.get("devices", []) if isinstance(sub.get("devices"), list) else []
+        exposed = [
+            {k: d.get(k) for k in _FIELDS}
+            for d in devs
+            if isinstance(d, dict)
+            and (d.get("threat") not in (None, "ok") or d.get("topPorts") or (d.get("accept") or 0) > 0)
+        ]
+        exposed.sort(key=lambda d: -((d.get("deny") or 0) + (d.get("flows") or 0)))
+        subnets.append({
+            "cidr": cidr,
+            "devices": stats.get("devices", len(devs)),
+            "withTraffic": stats.get("withTraffic", 0),
+            "deny": stats.get("deny", 0),
+            "roles": stats.get("roles", {}),
+            "vendors": stats.get("vendors", {}),
+            "exposed": exposed[:24],
+        })
+    subnets.sort(key=lambda x: -(x.get("deny") or 0))
+    totals = {
+        "devices": sum(s["devices"] for s in subnets),
+        "exposed": sum(len(s["exposed"]) for s in subnets),
+        "high": sum(1 for s in subnets for d in s["exposed"] if d.get("threat") == "high"),
+        "cameras": sum(v for s in subnets for r, v in s["roles"].items() if r == "camera"),
+    }
+    return {"subnets": subnets, "totals": totals}
+
+
+def wan_attack_surface() -> dict[str, Any]:
+    """Public entry for the attack-surface drill-down: WAN offense + internal exposure."""
+    ev = _wan_evidence()
+    ev["assetExposure"] = _asset_exposure()
+    return ev
 
 
 _wan_cache: dict[str, Any] = {}
@@ -546,6 +600,12 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
 
     ev = _wan_evidence()
     attacker = next((a for a in ev["topAttackers"] if a[0] == ip), None)
+    lateral = next((x for x in ev["internalDenySrc"] if x[0] == ip), None)
+    if attacker is None and lateral is not None:
+        # an INTERNAL host clicked from the lateral-source cluster: assess it as a
+        # possible compromised pivot — the attack it received, its weakness, and the
+        # remediation playbook for its device role — NOT as an external WAN attacker.
+        return _assess_internal_host(ip, lateral, ev, lang)
     if attacker is None:
         return {"ok": False, "text": "attacker not in held-out top sources"}
     net = ".".join(ip.split(".")[:3]) + ".0/24"
@@ -573,6 +633,13 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
         f'"internal_correlation": [{{"ip": <ip from internal_deny_hosts>, "relation": <why linked, <=8 words>}}], '
         f'"blast": <1 sentence: lockout DoS / compromise risk>, '
         f'"actions": [<concrete action>, <concrete action>, <concrete action>], '
+        f'"playbook": [{{"target": <node label, e.g. "FortiGate 192.168.1.1" or an internal host ip>, '
+        f'"targetIp": <ip or cidr this step acts on>, "layer": "firewall|host|segment", '
+        f'"commands": [<REAL runnable command or config line — FortiOS CLI for the FortiGate, '
+        f'shell/iptables for a host — concrete and correct; this is for a human operator to REVIEW, '
+        f'it will NOT be auto-executed>], "why": <<=10 words>}}], '
+        f'"impact_nodes": [<every ip or cidr on the attack path: the attacker /24, 192.168.1.1 the '
+        f'FortiGate, and each internal pivot ip>], '
         f'"confidence": <0-1 number>}}.'
     )
     payload = {
@@ -618,9 +685,84 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
         ][:6],
         "blast": out.get("blast", ""),
         "actions": [a for a in (out.get("actions") or []) if a][:4],
+        # runnable remediation playbook, mapped to real target nodes. Display-only:
+        # the console never executes any of it — the approval boundary is absolute.
+        "playbook": [
+            {
+                "target": p.get("target", ""),
+                "targetIp": p.get("targetIp", ""),
+                "layer": p.get("layer", ""),
+                "commands": [c for c in (p.get("commands") or []) if c][:6],
+                "why": p.get("why", ""),
+            }
+            for p in (out.get("playbook") or [])
+            if isinstance(p, dict) and p.get("commands")
+        ][:6],
+        "impactNodes": [x for x in (out.get("impact_nodes") or []) if x][:12],
         "confidence": out.get("confidence"),
         "lockouts": ev["lockouts"],
         "distinctSrc": ev["distinctSrc"],
+        "model": cfg["model"],
+    }
+
+
+def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str) -> dict[str, Any]:
+    """Assess an internal host (clicked from the lateral-source cluster) as a possible
+    compromised pivot: the attack it received, its weakness, and a role playbook."""
+    from . import providers
+    from core.llm.provider import OpenAICompatibleClient
+
+    cfg = providers._deepseek_cfg()
+    if not cfg["api_key"]:
+        return {"ok": False, "text": "DeepSeek key not configured."}
+    dev = None
+    for s in _asset_exposure()["subnets"]:
+        for d in s["exposed"]:
+            if d["ip"] == ip:
+                dev = {**d, "cidr": s["cidr"]}
+                break
+        if dev:
+            break
+    want = "Chinese" if lang == "zh" else "English"
+    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=50)
+    instr = (
+        f"You are a SOC analyst. This is an INTERNAL host on the R230 network with heavy denied traffic. "
+        f"Assess whether it is a COMPROMISED PIVOT tied to the external brute-force campaign, using ONLY "
+        f"the real evidence. Respond in {want}, concise. Give the attack it plausibly received, its weakness "
+        f"(open ports/role), and a remediation PLAYBOOK for its device role — REAL runnable commands for a "
+        f"human to REVIEW, NOT auto-executed. Return JSON {{\"verdict\": <short>, \"severity\": "
+        f"\"critical|high|medium\", \"campaign\": <1 sentence: attack received>, \"kill_chain\": "
+        f"\"lateral-movement|impact|credential-access\", \"attribution\": <device role>, \"blast\": "
+        f"<1 sentence: weakness>, \"actions\": [<action>,<action>], \"playbook\": [{{\"target\": <this host "
+        f"or its gateway>, \"targetIp\": <ip>, \"layer\": \"host|firewall\", \"commands\": [<REAL command/"
+        f"config for review>], \"why\": <<=10 words>}}], \"impact_nodes\": [<this ip, its /24, 192.168.1.1>], "
+        f"\"confidence\": <0-1>}}."
+    )
+    payload = {
+        "internal_host": ip,
+        "denied_flows": lateral[1],
+        "device": dev or {"ip": ip, "note": "not in exposed device set"},
+        "external_campaign": {"distinct_sources": ev["distinctSrc"], "admin_lockouts": ev["lockouts"]},
+        "top_denied_ports": ev["denyPorts"][:6],
+    }
+    try:
+        out = client.complete_json([{"role": "user", "content": instr + "\n" + json.dumps(payload)}], schema_name="internal_host")
+    except Exception as exc:
+        return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
+    return {
+        "ok": True, "ip": ip, "attempts": lateral[1], "netblock": (dev or {}).get("cidr", ""),
+        "verdict": out.get("verdict", ""), "severity": out.get("severity", "high"),
+        "campaign": out.get("campaign", ""), "killChain": out.get("kill_chain", ""),
+        "attribution": out.get("attribution", ""), "blast": out.get("blast", ""),
+        "siblings": [], "internalCorrelation": [],
+        "actions": [a for a in (out.get("actions") or []) if a][:4],
+        "playbook": [
+            {"target": p.get("target", ""), "targetIp": p.get("targetIp", ""), "layer": p.get("layer", ""),
+             "commands": [c for c in (p.get("commands") or []) if c][:6], "why": p.get("why", "")}
+            for p in (out.get("playbook") or []) if isinstance(p, dict) and p.get("commands")
+        ][:6],
+        "impactNodes": [x for x in (out.get("impact_nodes") or []) if x][:12],
+        "confidence": out.get("confidence"), "lockouts": ev["lockouts"], "distinctSrc": ev["distinctSrc"],
         "model": cfg["model"],
     }
 

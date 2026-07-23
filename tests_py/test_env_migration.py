@@ -44,3 +44,12 @@ def test_gateway_settings_accept_legacy_fallback_but_prefer_new(monkeypatch, tmp
     settings = Settings.from_env()
     assert settings.repo_root == current_root.resolve()
     assert settings.frontend_dist == (current_root / "frontend" / "dist").resolve()
+
+
+def test_gateway_settings_exposes_optional_knowledge_corpus(monkeypatch, tmp_path):
+    corpus = tmp_path / "knowledge.json"
+    monkeypatch.setenv("AUTOPOIESIS_KNOWLEDGE_CORPUS_PATH", str(corpus))
+
+    settings = Settings.from_env()
+
+    assert settings.knowledge_corpus_path == corpus.resolve()

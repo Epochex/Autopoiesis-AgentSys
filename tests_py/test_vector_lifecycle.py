@@ -15,6 +15,12 @@ def vectors(*rows):
     return np.asarray(rows, dtype="float32")
 
 
+def test_exact_flat_is_the_default_base_index():
+    index = VectorIndexLifecycle.build(["a"], vectors([1, 0]))
+
+    assert index.base_index_type == "flat"
+
+
 def test_upsert_update_delete_and_merged_ranking():
     index = VectorIndexLifecycle.build(
         ["old", "other"],

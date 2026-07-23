@@ -16,12 +16,13 @@ SKILL_OPERATIONS = {
 
 
 def register_active_recon_skills(registry: SkillRegistry, adapter) -> None:
+    source_kind = "mock" if adapter.__class__.__name__.startswith("Mock") else "allowlisted live"
     for name, (operation, tags) in SKILL_OPERATIONS.items():
         readonly = operation in adapter.readonly_operations
         registry.register(
             SkillSpec(
                 name=name,
-                description=f"Mock active recon probe for {operation}",
+                description=f"{source_kind} active recon probe for {operation}",
                 input_schema={"case_id": "str"},
                 risk="read_only" if readonly else "approval_required",
                 cost=1.0,

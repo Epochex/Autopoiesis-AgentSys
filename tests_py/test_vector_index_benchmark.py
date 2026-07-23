@@ -7,6 +7,7 @@ import pytest
 
 from core.eval.vector_index_benchmark import (
     BenchmarkConfig,
+    generate_independent_queries,
     generate_queries,
     generate_vectors,
     latency_summary,
@@ -96,7 +97,7 @@ def test_small_end_to_end_benchmark_has_metrics_and_recall_tradeoff():
         throughput_repeats=1,
     )
     report = run_benchmark(config)
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == 2
     assert report["benchmark"] == "flat-vs-hnsw-scale"
     row = report["results"][0]
     assert row["size"] == 2_000
@@ -113,6 +114,31 @@ def test_small_end_to_end_benchmark_has_metrics_and_recall_tradeoff():
         assert method["p95_ms"] > 0
         assert method["sequential_qps"] > 0
         assert method["batch_qps_median"] > 0
+
+
+def test_independent_queries_and_matched_recall_summary_are_reported():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("faiss")
+    queries = generate_independent_queries(12, 24, 17)
+    assert queries.shape == (12, 24)
+    assert np.allclose(np.linalg.norm(queries, axis=1), 1.0, atol=1e-5)
+
+    report = run_benchmark(BenchmarkConfig(
+        sizes=(2_000,),
+        dim=24,
+        queries=20,
+        query_mode="independent",
+        ef_search_values=(16, 64),
+        recall_targets=(0.5, 1.0),
+        build_threads=2,
+        throughput_threads=2,
+        throughput_repeats=1,
+    ))
+    row = report["results"][0]
+    assert "independent held-out queries" in row["dataset"]
+    matched = row["hnsw"]["matched_recall"]
+    assert [item["target_recall_at_k"] for item in matched] == [0.5, 1.0]
+    assert all("reached" in item for item in matched)
 
 
 def test_report_write_is_complete_and_atomic(tmp_path):

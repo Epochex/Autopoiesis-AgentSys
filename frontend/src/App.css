@@ -850,6 +850,28 @@
 .wan-actions li { margin-bottom: 3px; }
 .wan-actions li::marker { color: var(--coral); font-family: 'IBM Plex Mono', monospace; }
 
+/* playbook needs room; the panel scrolls inside its foreignObject */
+.wan-panel { max-height: 452px; overflow-y: auto; overscroll-behavior: contain; }
+/* impact surface — every node on the attack path */
+.wan-impact { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 2px 0 8px; }
+.wan-impact-lab { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--coral); margin-right: 4px; }
+.wan-impact-node { font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-variant-numeric: tabular-nums; color: var(--text); border: 1px solid var(--line); padding: 1px 6px; background: var(--paper-2); }
+.wan-impact-node.fw { border-color: var(--coral); color: var(--coral); font-weight: 600; }
+/* runnable playbook, display-only */
+.wan-pb { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.wan-pb-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.wan-pb-h > span:first-child { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text); font-weight: 600; }
+.wan-pb-gate { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 0.03em; color: var(--coral); border: 1px solid var(--coral); padding: 1px 6px; }
+.wan-pb-step { border: 1px solid var(--line); border-left: 3px solid var(--coral); }
+.wan-pb-step.layer-host { border-left-color: var(--mint); }
+.wan-pb-step.layer-segment { border-left-color: var(--fog); }
+.wan-pb-step-h { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; flex-wrap: wrap; }
+.wan-pb-seq { font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; color: var(--coral); font-variant-numeric: tabular-nums; }
+.wan-pb-target { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text); font-weight: 600; }
+.wan-pb-layer { font-family: 'IBM Plex Mono', monospace; font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--mint); border: 1px solid var(--line); padding: 0 4px; }
+.wan-pb-why { font-family: 'IBM Plex Sans Condensed', sans-serif; font-size: 10.5px; color: var(--fog); margin-left: auto; }
+.wan-pb-cmds { margin: 0; padding: 7px 10px; background: #14140f; color: #cdff8f; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; border-top: 1px solid var(--line); }
+
 /* device behavioral mesh */
 .mesh-toggle-row {
   margin-top: 14px;
@@ -2179,6 +2201,51 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .ws-node:hover .ws-node-hint { opacity: 1; }
 .stage[data-view='console'] .ws-node:hover .ws-node-ip { text-decoration: underline; text-underline-offset: 3px; }
 .stage[data-view='console'] .ws-node.sel .ws-node-dot { fill: var(--wan); stroke: var(--acid); stroke-width: 4; paint-order: stroke; }
+
+/* ── in-place attack drill-down: netblock burst → attacker profile → target unfold ── */
+.stage[data-view='console'] .ws-drill-hint { fill: var(--wan-ink); font-weight: 600; }
+.stage[data-view='console'] .ws-tally-hit { fill: transparent; }
+.stage[data-view='console'] .ws-tally:hover .ws-src { opacity: 0.95; }
+.stage[data-view='console'] .ws-back { fill: var(--gray); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.stage[data-view='console'] .ws-back:hover { fill: var(--ink); }
+.stage[data-view='console'] .ws-block-cidr { fill: var(--ink); font-family: var(--font-mono); font-size: 14px; font-weight: 600; }
+.stage[data-view='console'] .ws-coord { fill: var(--wan-ink); font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; }
+.stage[data-view='console'] .ws-ip-mark { fill: var(--wan); stroke: var(--paper); stroke-width: 1; }
+.stage[data-view='console'] .ws-ip-mark.lat { fill: var(--gray); }
+/* attack-relation web: density field + lockstep + same-botnet + lateral cluster */
+.stage[data-view='console'] .ws-src.faint { opacity: 0.16; }
+.stage[data-view='console'] .ws-field-lab { fill: var(--gray); font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.06em; }
+.stage[data-view='console'] .ws-coord-link { fill: none; stroke: var(--wan); stroke-width: 1.6; stroke-dasharray: 1 5; stroke-linecap: round; opacity: 0.8; }
+.stage[data-view='console'] .ws-botnet-link { fill: none; stroke: var(--wan); stroke-width: 1.2; stroke-dasharray: 5 4; opacity: 0.5; }
+.stage[data-view='console'] .ws-botnet-lab { fill: var(--wan-ink); font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.04em; text-anchor: end; }
+.stage[data-view='console'] .ws-lat-cluster { fill: none; stroke: var(--gray); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.55; }
+.stage[data-view='console'] .ws-ipnode.on .ws-ip-mark { stroke: var(--acid); stroke-width: 3; paint-order: stroke; }
+.stage[data-view='console'] .ws-ipnode.mute { opacity: 0.3; }
+.stage[data-view='console'] .ws-ip-lab { fill: var(--ink); font-family: var(--font-mono); font-size: 10.5px; }
+.stage[data-view='console'] .ws-ip-v { fill: var(--gray); font-family: var(--font-mono); font-size: 9px; font-variant-numeric: tabular-nums; }
+.stage[data-view='console'] .ws-ipnode:hover .ws-ip-lab { text-decoration: underline; text-underline-offset: 3px; }
+.stage[data-view='console'] .ws-atk-line { stroke: var(--wan); stroke-width: 1; opacity: 0.4; stroke-dasharray: 2 4; }
+.stage[data-view='console'] .ws-atk-line.hot { opacity: 1; stroke-width: 2.4; stroke-dasharray: none; }
+.stage[data-view='console'] .ws-crosslink { fill: none; stroke: var(--acid); stroke-width: 2; stroke-dasharray: 6 3; opacity: 0.9; }
+.stage[data-view='console'] .ws-card-fo { overflow: visible; }
+.stage[data-view='console'] .ws-card { border: 1.5px solid var(--ink); background: var(--paper); padding: 7px 9px; font-family: var(--font-mono); display: flex; flex-direction: column; gap: 3px; box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.12); }
+.stage[data-view='console'] .ws-card-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.stage[data-view='console'] .ws-card-h b { font-size: 12px; color: var(--ink); }
+.stage[data-view='console'] .ws-card-h span { font-size: 9px; color: var(--wan-ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.stage[data-view='console'] .ws-card-row { font-size: 9px; color: var(--gray); }
+.stage[data-view='console'] .ws-card-corr { font-size: 8.5px; color: var(--ink); background: color-mix(in srgb, var(--paper-2) 78%, var(--acid)); border-left: 2px solid var(--acid); padding: 3px 5px; line-height: 1.4; }
+.stage[data-view='console'] .ws-card-btn { margin-top: 2px; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.04em; color: var(--paper); background: var(--ink); border: none; padding: 3px 6px; cursor: pointer; text-align: left; }
+.stage[data-view='console'] .ws-card-btn:hover { background: var(--wan-ink); }
+.stage[data-view='console'] .ws-tcard { border: 1.5px solid var(--ink); background: var(--paper); padding: 8px 10px; font-family: var(--font-mono); display: flex; flex-direction: column; gap: 4px; box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.12); }
+.stage[data-view='console'] .ws-tcard-h { font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray); }
+.stage[data-view='console'] .ws-tcard-funnel { font-size: 10px; color: var(--ink); }
+.stage[data-view='console'] .ws-tcard-funnel b { color: var(--wan-ink); font-variant-numeric: tabular-nums; }
+.stage[data-view='console'] .ws-tcard-lab { font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray); margin-top: 2px; }
+.stage[data-view='console'] .ws-tcard-bar { display: grid; grid-template-columns: 92px 1fr 52px; align-items: center; gap: 5px; font-size: 8.5px; color: var(--ink); }
+.stage[data-view='console'] .ws-tcard-bar i { height: 7px; background: var(--wan); }
+.stage[data-view='console'] .ws-tcard-bar em { font-style: normal; font-variant-numeric: tabular-nums; text-align: right; color: var(--gray); }
+.stage[data-view='console'] .ws-tcard-dahua { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 9px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.stage[data-view='console'] .ws-target.on .ws-lock-bracket { stroke: var(--acid); }
 
 /* ── the thesis: what this page is, in the resting state ── */
 .stage[data-view='console'] .th-rule { stroke: var(--ink); stroke-width: 2; }

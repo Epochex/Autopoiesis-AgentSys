@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -189,12 +190,31 @@ def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rul
     return payload
 
 
+# The evolution stream is deterministic for a given dataset (rule reasoner, fixed
+# case order), so recomputing it on every page mount only reheats the same result.
+# Keyed by (manifest, passes) and invalidated when the manifest or stats file
+# changes on disk. The lock also collapses concurrent mounts into ONE compute —
+# stacked tab switches used to pile up parallel full re-runs.
+_EVOLUTION_LOCK = threading.Lock()
+_EVOLUTION_CACHE: dict[tuple[str, int], tuple[tuple, dict[str, Any]]] = {}
+
+
+def _dataset_fingerprint(*files: Path) -> tuple:
+    out = []
+    for f in files:
+        st = f.stat()
+        out.append((str(f), st.st_mtime_ns, st.st_size))
+    return tuple(out)
+
+
 def load_evolution(manifest_path: Path | None = None, passes: int = 4) -> dict[str, Any]:
     """Real self-evolution on the held-out stream (cold-vs-warm, StreamBench-style).
 
     Recurring incidents may use provenance-linked memory to narrow the probe plan,
     but every diagnosis still obtains fresh evidence. Historical snapshots are
     never replayed as current observations.
+
+    Cached per (manifest, passes); the dataset files' mtime+size invalidate it.
     """
     from core.evolve import compare_cold_vs_warm
 
@@ -203,30 +223,38 @@ def load_evolution(manifest_path: Path | None = None, passes: int = 4) -> dict[s
     if not validation.ready:
         return {"ready": False, "reason": "No validated real held-out dataset present."}
     stats_path = resolve_stats_path(manifest)
-    cases, ground_truth = load_real_case_bundle(manifest, split="heldout")
-    res = compare_cold_vs_warm(
-        cases, ground_truth, passes=passes,
-        data_source="real", real_stats_path=stats_path, reasoner_mode="rule",
-    )
-    # The warm run is the only one with a memory lifecycle (cold has evolve=False).
-    # Move it to the top level rather than copying, so the payload isn't doubled.
-    observatory = res["warm"].pop("observatory", None)
-    return {
-        "ready": True,
-        "passes": passes,
-        "nCases": len(cases),
-        "cases": [
-            {
-                "id": c.id,
-                "query": c.query,
-                "assets": list(c.assets),
-                "rootCauseKey": ground_truth[c.id].expected_root_cause_key if c.id in ground_truth else "",
-            }
-            for c in cases
-        ],
-        "warm": res["warm"],
-        "cold": res["cold"],
-        "delta": res["delta"],
-        "memory": res.get("memory", {}),
-        "observatory": observatory,
-    }
+    fingerprint = _dataset_fingerprint(manifest, Path(stats_path))
+    key = (str(manifest), passes)
+    with _EVOLUTION_LOCK:
+        hit = _EVOLUTION_CACHE.get(key)
+        if hit and hit[0] == fingerprint:
+            return hit[1]
+        cases, ground_truth = load_real_case_bundle(manifest, split="heldout")
+        res = compare_cold_vs_warm(
+            cases, ground_truth, passes=passes,
+            data_source="real", real_stats_path=stats_path, reasoner_mode="rule",
+        )
+        # The warm run is the only one with a memory lifecycle (cold has evolve=False).
+        # Move it to the top level rather than copying, so the payload isn't doubled.
+        observatory = res["warm"].pop("observatory", None)
+        payload = {
+            "ready": True,
+            "passes": passes,
+            "nCases": len(cases),
+            "cases": [
+                {
+                    "id": c.id,
+                    "query": c.query,
+                    "assets": list(c.assets),
+                    "rootCauseKey": ground_truth[c.id].expected_root_cause_key if c.id in ground_truth else "",
+                }
+                for c in cases
+            ],
+            "warm": res["warm"],
+            "cold": res["cold"],
+            "delta": res["delta"],
+            "memory": res.get("memory", {}),
+            "observatory": observatory,
+        }
+        _EVOLUTION_CACHE[key] = (fingerprint, payload)
+        return payload

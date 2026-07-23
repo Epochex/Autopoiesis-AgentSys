@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
 import random
 import statistics
 import tempfile
@@ -46,6 +48,22 @@ def _queries(count: int, *, seed: int) -> list[list[str]]:
     ]
 
 
+def _measure_queries(rank, queries: list[list[str]]) -> tuple[list[list[tuple[str, float]]], dict[str, float]]:
+    latencies_ms: list[float] = []
+    observed: list[list[tuple[str, float]]] = []
+    for query in queries:
+        query_started = time.perf_counter()
+        observed.append(rank(query))
+        latencies_ms.append((time.perf_counter() - query_started) * 1_000)
+    elapsed_seconds = sum(latencies_ms) / 1_000
+    return observed, {
+        "p50_ms": round(statistics.median(latencies_ms), 4),
+        "p95_ms": round(_percentile(latencies_ms, 0.95), 4),
+        "p99_ms": round(_percentile(latencies_ms, 0.99), 4),
+        "qps": round(len(queries) / elapsed_seconds, 2),
+    }
+
+
 def run_sparse_lifecycle_benchmark(
     *,
     size: int = 100_000,
@@ -73,6 +91,7 @@ def run_sparse_lifecycle_benchmark(
     index.compact(force=True)
 
     offset = size
+    mutation_started = time.perf_counter()
     for number in range(updates):
         doc_id = f"doc-{number:08d}"
         offset += 1
@@ -84,27 +103,22 @@ def run_sparse_lifecycle_benchmark(
         offset += 1
         documents.pop(doc_id)
         index.delete(doc_id, offset)
+    mutation_seconds = time.perf_counter() - mutation_started
 
     before = index.health()
-    latencies_ms: list[float] = []
-    observed: list[list[tuple[str, float]]] = []
-    for query in queries:
-        query_started = time.perf_counter()
-        observed.append(index.rank_with_scores(query, 10))
-        latencies_ms.append((time.perf_counter() - query_started) * 1_000)
+    observed, segmented_before_query = _measure_queries(
+        lambda query: index.rank_with_scores(query, 10),
+        queries,
+    )
 
     exact_started = time.perf_counter()
     exact = BM25Index(documents)
     exact_build_seconds = time.perf_counter() - exact_started
-    equivalent = all(
-        actual == exact.rank_with_scores("", 10, query_tokens=query)
-        for actual, query in zip(observed, queries)
+    exact_observed, monolithic_query = _measure_queries(
+        lambda query: exact.rank_with_scores("", 10, query_tokens=query),
+        queries,
     )
-    legacy_latencies_ms: list[float] = []
-    for query in queries[: min(5, len(queries))]:
-        legacy_started = time.perf_counter()
-        BM25Index(documents).rank_with_scores("", 10, query_tokens=query)
-        legacy_latencies_ms.append((time.perf_counter() - legacy_started) * 1_000)
+    equivalent = observed == exact_observed
 
     root = Path(snapshot_dir) if snapshot_dir else Path(tempfile.mkdtemp(prefix="index-lifecycle-"))
     root.mkdir(parents=True, exist_ok=True)
@@ -116,6 +130,10 @@ def run_sparse_lifecycle_benchmark(
     compacted = index.maybe_compact()
     compaction_seconds = time.perf_counter() - compact_started
     after = index.health()
+    compacted_observed, segmented_after_query = _measure_queries(
+        lambda query: index.rank_with_scores(query, 10),
+        queries,
+    )
     index.save(after_path)
     restored_started = time.perf_counter()
     restored = SegmentedBM25Index.load(after_path)
@@ -128,6 +146,8 @@ def run_sparse_lifecycle_benchmark(
     physical_before = int(before["physical_entries"])
     physical_after = int(after["physical_entries"])
     return {
+        "schema_version": 2,
+        "benchmark": "segmented-vs-resident-monolithic-bm25",
         "config": {
             "documents": size,
             "updates": updates,
@@ -135,21 +155,27 @@ def run_sparse_lifecycle_benchmark(
             "queries": query_count,
             "seed": seed,
         },
-        "initial_ingest_seconds": round(initial_ingest_seconds, 4),
-        "fresh_monolithic_build_seconds": round(exact_build_seconds, 4),
-        "query": {
-            "p50_ms": round(statistics.median(latencies_ms), 4),
-            "p95_ms": round(_percentile(latencies_ms, 0.95), 4),
-            "p99_ms": round(_percentile(latencies_ms, 0.99), 4),
-            "qps": round(query_count / (sum(latencies_ms) / 1_000), 2),
+        "environment": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "cpu_count": os.cpu_count(),
         },
-        "legacy_rebuild_per_query": {
-            "samples": len(legacy_latencies_ms),
-            "p50_ms": round(statistics.median(legacy_latencies_ms), 4),
-            "p95_ms": round(_percentile(legacy_latencies_ms, 0.95), 4),
-            "p95_speedup_x": round(
-                _percentile(legacy_latencies_ms, 0.95) / _percentile(latencies_ms, 0.95),
-                2,
+        "initial_ingest_seconds": round(initial_ingest_seconds, 4),
+        "maintenance": {
+            "incremental_mutation_seconds": round(mutation_seconds, 4),
+            "background_compaction_seconds": round(compaction_seconds, 4),
+            "incremental_plus_compaction_seconds": round(mutation_seconds + compaction_seconds, 4),
+            "fresh_monolithic_rebuild_seconds": round(exact_build_seconds, 4),
+        },
+        "resident_query": {
+            "segmented_before_compaction": segmented_before_query,
+            "segmented_after_compaction": segmented_after_query,
+            "monolithic_full_scan": monolithic_query,
+            "before_p95_speedup_vs_monolithic": round(
+                monolithic_query["p95_ms"] / segmented_before_query["p95_ms"], 4
+            ),
+            "after_p95_speedup_vs_monolithic": round(
+                monolithic_query["p95_ms"] / segmented_after_query["p95_ms"], 4
             ),
         },
         "before_compaction": before,
@@ -165,6 +191,7 @@ def run_sparse_lifecycle_benchmark(
         "snapshot_bytes_after": after_path.stat().st_size,
         "restore_seconds": round(restore_seconds, 4),
         "ranking_equal_to_monolithic_bm25": equivalent,
+        "post_compaction_ranking_equal_to_monolithic_bm25": compacted_observed == exact_observed,
         "restart_ranking_equal": restart_equivalent,
         "snapshot_directory": str(root),
     }

@@ -14,8 +14,9 @@ review the dominant signal.
 
 ```text
 alert / task
-  → BM25 / asset / graph retrieve; optional HNSW dense route (core/memory)
+  → BM25 / asset / graph retrieve; optional Flat dense route (core/memory)
   → episodic hypothesis               (historical evidence is provenance, never current state)
+  → hybrid knowledge-document retrieve (BM25 + exact Flat + RRF; optional evaluated reranker)
   → probe read-only skills             (fresh evidence; procedural memory may narrow the shortlist)
   → evidence-aware context compile     (core/context/compiler.py, to a token budget)
   → reasoner                           (domains/network_rca/reasoner.py — rules by default; optional DeepSeek LLM)
@@ -90,10 +91,18 @@ the deterministic test/default mode remains in process.
 
 Online semantic memory retrieval is optional and disabled by default. Setting
 `AUTOPOIESIS_ENABLE_VECTOR_MEMORY=1` enables the same lifecycle boundary through
-`VectorIndexLifecycle`: immutable FAISS HNSW base, exact Flat delta, version-filtered merged
-search, checksummed snapshots and an atomic `CURRENT` pointer. FAISS HNSW is never modified
-to remove a node. Full research rationale and churn results are in
+`VectorIndexLifecycle`: an immutable FAISS Flat base by default, exact Flat delta,
+version-filtered merged search, checksummed snapshots and an atomic `CURRENT` pointer.
+HNSW remains an explicit deployment alternative; it is rebuilt as a complete candidate
+generation rather than modified in place. Full research rationale and churn results are in
 [`INDEX_LIFECYCLE_RESEARCH.md`](./INDEX_LIFECYCLE_RESEARCH.md).
+
+The optional online knowledge-document route is injected through
+`build_network_rca_orchestrator(knowledge_retriever=...)` or constructed from a corpus path.
+Its BM25 and exact-Flat candidates are fused with RRF, while Cross-Encoder reranking is off
+by default. Retrieved documents enter the compiled context and verification input as
+`knowledge_document` evidence, but the verifier requires at least one cited current
+operational observation before a diagnosis can pass.
 
 A topology-graph / logical-retrieval variant
 ([`topo_graph.py`](../core/memory/topo_graph.py),

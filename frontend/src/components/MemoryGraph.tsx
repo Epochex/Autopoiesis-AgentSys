@@ -66,25 +66,25 @@ const RAIL_W = 124
 const HEAD_H = 44 /* column-header row */
 
 /* Band label, op badge and link approach lanes all live in this strip. It has to
-   clear the label's baseline plus the badge that hangs at node.y - 12, or the
+   clear the label's baseline plus the badge that hangs at node.y - 13, or the
    leftmost node's badge prints straight through the band title.
-   Measured, not guessed: at 24 the col-0 badge overlaps the label ink by 2px in
-   both languages (episodic + procedural bands); 27 is the exact touch point, so
-   30 buys a 3px gap. Every +1 here costs 1px on each band — keep it tight. */
-const BAND_HEAD = 30
-const ROW_HEAD = 14 /* approach lanes for sub-rows       */
-const LANE_STEP = 4
+   Re-measured for the 13px label + 12px badge (2026-07 legibility scale-up):
+   ~30 is the touch point, so 34 buys a 4px gap. Every +1 here costs 1px on each
+   band — keep it tight. */
+const BAND_HEAD = 34
+const ROW_HEAD = 17 /* approach lanes for sub-rows       */
+const LANE_STEP = 5
 const ROW_LANES = 4 /* 0..2 recall · 3 associative       */
-const BAND_PAD = 6
-const BAND_GAP = 10
-const SPINE_ZONE = 14
+const BAND_PAD = 7
+const BAND_GAP = 12
+const SPINE_ZONE = 16
 const FOOT_H = 56
 
 /* importance → height. Ceiling is a FIXED constant, not data-derived, so the
  * scale is stable if the store grows. Real domain today: 2.5 → 50.9. */
 const IMP_CEIL = 52
-const H_MIN = 44
-const H_SPAN = 44
+const H_MIN = 54
+const H_SPAN = 54
 const hOf = (imp: number) =>
   H_MIN + H_SPAN * Math.sqrt(Math.max(0, Math.min(imp, IMP_CEIL)) / IMP_CEIL)
 
@@ -300,7 +300,7 @@ export function MemoryGraph(props: {
             x = colX(col) + boxDx
           }
           const inner = boxW - 14
-          const maxLines = Math.max(1, Math.floor((h - 31) / 10.5))
+          const maxLines = Math.max(1, Math.floor((h - 34) / 13))
           const n: NodeGeom = {
             rec,
             col,
@@ -311,9 +311,9 @@ export function MemoryGraph(props: {
             h,
             cx: x + boxW / 2,
             bottom: nodesTop + h,
-            /* − 34 keeps clear of the right-anchored reinforce tally */
-            lines: wrapLines(rec.text, fitChars(inner, 8.5, LS_TXT), maxLines),
-            idText: midEllipsis(rec.memory_id, fitChars(inner - 34, 8, LS_ID)),
+            /* − 40 keeps clear of the right-anchored reinforce tally */
+            lines: wrapLines(rec.text, fitChars(inner, 10.5, LS_TXT), maxLines),
+            idText: midEllipsis(rec.memory_id, fitChars(inner - 40, 9.5, LS_ID)),
           }
           nodes.push(n)
           byId.set(rec.memory_id, n)
@@ -488,7 +488,7 @@ export function MemoryGraph(props: {
     for (const ids of Object.values(recall.retrieved)) for (const id of ids ?? []) if (!retrieved.includes(id)) retrieved.push(id)
     const included = recall.included_memory_ids.filter((id) => geom.byId.has(id))
     const dropped = recall.dropped_memory_ids.filter((id) => geom.byId.has(id))
-    const top = HEAD_H + 30
+    const top = HEAD_H + 42
     const avail = geom.railBottom - 8 - top
     const slotH = included.length ? Math.min(44, avail / included.length) : 44
     const slotY = (i: number) => top + slotH * (i + 0.5)
@@ -559,7 +559,7 @@ export function MemoryGraph(props: {
   )
 
   const { cols, colX, colW, bands, nodes, spineY, vbH, railBottom, footTop } = geom
-  const colChars = fitChars(colW - 14, 8, LS_COL)
+  const colChars = fitChars(colW - 14, 9, LS_COL)
 
   return (
     <div className="mg-root">
@@ -592,9 +592,9 @@ export function MemoryGraph(props: {
             {zh ? '列 = 根因族 · 按首次写入顺序' : 'COLUMN = ROOT FAMILY · FIRST-WRITE ORDER'}
           </text>
           {cols.map((k, i) => (
-            <text key={k} x={colX(i) + 10} y={24} className="mg-colkey">
+            <text key={k} x={colX(i) + 10} y={23} className="mg-colkey">
               {wrapLines(k, colChars, 2).map((l, j) => (
-                <tspan key={j} x={colX(i) + 10} dy={j ? 9 : 0}>
+                <tspan key={j} x={colX(i) + 10} dy={j ? 10 : 0}>
                   {l}
                 </tspan>
               ))}
@@ -613,11 +613,11 @@ export function MemoryGraph(props: {
             <rect x={FRAME_X} y={b.top} width={FRAME_R - FRAME_X} height={b.bottom - b.top} className="mg-band-box" />
             {b.tier === 'semantic' && <line x1={FRAME_X} y1={b.top} x2={FRAME_R} y2={b.top} className="mg-band-heavy" />}
             {b.tier === 'procedural' && (
-              <rect x={FRAME_X + 6} y={b.top + 3} width={14} height={9} className="mg-band-hatch" />
+              <rect x={FRAME_X + 6} y={b.top + 4} width={16} height={10} className="mg-band-hatch" />
             )}
             <text
-              x={FRAME_X + (b.tier === 'procedural' ? 26 : 6)}
-              y={b.top + 11}
+              x={FRAME_X + (b.tier === 'procedural' ? 30 : 6)}
+              y={b.top + 13}
               className="mg-band-lab"
             >
               {BAND_LABEL[b.tier][zh ? 0 : 1]}
@@ -717,31 +717,31 @@ export function MemoryGraph(props: {
                   <path d={pinBrackets(n.x, n.y, n.w, alive ? n.h : H_MIN)} className="mg-pinmark" />
                 )}
                 {!alive ? (
-                  <text x={n.x + 7} y={n.y + 20} className="mg-pend-t">
+                  <text x={n.x + 7} y={n.y + 22} className="mg-pend-t">
                     {zh ? '未写入' : 'NOT YET'}
                   </text>
                 ) : (
                   <>
                     {op && (
                       <g className="mg-op">
-                        <rect x={n.x} y={n.y - 12} width={opBadge(op).length * advOf(7.5, LS_OP) + 10} height={11} className="mg-op-bg" />
+                        <rect x={n.x} y={n.y - 13} width={opBadge(op).length * advOf(8.5, LS_OP) + 10} height={12} className="mg-op-bg" />
                         <text x={n.x + 5} y={n.y - 3.5} className="mg-op-t">
                           {opBadge(op)}
                         </text>
                       </g>
                     )}
-                    <text x={n.x + 7} y={n.y + 11} className="mg-id">
+                    <text x={n.x + 7} y={n.y + 13} className="mg-id">
                       {n.idText}
                     </text>
                     {rf > 0 && (
-                      <text x={n.x + n.w - 7} y={n.y + 11} className="mg-tally">
+                      <text x={n.x + n.w - 7} y={n.y + 13} className="mg-tally">
                         ×{rf}
                       </text>
                     )}
-                    <line x1={n.x + 6} y1={n.y + 15} x2={n.x + n.w - 6} y2={n.y + 15} className="mg-node-rule" />
-                    <text x={n.x + 7} y={n.y + 25} className="mg-txt">
+                    <line x1={n.x + 6} y1={n.y + 18} x2={n.x + n.w - 6} y2={n.y + 18} className="mg-node-rule" />
+                    <text x={n.x + 7} y={n.y + 29} className="mg-txt">
                       {n.lines.map((l, i) => (
-                        <tspan key={i} x={n.x + 7} dy={i ? 10.5 : 0}>
+                        <tspan key={i} x={n.x + 7} dy={i ? 13 : 0}>
                           {l}
                         </tspan>
                       ))}
@@ -752,17 +752,17 @@ export function MemoryGraph(props: {
                         const f = Math.max(0, Math.min(1, n.rec.confidence - k))
                         return (
                           <g key={k}>
-                            <rect x={n.x + 7 + k * 10} y={n.bottom - 13} width={8} height={7} className="mg-cell" />
+                            <rect x={n.x + 7 + k * 12} y={n.bottom - 16} width={10} height={8.5} className="mg-cell" />
                             {f > 0 && (
-                              <rect x={n.x + 7 + k * 10} y={n.bottom - 13} width={8 * f} height={7} className="mg-cell-f" />
+                              <rect x={n.x + 7 + k * 12} y={n.bottom - 16} width={10 * f} height={8.5} className="mg-cell-f" />
                             )}
                           </g>
                         )
                       })}
-                      <text x={n.x + 41} y={n.bottom - 7} className="mg-val">
+                      <text x={n.x + 48} y={n.bottom - 8} className="mg-val">
                         {n.rec.confidence.toFixed(1)}
                       </text>
-                      <text x={n.x + n.w - 7} y={n.bottom - 7} className="mg-val imp">
+                      <text x={n.x + n.w - 7} y={n.bottom - 8} className="mg-val imp">
                         {n.rec.importance.toFixed(1)}
                       </text>
                     </g>
@@ -776,13 +776,13 @@ export function MemoryGraph(props: {
         {/* ── context rail: the compiled context, in the kernel's own order ── */}
         <g className="mg-rail">
           <rect x={RAIL_X} y={HEAD_H} width={RAIL_W} height={railBottom - HEAD_H} className="mg-rail-box" />
-          <rect x={RAIL_X} y={HEAD_H} width={RAIL_W} height={22} className="mg-rail-cap" />
-          <text x={RAIL_X + 7} y={HEAD_H + 15} className="mg-rail-t">
+          <rect x={RAIL_X} y={HEAD_H} width={RAIL_W} height={24} className="mg-rail-cap" />
+          <text x={RAIL_X + 7} y={HEAD_H + 16} className="mg-rail-t">
             {zh ? '上下文 CONTEXT' : 'CONTEXT'}
           </text>
           {rail && recall ? (
             <>
-              <text x={RAIL_X + 7} y={HEAD_H + 34} className="mg-rail-s">
+              <text x={RAIL_X + 7} y={HEAD_H + 38} className="mg-rail-s">
                 {`P${recall.pass} · ${rail.included.length}/${rail.retrieved.length} ${zh ? '条' : 'IN'}`}
               </text>
               {rail.included.map((id, i) => {
@@ -791,11 +791,11 @@ export function MemoryGraph(props: {
                 return (
                   <g key={id} className={`mg-slot${hot ? (hot.has(id) ? ' hot' : ' dim') : ''}`}>
                     <line x1={RAIL_X} y1={y} x2={RAIL_X + 8} y2={y} className="mg-slot-l" />
-                    <text x={RAIL_X + 12} y={y - 2} className="mg-slot-n">
+                    <text x={RAIL_X + 12} y={y - 3} className="mg-slot-n">
                       {String(i + 1).padStart(2, '0')}
                     </text>
-                    <text x={RAIL_X + 12} y={y + 8} className="mg-slot-id">
-                      {midEllipsis(n.rec.memory_id, fitChars(RAIL_W - 24, 7.5))}
+                    <text x={RAIL_X + 12} y={y + 9} className="mg-slot-id">
+                      {midEllipsis(n.rec.memory_id, fitChars(RAIL_W - 24, 8.5))}
                       <title>{n.rec.memory_id}</title>
                     </text>
                     {i < rail.included.length - 1 && (
@@ -811,7 +811,7 @@ export function MemoryGraph(props: {
               )}
             </>
           ) : (
-            <text x={RAIL_X + 7} y={HEAD_H + 40} className="mg-rail-s">
+            <text x={RAIL_X + 7} y={HEAD_H + 44} className="mg-rail-s">
               {zh ? '本步无检索' : 'NO RECALL'}
             </text>
           )}

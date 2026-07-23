@@ -1,0 +1,1767 @@
+{
+  "boundary": {
+    "human_gold": "root-cause labels and required-evidence contracts in the held-out manifest",
+    "negative_definition": "all root-cause-contract current observations withheld; task text retained but is not accepted as operational evidence",
+    "unsupported_publication_is_not_absolute_hallucination_rate": true
+  },
+  "comparison": {
+    "baseline": {
+      "answerable_runs": 18,
+      "correct_refusal_rate_on_withheld_negatives": 0.055556,
+      "false_refusal_rate_on_answerable": 0.0,
+      "grounded_diagnosis_accuracy": 0.888889,
+      "latency_ms_median": 2521.543,
+      "latency_ms_p95": 7476.723,
+      "required_evidence_recall_on_answerable": 1.0,
+      "root_cause_accuracy_on_answerable": 0.888889,
+      "unsupported_publication_rate_on_withheld_negatives": 0.944444,
+      "variant": "baseline",
+      "withheld_evidence_negative_runs": 18
+    },
+    "full": {
+      "answerable_runs": 18,
+      "correct_refusal_rate_on_withheld_negatives": 1.0,
+      "false_refusal_rate_on_answerable": 0.055556,
+      "grounded_diagnosis_accuracy": 0.944444,
+      "latency_ms_median": 2571.51,
+      "latency_ms_p95": 7502.341,
+      "required_evidence_recall_on_answerable": 1.0,
+      "root_cause_accuracy_on_answerable": 0.944444,
+      "unsupported_publication_rate_on_withheld_negatives": 0.0,
+      "variant": "full",
+      "withheld_evidence_negative_runs": 18
+    },
+    "grounded_diagnosis_accuracy_gain": 0.055555,
+    "unsupported_publication_rate_reduction": 0.944444
+  },
+  "dataset": {
+    "answerable_runs_per_variant": 18,
+    "dataset_kind": "real",
+    "manifest": "domains/network_rca/fixtures/real/manifest.json",
+    "repeats": 3,
+    "split": "heldout",
+    "unique_cases": 6,
+    "withheld_evidence_negative_runs_per_variant": 18
+  },
+  "evaluation_kind": "paired_grounded_rca_generation",
+  "model": "deepseek-v4-flash",
+  "rows": [
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2151.63,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2929.218,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2248.207,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2004.752,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2575.581,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2884.402,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2548.012,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2265.783,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2788.985,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2507.205,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 3322.293,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_admin_bruteforce_lockout",
+      "cited_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2690.673,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-admin-auth-failures",
+        "ev-admin-lockout"
+      ],
+      "root_cause_key": "admin_bruteforce_lockout",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2646.475,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "device_service_port_probe_contained",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-device-port-probe"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2671.98,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-device-port-probe"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 3065.085,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "device_service_port_probe_contained",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2581.244,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "device_service_port_probe_contained",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 4930.357,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "internal_policy_deny_expected",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-device-port-probe"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2176.303,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-device-port-probe"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2548.283,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "device_service_port_probe_contained",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2772.281,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "device_service_port_probe_contained",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2339.584,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "internal_policy_deny_expected",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-device-port-probe"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2109.016,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-device-port-probe"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2317.352,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "internal_policy_deny_expected",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_device_port_probe",
+      "cited_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 3441.255,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-device-port-probe"
+      ],
+      "root_cause_key": "device_service_port_probe_contained",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 3068.132,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-dhcp-health"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2150.731,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-dhcp-health"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2512.424,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 1823.589,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 3322.456,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-dhcp-health"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 1857.969,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-dhcp-health"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 1977.97,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2278.555,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2237.871,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-dhcp-health"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2117.098,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-dhcp-health"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2355.893,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_dhcp_service_health",
+      "cited_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2615.359,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-dhcp-health"
+      ],
+      "root_cause_key": "dhcp_service_healthy",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 7476.723,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "internal_policy_deny_expected",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2674.013,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 7441.391,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "fg_policy_missing",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 7502.341,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 7935.905,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "fg_policy_missing",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2806.938,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 4347.777,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "internal_policy_deny_expected",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 5317.83,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "internal_policy_deny_expected",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2911.199,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 3062.749,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 5723.659,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "internal_policy_deny_expected",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_internal_deny_flood",
+      "cited_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 11185.436,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-policy-deny-profile",
+        "ev-traffic-baseline"
+      ],
+      "root_cause_key": "internal_policy_deny_expected",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 1919.918,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-security-posture"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2348.061,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-security-posture"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2530.663,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 3251.027,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2154.736,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-security-posture"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2206.702,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-security-posture"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 1728.933,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2165.626,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2221.521,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-security-posture"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2814.449,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-security-posture"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 1719.666,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_security_posture_current",
+      "cited_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2503.181,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-security-posture"
+      ],
+      "root_cause_key": "security_posture_current",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2298.172,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-event-log-scan"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2148.136,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 0,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-event-log-scan"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2313.835,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 3179.558,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 0,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 1798.693,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-event-log-scan"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2346.922,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 1,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-event-log-scan"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2372.693,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 3348.357,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 1,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [],
+      "correct_root": true,
+      "grounded_correct": false,
+      "latency_ms": 2623.308,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "baseline",
+      "withheld_evidence_ids": [
+        "ev-event-log-scan"
+      ]
+    },
+    {
+      "answerable": false,
+      "available_evidence_ids": [],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [],
+      "correct_root": false,
+      "grounded_correct": false,
+      "latency_ms": 2542.485,
+      "published": false,
+      "raw_refused": true,
+      "repeat": 2,
+      "required_evidence_complete": false,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "unknown",
+      "variant": "full",
+      "withheld_evidence_ids": [
+        "ev-event-log-scan"
+      ]
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 1642.071,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "baseline",
+      "withheld_evidence_ids": []
+    },
+    {
+      "answerable": true,
+      "available_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "blocked_reason": "",
+      "case_id": "real_session_clash_benign",
+      "cited_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "correct_root": true,
+      "grounded_correct": true,
+      "latency_ms": 2561.775,
+      "published": true,
+      "raw_refused": false,
+      "repeat": 2,
+      "required_evidence_complete": true,
+      "required_evidence_ids": [
+        "ev-event-log-scan"
+      ],
+      "root_cause_key": "benign_session_clash",
+      "variant": "full",
+      "withheld_evidence_ids": []
+    }
+  ],
+  "schema_version": 1
+}

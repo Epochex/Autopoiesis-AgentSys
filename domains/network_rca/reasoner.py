@@ -72,7 +72,9 @@ class LLMReasoner:
             "You are a network root-cause analyst. Pick exactly one root_cause_key from "
             "allowed_root_cause_keys. Reason from the supplied compiled_context and cite only "
             "its included evidence ids. Dropped provenance is metadata about omitted context, "
-            "not evidence.\n"
+            "not evidence. Knowledge-document evidence may explain a mechanism but cannot by "
+            "itself establish current device state; cite current operational observations for "
+            "the diagnosed root cause.\n"
             "Return ONLY a JSON object with EXACTLY these fields:\n"
             '{"root_cause_key": <one of allowed_root_cause_keys>, '
             '"confidence": <float 0..1>, '

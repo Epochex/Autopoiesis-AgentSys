@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from typing import Mapping, Protocol, Sequence
 
 from core.evolve.consolidate import CaseLike, _first, consolidate_run
-from core.evolve.memory_ops import memory_health, utility_evict
+from core.evolve.memory_ops import decay_and_forget, memory_health, utility_evict
 from core.evolve.observatory import (
     CAPABILITIES,
     recall_row,
@@ -52,12 +52,17 @@ def run_evolving_stream(
     so a re-diagnosis that renames the root cause retires the stale prior.
     """
     with TemporaryDirectory() as tmp:
+        # trace_durable=False: this ledger lives in a TemporaryDirectory that is
+        # deleted the moment the stream returns. fsync-ing a file about to be
+        # unlinked buys no durability and costs ~50ms per diagnosis on disk —
+        # it alone made the live /api/rca/evolution request ~4x slower.
         orch = build_network_rca_orchestrator(
             Path(tmp) / "stream.jsonl",
             data_source=data_source,
             real_stats_path=real_stats_path,
             reasoner_mode=reasoner_mode,
             seed_memory=False,
+            trace_durable=False,
         )
         n = len(cases)
         stream = [case for _ in range(passes) for case in cases]
@@ -97,6 +102,13 @@ def run_evolving_stream(
                     # capacity-budgeted utility eviction — the wired firing point. EVICT
                     # ops flow into the same observability stream as every other op.
                     utility_evict(orch.memory, budget=capacity_budget, recorder=ops)
+                if (i + 1) % n == 0:
+                    # Ebbinghaus tick at each pass boundary: memories reused this pass were
+                    # reset to strength 1.0 and survive; the rest lose retrievability, and
+                    # anything past ~2 idle ticks crosses the floor and is forgotten. Decay
+                    # by age is the wired counterpart to eviction by learned worth; FORGET
+                    # ops join the same observability stream.
+                    decay_and_forget(orch.memory, recorder=ops)
                 obs_recall.append(recall_row(
                     events, seq=len(obs_recall), pass_no=i // n,
                     case_id=case.id, run_id=run_id, probes=probes,

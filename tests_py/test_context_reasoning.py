@@ -4,7 +4,7 @@ import json
 
 from core.context.compiler import ContextCompiler
 from domains.network_rca.reasoner import LLMReasoner, build_diagnosis
-from domains.network_rca.schema import RCASeedCase
+from domains.network_rca.schema import DiagnosisEvidence, RCADiagnosis, RCASeedCase
 from domains.network_rca.reasoner import ROOT_CAUSE_EVIDENCE_CONTRACTS
 from core.verifier.verifier import Verifier
 
@@ -119,3 +119,29 @@ def test_existing_but_unrelated_citation_fails_root_cause_contract():
 
     assert report.passed is False
     assert any("evidence contract" in error for error in report.errors)
+
+
+def test_knowledge_document_cannot_replace_current_operational_observation():
+    evidence = [{
+        "evidence_id": "kb:carrier-runbook",
+        "source": "runbook://carrier",
+        "summary": "Carrier loss may indicate an unplugged cable.",
+        "evidence_kind": "knowledge_document",
+        "current_observation": False,
+    }]
+    diagnosis = RCADiagnosis(
+        case_id="case-context",
+        root_cause_key="unknown",
+        root_cause="Unknown root cause",
+        confidence=0.2,
+        evidence=[DiagnosisEvidence(
+            evidence_id="kb:carrier-runbook",
+            source="runbook://carrier",
+            summary="Carrier loss may indicate an unplugged cable.",
+        )],
+    )
+
+    report = Verifier().verify(diagnosis, evidence, [])
+
+    assert report.passed is False
+    assert any("no current operational observation" in error for error in report.errors)

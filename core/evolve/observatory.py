@@ -43,7 +43,7 @@ _MAX_SUMMARY_CHARS = 240
 #   update_text_mutation — apply_route()'s UPDATE merges tags/assets/confidence but
 #                          never rewrites target.text, so there is no text diff.
 CAPABILITIES: dict[str, bool] = {
-    "decay_wired": False,
+    "decay_wired": True,
     "eviction_wired": True,
     "conflict_update_wired": True,
     "retrieval_scores": True,
@@ -69,8 +69,8 @@ def runtime_capability_status(
     return {
         "decay": {
             "implemented": CAPABILITIES["decay_wired"],
-            "configured": False,
-            "fired": False,
+            "configured": True,
+            "fired": "FORGET" in operation_kinds,
         },
         "eviction": {
             "implemented": CAPABILITIES["eviction_wired"],

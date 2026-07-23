@@ -191,7 +191,7 @@ def test_full_memory_lifecycle_is_observable_and_retrievable(monkeypatch):
     assert supersede_op["before"] != supersede_op["after"]
     assert {event["memory_id"] for event in operations if event["op"] == "EVICT"} == set(evicted)
 
-    assert CAPABILITIES["decay_wired"] is False
+    assert CAPABILITIES["decay_wired"] is True
     assert CAPABILITIES["eviction_wired"] is True
     assert CAPABILITIES["conflict_update_wired"] is True
     assert memory_health(memory) == {

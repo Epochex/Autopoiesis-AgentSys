@@ -18,6 +18,12 @@ class JSONLTraceLedger:
     ``fsync`` uses group-commit semantics at run/decision boundaries rather than
     forcing a disk flush for every observation; a completed diagnosis is durable
     together with every event written before it without destroying throughput.
+
+    ``durable=False`` drops the fsync entirely (the append and its lock remain).
+    That is for ledgers whose files do not outlive the process — e.g. an
+    evaluation stream writing into a TemporaryDirectory — where flushing to
+    disk buys nothing and, at ~50ms per fsync on rotational storage, dominates
+    the whole run.
     """
 
     _SYNC_KINDS = {
@@ -27,8 +33,9 @@ class JSONLTraceLedger:
         "step_rolled_back",
     }
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, durable: bool = True):
         self.path = Path(path)
+        self.durable = durable
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @classmethod
@@ -51,7 +58,7 @@ class JSONLTraceLedger:
             written = 0
             while written < len(payload):
                 written += os.write(descriptor, payload[written:])
-            if self.is_sync_boundary(event.kind):
+            if self.durable and self.is_sync_boundary(event.kind):
                 os.fsync(descriptor)
         finally:
             try:

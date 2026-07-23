@@ -212,6 +212,8 @@ export type MemOp =
   | 'INSIGHT'
   | 'INSIGHT_REFRESH'
   | 'LINK'
+  | 'DECAY'
+  | 'FORGET'
 
 export interface MemRecord {
   memory_id: string

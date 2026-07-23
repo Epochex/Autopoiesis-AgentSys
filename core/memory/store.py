@@ -3,7 +3,7 @@
 Three learned tiers (episodic / semantic / procedural) plus seeded asset
 profiles overlay into one queryable store.  The always-available route is
 deterministic segmented BM25 plus exact asset identity.  An optional dense
-route adds semantic candidates from the mutable HNSW-base/Flat-delta index;
+route adds semantic candidates from the immutable-base/Flat-delta index;
 the memory records in this store remain the source of truth.
 
 Retrieval ranking (see :meth:`TieredMemoryStore.retrieve`) is a two-stage

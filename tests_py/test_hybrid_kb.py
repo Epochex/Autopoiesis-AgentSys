@@ -160,7 +160,7 @@ def test_optional_faiss_hnsw_index_constructs():
     assert retriever.dense_index.index_type == "hnsw"
 
 
-def test_default_dense_builder_requests_hnsw(monkeypatch):
+def test_default_dense_builder_requests_exact_flat(monkeypatch):
     from core.eval import dense_retrieval
 
     sentinel = _FixedDense(["a"])
@@ -175,7 +175,28 @@ def test_default_dense_builder_requests_hnsw(monkeypatch):
         {"a": "alpha"}, fusion=True, rerank=False,
     )
     assert retriever.dense_index is sentinel
-    assert seen["index_type"] == "hnsw"
+    assert seen["index_type"] == "flat"
+
+
+def test_cross_encoder_is_disabled_by_default():
+    dense = _FixedDense(["semantic", "both", "lexical"])
+    reranker = _FixedReranker(["semantic", "both", "lexical"])
+    retriever = HybridKBRetriever(
+        [
+            KBDocument("lexical", "administrator login lockout"),
+            KBDocument("both", "administrator authentication policy"),
+            KBDocument("semantic", "account access disabled after repeated failures"),
+        ],
+        dense_index=dense,
+        reranker_instance=reranker,
+        fusion_depth=3,
+        rerank_depth=3,
+    )
+
+    retriever.retrieve_ids("administrator policy", 1)
+
+    assert retriever.rerank is False
+    assert reranker.calls == []
 
 
 @pytest.mark.parametrize("field,value", [("k", 0), ("rerank_depth", 0), ("fusion_depth", 0)])

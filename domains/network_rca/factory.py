@@ -65,9 +65,17 @@ def build_network_rca_orchestrator(
     vector_memory_enabled: bool | None = None,
     memory_embedder: Any | None = None,
     vector_options: dict[str, Any] | None = None,
+    knowledge_retriever: Any | None = None,
+    knowledge_corpus_path: str | Path | None = None,
+    knowledge_top_k: int = 5,
     observer: Any | None = None,
     observability_path: str | Path | None = None,
-) -> SingleAgentRCAOrchestrator:
+    adaptive_multiagent_enabled: bool = False,
+    adaptive_options: dict[str, Any] | None = None,
+    trace_durable: bool = True,
+) -> Any:
+    if knowledge_retriever is not None and knowledge_corpus_path is not None:
+        raise ValueError("provide knowledge_retriever or knowledge_corpus_path, not both")
     if observer is None:
         from core.observability import ExecutionObserver, LangfuseTraceExporter
 
@@ -125,6 +133,15 @@ def build_network_rca_orchestrator(
             )
         except VectorMemoryDependencyError as exc:
             memory.mark_vector_degraded(str(exc))
+    if knowledge_retriever is None and knowledge_corpus_path is not None:
+        from core.memory.hybrid_kb import HybridKBRetriever
+
+        corpus = json.loads(Path(knowledge_corpus_path).read_text(encoding="utf-8"))
+        knowledge_retriever = HybridKBRetriever.from_corpus(
+            corpus,
+            fusion=True,
+            rerank=False,
+        )
     registry = SkillRegistry()
     if data_source == "mock":
         adapter = MockDeviceAdapter(ROOT / "fixtures" / "mock_device_responses.json")
@@ -142,7 +159,7 @@ def build_network_rca_orchestrator(
     else:
         raise ValueError(f"unknown reasoner_mode: {reasoner_mode}")
 
-    return SingleAgentRCAOrchestrator(
+    orchestrator = SingleAgentRCAOrchestrator(
         memory=memory,
         context_compiler=ContextCompiler(
             token_budget=2_048,
@@ -160,7 +177,18 @@ def build_network_rca_orchestrator(
         diagnosis_builder=diagnosis_builder,
         ledger_path=ledger_path,
         observer=observer,
+        knowledge_retriever=knowledge_retriever,
+        knowledge_top_k=knowledge_top_k,
+        trace_durable=trace_durable,
     )
+    if adaptive_multiagent_enabled:
+        from core.orchestrator.adaptive import build_adaptive_orchestrator
+
+        return build_adaptive_orchestrator(
+            orchestrator,
+            **dict(adaptive_options or {}),
+        )
+    return orchestrator
 
 
 def build_network_rca_service(

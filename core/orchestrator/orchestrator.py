@@ -54,21 +54,29 @@ class SingleAgentRCAOrchestrator:
         diagnosis_builder: Callable[..., Any],
         ledger_path: str | Path,
         observer: ExecutionObserver | None = None,
+        knowledge_retriever: Any | None = None,
+        knowledge_top_k: int = 5,
+        trace_durable: bool = True,
     ):
+        if knowledge_top_k <= 0:
+            raise ValueError("knowledge_top_k must be positive")
         self.memory = memory
         self.context_compiler = context_compiler
         self.skills = skills
         self.skill_controller = skill_controller
         self.verifier = verifier
         self.diagnosis_builder = diagnosis_builder
-        self.ledger = JSONLTraceLedger(ledger_path)
+        self.ledger = JSONLTraceLedger(ledger_path, durable=trace_durable)
         ledger_path = Path(ledger_path)
         observation_path = ledger_path.with_name(
             f"{ledger_path.stem}.observability.jsonl"
         )
         self.observer = observer or ExecutionObserver(observation_path)
+        self.knowledge_retriever = knowledge_retriever
+        self.knowledge_top_k = knowledge_top_k
         self._run_events: list[TraceEvent] = []
         self._last_evidence: list[dict] = []
+        self._last_knowledge_evidence: list[dict] = []
         self.last_run_id: str = ""
         self._current_session_id: str | None = None
 
@@ -223,6 +231,11 @@ class SingleAgentRCAOrchestrator:
                 },
             )
 
+        knowledge_evidence = self._retrieve_knowledge(
+            run_id,
+            case,
+            session_id=session_id,
+        )
         query = {t.lower() for t in case.query_terms}
         recalled = self._recall_episodic(memories.get("episodic", []), query, case.assets)
         # Even a strong episodic match is only a prior.  Procedural memory may
@@ -252,6 +265,8 @@ class SingleAgentRCAOrchestrator:
             )
 
         self._last_evidence = evidence
+        self._last_knowledge_evidence = knowledge_evidence
+        reasoning_evidence = [*evidence, *knowledge_evidence]
         with self.observer.span(
             trace_id=run_id,
             session_id=session_id,
@@ -261,13 +276,14 @@ class SingleAgentRCAOrchestrator:
             input={
                 "retrieved_memories": sum(len(items) for items in memories.values()),
                 "current_evidence": len(evidence),
+                "knowledge_evidence": len(knowledge_evidence),
             },
         ) as context_span:
             context = self.context_compiler.compile(
                 case_id=case.id,
                 query=case.query,
                 memories_by_tier=memories,
-                current_evidence=evidence,
+                current_evidence=reasoning_evidence,
                 required_evidence=[],
             )
             dropped = sum(len(section.dropped) for section in context.sections)
@@ -325,7 +341,11 @@ class SingleAgentRCAOrchestrator:
             },
             attributes={"reasoner": reasoner_name},
         ) as reasoner_span:
-            diagnosis = self.diagnosis_builder(case=case, evidence=evidence, context=context)
+            diagnosis = self.diagnosis_builder(
+                case=case,
+                evidence=reasoning_evidence,
+                context=context,
+            )
             reasoner_span.set_result(
                 output={
                     "root_cause_key": diagnosis.root_cause_key,
@@ -348,7 +368,7 @@ class SingleAgentRCAOrchestrator:
                 "evidence_ids": [item.evidence_id for item in diagnosis.evidence],
             },
         ) as verifier_span:
-            report = self.verifier.verify(diagnosis, evidence, [])
+            report = self.verifier.verify(diagnosis, reasoning_evidence, [])
             verifier_span.set_result(
                 output={"passed": report.passed, "errors": list(report.errors)},
                 metrics={"passed": report.passed, "error_count": len(report.errors)},
@@ -385,6 +405,70 @@ class SingleAgentRCAOrchestrator:
         self._record(run_id, case.id, "cost_observed", {"tool_cost": total_cost, "tool_calls": tool_calls})
         self._record(run_id, case.id, "diagnosis_completed", diagnosis.model_dump(mode="json"))
         return diagnosis, report
+
+    def _retrieve_knowledge(
+        self,
+        run_id: str,
+        case: CaseLike,
+        *,
+        session_id: str | None = None,
+    ) -> list[dict]:
+        """Retrieve reference documents without treating them as live observations."""
+
+        if self.knowledge_retriever is None:
+            return []
+        with self.observer.span(
+            trace_id=run_id,
+            session_id=session_id,
+            case_id=case.id,
+            node_name="knowledge.retrieve",
+            node_type="retrieval",
+            input={"query": case.query, "top_k": self.knowledge_top_k},
+        ) as retrieval_span:
+            try:
+                documents = self.knowledge_retriever.retrieve(
+                    case.query,
+                    k=self.knowledge_top_k,
+                )
+            except Exception as exc:
+                retrieval_span.mark_partial(
+                    f"knowledge retrieval degraded to operational evidence only: {exc}"
+                )
+                retrieval_span.set_result(
+                    output={"document_ids": []},
+                    metrics={"returned_count": 0},
+                )
+                return []
+
+            evidence = [self._knowledge_document_evidence(document) for document in documents]
+            retrieval_span.set_result(
+                output={"document_ids": [item["data"]["document_id"] for item in evidence]},
+                metrics={"returned_count": len(evidence)},
+                attributes={"rerank_enabled": bool(getattr(self.knowledge_retriever, "rerank", False))},
+            )
+            return evidence
+
+    @staticmethod
+    def _knowledge_document_evidence(document: Any) -> dict:
+        document_id = str(document.id)
+        metadata = dict(getattr(document, "metadata", {}) or {})
+        source = str(
+            metadata.get("source")
+            or metadata.get("url")
+            or metadata.get("document_title")
+            or "knowledge_base"
+        )
+        return {
+            "evidence_id": f"kb:{document_id}",
+            "source": source,
+            "summary": str(document.text),
+            "evidence_kind": "knowledge_document",
+            "current_observation": False,
+            "data": {
+                "document_id": document_id,
+                "metadata": metadata,
+            },
+        }
 
     def _recall_episodic(self, episodic: list[Any], query: set[str], assets: list[str]) -> Any | None:
         """Return the first episodic record strong enough to be a current hypothesis."""

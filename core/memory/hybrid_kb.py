@@ -1,7 +1,7 @@
 """Reusable hybrid retrieval for natural-language knowledge bases.
 
 ``HybridKBRetriever`` indexes the same document text with the zero-dependency
-Okapi BM25 implementation and, when enabled, a bge/faiss HNSW dense index.  At
+Okapi BM25 implementation and, when enabled, a bge/faiss exact Flat index.  At
 query time it searches both routes concurrently, combines their rankings with
 Reciprocal Rank Fusion (RRF), and can cross-encoder-rerank a bounded candidate
 pool.
@@ -14,8 +14,10 @@ BM25-only instance therefore remains available in the zero-dependency core::
     retriever = HybridKBRetriever.from_corpus(corpus, fusion=False, rerank=False)
     hits = retriever.retrieve("administrator login lockout", k=5)
 
-The default configuration is the full production pipeline.  Install the
-``dense`` and ``rerank`` extras before constructing it.
+The default configuration enables hybrid first-stage retrieval but leaves the
+corpus-dependent cross-encoder stage disabled.  Install the ``dense`` extra to
+construct the default retriever; install ``rerank`` only for a corpus whose
+held-out evaluation justifies second-stage reranking.
 """
 from __future__ import annotations
 
@@ -68,13 +70,13 @@ class _Reranker(Protocol):
 
 
 class HybridKBRetriever:
-    """BM25 + dense/HNSW + RRF + cross-encoder knowledge-base retriever.
+    """BM25 + dense/Flat + RRF + optional cross-encoder knowledge-base retriever.
 
     Parameters are deliberately stage-oriented so an online caller and an
     evaluation harness use the exact same component:
 
     - ``fusion=False`` selects BM25 alone and does not require dense packages.
-    - ``fusion=True`` builds an HNSW index and fuses BM25+dense with RRF.
+    - ``fusion=True`` builds an exact Flat index and fuses BM25+dense with RRF.
     - ``rerank=True`` cross-encoder-reranks the first-stage top-N candidates.
     - ``k`` and ``rerank_depth`` are defaults and can be overridden per call.
 
@@ -88,7 +90,7 @@ class HybridKBRetriever:
         documents: Sequence[KBDocument],
         *,
         fusion: bool = True,
-        rerank: bool = True,
+        rerank: bool = False,
         k: int = 10,
         rerank_depth: int = 30,
         fusion_depth: int = 60,
@@ -246,7 +248,7 @@ class HybridKBRetriever:
                 self.doc_ids,
                 [self.documents[doc_id].text for doc_id in self.doc_ids],
                 model_name=self.model_name,
-                index_type="hnsw",
+                index_type="flat",
                 cache_key=cache_key,
             )
         except ModuleNotFoundError as exc:

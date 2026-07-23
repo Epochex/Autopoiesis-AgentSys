@@ -36,6 +36,8 @@ export type WanThreat = {
   internalCorrelation?: { ip: string; relation: string; deny?: number }[]
   blast?: string
   actions?: string[]
+  playbook?: { target: string; targetIp: string; layer: string; commands: string[]; why: string }[]
+  impactNodes?: string[]
   confidence?: number
   lockouts?: number
   distinctSrc?: number

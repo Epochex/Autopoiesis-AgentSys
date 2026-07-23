@@ -313,9 +313,11 @@ def test_cold_runs_have_no_observatory_and_capabilities_stay_honest():
         "fired": False,
     }
     assert warm["capability_status"]["retrieval_scoring"]["implemented"] is True
-    # Lifecycle operations and structured context-drop provenance are wired; retrieval
-    # score tracing and UPDATE text mutation remain deliberately absent.
-    assert CAPABILITIES["decay_wired"] is False
+    assert warm["capability_status"]["decay"]["implemented"] is True
+    assert warm["capability_status"]["decay"]["configured"] is True
+    # Ebbinghaus decay now runs at every pass boundary; only UPDATE text mutation
+    # remains deliberately absent.
+    assert CAPABILITIES["decay_wired"] is True
     assert CAPABILITIES["eviction_wired"] is True
     assert CAPABILITIES["conflict_update_wired"] is True
     assert CAPABILITIES["retrieval_scores"] is True
@@ -343,6 +345,28 @@ def test_runtime_capability_status_distinguishes_configuration_from_firing():
     }
     assert status["retrieval_scoring"]["fired"] is True
     assert status["context_drop_provenance"]["fired"] is False
+    # decay is wired and configured; it only "fires" (forgets) when a record crosses the
+    # floor, which these two synthetic ops do not carry.
+    assert status["decay"] == {"implemented": True, "configured": True, "fired": False}
+
+
+def test_pass_boundary_decay_lowers_strength_without_dropping_reused_memory():
+    """Ebbinghaus decay must be observable: after the warm stream, retrievability is no
+    longer an inert constant 1.0 — records not reused on the final pass carry a decayed
+    strength, protected priors stay at 1.0, and nothing useful is forgotten on a
+    recurring stream because reuse resets strength each pass."""
+    cases, gt = load_seed_cases(), load_ground_truth()
+    obs = run_evolving_stream(cases, gt, passes=4, evolve=True)["observatory"]
+    records = obs["records"]
+    strengths = [r["strength"] for r in records]
+    # decay actually happened: at least one active record is below 1.0
+    assert any(s < 1.0 for s in strengths), strengths
+    # protected priors (reflected insights) never decay
+    insights = [r for r in records if r["memory_id"].startswith("insight")]
+    assert insights and all(r["strength"] == 1.0 for r in insights)
+    # capability is honest: implemented + configured, firing only if something crossed the floor
+    assert obs["capabilities"]["decay_wired"] is True
+    assert obs["capability_status"]["decay"]["configured"] is True
 
 
 def test_records_carry_real_text_and_include_quarantined():
@@ -393,6 +417,7 @@ def test_evolution_events_are_ordered_and_attributed():
         assert e["case_id"] in ids and e["run_id"]      # every op traces to a real run
         assert e["op"] in {
             "ADD", "UPDATE", "NOOP", "REINFORCE", "QUARANTINE", "INSIGHT", "INSIGHT_REFRESH", "LINK",
+            "DECAY", "FORGET", "EVICT",
         }
         if e["op"] == "REINFORCE":
             assert e["before"] != e["after"]            # a reinforcement that changed nothing is a bug

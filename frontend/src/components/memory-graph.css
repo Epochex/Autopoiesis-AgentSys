@@ -17,8 +17,8 @@
 .mg-bg { fill: transparent; }
 
 /* ── column headers ───────────────────────────────────────────────────────── */
-.mg-kick { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--gray); }
-.mg-colkey { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.06em; fill: var(--ink); font-weight: 500; }
+.mg-kick { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--gray); }
+.mg-colkey { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; fill: var(--ink); font-weight: 500; }
 .mg-headrule { stroke: var(--ink); stroke-width: 1.5; }
 
 /* ── bands ────────────────────────────────────────────────────────────────── */
@@ -30,17 +30,17 @@
 .mg-dot { fill: var(--rule); }
 .mg-hatchbar { fill: var(--ink); }
 .mg-band-lab {
-  font-family: var(--font-display); font-weight: 600; font-size: 11px;
+  font-family: var(--font-display); font-weight: 600; font-size: 13px;
   letter-spacing: 0.06em; fill: var(--ink);
   /* knock the paper out behind the label so routing lanes read cleanly under it */
   paint-order: stroke; stroke: var(--paper); stroke-width: 3px; stroke-linejoin: round;
 }
 .mg-row-lab {
-  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em; fill: var(--gray);
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; fill: var(--gray);
   text-anchor: end; paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round;
 }
 .mg-spine-lab {
-  font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em; fill: var(--gray); text-anchor: end;
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; fill: var(--gray); text-anchor: end;
   paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round;
 }
 
@@ -94,13 +94,13 @@
 .mg-node.pin .mg-node-bg { stroke-width: 3.4; }
 .mg-canvas.sel .mg-node.pin .mg-hit { stroke: var(--ink); }
 
-.mg-id { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.02em; fill: var(--gray); }
-.mg-tally { font-family: var(--font-mono); font-size: 8px; font-weight: 600; fill: var(--ink-soft); text-anchor: end; font-variant-numeric: tabular-nums; }
+.mg-id { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.02em; fill: var(--gray); }
+.mg-tally { font-family: var(--font-mono); font-size: 9.5px; font-weight: 600; fill: var(--ink-soft); text-anchor: end; font-variant-numeric: tabular-nums; }
 .mg-node-rule { stroke: var(--rule); stroke-width: 1; }
-.mg-txt { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.005em; fill: var(--ink); }
-.mg-pend-t { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--gray); }
-.mg-val { font-family: var(--font-mono); font-size: 7.5px; font-weight: 600; fill: var(--ink-soft); font-variant-numeric: tabular-nums; }
-.mg-val.imp { text-anchor: end; fill: var(--ink); font-size: 8.5px; }
+.mg-txt { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.005em; fill: var(--ink); }
+.mg-pend-t { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--gray); }
+.mg-val { font-family: var(--font-mono); font-size: 9px; font-weight: 600; fill: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.mg-val.imp { text-anchor: end; fill: var(--ink); font-size: 10px; }
 .mg-cell { fill: var(--paper); stroke: var(--gray); stroke-width: 0.8; }
 .mg-cell-f { fill: var(--ink); }
 .mg-node.touch .mg-id, .mg-node.touch .mg-txt, .mg-node.touch .mg-val, .mg-node.touch .mg-tally { fill: var(--acid-ink); }
@@ -114,17 +114,17 @@
 
 /* op tag on the record that actually changed at this step */
 .mg-op-bg { fill: var(--ink); }
-.mg-op-t { font-family: var(--font-mono); font-size: 7.5px; font-weight: 600; letter-spacing: 0.08em; fill: var(--acid); }
+.mg-op-t { font-family: var(--font-mono); font-size: 8.5px; font-weight: 600; letter-spacing: 0.08em; fill: var(--acid); }
 
 /* ── context rail ─────────────────────────────────────────────────────────── */
 .mg-rail-box { fill: var(--paper-2); stroke: var(--ink); stroke-width: 2; }
 .mg-rail-cap { fill: var(--ink); }
-.mg-rail-t { font-family: var(--font-display); font-weight: 600; font-size: 11px; letter-spacing: 0.08em; fill: var(--paper); }
-.mg-rail-s { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; fill: var(--ink); font-variant-numeric: tabular-nums; }
-.mg-rail-drop { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.08em; fill: var(--gray); }
+.mg-rail-t { font-family: var(--font-display); font-weight: 600; font-size: 12px; letter-spacing: 0.08em; fill: var(--paper); }
+.mg-rail-s { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.mg-rail-drop { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.08em; fill: var(--gray); }
 .mg-slot-l { stroke: var(--ink); stroke-width: 2; }
-.mg-slot-n { font-family: var(--font-mono); font-size: 7.5px; font-weight: 600; fill: var(--gray); font-variant-numeric: tabular-nums; }
-.mg-slot-id { font-family: var(--font-mono); font-size: 7.5px; fill: var(--ink); }
+.mg-slot-n { font-family: var(--font-mono); font-size: 8.5px; font-weight: 600; fill: var(--gray); font-variant-numeric: tabular-nums; }
+.mg-slot-id { font-family: var(--font-mono); font-size: 8.5px; fill: var(--ink); }
 .mg-slot-rule { stroke: var(--rule); stroke-width: 1; }
 
 /* ── legend ───────────────────────────────────────────────────────────────── */

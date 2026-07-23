@@ -448,11 +448,13 @@ def reflect(
     return created
 
 
-def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floor: float = 0.4, protect: tuple[str, ...] = ("seed", "asset", "insight")) -> list[str]:
+def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floor: float = 0.4, protect: tuple[str, ...] = ("seed", "asset", "insight"), recorder: list[dict] | None = None) -> list[str]:
     """Ebbinghaus tick: every non-protected active memory loses retrievability;
     those below the floor are forgotten (quarantined). Memories reused this tick were
     reset to strength 1.0 and survive; a memory unused for ~2 ticks fades out.
     Protected priors (seeded / asset-profile / reflected insights) never decay.
+    Every retrievability change is emitted as a DECAY op and each drop below the floor as
+    a FORGET op, so the observatory replays real strength loss instead of an inert 1.0.
     Returns the ids forgotten this tick."""
     if not 0.0 < retention <= 1.0:
         raise ValueError(f"retention must be in (0, 1], got {retention}")
@@ -462,10 +464,14 @@ def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floo
     for rec in memory.active():
         if rec.memory_id.startswith(protect):
             continue
+        before = _snap(rec)
         rec.strength *= retention
         if rec.strength < floor:
             memory.quarantine(rec.memory_id, "forgotten")
+            _emit(recorder, "FORGET", rec.memory_id, rec.tier, before=before, after=_snap(rec))
             forgotten.append(rec.memory_id)
+        else:
+            _emit(recorder, "DECAY", rec.memory_id, rec.tier, before=before, after=_snap(rec))
     return forgotten
 
 
