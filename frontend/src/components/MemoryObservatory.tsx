@@ -35,9 +35,11 @@ const reducedMotion = () =>
 export function MemoryObservatory({
   obs,
   zh,
+  caseRoots,
 }: {
   obs: Observatory
   zh: boolean
+  caseRoots?: Record<string, string>
 }) {
   const last = obs.events.length - 1
   const rootRef = useRef<HTMLElement | null>(null)
@@ -224,6 +226,7 @@ export function MemoryObservatory({
         prevRecall={prevRecall}
         records={obs.records}
         capabilities={obs.capabilities}
+        caseRoot={currentRecall ? caseRoots?.[currentRecall.case_id] : undefined}
         zh={zh}
       />
 

@@ -200,6 +200,56 @@ async def rca_wan_threat(ip: str, lang: str = "zh") -> dict[str, Any]:
     return await asyncio.to_thread(assess_wan, ip, lang)
 
 
+@app.get("/api/rca/device_profile")
+async def rca_device_profile(ip: str, lang: str = "zh") -> dict[str, Any]:
+    """Traffic portrait for one host: destinations, inbound sources, activity, inferred tags."""
+    from .device_profile import device_profile
+    return await asyncio.to_thread(device_profile, ip, lang)
+
+
+@app.get("/api/rca/device_history")
+async def rca_device_history(ip: str, days: int = 7, full: int = 0) -> dict[str, Any]:
+    """Historical portrait for one host over the last N days, from ClickHouse netops.facts."""
+    from .history import device_history
+    out = await asyncio.to_thread(device_history, ip, days, bool(full))
+    return out if out is not None else {"ok": False, "text": "history store unavailable"}
+
+
+@app.get("/api/rca/vlan_diag")
+async def rca_vlan_diag(cidr: str, days: int = 7) -> dict[str, Any]:
+    """Passive /24 congestion/pressure aggregate from ClickHouse (NOT latency)."""
+    from .vlan_diag import vlan_diag
+    out = await asyncio.to_thread(vlan_diag, cidr, days)
+    return out if out is not None else {"ok": False, "text": "history store unavailable"}
+
+
+@app.get("/api/rca/probe_latency")
+async def rca_probe_latency(ip: str = "", cidr: str = "", count: int = 5) -> dict[str, Any]:
+    """Active on-demand ICMP round-trip probe (real RTT) for one host or a /24."""
+    from .vlan_diag import _prefix24, probe_latency
+
+    targets: list[str] = []
+    if ip:
+        targets = [ip]
+    elif cidr:
+        prefix = _prefix24(cidr)
+        if prefix is not None:
+            from .rca_reader import _load_device_graphs
+
+            graphs = await asyncio.to_thread(_load_device_graphs)
+            for g in graphs.values():
+                if g.get("cidr") != cidr:
+                    continue
+                for dv in g.get("devices", []):
+                    dip = dv.get("ip")
+                    if dip and str(dip).startswith(prefix):
+                        targets.append(str(dip))
+            targets = targets[:24]
+    else:
+        return {"ok": False, "text": "need ip or cidr"}
+    return await asyncio.to_thread(probe_latency, targets, count)
+
+
 @app.get("/api/rca/attack_surface")
 async def rca_attack_surface() -> dict[str, Any]:
     # Resident deep attack-surface analysis: full real held-out WAN evidence
@@ -323,22 +373,216 @@ async def rca_evolution(passes: int = Query(default=4, ge=1, le=64)) -> dict[str
     return await asyncio.to_thread(load_evolution, None, passes)
 
 
+@app.get("/api/rca/memory-graph")
+async def rca_memory_graph(passes: int = Query(default=4, ge=1, le=64)) -> dict[str, Any]:
+    # The REAL evolved memory graph from the self-evolving run (serialize_store):
+    # nodes = memory records (episodic/semantic/procedural) + insight hubs, edges =
+    # the real links/relations between them. A full node-link graph — the benchmark
+    # 态势 analogue of the live device-relation constellation. Reshape only; every
+    # node/edge comes verbatim from load_evolution's observatory.records.
+    from .rca_reader import load_evolution
+
+    def build() -> dict[str, Any]:
+        d = load_evolution(None, passes)
+        recs = (d.get("observatory") or {}).get("records") or []
+        node_ids = {r["memory_id"] for r in recs}
+        nodes: list[dict[str, Any]] = []
+        for r in recs:
+            tags = r.get("tags") or []
+            root = next((t.split(":", 1)[1] for t in tags if t.startswith("root:")), "")
+            nodes.append({
+                "id": r["memory_id"], "tier": r.get("tier", "semantic"),
+                "label": root or r["memory_id"],
+                "text": (r.get("text") or "")[:220],
+                "strength": float(r.get("strength", 0.5) or 0.0),
+                "importance": float(r.get("importance", 0.0) or 0.0),
+                "tags": [t for t in tags if not t.startswith("root:")][:6],
+                "assets": r.get("asset_ids") or [],
+            })
+        # edges: dedup by unordered pair; type from a matching typed relation if any
+        rel_type: dict[tuple[str, str], str] = {}
+        for r in recs:
+            for rel in (r.get("relations") or []):
+                t = rel.get("target_id")
+                if t:
+                    rel_type[tuple(sorted((r["memory_id"], t)))] = rel.get("relation_type", "link")
+        edges: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        extra: set[str] = set()
+        for r in recs:
+            for tgt in (r.get("links") or []):
+                pair = tuple(sorted((r["memory_id"], tgt)))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                edges.append({"src": r["memory_id"], "dst": tgt, "type": rel_type.get(pair, "link")})
+                if tgt not in node_ids:
+                    extra.add(tgt)
+        for x in sorted(extra):
+            is_ins = x.startswith("insight")
+            nodes.append({
+                "id": x, "tier": "insight" if is_ins else "semantic",
+                "label": x.replace("insight-", "") if is_ins else x,
+                "text": "", "strength": 0.85, "importance": 0.6,
+                "tags": ["insight"] if is_ins else [], "assets": [],
+            })
+        mem = d.get("memory") or {}
+        return {
+            "ok": True, "nodes": nodes, "edges": edges,
+            "stats": {"records": len(recs), "edges": len(edges),
+                      "insights": mem.get("insights", 0), "by_tier": mem.get("by_tier", {})},
+        }
+
+    return await asyncio.to_thread(build)
+
+
+@app.get("/api/rca/bench-snapshot")
+async def rca_bench_snapshot(passes: int = Query(default=4, ge=1, le=64)) -> dict[str, Any]:
+    # Benchmark 态势 in the EXACT live topology shapes (Topology + SubnetGraph), built
+    # from the REAL evolved memory graph so the frontend reuses the live TopologyCanvas
+    # in its DRILLED state (drillSub === graph.cidr === "mem://autopoiesis"). Reshape
+    # only: every node/edge/label comes verbatim from load_evolution()'s
+    # observatory.records; flows/accept/threat/x/y are clearly derived render
+    # heuristics from the real strength/importance scores (see build_bench_snapshot).
+    from .rca_reader import build_bench_snapshot
+    return await asyncio.to_thread(build_bench_snapshot, passes)
+
+
+@app.get("/api/rca/replay")
+async def rca_replay(
+    lang: str = "zh",
+    passes: int = Query(default=4, ge=1, le=64),
+    inject: int = Query(default=0, ge=0, le=1),
+) -> dict[str, Any]:
+    # Streaming fault-injection self-heal benchmark. The trajectory is the REAL
+    # offline evolving run (rule reasoner, no LLM) over the six real held-out cases.
+    # inject=1 first PRODUCES the representative replay:true fault bursts to the
+    # ISOLATED topic netops.facts.replay.v1 (real streaming via kubectl/rpk), then
+    # includes that result as `streamed`. Production degrades gracefully in the
+    # sandbox/CI (streamed.degraded:true) while the offline trajectory still returns.
+    from core.evolve.replay_stream import (
+        REPLAY_TOPIC,
+        produce_replay,
+        replay_trajectory,
+        topic_status,
+    )
+
+    streamed = await asyncio.to_thread(produce_replay) if inject == 1 else None
+    status = await asyncio.to_thread(topic_status, REPLAY_TOPIC)
+    trajectory = await asyncio.to_thread(replay_trajectory, passes, lang)
+    return {
+        "ok": True,
+        "live": True,
+        "topic": REPLAY_TOPIC,
+        "topic_events": status.get("events"),
+        "streamed": streamed,
+        **trajectory,
+    }
+
+
+@app.get("/api/rca/device_search")
+async def rca_device_search(q: str, limit: int = Query(default=14, ge=1, le=50)) -> dict[str, Any]:
+    # Keyword search over every mined device across the topology's subnets: match
+    # ip / name / vendor / role / os / top-ports / live hostname. Returns the ip +
+    # cidr so the console can drill to the segment and focus the device (its
+    # profile/画像). Read-only; reuses the cached subnet_graph builder.
+    needle = (q or "").strip().lower()
+    if not needle:
+        return {"ok": True, "q": q, "results": []}
+
+    def search() -> list[dict[str, Any]]:
+        topo = _load_topology() or {}
+        out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for sub in topo.get("subnets", []):
+            cidr = sub.get("cidr")
+            if not cidr:
+                continue
+            g = subnet_graph(cidr)
+            if not g.get("ok"):
+                continue
+            for dv in g.get("devices", []) or []:
+                ident = dv.get("liveIdentity") or {}
+                hay = " ".join(str(x) for x in (
+                    dv.get("ip"), dv.get("name"), dv.get("vendor"), dv.get("role"),
+                    dv.get("os"), ident.get("hostname"), ident.get("type"),
+                    " ".join(dv.get("topPorts") or []),
+                )).lower()
+                if needle in hay:
+                    key = (dv.get("ip"), cidr)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append({
+                        "ip": dv.get("ip"), "cidr": cidr,
+                        "name": dv.get("name") or ident.get("hostname"),
+                        "vendor": dv.get("vendor"), "role": dv.get("role"),
+                        "threat": dv.get("threat", "ok"),
+                        "flows": dv.get("flows", 0), "topPorts": (dv.get("topPorts") or [])[:4],
+                    })
+        # most-active / highest-threat first
+        rank = {"high": 0, "watch": 1, "ok": 2}
+        out.sort(key=lambda d: (rank.get(d["threat"], 3), -int(d.get("flows") or 0)))
+        return out[:limit]
+
+    results = await asyncio.to_thread(search)
+    return {"ok": True, "q": q, "results": results}
+
+
 @app.get("/api/rca/pentest")
-async def rca_pentest(lang: str = "zh") -> dict[str, Any]:
-    # Read-only self-pentest report built from the active_recon mock surface.
-    # Intrusive weak-cred/exploit probes are approval-gated and never executed.
+async def rca_pentest(lang: str = "zh", scenario: str = "live") -> dict[str, Any]:
+    # Scenario-aware self-pentest report. scenario="live" (default) is the read-only
+    # recon of the REAL internal-network surface; scenario="bench" is the REAL ITBench
+    # CISO compliance-scenario CATALOG (published definitions only — local scoring
+    # pending, see the benchmark page Task B). Intrusive weak-cred/exploit probes are
+    # approval-gated and never executed; no ITBench pass/fail is fabricated.
     from domains.active_recon.pentest import build_pentest_report
-    return await asyncio.to_thread(build_pentest_report, lang)
+    return await asyncio.to_thread(build_pentest_report, lang, "auto", scenario)
+
+
+@app.get("/api/rca/retrieval")
+async def rca_retrieval(
+    lang: str = "zh", q: str | None = None, scenario: str = "live",
+) -> dict[str, Any]:
+    # Scenario-aware trace of REAL retrieval flows. scenario="live" (default) shows
+    # ONLY the internal-network memory-recall cases (real TieredMemoryStore recall);
+    # scenario="bench" shows ONLY the corpus/KB hybrid pipeline (BM25 + optional dense
+    # + structured-tag routes, RRF fusion, CRAG gate, optional rerank, context
+    # compilation). Optional stages degrade to enabled:false honestly; never fabricated.
+    from core.memory.retrieval_trace import build_retrieval_trace
+    return await asyncio.to_thread(build_retrieval_trace, lang, q, scenario)
+
+
+@app.get("/api/rca/benchmark")
+async def rca_benchmark(lang: str = "zh") -> dict[str, Any]:
+    # Benchmark-scenario data: REAL LongMemEval-500 recall@k (read verbatim from
+    # eval_mem_compare/results_*.json, live:true) plus the ITBench published-baseline
+    # catalog (live:false, reference figures only). No numbers are recomputed or
+    # fabricated; the LongMemEval note honestly states the BM25 floor leads this
+    # LLM-free recall metric.
+    from core.eval.benchmark_report import build_benchmark_report
+    return await asyncio.to_thread(build_benchmark_report, lang)
 
 
 @app.get("/api/rca/live-situation")
-async def rca_live_situation() -> dict[str, Any]:
+async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
     # Read-only tail of the NetOps real-time subsystem's landed sink files (alerts +
     # AIOps suggestions + cluster-state). The gateway never joins the Redpanda topic;
     # the two subsystems meet only at this disk boundary. Returns empty collections
     # when the runtime dir is absent, so the panel degrades to "no live data".
     from .runtime_reader import load_runtime_snapshot
-    return await asyncio.to_thread(load_runtime_snapshot, settings)
+    return await asyncio.to_thread(load_runtime_snapshot, settings, lang)
+
+
+@app.get("/api/rca/bench-live-situation")
+async def rca_bench_live_situation(lang: str = "zh") -> dict[str, Any]:
+    # SAME reader as /api/rca/live-situation, pointed at the ISOLATED benchmark runtime
+    # dir written by the replay side-car pipeline (correlator-replay -> alerts-sink-replay
+    # -> aiops-agent-replay). Real running-pod output; the prod runtime dir is untouched.
+    from .runtime_reader import load_runtime_snapshot
+    base = settings.netops_runtime_dir
+    replay_dir = base.parent / (base.name + "-replay")
+    return await asyncio.to_thread(load_runtime_snapshot, settings, lang, replay_dir)
 
 
 @app.get("/", include_in_schema=False)

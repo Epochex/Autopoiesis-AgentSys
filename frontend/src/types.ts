@@ -103,6 +103,27 @@ export interface GraphDevice {
   seenBy: 'traffic' | 'dhcp'
   x: number
   y: number
+  /** read-only overlay from the FortiGate live inventory (fills unknowns; mined values win). */
+  liveIdentity?: { hostname?: string | null; os?: string | null; vendor?: string | null; type?: string | null; source: string } | null
+  /** Benchmark 态势 (cidr `mem://autopoiesis`) ONLY: the evolved MEMORY RECORD this
+   *  constellation node maps to (build_bench_snapshot embeds it verbatim). A bench
+   *  node is a memory, not a real device, so clicking it shows this record instead of
+   *  the live traffic profile. NEVER present on a live-network device. */
+  memory?: {
+    memory_id: string
+    tier: string
+    text: string
+    root: string | null
+    strength: number
+    importance: number
+    confidence: number
+    tags: string[]
+    evidence: { source: string; summary: string }[]
+    assets: string[]
+    links: string[]
+    sourceTraces: string[]
+    quarantined: boolean
+  } | null
 }
 export type EdgeKind = 'clash' | 'bcast' | 'codst' | 'fleet' | 'family' | 'lease' | 'portfp'
 export interface GraphEdge {
@@ -145,6 +166,98 @@ export interface SubnetGraph {
     vendors: Record<string, number>
   }
 }
+/** One aggregated flow peer of a profiled host (a destination it talks to, or a source that talks at it). */
+export interface ProfilePeer {
+  ip: string
+  hits: number
+  accept: number
+  deny: number
+  bytes: number
+  ports: number[]
+  services: string[]
+  country: string | null
+  rdns?: string | null
+  external: boolean
+  kind: 'host' | 'bcast'
+  dir: 'in' | 'out'
+}
+/** A live destination the router currently sees this host talking to (FortiView realtime). */
+export interface LiveDest {
+  ip: string
+  resolved: string | null
+  port: number | null
+  sessions: number | null
+  country: string | null
+  bytes: number
+  /** current measured throughput to this destination, bits/s (0 when idle). */
+  bps?: number
+  /** name of the FortiGate QoS shaper policy on this flow (e.g. "guarantee-100kbps",
+   *  "400M"). A policy label, not necessarily a cap — could be a floor or a ceiling. */
+  shaper?: string | null
+}
+export interface ProfileLive {
+  destinations: LiveDest[]
+  sessions: { dir: 'in' | 'out'; peer: string; port: number | null; proto: string | null; country: string | null; duration: number | null; bps?: number; shaper?: string | null }[]
+  sessionCount: number
+  /** total current throughput across all of this host's flows, bits/s. */
+  totalBps?: number
+}
+/** Online/idle/offline verdict + last-seen age, from the router's live view. */
+export interface DeviceStatus {
+  state: 'online' | 'idle' | 'offline' | 'unknown'
+  lastSeenSec: number | null
+  lastSeenText: string | null
+  hasLiveSession: boolean
+}
+/** One historical destination aggregate for a host (from ClickHouse netops.facts). */
+export interface HistoryDest {
+  ip: string
+  country: string | null
+  services: string[]
+  flows: number
+  bytes: number
+  up?: number
+  down?: number
+  denied: number
+}
+/** Historical device portrait over the last N days, from the ClickHouse flow store. */
+export interface DeviceHistory {
+  ok: boolean
+  ip: string
+  days: number
+  flows: number
+  empty?: boolean
+  bytes?: number
+  up?: number
+  down?: number
+  full?: boolean
+  denied?: number
+  peers?: number
+  first?: string
+  last?: string
+  destinations?: HistoryDest[]
+  daily?: { date: string; flows: number; bytes: number }[]
+  hours?: number[]
+  topPorts?: number[]
+}
+/** Traffic portrait of one host, mined from the raw syslog sample. */
+export interface DeviceProfile {
+  ok: boolean
+  loading?: boolean
+  ip: string
+  device?: GraphDevice | null
+  /** live online/offline + last-seen (from FortiGate); null when no creds. */
+  status?: DeviceStatus | null
+  /** current router-attested behavior (active sessions + resolved destinations); null when no FortiGate creds. */
+  live?: ProfileLive | null
+  outbound: ProfilePeer[]
+  inbound: ProfilePeer[]
+  hours: number[]
+  tags: string[]
+  totals: { outHits: number; inHits: number; bytes: number; extPeers: number; intPeers: number }
+  window?: { from: string; to: string } | null
+  sampled?: boolean
+}
 export interface GraphPattern {
   title: string
   kind: string
@@ -178,6 +291,8 @@ export interface TheaterEvent {
   id: string
   ts: string
   device: string
+  /** Localized display label; `device` remains the raw identity used for anchors. */
+  deviceLabel?: string
   severity?: string
   priority?: string
   scenario?: string

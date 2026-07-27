@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DataStats, Device, GraphAnalysis, Subnet, SubnetGraph, TheaterEvent, Topology } from '../types'
+import type { DataStats, Device, DeviceHistory, DeviceProfile, GraphAnalysis, ProfilePeer, Subnet, SubnetGraph, TheaterEvent, Topology } from '../types'
 import { Scramble } from './Motion'
 import { SubnetGraphLayer } from './SubnetGraph'
 import { TheaterStage } from './TheaterStage'
@@ -15,6 +15,17 @@ const VBW = 1920
 const VBH = 1000
 const bez = (a: Pt, b: Pt) => `M${a.x} ${a.y} C ${(a.x + b.x) / 2} ${a.y}, ${(a.x + b.x) / 2} ${b.y}, ${b.x} ${b.y}`
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
+const fmtBytes = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}G` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K` : `${n}`)
+type VlanDiag = { ok: boolean; cidr: string; empty?: boolean; totals?: { devices: number; flows: number; up: number; down: number; bytes: number; deny: number; accept: number; denyRate: number; peers: number }; nodes?: { ip: string; flows: number; up: number; down: number; deny: number; denyRate: number; peers: number; topPorts: number[] }[]; note?: string }
+type VlanLat = { ok: boolean; results: { ip: string; reachable: boolean; loss_pct: number | null; rtt_min: number | null; rtt_avg: number | null; rtt_max: number | null; jitter: number | null }[]; degraded?: boolean }
+/** bits/s → human bandwidth. Returns '' for 0 so idle flows stay unlabeled. */
+const bw = (bps?: number | null) => {
+  if (!bps || bps <= 0) return ''
+  if (bps >= 1e9) return `${(bps / 1e9).toFixed(1)} Gbps`
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`
+  if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)} kbps`
+  return `${bps} bps`
+}
 const clipS = (s: string, n: number) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s)
 const weight = (f: number) => Math.max(1, Math.min(5.5, 1 + Math.log10(f + 1) * 0.7))
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -557,6 +568,95 @@ export function TopologyCanvas({
   //    field. We reframe the viewport onto {node ∪ neighbours} and the graph layer
   //    fades every unrelated host, so a dense community becomes one legible ego net. */
   const [focusDev, setFocusDev] = useState<string | null>(null)
+  // Latest graph, mirrored into a ref so the live device_profile / device_history
+  // effects below can tell a BENCH memory node (cidr mem://autopoiesis, GraphDevice
+  // carries `.memory`) apart from a real host WITHOUT taking `graph` as a dependency
+  // — their firing behavior for real devices stays byte-for-byte unchanged.
+  const graphRef = useRef<SubnetGraph | null>(graph)
+  graphRef.current = graph
+  const isMemNode = (ip: string | null) => !!(ip && graphRef.current?.devices.find((d) => d.ip === ip)?.memory)
+  // ── traffic portrait of the focused host: fetched per click, drives both the
+  //    right-hand portrait panel and the flow-topology overlay in the graph layer.
+  const [profile, setProfile] = useState<DeviceProfile | null>(null)
+  useEffect(() => {
+    if (!focusDev) {
+      setProfile(null)
+      return
+    }
+    // Bench memory node: a memory_id has no live traffic profile — skip the probe
+    // entirely (it would 404) and let the memory-record panel render instead.
+    if (isMemNode(focusDev)) {
+      setProfile(null)
+      return
+    }
+    let gone = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    setProfile({ ip: focusDev, loading: true } as DeviceProfile)
+    // poll while a host stays focused so live bandwidth/sessions stay current
+    // and the router-side rolling rate baseline stays warm.
+    const tick = (first: boolean) => {
+      fetch(`/api/rca/device_profile?ip=${encodeURIComponent(focusDev)}&lang=${lang}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j: DeviceProfile | null) => {
+          if (gone) return
+          if (j?.ok) setProfile(j)
+          else if (first) setProfile(null)
+          if (!gone) timer = setTimeout(() => tick(false), 5000)
+        })
+        .catch(() => {
+          if (gone) return
+          if (first) setProfile(null)
+          timer = setTimeout(() => tick(false), 5000)
+        })
+    }
+    tick(true)
+    return () => {
+      gone = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [focusDev, lang])
+
+  // ── historical portrait (ClickHouse netops.facts, last 7 days). Fetched once
+  //    per focus; independent of the live poll since history moves slowly.
+  const [history, setHistory] = useState<DeviceHistory | null>(null)
+  const [histFull, setHistFull] = useState<DeviceHistory | null>(null)  // all historical targets, fetched on expand
+  const [histBusy, setHistBusy] = useState(false)
+  const [latency, setLatency] = useState<{ loading?: boolean; reachable?: boolean; loss_pct?: number | null; rtt_min?: number | null; rtt_avg?: number | null; rtt_max?: number | null; jitter?: number | null; degraded?: boolean } | null>(null)
+  const [vlanDiag, setVlanDiag] = useState<VlanDiag | null>(null)
+  const [vlanLat, setVlanLat] = useState<VlanLat | null>(null)
+  const [vlanLatBusy, setVlanLatBusy] = useState(false)
+  useEffect(() => {
+    setVlanLat(null)
+    if (!drillSub) { setVlanDiag(null); return }
+    let gone = false
+    fetch(`/api/rca/vlan_diag?cidr=${encodeURIComponent(drillSub)}&days=7`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: VlanDiag | null) => { if (!gone) setVlanDiag(j?.ok && !j.empty ? j : null) })
+      .catch(() => { if (!gone) setVlanDiag(null) })
+    return () => { gone = true }
+  }, [drillSub])
+  useEffect(() => {
+    if (!focusDev || isMemNode(focusDev)) {
+      setHistory(null)
+      setHistFull(null)
+      setLatency(null)
+      return
+    }
+    setHistFull(null)
+    setLatency(null)
+    let gone = false
+    fetch(`/api/rca/device_history?ip=${encodeURIComponent(focusDev)}&days=7`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: DeviceHistory | null) => {
+        if (!gone) setHistory(j?.ok ? j : null)
+      })
+      .catch(() => {
+        if (!gone) setHistory(null)
+      })
+    return () => {
+      gone = true
+    }
+  }, [focusDev])
   // opening/closing a segment resets both the ego-focus and the viewport. This is
   // the "adjust state when a prop changes" pattern (compare during render), not an
   // effect — so it stays in sync without a post-render flash.
@@ -585,6 +685,10 @@ export function TopologyCanvas({
     }
     const pts = [...ego].map((x) => pos[x]).filter(Boolean)
     if (!pts.length) return
+    // reserve room for the flow-portrait overlay: external endpoints fan out
+    // ±265 from the focus with ~160px labels, so the frame must include them.
+    const pc = pos[ip]
+    if (pc) pts.push({ x: pc.x - 430, y: pc.y - 250 }, { x: pc.x + 430, y: pc.y + 250 })
     const xs = pts.map((p) => p.x)
     const ys = pts.map((p) => p.y)
     const pad = 150
@@ -719,6 +823,50 @@ export function TopologyCanvas({
           </g>
         ) : null}
 
+        {drilled && graph && !focusDev && vlanDiag && vlanDiag.totals ? (
+          <foreignObject x={24} y={244} width={362} height={452} className="ego-fo">
+            <div className="dp-panel vlan">
+              <div className="dp-h"><span className="dp-k">{lang === 'zh' ? '网段诊断' : 'VLAN DIAG'} · {graph.cidr}</span></div>
+              <div className="dp-stats">
+                <span><b>{vlanDiag.totals.devices}</b> {lang === 'zh' ? '设备' : 'devices'}</span>
+                <span><b>{short(vlanDiag.totals.flows)}</b> {lang === 'zh' ? '流' : 'flows'}</span>
+                <span className={vlanDiag.totals.denyRate > 0.5 ? 'bad' : ''}><b>{Math.round(vlanDiag.totals.denyRate * 100)}%</b> {lang === 'zh' ? '拒绝率' : 'deny'}</span>
+              </div>
+              <div className="dp-stats io">
+                <span className="up"><b>↑ {fmtBytes(vlanDiag.totals.up)}</b> {lang === 'zh' ? '上行' : 'up'}</span>
+                <span className="down"><b>↓ {fmtBytes(vlanDiag.totals.down)}</b> {lang === 'zh' ? '下行' : 'down'}</span>
+                <span><b>{vlanDiag.totals.peers}</b> {lang === 'zh' ? '对端' : 'peers'}</span>
+              </div>
+              <div className="dp-lat-note">{lang === 'zh' ? '以上为被动拥塞/压力信号(流量·拒绝率·活跃),非延迟' : 'passive congestion (flows/deny-rate), not latency'}</div>
+              <div className="dp-sec lat">{lang === 'zh' ? '本段延迟 · 主动探测' : 'VLAN LATENCY · active'}<span className="dp-hist-badge" title="ICMP">ICMP</span></div>
+              {vlanLat ? (
+                <div className="dp-list">
+                  {vlanLat.results.slice(0, 14).map((r) => (
+                    <div key={r.ip} className={`dp-row ${(!r.reachable || (r.loss_pct ?? 0) > 0) ? 'denied' : ''}`}>
+                      <span className="dp-dir">▸</span>
+                      <span className="dp-ip">{r.ip}</span>
+                      <span className="dp-io">{r.reachable ? `${r.rtt_avg?.toFixed(1)}ms · ${lang === 'zh' ? '抖' : 'j'}${r.jitter?.toFixed(1)}` : (lang === 'zh' ? '不可达' : 'down')}</span>
+                      <span className="dp-n">{r.loss_pct ?? '—'}%</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <button className="dp-expand" disabled={vlanLatBusy} onClick={async () => {
+                  if (vlanLatBusy) return
+                  setVlanLatBusy(true)
+                  try {
+                    const r = await fetch(`/api/rca/probe_latency?cidr=${encodeURIComponent(graph.cidr)}&count=4`)
+                    const j = await r.json()
+                    if (j?.ok) setVlanLat(j)
+                  } catch { /* keep collapsed */ }
+                  setVlanLatBusy(false)
+                }}>{vlanLatBusy ? (lang === 'zh' ? '探测中…' : 'probing…') : (lang === 'zh' ? '▶ 测量本段延迟 · ICMP · ≤24 节点' : '▶ PROBE VLAN RTT · ≤24')}</button>
+              )}
+              <div className="dp-lat-note">{lang === 'zh' ? '点击时对本段最多 24 个活跃节点做真实 ICMP 探测(仅本次)' : 'live ICMP to ≤24 active nodes, on click only'}</div>
+            </div>
+          </foreignObject>
+        ) : null}
+
         {/* The thesis owns the resting state's bottom band; an open analysis takes
             the same space, so they are mutually exclusive by construction. */}
         {!drilled && !inTheater && !threat && !wan ? <Thesis stats={stats} lang={lang} /> : null}
@@ -778,6 +926,7 @@ export function TopologyCanvas({
                     hoverIp={hoverDev}
                     selectedIp={drillDev}
                     focusIp={focusDev}
+                    profile={profile}
                     marks={marks}
                     showPanel={!threat}
                     onHover={onHoverDev}
@@ -1019,8 +1168,15 @@ export function TopologyCanvas({
                     </div>
                   </foreignObject>
                 ) : wan.error ? (
-                  <foreignObject x={36} y={690} width={560} height={90}>
-                    <div className="an-panel wan-panel"><div className="an-body err">{wan.error}</div></div>
+                  <foreignObject x={36} y={670} width={560} height={130}>
+                    <div className="an-panel wan-panel">
+                      <div className="an-head">
+                        <span className="an-kicker">{lang === 'zh' ? 'AI 分析' : 'AI'} · {wan.ip}</span>
+                        <button className="an-x" onClick={onCloseWan}>✕</button>
+                      </div>
+                      <div className="an-body err">{wan.error}</div>
+                      <button className="an-retry" onClick={() => onWan(wan.ip)}>{lang === 'zh' ? '↻ 重试' : '↻ RETRY'}</button>
+                    </div>
                   </foreignObject>
                 ) : (
                   <foreignObject x={28} y={520} width={700} height={472}>
@@ -1156,11 +1312,340 @@ export function TopologyCanvas({
                       </button>
                     ))}
                   </div>
-                  {f.threat !== 'ok' ? (
+                  {f.threat !== 'ok' && !isMemNode(f.ip) ? (
                     <button className="sg-ego-ai" onClick={() => onDev({ ip: f.ip, flows: f.flows, deny: f.deny, accept: f.accept, threat: f.threat, top_ports: f.topPorts }, graph.cidr)}>
                       ⚡ {lang === 'zh' ? 'AI 威胁研判' : 'AI THREAT VERDICT'}
                     </button>
                   ) : null}
+                </div>
+              </foreignObject>
+            )
+          })()
+        : null}
+
+      {/* traffic portrait — the flow evidence behind the focused host, pinned to
+          the right column (left column belongs to the relation ego panel). Shows
+          where this device's traffic GOES, what comes AT it, when it is active,
+          and the tags those flows justify. */}
+      {drilled && graph && focusDev && profile
+        ? (() => {
+            const p = profile
+            const svcOf = (r: ProfilePeer) => r.services.slice(0, 2).join('/') || r.ports.slice(0, 2).map((x) => `:${x}`).join(' ')
+            const peerRow = (r: ProfilePeer) => (
+              <div key={`${r.dir}${r.ip}`} className={`dp-row ${r.deny > r.accept ? 'denied' : ''}`}>
+                <span className="dp-dir">{r.dir === 'out' ? '▸' : '◂'}</span>
+                <span className="dp-ip" title={r.rdns ? r.ip : undefined}>
+                  {r.rdns ?? r.ip}
+                  {r.kind === 'bcast' ? (lang === 'zh' ? ' · 广播' : ' · bcast') : ''}
+                  {r.external && r.country ? ` · ${r.country}` : ''}
+                </span>
+                <span className="dp-svc">{svcOf(r)}</span>
+                <span className="dp-n">{short(r.hits)}</span>
+              </div>
+            )
+            const hourMax = Math.max(...(p.hours ?? [0]), 1)
+            const empty = !p.loading && !(p.outbound?.length || p.inbound?.length)
+            return (
+              <foreignObject x={VBW - 396} y={90} width={376} height={700} className="ego-fo">
+                <div className="dp-panel">
+                  <div className="dp-h">
+                    <span className="dp-k">{lang === 'zh' ? '流量画像' : 'TRAFFIC PORTRAIT'} · {focusDev}</span>
+                  </div>
+                  {p.loading ? (
+                    <div className="dp-wait">{lang === 'zh' ? '正在聚合真实流量…' : 'aggregating real flows…'}</div>
+                  ) : (
+                    <div className="dp-b">
+                      {p.device ? (
+                        <div className="dp-id">
+                          {p.device.name ?? (lang === 'zh' ? '无主机名' : 'no hostname')}
+                          {p.device.vendor && p.device.vendor !== 'unknown' ? ` · ${p.device.vendor}` : ''}
+                          {p.device.os ? ` · ${p.device.os}` : ''}
+                          {p.device.liveIdentity ? <span className="dp-live" title={lang === 'zh' ? 'FortiGate 实时清单(只读)' : 'FortiGate live inventory (read-only)'}>LIVE</span> : null}
+                        </div>
+                      ) : null}
+                      {p.status && p.status.state !== 'unknown' ? (
+                        <div className={`dp-status s-${p.status.state}`}>
+                          <span className="dp-status-dot" />
+                          {p.status.state === 'online'
+                            ? (lang === 'zh' ? '在线' : 'online')
+                            : p.status.state === 'idle'
+                              ? (lang === 'zh' ? '空闲(近期活跃)' : 'idle (recently active)')
+                              : (lang === 'zh' ? '离线' : 'offline')}
+                          {p.status.lastSeenText ? (
+                            <span className="dp-status-seen">
+                              · {lang === 'zh' ? '最后在线 ' : 'last seen '}{p.status.lastSeenText}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <div className="dp-tags">
+                        {(p.tags ?? []).map((t, i) => (
+                          <span key={i} className="dp-tag">{t}</span>
+                        ))}
+                      </div>
+                      {p.live && p.live.destinations.length ? (
+                        <>
+                          <div className="dp-sec live">
+                            {lang === 'zh' ? `实时访问去向 · ${p.live.destinations.length}` : `LIVE DESTINATIONS · ${p.live.destinations.length}`}
+                            <span className="dp-live-badge" title={lang === 'zh' ? 'FortiGate 实时会话(只读)' : 'FortiGate realtime (read-only)'}>
+                              {bw(p.live.totalBps) ? `${bw(p.live.totalBps)} · ` : ''}{p.live.sessionCount} {lang === 'zh' ? '会话' : 'active'}
+                            </span>
+                          </div>
+                          <div className="dp-list">
+                            {p.live.destinations.map((d, i) => (
+                              <div key={i} className="dp-row live">
+                                <span className="dp-dir">▸</span>
+                                <span className="dp-ip" title={d.resolved ? d.ip : undefined}>
+                                  {d.resolved ?? d.ip}
+                                  {d.country ? ` · ${d.country}` : ''}
+                                </span>
+                                <span className="dp-svc">:{d.port}</span>
+                                {d.shaper ? (
+                                  <span className="dp-qos" title={lang === 'zh' ? `QoS 整形策略: ${d.shaper}(保底/上限需查配置)` : `QoS shaper policy: ${d.shaper}`}>{d.shaper}</span>
+                                ) : null}
+                                {bw(d.bps) ? (
+                                  <span className="dp-bw">{bw(d.bps)}</span>
+                                ) : (
+                                  <span className="dp-n">{short(d.sessions ?? 0)}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                      {empty && !(p.live && p.live.destinations.length) ? (
+                        <div className="dp-empty">
+                          {lang === 'zh' ? '采样窗内无流量记录 — 该设备仅以 DHCP 心跳可见' : 'no flows in the sample window — DHCP heartbeat only'}
+                        </div>
+                      ) : empty ? null : (
+                        <>
+                          <div className="dp-stats">
+                            <span><b>{short(p.totals?.outHits ?? 0)}</b> {lang === 'zh' ? '出向' : 'out'}</span>
+                            <span><b>{short(p.totals?.inHits ?? 0)}</b> {lang === 'zh' ? '入向' : 'in'}</span>
+                            <span><b>{p.totals?.extPeers ?? 0}</b> {lang === 'zh' ? '外部端点' : 'ext peers'}</span>
+                            <span><b>{p.totals?.intPeers ?? 0}</b> {lang === 'zh' ? '内网端点' : 'lan peers'}</span>
+                          </div>
+                          <div className="dp-sec">{lang === 'zh' ? '活跃时段' : 'ACTIVITY BY HOUR'}</div>
+                          <div className="dp-hours">
+                            {(p.hours ?? []).map((h, i) => (
+                              <span key={i} className={h ? 'on' : ''} style={{ height: `${3 + (h / hourMax) * 24}px` }} title={`${i}:00 · ${h}`} />
+                            ))}
+                          </div>
+                          {p.outbound?.length ? (
+                            <>
+                              <div className="dp-sec">{lang === 'zh' ? `流量去向 · ${p.outbound.length}` : `DESTINATIONS · ${p.outbound.length}`}</div>
+                              <div className="dp-list">{p.outbound.map(peerRow)}</div>
+                            </>
+                          ) : null}
+                          {p.inbound?.length ? (
+                            <>
+                              <div className="dp-sec">{lang === 'zh' ? `访问它的流量 · ${p.inbound.length}` : `INBOUND · ${p.inbound.length}`}</div>
+                              <div className="dp-list">{p.inbound.map(peerRow)}</div>
+                            </>
+                          ) : null}
+                        </>
+                      )}
+                      {history && !history.empty && history.flows > 0 ? (() => {
+                        const dmax = Math.max(...(history.daily ?? []).map((x) => x.flows), 1)
+                        const fmtB = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}G` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K` : `${n}`)
+                        const allDests = histFull?.destinations ?? history.destinations ?? []
+                        const shownDests = histFull ? allDests : allDests.slice(0, 8)
+                        const moreDests = (history.peers ?? allDests.length) - shownDests.length
+                        return (
+                          <>
+                            <div className="dp-sec hist">
+                              {lang === 'zh' ? `历史画像 · ${history.days} 天` : `HISTORY · ${history.days}d`}
+                              <span className="dp-hist-badge" title={lang === 'zh' ? 'ClickHouse 全量日志(R230)' : 'ClickHouse full log (R230)'}>ClickHouse</span>
+                            </div>
+                            <div className="dp-stats">
+                              <span><b>{short(history.flows)}</b> {lang === 'zh' ? '条流' : 'flows'}</span>
+                              <span><b>{history.peers ?? 0}</b> {lang === 'zh' ? '目标' : 'peers'}</span>
+                              <span><b>{short(history.denied ?? 0)}</b> {lang === 'zh' ? '被拦' : 'denied'}</span>
+                            </div>
+                            <div className="dp-stats io">
+                              <span className="up"><b>↑ {fmtB(history.up ?? 0)}</b> {lang === 'zh' ? '上行' : 'up'}</span>
+                              <span className="down"><b>↓ {fmtB(history.down ?? 0)}</b> {lang === 'zh' ? '下行' : 'down'}</span>
+                              <span><b>{fmtB(history.bytes ?? 0)}</b> {lang === 'zh' ? '总量' : 'total'}</span>
+                            </div>
+                            {history.daily?.length ? (
+                              <>
+                                <div className="dp-sub">{lang === 'zh' ? '每日流量 · 条/天' : 'DAILY FLOWS · per day'}</div>
+                                <div className="dp-daily">
+                                  {history.daily.map((d) => (
+                                    <span key={d.date} className="on" style={{ height: `${4 + (d.flows / dmax) * 26}px` }}
+                                      title={`${d.date} · ${d.flows} ${lang === 'zh' ? '条' : 'flows'} · ${fmtB(d.bytes)}`} />
+                                  ))}
+                                </div>
+                              </>
+                            ) : null}
+                            {allDests.length ? (
+                              <>
+                                <div className="dp-sub">{lang === 'zh' ? `历史访问对象 · 按字节${histFull ? ` · 全部 ${shownDests.length}` : ''}` : `ACCESS TARGETS · by bytes${histFull ? ` · all ${shownDests.length}` : ''}`}</div>
+                                <div className="dp-list">
+                                  {shownDests.map((d) => (
+                                    <div key={d.ip} className={`dp-row ${d.denied > d.flows / 2 ? 'denied' : ''}`}>
+                                      <span className="dp-dir">▸</span>
+                                      <span className="dp-ip">{d.ip}{d.country ? ` · ${d.country}` : ''}</span>
+                                      <span className="dp-svc">{d.services.slice(0, 2).join('/')}</span>
+                                      <span className="dp-io" title={`${short(d.flows)} ${lang === 'zh' ? '条' : 'flows'}`}>↑{fmtB(d.up ?? 0)} ↓{fmtB(d.down ?? 0)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                {!histFull && moreDests > 0 ? (
+                                  <button className="dp-expand" disabled={histBusy} onClick={async () => {
+                                    if (histBusy) return
+                                    setHistBusy(true)
+                                    try {
+                                      const rr = await fetch(`/api/rca/device_history?ip=${encodeURIComponent(focusDev)}&days=7&full=1`)
+                                      const jj = await rr.json()
+                                      if (jj?.ok) setHistFull(jj)
+                                    } catch { /* keep collapsed */ }
+                                    setHistBusy(false)
+                                  }}>
+                                    {histBusy ? (lang === 'zh' ? '展开中…' : 'loading…') : (lang === 'zh' ? `展开全部历史访问对象 · +${moreDests}` : `SHOW ALL · +${moreDests}`)}
+                                  </button>
+                                ) : null}
+                              </>
+                            ) : null}
+                          </>
+                        )
+                      })() : null}
+                      <div className="dp-sec lat">
+                        {lang === 'zh' ? '网络延迟 · 主动探测' : 'LATENCY · active probe'}
+                        <span className="dp-hist-badge" title={lang === 'zh' ? '点击时执行真实 ICMP 回显(仅本次)' : 'live ICMP echo, on click only'}>ICMP</span>
+                      </div>
+                      {latency && !latency.loading ? (
+                        latency.reachable ? (
+                          <div className="dp-lat">
+                            <span><b>{latency.rtt_avg?.toFixed(1) ?? '—'}</b><i>ms {lang === 'zh' ? '平均' : 'avg'}</i></span>
+                            <span><b>{latency.rtt_min?.toFixed(1) ?? '—'}/{latency.rtt_max?.toFixed(1) ?? '—'}</b><i>{lang === 'zh' ? '最小/最大' : 'min/max'}</i></span>
+                            <span><b>{latency.jitter?.toFixed(1) ?? '—'}</b><i>ms {lang === 'zh' ? '抖动' : 'jitter'}</i></span>
+                            <span className={latency.loss_pct ? 'bad' : ''}><b>{latency.loss_pct ?? '—'}%</b><i>{lang === 'zh' ? '丢包' : 'loss'}</i></span>
+                          </div>
+                        ) : (
+                          <div className="dp-lat-none">{latency.degraded ? (lang === 'zh' ? '探测器不可用 · 网关无 ping' : 'probe unavailable') : (lang === 'zh' ? '不可达 · 100% 丢包' : 'unreachable · 100% loss')}</div>
+                        )
+                      ) : (
+                        <button className="dp-expand" disabled={!!latency?.loading} onClick={async () => {
+                          if (latency?.loading) return
+                          setLatency({ loading: true })
+                          try {
+                            const r = await fetch(`/api/rca/probe_latency?ip=${encodeURIComponent(focusDev)}&count=5`)
+                            const j = await r.json()
+                            const res = (j?.results || [])[0]
+                            setLatency(res ? { ...res, degraded: j.degraded } : { reachable: false, degraded: j?.degraded })
+                          } catch { setLatency({ reachable: false }) }
+                        }}>{latency?.loading ? (lang === 'zh' ? '探测中…' : 'probing…') : (lang === 'zh' ? '▶ 测量延迟 · ICMP ×5' : '▶ MEASURE RTT · ICMP ×5')}</button>
+                      )}
+                      <div className="dp-lat-note">{lang === 'zh' ? '被动 syslog 无延迟字段;RTT/抖动/丢包为点击时真实 ICMP 测量。理论最大速率被动不可得。' : 'passive logs carry no latency; RTT/jitter/loss measured live on click.'}</div>
+                      <div className="dp-foot">
+                        {p.window ? `${lang === 'zh' ? '证据窗口' : 'window'} ${p.window.from} → ${p.window.to} · ` : ''}
+                        {lang === 'zh' ? '采样 syslog · 实测流量,非全量' : 'sampled syslog · measured, not exhaustive'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </foreignObject>
+            )
+          })()
+        : null}
+
+      {/* MEMORY-RECORD detail — Benchmark 态势 only. The focused constellation node is
+          an evolved memory record (GraphDevice.memory, embedded by build_bench_snapshot),
+          NOT a real device, so it renders the record's OWN fields here in place of the
+          live traffic portrait. Strictly additive: gated on `.memory`, which no
+          live-network device ever carries, and mutually exclusive with the traffic
+          portrait above (its device_profile fetch is skipped for a memory node, so
+          `profile` is null and that block does not render). */}
+      {drilled && graph && focusDev
+        ? (() => {
+            const mem = graph.devices.find((d) => d.ip === focusDev)?.memory
+            if (!mem) return null
+            const zh = lang === 'zh'
+            const num = (n: number) => `${Math.round(n * 100) / 100}`
+            return (
+              <foreignObject x={VBW - 396} y={90} width={376} height={720} className="ego-fo">
+                <div className="dp-panel mem">
+                  <div className="dp-h">
+                    <span className="dp-k">{zh ? '记忆条目' : 'MEMORY RECORD'} · {mem.tier}</span>
+                    <button className="dp-mem-x" onClick={() => focusOn(null, devPos)} title={zh ? '关闭' : 'close'}>✕</button>
+                  </div>
+                  <div className="dp-b">
+                    <div className="dp-mem-id">
+                      {mem.memory_id}
+                      {mem.quarantined ? <span className="dp-mem-q">{zh ? '已隔离' : 'QUARANTINED'}</span> : null}
+                    </div>
+                    {mem.root ? (
+                      <div className="dp-mem-root"><span>{zh ? '根因' : 'ROOT'}</span>{mem.root}</div>
+                    ) : null}
+                    <div className="dp-mem-text">{mem.text}</div>
+                    <div className="dp-stats">
+                      <span><b>{num(mem.strength)}</b> {zh ? '强度' : 'strength'}</span>
+                      <span><b>{num(mem.importance)}</b> {zh ? '重要度' : 'importance'}</span>
+                      <span><b>{num(mem.confidence)}</b> {zh ? '置信' : 'confidence'}</span>
+                    </div>
+                    {mem.tags.length ? (
+                      <>
+                        <div className="dp-sec">{zh ? '标签' : 'TAGS'}</div>
+                        <div className="dp-tags">
+                          {mem.tags.map((t, i) => <span key={i} className="dp-tag">{t}</span>)}
+                        </div>
+                      </>
+                    ) : null}
+                    {mem.evidence.length ? (
+                      <>
+                        <div className="dp-sec">{zh ? `证据 · ${mem.evidence.length}` : `EVIDENCE · ${mem.evidence.length}`}</div>
+                        <div className="dp-list">
+                          {mem.evidence.map((e, i) => (
+                            <div key={i} className="dp-mem-ev">
+                              <div className="dp-mem-ev-src">{e.source}</div>
+                              {e.summary ? <div className="dp-mem-ev-sum">{e.summary}</div> : null}
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                    {mem.assets.length ? (
+                      <>
+                        <div className="dp-sec">{zh ? '关联资产' : 'ASSETS'}</div>
+                        <div className="dp-tags">
+                          {mem.assets.map((a, i) => <span key={i} className="dp-tag asset">{a}</span>)}
+                        </div>
+                      </>
+                    ) : null}
+                    {mem.links.length ? (
+                      <>
+                        <div className="dp-sec">{zh ? `关联记忆 · ${mem.links.length}` : `LINKS · ${mem.links.length}`}</div>
+                        <div className="dp-list">
+                          {mem.links.map((lk, i) => {
+                            const tgt = graph.devices.find((d) => d.ip === lk)
+                            const pivot = !!tgt?.memory
+                            return pivot ? (
+                              <button key={i} className="dp-mem-link" onClick={() => focusOn(lk, devPos)}>
+                                <span className="dp-dir">↳</span>
+                                <span className="dp-ip">{tgt?.name ?? lk}</span>
+                                <span className="dp-svc">{tgt?.role}</span>
+                              </button>
+                            ) : (
+                              <div key={i} className="dp-mem-link static">
+                                <span className="dp-dir">↳</span>
+                                <span className="dp-ip">{tgt?.name ?? lk}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </>
+                    ) : null}
+                    {mem.sourceTraces.length ? (
+                      <>
+                        <div className="dp-sec">{zh ? '来源 trace' : 'SOURCE TRACES'}</div>
+                        <div className="dp-mem-traces">
+                          {mem.sourceTraces.map((t, i) => <span key={i} className="dp-mem-trace">{t}</span>)}
+                        </div>
+                      </>
+                    ) : null}
+                    <div className="dp-foot">{zh ? '自演化记忆 · 观测台真实记录' : 'evolved memory · observatory record (verbatim)'}</div>
+                  </div>
                 </div>
               </foreignObject>
             )

@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import type { RcaCase, RcaSnapshot } from './types'
-import { rc, type Lang } from './i18n'
+import { type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
 import { TrajectoryPage } from './components/TrajectoryPage'
 import { PentestPage } from './components/PentestPage'
+import { RetrievalPage } from './components/RetrievalPage'
+import { BenchConsole } from './components/BenchConsole'
+import { TopoSearch } from './components/TopoSearch'
+import { TrajectoryBench } from './components/TrajectoryBench'
 import { lazy, Suspense } from 'react'
 
 const Constellation3D = lazy(() => import('./components/Constellation3D').then((m) => ({ default: m.Constellation3D })))
@@ -14,9 +18,9 @@ type MeshModel = {
   links: { src: string; dst: string; relation: string; strength: number }[]
   nodes: Record<string, { severity: string; label: string; summary: string }>
 }
-import type { Device, GraphAnalysis, SubnetGraph, TheaterEvent } from './types'
+import type { DataStats, Device, GraphAnalysis, SubnetGraph, TheaterEvent, Topology } from './types'
 
-type View = 'console' | 'trajectory' | 'pentest'
+type View = 'console' | 'trajectory' | 'pentest' | 'retrieval'
 
 type State =
   | { s: 'load' }
@@ -26,6 +30,7 @@ type State =
 function App() {
   const [lang, setLang] = useState<Lang>('zh')
   const [view, setView] = useState<View>('console')
+  const [scenario, setScenario] = useState<'live' | 'bench'>('live')
   const [provider, setProvider] = useState('rule')
   const [st, setSt] = useState<State>({ s: 'load' })
   const [active, setActive] = useState('')
@@ -49,6 +54,8 @@ function App() {
   // ── event-driven full-chain topology theater ──
   const [theater, setTheater] = useState<TheaterEvent | null>(null)
   const [allGraphs, setAllGraphs] = useState<Record<string, SubnetGraph>>({})
+  // bench full-chain theater: the benchmark memory topology (same snapshot BenchConsole uses)
+  const [benchSnap, setBenchSnap] = useState<{ topology: Topology; stats: DataStats; graph: SubnetGraph; cidr: string } | null>(null)
 
   /* the theater expands EVERY subnet at once, so it needs every mined graph */
   const loadAllGraphs = useCallback(async (cidrs: string[]) => {
@@ -68,19 +75,32 @@ function App() {
     setAllGraphs(next)
   }, [])
 
+  useEffect(() => {
+    if (scenario !== 'bench' || benchSnap) return
+    let alive = true
+    fetch('/api/rca/bench-snapshot', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error())))
+      .then((dd) => { if (alive && dd && dd.ok) setBenchSnap(dd) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [scenario, benchSnap])
+
   const openTheater = (evt: TheaterEvent) => {
     setTheater(evt)
-    setView('console')
-    setDrillSub(null)
-    setGraph(null)
-    setGraphAnalysis(null)
-    setDrillDev(null)
-    setThreat(null)
-    setWan(null)
-    setPosture(null)
-    setShow3D(false)
-    if (st.s === 'ok' && st.d.topology && !Object.keys(allGraphs).length) {
-      void loadAllGraphs(st.d.topology.subnets.map((x) => x.cidr))
+    // live-only view/drill resets; the bench theater is a standalone full-screen overlay
+    if (scenario === 'live') {
+      setView('console')
+      setDrillSub(null)
+      setGraph(null)
+      setGraphAnalysis(null)
+      setDrillDev(null)
+      setThreat(null)
+      setWan(null)
+      setPosture(null)
+      setShow3D(false)
+      if (st.s === 'ok' && st.d.topology && !Object.keys(allGraphs).length) {
+        void loadAllGraphs(st.d.topology.subnets.map((x) => x.cidr))
+      }
     }
   }
   const closeTheater = () => {
@@ -111,6 +131,12 @@ function App() {
     } catch {
       setGraph(null)
     }
+  }
+
+  // search → drill to the device's subnet and focus it (opens its profile/画像)
+  const onSearchPick = async (ip: string, cidr: string) => {
+    await openSubnet(cidr)
+    setDrillDev(ip)
   }
 
   const correlateGraph = async (cidr: string) => {
@@ -293,31 +319,22 @@ function App() {
           autopoiesis<span className="mark-dot" />
         </div>
         <div className="top-right">
+          <div className="scen" role="group" aria-label={lang === 'zh' ? '场景切换' : 'scenario'}>
+            <button className={scenario === 'live' ? 'on' : ''} onClick={() => setScenario('live')}>{lang === 'zh' ? '内网实时' : 'LIVE NET'}</button>
+            <button className={scenario === 'bench' ? 'on' : ''} onClick={() => setScenario('bench')}>{lang === 'zh' ? '基准 · ITBench+LME' : 'BENCHMARK'}</button>
+          </div>
           <div className="pager">
             <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '态势' : 'CONSOLE'}</button>
             <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
             <button className={view === 'pentest' ? 'on' : ''} onClick={() => setView('pentest')}>{lang === 'zh' ? '渗透' : 'PENTEST'}</button>
+            <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '检索' : 'RETRIEVAL'}</button>
           </div>
-          {view === 'console' ? (
-            <div className="cases">
-              {d.cases.map((x) => (
-                <button
-                  key={x.id}
-                  className={`case ${x.id === c?.id ? 'on' : ''}`}
-                  onClick={() => setActive(x.id)}
-                  title={rc(x.diagnosis.rootCauseKey, lang)}
-                >
-                  <span className={`tick ${x.verifier.passed ? 'ok' : ''}`} />
-                </button>
-              ))}
-            </div>
-          ) : null}
           {/* The selector governs exactly one thing: the case diagnosis in
               /api/rca/snapshot. Baselines, evolution and the live threat cards
               resolve their own reasoner server-side and ignore it — so it is
               captioned with its real scope, and hidden on pentest where it
               governs nothing at all. */}
-          {view === 'pentest' ? null : (
+          {scenario !== 'live' || view === 'pentest' ? null : (
             <div className="engines" role="group" aria-label={lang === 'zh' ? '案例诊断引擎' : 'Case-diagnosis reasoner'}>
               <span className="eng-scope">{lang === 'zh' ? '案例诊断' : 'Case diag'}</span>
               {d.providers.map((p) => {
@@ -350,8 +367,14 @@ function App() {
         </div>
       </header>
 
-      {view === 'pentest' ? (
-        <PentestPage lang={lang} />
+      {view === 'retrieval' ? (
+        <RetrievalPage lang={lang} scenario={scenario} />
+      ) : view === 'pentest' ? (
+        <PentestPage lang={lang} scenario={scenario} />
+      ) : view === 'console' && scenario === 'bench' ? (
+        <BenchConsole lang={lang} />
+      ) : view === 'trajectory' && scenario === 'bench' ? (
+        <TrajectoryBench lang={lang} onTheater={openTheater} />
       ) : view === 'trajectory' && d.datasetReady && c ? (
         <TrajectoryPage
           key={`${active}:${lang}`}
@@ -366,6 +389,7 @@ function App() {
       ) : d.datasetReady && s && c ? (
         <>
           <section className={`canvas-wrap ${show3D ? 'full3d' : threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>
+            {scenario === 'live' && !show3D ? <TopoSearch lang={lang} onPick={onSearchPick} /> : null}
             {topo && !show3D ? (
               <TopologyCanvas
                 topo={topo}
@@ -464,6 +488,54 @@ function App() {
       ) : (
         <div className="boot err">{d.note}</div>
       )}
+
+      {/* Bench full-chain theater: standalone full-screen overlay REUSING the live
+          TopologyCanvas in theater mode, fed the benchmark memory snapshot. Opened from
+          the benchmark 长轨迹 LiveSituation cards to replay the injected fault flowing
+          correlator -> alerts -> cluster -> aiops -> suggestion -> remediation. */}
+      {scenario === 'bench' && theater && benchSnap ? (
+        <div className="bench-theater-overlay" role="dialog" aria-label={lang === 'zh' ? '全链路剧场' : 'full-chain theater'}>
+          <button className="bench-theater-x" onClick={closeTheater}>{lang === 'zh' ? '✕ 退出剧场' : '✕ EXIT'}</button>
+          <section className="canvas-wrap tall">
+            <TopologyCanvas
+              topo={benchSnap.topology}
+              stats={benchSnap.stats}
+              activeKey=""
+              drillSub={benchSnap.cidr}
+              drillDev={null}
+              tempo={1}
+              marks={{}}
+              threat={null}
+              lang={lang}
+              meshCount={0}
+              meshLoading={false}
+              hover3D={null}
+              hover3DCidr={null}
+              topoAlert={null}
+              wan={null}
+              graph={benchSnap.graph}
+              graphAnalysis={null}
+              hoverDev={null}
+              onHoverDev={() => {}}
+              onGraphAnalyze={() => {}}
+              onCloseGraphAnalysis={() => {}}
+              onWan={() => {}}
+              onCloseWan={() => {}}
+              onHoverSubnet={undefined}
+              onOpen3D={() => {}}
+              onCloseThreat={() => {}}
+              onSub={() => {}}
+              onDev={() => {}}
+              onBatch={() => {}}
+              onPentest={() => {}}
+              theater={theater}
+              allGraphs={{ [benchSnap.cidr]: benchSnap.graph }}
+              onCloseTheater={closeTheater}
+              onOpenTheater={() => {}}
+            />
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }

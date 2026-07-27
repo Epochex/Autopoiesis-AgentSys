@@ -497,7 +497,7 @@ export function TheaterStage({
           </div>
           {theater.kind !== 'browse' ? (
             <>
-              <div className="th-banner-dev">{theater.device || '—'}</div>
+              <div className="th-banner-dev">{theater.deviceLabel || theater.device || '—'}</div>
               <div className="th-banner-sum">{theater.summary || theater.scenario || ''}</div>
               <div className="th-banner-meta">
                 {theater.ts.replace('T', ' ').replace(/\+.*$/, '')} ·{' '}

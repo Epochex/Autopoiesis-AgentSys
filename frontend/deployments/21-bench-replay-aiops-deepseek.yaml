@@ -1,0 +1,63 @@
+# ── OPTIONAL: swap the benchmark aiops-agent to REAL LLM (DeepSeek) RCA ──────────
+# `kubectl apply -f 21-bench-replay-aiops-deepseek.yaml` replaces the template
+# aiops-agent-replay (from 20-...) with a DeepSeek-backed one — real LLM deep
+# reasoning instead of deterministic templates. COSTS MONEY: each injected fault
+# cluster triggers DeepSeek calls (uses the same `deepseek-api` secret prod uses).
+# Revert to free template RCA: re-apply the aiops block of 20-bench-replay-pipeline.yaml.
+# Still fully isolated (replay topics + netops-runtime-replay dir); prod untouched.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-aiops-agent-replay
+  namespace: netops-core
+  labels: { app: core-aiops-agent-replay, tier: replay-sidecar }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: core-aiops-agent-replay } }
+  template:
+    metadata: { labels: { app: core-aiops-agent-replay, tier: replay-sidecar } }
+    spec:
+      nodeSelector: { kubernetes.io/hostname: r450 }
+      initContainers:
+        - name: wait-redpanda
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args: ["until nc -z netops-redpanda.netops-core.svc.cluster.local 9093; do echo waiting; sleep 3; done\n"]
+      containers:
+        - name: core-aiops-agent-replay
+          image: netops-core-app:v20260722-adaptive-agents-v1
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "core.aiops_agent.main"]
+          env:
+            - { name: KAFKA_BOOTSTRAP_SERVERS, value: netops-redpanda.netops-core.svc.cluster.local:9093 }
+            - { name: KAFKA_TOPIC_ALERTS, value: netops.alerts.replay.v1 }
+            - { name: KAFKA_TOPIC_AIOPS_SUGGESTIONS, value: netops.aiops.suggestions.replay.v1 }
+            - { name: AIOPS_AGENT_GROUP_ID, value: core-aiops-agent-replay }
+            - { name: KAFKA_AUTO_OFFSET_RESET, value: earliest }
+            - { name: AIOPS_MIN_SEVERITY, value: warning }
+            - { name: AIOPS_CLUSTER_WINDOW_SEC, value: "120" }
+            - { name: AIOPS_CLUSTER_MIN_ALERTS, value: "2" }
+            - { name: AIOPS_CLUSTER_COOLDOWN_SEC, value: "10" }
+            - { name: AIOPS_CLUSTER_ALLOWED_LATENESS_SEC, value: "30" }
+            - { name: AIOPS_CLUSTER_STATE_PATH, value: /data/netops-runtime-replay/aiops/cluster-state.json }
+            - { name: AIOPS_PROVIDER, value: deepseek }
+            - { name: AIOPS_PROVIDER_ENDPOINT_URL, value: https://api.deepseek.com/v1 }
+            - name: AIOPS_PROVIDER_API_KEY
+              valueFrom: { secretKeyRef: { key: api-key, name: deepseek-api } }
+            - { name: AIOPS_PROVIDER_MODEL, value: deepseek-v4-flash }
+            - { name: AIOPS_PROVIDER_PRO_MODEL, value: deepseek-v4-pro }
+            - { name: AIOPS_PROVIDER_TIMEOUT_SEC, value: "90" }
+            - { name: AIOPS_PROVIDER_MAX_TOKENS, value: "4096" }
+            - { name: AIOPS_PROVIDER_MAX_RETRIES, value: "1" }
+            - { name: AIOPS_PROVIDER_MAX_PARALLELISM, value: "2" }
+            - { name: AIOPS_ADAPTIVE_MULTI_AGENT_ENABLED, value: "false" }
+            - { name: AIOPS_PROVIDER_COMPUTE_TARGET, value: external_gpu_service }
+            - { name: AIOPS_CLICKHOUSE_ENABLED, value: "false" }
+            - { name: AIOPS_OUTPUT_DIR, value: /data/netops-runtime-replay/aiops }
+            - { name: AIOPS_LOG_INTERVAL_SEC, value: "15" }
+          volumeMounts:
+            - { name: netops-runtime-replay, mountPath: /data/netops-runtime-replay }
+      volumes:
+        - name: netops-runtime-replay
+          hostPath: { path: /data/netops-runtime-replay, type: DirectoryOrCreate }

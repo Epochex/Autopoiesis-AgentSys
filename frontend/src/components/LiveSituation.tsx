@@ -20,7 +20,7 @@ interface TPt { ts: string; label: string; kind: string }
 interface Hypo { id: string; rank: number; statement: string; confidence: number; confidenceLabel: string; evidenceRefs: string[] }
 interface Suggestion {
   id: string; ts: string; scope: string; severity: string; priority: string; summary: string
-  service: string; device: string; clusterSize: number; adaptiveMode: string
+  service: string; device: string; deviceKey: string; clusterSize: number; adaptiveMode: string
   triggerReasons: string[]; impactLevel: string
   timeline: TPt[]; stageTelemetry: Stage[]
   hypothesisSet: { setId: string; primaryHypothesisId: string; items: Hypo[]; summary: Record<string, number> }
@@ -36,7 +36,7 @@ interface Suggestion {
 }
 interface FeedItem {
   id: string; kind: string; scope?: string; ts: string; severity?: string
-  priority?: string; device?: string; summary?: string; ruleId?: string; scenario?: string
+  priority?: string; device?: string; deviceKey?: string; summary?: string; ruleId?: string; scenario?: string
 }
 interface ClusterWatch { key: string; severity: string; ruleId: string; progress: number; target: number; lastEmitTs: string }
 export interface LiveSnapshot {
@@ -70,18 +70,20 @@ const hotStages = (s: Suggestion | null): Set<string> => {
 
 /* feed item / selected suggestion → the theater event page 1 will play out */
 const alertEvent = (f: FeedItem): TheaterEvent => ({
-  kind: 'alert', id: f.id, ts: f.ts, device: f.device || '', severity: f.severity,
+  kind: 'alert', id: f.id, ts: f.ts, device: f.deviceKey || f.device || '', deviceLabel: f.device,
+  severity: f.severity,
   scenario: f.scenario, stageIds: ['correlator', 'alerts-topic', 'cluster-window'],
 })
 const suggestionEvent = (s: Suggestion): TheaterEvent => ({
-  kind: 'suggestion', id: s.id, ts: s.ts, device: s.device, severity: s.severity,
+  kind: 'suggestion', id: s.id, ts: s.ts, device: s.deviceKey || s.device, deviceLabel: s.device,
+  severity: s.severity,
   priority: s.priority, summary: s.summary, scope: s.scope,
   stageIds: s.scope === 'cluster'
     ? ['correlator', 'alerts-topic', 'cluster-window', 'aiops-agent', 'suggestions-topic', 'remediation']
     : ['aiops-agent', 'suggestions-topic', 'remediation'],
 })
 
-export function LiveSituation({ zh, onTheater }: { zh: boolean; onTheater?: (e: TheaterEvent) => void }) {
+export function LiveSituation({ zh, onTheater, scenario = 'live' }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; scenario?: 'live' | 'bench' }) {
   const [snap, setSnap] = useState<LiveSnapshot | null>(null)
   const [state, setState] = useState<'load' | 'ok' | 'empty' | 'err'>('load')
   const [selId, setSelId] = useState<string | null>(null)
@@ -92,7 +94,7 @@ export function LiveSituation({ zh, onTheater }: { zh: boolean; onTheater?: (e: 
   useEffect(() => {
     let gone = false
     const load = () => {
-      fetch('/api/rca/live-situation')
+      fetch(`/api/rca/${scenario === 'bench' ? 'bench-live-situation' : 'live-situation'}?lang=${zh ? 'zh' : 'en'}`)
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
         .then((d: LiveSnapshot) => {
           if (gone) return
@@ -104,7 +106,7 @@ export function LiveSituation({ zh, onTheater }: { zh: boolean; onTheater?: (e: 
     load()
     timer.current = window.setInterval(load, 20000)
     return () => { gone = true; if (timer.current) window.clearInterval(timer.current) }
-  }, [])
+  }, [zh, scenario])
 
   const suggestions = useMemo(() => snap?.suggestions ?? [], [snap])
   const feed = useMemo(() => snap?.feed ?? [], [snap])

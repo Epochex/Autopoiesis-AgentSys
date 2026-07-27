@@ -15,8 +15,9 @@
  * Honesty: on the R230 held-out set retrieval is asset+structural driven, so
  * lexical/vector are 0 for most rows. That is shown, not hidden — it is the true
  * shape of how this context gets built. */
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { MemCapabilities, MemRecall, MemRecord, MemTier } from '../types'
+import { ContextFull } from './ContextFull'
 import './context-packet.css'
 
 const TIER: Record<MemTier, [string, string]> = {
@@ -48,15 +49,17 @@ const L = (zh: boolean) => ({
 })
 
 export function ContextPacket({
-  recall, prevRecall, records, capabilities, zh,
+  recall, prevRecall, records, capabilities, caseRoot, zh,
 }: {
   recall: MemRecall | null
   prevRecall: MemRecall | null
   records: MemRecord[]
   capabilities: MemCapabilities
+  caseRoot?: string
   zh: boolean
 }) {
   const l = L(zh)
+  const [full, setFull] = useState(false)
   const textOf = useMemo(() => {
     const m = new Map<string, MemRecord>()
     for (const r of records) m.set(r.memory_id, r)
@@ -96,6 +99,7 @@ export function ContextPacket({
             </span>
             {recall.shortcut && <span className="cp-badge">{l.shortcut}</span>}
             <span className="cp-badge dim">{l.probes} {recall.probes}</span>
+            <button className="cp-full" onClick={() => setFull(true)}>{zh ? '完整上下文 ▸' : 'FULL CONTEXT ▸'}</button>
           </div>
         ) : null}
       </header>
@@ -151,6 +155,9 @@ export function ContextPacket({
           {capabilities.retrieval_scores ? <div className="cp-note">{l.note}</div> : null}
         </>
       )}
+      {full && recall ? (
+        <ContextFull recall={recall} prevRecall={prevRecall} records={records} caseRoot={caseRoot} zh={zh} onClose={() => setFull(false)} />
+      ) : null}
     </section>
   )
 }

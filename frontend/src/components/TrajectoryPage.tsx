@@ -84,7 +84,7 @@ export function TrajectoryPage({
       {/* the memory the run learns from, replayed from empty */}
       <section className="fx-first">
         {evo?.ready && evo.observatory
-          ? <MemoryObservatory obs={evo.observatory} zh={zh} />
+          ? <MemoryObservatory obs={evo.observatory} zh={zh} caseRoots={Object.fromEntries(cases.map((x) => [x.id, x.diagnosis.rootCauseKey]))} />
           : <div className="fx-first-wait">{zh ? '正在跑自我进化流…' : 'RUNNING SELF-EVOLUTION STREAM…'}</div>}
       </section>
 

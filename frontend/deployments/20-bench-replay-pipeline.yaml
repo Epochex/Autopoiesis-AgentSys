@@ -1,0 +1,136 @@
+# ── ISOLATED benchmark self-heal side-car pipeline (3 components) ───────────────
+# A full clone of the prod correlator + alerts-sink + aiops-agent, bound ENTIRELY to
+# isolated replay topics AND an isolated runtime dir. NOTHING here touches prod:
+#   facts:  netops.facts.replay.v1              (prod: netops.facts.raw.v1)
+#   alerts: netops.alerts.replay.v1             (prod: netops.alerts.v1)
+#   suggs:  netops.aiops.suggestions.replay.v1  (prod: netops.aiops.suggestions.v1)
+#   groups: *-replay                            (prod: *-v1 / *-v2)
+#   disk:   /data/netops-runtime-replay/{alerts,aiops}   (prod: /data/netops-runtime/...)
+# Same images as prod (IfNotPresent, already on r450). The correlator fires on the
+# annotated_fault_v1 rule (each injected event carries fault_context), so ALL six
+# cases produce an alert regardless of action type — not just the deny-flood ones.
+# AIOPS_PROVIDER=template → deterministic RCA, NO external LLM, no cost. ClickHouse
+# disabled (None-safe in code): only recent-similar / history enrichment degrades.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-correlator-replay
+  namespace: netops-core
+  labels: { app: core-correlator-replay, tier: replay-sidecar }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: core-correlator-replay } }
+  template:
+    metadata: { labels: { app: core-correlator-replay, tier: replay-sidecar } }
+    spec:
+      nodeSelector: { kubernetes.io/hostname: r450 }
+      initContainers:
+        - name: wait-redpanda
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args: ["until nc -z netops-redpanda.netops-core.svc.cluster.local 9093; do echo waiting; sleep 3; done\n"]
+      containers:
+        - name: core-correlator-replay
+          image: netops-core-app:v20260722-redpanda-v2
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "core.correlator.main"]
+          env:
+            - { name: KAFKA_BOOTSTRAP_SERVERS, value: netops-redpanda.netops-core.svc.cluster.local:9093 }
+            - { name: KAFKA_TOPIC_RAW, value: netops.facts.replay.v1 }
+            - { name: KAFKA_TOPIC_ALERTS, value: netops.alerts.replay.v1 }
+            - { name: KAFKA_TOPIC_DLQ, value: netops.dlq.v1 }
+            - { name: CORRELATOR_GROUP_ID, value: core-correlator-replay }
+            - { name: KAFKA_AUTO_OFFSET_RESET, value: earliest }
+            - { name: CORRELATOR_DEDUP_CACHE_SIZE, value: "200000" }
+            - { name: CORRELATOR_LOG_INTERVAL_SEC, value: "15" }
+            - { name: RULE_DENY_WINDOW_SEC, value: "900" }
+            - { name: RULE_DENY_THRESHOLD, value: "5" }
+            - { name: RULE_BYTES_WINDOW_SEC, value: "900" }
+            - { name: RULE_BYTES_THRESHOLD, value: "1000" }
+            - { name: RULE_ALERT_COOLDOWN_SEC, value: "10" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-alerts-sink-replay
+  namespace: netops-core
+  labels: { app: core-alerts-sink-replay, tier: replay-sidecar }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: core-alerts-sink-replay } }
+  template:
+    metadata: { labels: { app: core-alerts-sink-replay, tier: replay-sidecar } }
+    spec:
+      nodeSelector: { kubernetes.io/hostname: r450 }
+      initContainers:
+        - name: wait-redpanda
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args: ["until nc -z netops-redpanda.netops-core.svc.cluster.local 9093; do echo waiting; sleep 3; done\n"]
+      containers:
+        - name: core-alerts-sink-replay
+          image: netops-core-app:v20260722-redpanda-v2
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "core.alerts_sink.main"]
+          env:
+            - { name: KAFKA_BOOTSTRAP_SERVERS, value: netops-redpanda.netops-core.svc.cluster.local:9093 }
+            - { name: KAFKA_TOPIC_ALERTS, value: netops.alerts.replay.v1 }
+            - { name: ALERTS_SINK_GROUP_ID, value: core-alerts-sink-replay }
+            - { name: KAFKA_AUTO_OFFSET_RESET, value: earliest }
+            - { name: ALERTS_OUTPUT_DIR, value: /data/netops-runtime-replay/alerts }
+            - { name: ALERTS_SINK_LOG_INTERVAL_SEC, value: "15" }
+          volumeMounts:
+            - { name: netops-runtime-replay, mountPath: /data/netops-runtime-replay }
+      volumes:
+        - name: netops-runtime-replay
+          hostPath: { path: /data/netops-runtime-replay, type: DirectoryOrCreate }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-aiops-agent-replay
+  namespace: netops-core
+  labels: { app: core-aiops-agent-replay, tier: replay-sidecar }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: core-aiops-agent-replay } }
+  template:
+    metadata: { labels: { app: core-aiops-agent-replay, tier: replay-sidecar } }
+    spec:
+      nodeSelector: { kubernetes.io/hostname: r450 }
+      initContainers:
+        - name: wait-redpanda
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args: ["until nc -z netops-redpanda.netops-core.svc.cluster.local 9093; do echo waiting; sleep 3; done\n"]
+      containers:
+        - name: core-aiops-agent-replay
+          image: netops-core-app:v20260722-adaptive-agents-v1
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "core.aiops_agent.main"]
+          env:
+            - { name: KAFKA_BOOTSTRAP_SERVERS, value: netops-redpanda.netops-core.svc.cluster.local:9093 }
+            - { name: KAFKA_TOPIC_ALERTS, value: netops.alerts.replay.v1 }
+            - { name: KAFKA_TOPIC_AIOPS_SUGGESTIONS, value: netops.aiops.suggestions.replay.v1 }
+            - { name: AIOPS_AGENT_GROUP_ID, value: core-aiops-agent-replay }
+            - { name: KAFKA_AUTO_OFFSET_RESET, value: earliest }
+            - { name: AIOPS_MIN_SEVERITY, value: warning }
+            - { name: AIOPS_CLUSTER_WINDOW_SEC, value: "120" }
+            - { name: AIOPS_CLUSTER_MIN_ALERTS, value: "2" }
+            - { name: AIOPS_CLUSTER_COOLDOWN_SEC, value: "10" }
+            - { name: AIOPS_CLUSTER_ALLOWED_LATENESS_SEC, value: "30" }
+            - { name: AIOPS_CLUSTER_STATE_PATH, value: /data/netops-runtime-replay/aiops/cluster-state.json }
+            - { name: AIOPS_PROVIDER, value: template }
+            - { name: AIOPS_ADAPTIVE_MULTI_AGENT_ENABLED, value: "false" }
+            - { name: AIOPS_CLICKHOUSE_ENABLED, value: "false" }
+            - { name: AIOPS_OUTPUT_DIR, value: /data/netops-runtime-replay/aiops }
+            - { name: AIOPS_LOG_INTERVAL_SEC, value: "15" }
+          volumeMounts:
+            - { name: netops-runtime-replay, mountPath: /data/netops-runtime-replay }
+      volumes:
+        - name: netops-runtime-replay
+          hostPath: { path: /data/netops-runtime-replay, type: DirectoryOrCreate }

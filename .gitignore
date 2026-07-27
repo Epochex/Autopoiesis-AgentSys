@@ -20,6 +20,10 @@ key/
 *.pem
 id_ed25519*
 
+# FortiGate REST credentials — read-only router access, never commit
+.fgt_cred
+*.fgt_cred
+
 # memory-comparison eval (isolated)
 .venv-memcmp/
 eval_mem_compare/mem0_shards/

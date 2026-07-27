@@ -287,13 +287,18 @@ _graph_cache: dict[str, Any] = {}
 
 
 def subnet_graph(cidr: str) -> dict[str, Any]:
-    """The raw mined device graph for one subnet: every host, every justified relation."""
+    """The raw mined device graph for one subnet: every host, every justified relation.
+
+    Identity gaps (unknown vendor / no hostname) are filled read-only from the
+    FortiGate's live device inventory when credentials are configured."""
+    from .live_identity import enrich_device
     from .rca_reader import _load_device_graphs
 
     g = (_load_device_graphs() or {}).get(cidr)
     if not g:
         return {"ok": False, "text": "no device graph for subnet"}
-    return {"ok": True, **g}
+    out = {**g, "devices": [enrich_device(d) for d in g.get("devices", [])]}
+    return {"ok": True, **out}
 
 
 def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
@@ -585,6 +590,26 @@ def wan_attack_surface() -> dict[str, Any]:
 _wan_cache: dict[str, Any] = {}
 
 
+def _llm_json_retry(client, messages, *, schema_name: str, lang: str):
+    """complete_json with one retry on read timeout.
+
+    Returns (parsed, None) on success, (None, panel-ready error text) on failure —
+    a raw TimeoutError repr must never reach the console panel.
+    """
+    for attempt in (1, 2):
+        try:
+            return client.complete_json(messages, schema_name=schema_name), None
+        except TimeoutError:
+            if attempt == 1:
+                continue
+            return None, (
+                "分析超时：模型响应过慢，请重试。" if lang == "zh"
+                else "Analysis timed out — the model responded too slowly. Please retry."
+            )
+        except Exception as exc:
+            return None, f"{type(exc).__name__}: {exc}"
+
+
 def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
     """DeepSeek deep-analysis of one WAN attacker: campaign correlation + cross-side blast radius.
 
@@ -605,7 +630,10 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
         # an INTERNAL host clicked from the lateral-source cluster: assess it as a
         # possible compromised pivot — the attack it received, its weakness, and the
         # remediation playbook for its device role — NOT as an external WAN attacker.
-        return _assess_internal_host(ip, lateral, ev, lang)
+        res = _assess_internal_host(ip, lateral, ev, lang)
+        if res.get("ok"):
+            _wan_cache[ck] = res
+        return res
     if attacker is None:
         # theater's bidirectional node analysis: ANY mined internal device is a valid
         # subject, not just the deny_top_src laterals — its real deny count stands in
@@ -616,7 +644,10 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
             devs = sub.get("devices") if isinstance(sub.get("devices"), list) else []
             for d in devs:
                 if isinstance(d, dict) and d.get("ip") == ip:
-                    return _assess_internal_host(ip, [ip, d.get("deny") or 0], ev, lang, dev_hint=d)
+                    res = _assess_internal_host(ip, [ip, d.get("deny") or 0], ev, lang, dev_hint=d)
+                    if res.get("ok"):
+                        _wan_cache[ck] = res
+                    return res
         return {"ok": False, "text": "attacker not in held-out top sources"}
     net = ".".join(ip.split(".")[:3]) + ".0/24"
     block = next((b for b in ev["netblocks"] if b["cidr"] == net), None) or {"cidr": net, "count": attacker[1], "ips": [attacker]}
@@ -626,7 +657,7 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
     cfg = providers._deepseek_cfg()
     if not cfg["api_key"]:
         return {"ok": False, "text": "DeepSeek key not configured."}
-    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=50)
+    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=120)
     want = "Chinese" if lang == "zh" else "English"
     instr = (
         f"You are a SOC threat analyst. Assess this external WAN source that is hammering the "
@@ -664,17 +695,18 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
         "internal_deny_hosts": [{"ip": i, "denied_flows": n} for i, n in internal],
         "top_denied_ports": ev["denyPorts"][:6],
     }
-    try:
-        out = client.complete_json(
-            [{"role": "user", "content": instr + "\n" + json.dumps(payload)}],
-            schema_name="wan_threat",
-        )
-    except Exception as exc:
-        return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
+    out, err = _llm_json_retry(
+        client,
+        [{"role": "user", "content": instr + "\n" + json.dumps(payload)}],
+        schema_name="wan_threat",
+        lang=lang,
+    )
+    if out is None:
+        return {"ok": False, "text": err}
 
     sib_valid = {i for i, _ in siblings_ev}
     int_valid = {i for i, _ in internal}
-    return {
+    result = {
         "ok": True,
         "ip": ip,
         "attempts": attacker[1],
@@ -714,6 +746,8 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
         "distinctSrc": ev["distinctSrc"],
         "model": cfg["model"],
     }
+    _wan_cache[ck] = result
+    return result
 
 
 def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str, dev_hint: dict | None = None) -> dict[str, Any]:
@@ -740,7 +774,7 @@ def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str, dev_h
         dev = {k: dev_hint.get(k) for k in _F if k in dev_hint}
         dev["cidr"] = ".".join(ip.split(".")[:3]) + ".0/24"
     want = "Chinese" if lang == "zh" else "English"
-    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=50)
+    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=120)
     instr = (
         f"You are a SOC analyst. This is an INTERNAL host on the R230 network with heavy denied traffic. "
         f"Assess whether it is a COMPROMISED PIVOT tied to the external brute-force campaign, using ONLY "
@@ -761,10 +795,12 @@ def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str, dev_h
         "external_campaign": {"distinct_sources": ev["distinctSrc"], "admin_lockouts": ev["lockouts"]},
         "top_denied_ports": ev["denyPorts"][:6],
     }
-    try:
-        out = client.complete_json([{"role": "user", "content": instr + "\n" + json.dumps(payload)}], schema_name="internal_host")
-    except Exception as exc:
-        return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
+    out, err = _llm_json_retry(
+        client, [{"role": "user", "content": instr + "\n" + json.dumps(payload)}],
+        schema_name="internal_host", lang=lang,
+    )
+    if out is None:
+        return {"ok": False, "text": err}
     return {
         "ok": True, "ip": ip, "attempts": lateral[1], "netblock": (dev or {}).get("cidr", ""),
         "verdict": out.get("verdict", ""), "severity": out.get("severity", "high"),

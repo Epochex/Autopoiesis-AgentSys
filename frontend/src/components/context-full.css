@@ -1,0 +1,49 @@
+/* 完整上下文查看器 · full-screen overlay */
+.cf-overlay { position: fixed; inset: 0; z-index: 240; background: var(--paper, #e7e7e3); color: var(--ink, #0d0d0d); display: flex; flex-direction: column; font-family: "IBM Plex Sans Condensed", system-ui, sans-serif; }
+.cf-head { display: flex; align-items: center; gap: 18px; padding: 12px 18px; border-bottom: 2px solid var(--ink, #0d0d0d); flex-wrap: wrap; }
+.cf-title { display: flex; flex-direction: column; gap: 2px; margin-right: auto; }
+.cf-k { font-weight: 700; font-size: 15px; letter-spacing: .01em; }
+.cf-meta { font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 11px; color: var(--gray, #5f5e59); }
+.cf-meta b { color: var(--ink, #0d0d0d); }
+.cf-meta mark { background: var(--acid, #ccff00); color: #0d0d0d; padding: 0 5px; }
+.cf-stats { display: flex; gap: 12px; font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--gray, #5f5e59); }
+.cf-stats b { font-size: 13px; color: var(--ink, #0d0d0d); margin-right: 2px; }
+.cf-stats .up b { color: var(--teal, #12615c); } .cf-stats .dn b { color: var(--coral, #c3384a); }
+.cf-stats .sc { background: var(--acid, #ccff00); color: #0d0d0d; padding: 1px 6px; }
+.cf-x { font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; background: var(--ink, #0d0d0d); color: var(--paper, #e7e7e3); border: none; padding: 6px 12px; cursor: pointer; }
+.cf-x:hover { background: var(--coral, #c3384a); }
+.cf-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 0; }
+.cf-main { overflow-y: auto; padding: 14px 18px 40px; border-right: 1.5px solid var(--line, #c9c8c1); }
+.cf-side { overflow-y: auto; padding: 14px 16px 40px; background: color-mix(in srgb, var(--paper, #e7e7e3) 92%, var(--ink, #0d0d0d)); }
+.cf-sec { font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink, #0d0d0d); border-bottom: 1.5px solid var(--ink, #0d0d0d); padding-bottom: 5px; margin: 6px 0 10px; }
+.cf-side .cf-sec:not(:first-child) { margin-top: 22px; }
+.cf-row { border-left: 3px solid var(--line, #c9c8c1); padding: 6px 0 8px 12px; margin-bottom: 12px; }
+.cf-row.fresh { border-left-color: var(--acid, #ccff00); }
+.cf-row-h { display: flex; align-items: center; gap: 8px; font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 10px; }
+.cf-rank { color: var(--gray, #5f5e59); }
+.cf-tier { padding: 1px 6px; font-size: 8.5px; letter-spacing: .06em; border: 1px solid currentColor; }
+.cf-tier.t-episodic { color: var(--gray, #5f5e59); } .cf-tier.t-semantic { color: var(--teal, #12615c); } .cf-tier.t-procedural { color: var(--amber, #a86a12); } .cf-tier.t-asset_profile { color: var(--ink, #0d0d0d); }
+.cf-mid { color: var(--gray, #5f5e59); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.cf-new { background: var(--acid, #ccff00); color: #0d0d0d; padding: 0 5px; font-size: 8.5px; }
+.cf-rd.up { color: var(--teal, #12615c); } .cf-rd.dn { color: var(--coral, #c3384a); }
+.cf-fscore { margin-left: auto; color: var(--gray, #5f5e59); } .cf-fscore b { color: var(--ink, #0d0d0d); font-size: 12px; }
+.cf-fscore em { font-style: normal; margin-left: 4px; } .cf-fscore em.up { color: var(--teal, #12615c); } .cf-fscore em.dn { color: var(--coral, #c3384a); }
+.cf-text { margin: 5px 0 4px; font-size: 12.5px; line-height: 1.4; color: var(--ink-soft, #2a2a27); }
+.cf-sig { display: flex; flex-wrap: wrap; gap: 10px; font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 9.5px; color: var(--gray, #5f5e59); }
+.cf-sig .z { opacity: .4; }
+.cf-bar { display: block; height: 3px; background: var(--line, #c9c8c1); margin: 6px 0 5px; }
+.cf-bar i { display: block; height: 100%; background: var(--ink, #0d0d0d); }
+.cf-evid { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; padding-left: 8px; border-left: 1px dashed var(--line, #c9c8c1); }
+.cf-ev { display: flex; gap: 8px; font-size: 10.5px; line-height: 1.35; }
+.cf-ev-src { font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 9px; color: var(--gray, #5f5e59); flex: 0 0 auto; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-ev-sum { color: var(--ink-soft, #2a2a27); }
+.cf-dl { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+.cf-dl-h { font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; margin: 6px 0 2px; }
+.cf-dl-h.up { color: var(--teal, #12615c); } .cf-dl-h.dn { color: var(--coral, #c3384a); }
+.cf-dl-row { font-size: 11.5px; line-height: 1.35; color: var(--ink-soft, #2a2a27); display: flex; gap: 6px; }
+.cf-dl-row i { font-style: normal; font-family: ui-monospace, monospace; }
+.cf-dl-row.drop { color: var(--gray, #5f5e59); }
+.cf-dl-none { font-size: 11px; color: var(--gray, #5f5e59); }
+.cf-root-k { margin-bottom: 8px; } .cf-root-k mark { background: var(--acid, #ccff00); color: #0d0d0d; padding: 2px 8px; font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 12px; }
+.cf-note { font-size: 9px; color: var(--gray, #5f5e59); margin-top: 14px; line-height: 1.4; }
+@media (max-width: 820px) { .cf-body { grid-template-columns: 1fr; } .cf-main { border-right: none; } }

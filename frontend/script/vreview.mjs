@@ -10,6 +10,8 @@
  *              paper constantly; this is the difference between "restrained" and
  *              "illegible", and it is measurable.
  *   fold       does the first screen resolve without scrolling.
+ *   language   EN pages contain no visible Chinese body copy (the "中" language
+ *              selector itself is intentionally exempt).
  *   console    page errors / failed requests.
  *   pixels     screenshot per (view × lang × viewport), plus an optional diff
  *              against a baseline so an iteration shows what it moved.
@@ -51,6 +53,7 @@ const VIEWS = {
   console: [/^态势$/, /^CONSOLE$/],
   trajectory: [/^长轨迹$/, /^TRAJECTORY$/],
   pentest: [/^渗透$/, /^PENTEST$/],
+  retrieval: [/^检索$/, /^RETRIEVAL$/],
 }
 const VIEWPORTS = W && H ? [[W, H]] : [[1920, 1080], [1440, 900]]
 const LANGS = ONLY_LANG ? [ONLY_LANG] : ['zh', 'en']
@@ -90,6 +93,29 @@ async function overflows(page) {
         dx, dy,
         ellipsis: cs.textOverflow === 'ellipsis',
         text: (el.textContent || '').trim().slice(0, 54),
+      })
+    }
+    return out
+  })
+}
+
+async function cjkLeaks(page) {
+  return page.evaluate(() => {
+    const cjk = /[\u3400-\u9fff]/
+    const seen = new Set()
+    const out = []
+    for (const el of document.querySelectorAll('body *')) {
+      if (el.children.length) continue
+      const cs = getComputedStyle(el)
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue
+      const text = (el.textContent || '').trim()
+      if (!text || text === '中' || !cjk.test(text) || seen.has(text)) continue
+      seen.add(text)
+      out.push({
+        sel: el.className && typeof el.className === 'string'
+          ? `${el.tagName.toLowerCase()}.${el.className.trim().split(/\s+/).join('.')}`
+          : el.tagName.toLowerCase(),
+        text: text.slice(0, 160),
       })
     }
     return out
@@ -163,6 +189,7 @@ async function run() {
         const ov = await overflows(page)
         const hard = ov.filter((o) => !o.ellipsis)
         const soft = ov.filter((o) => o.ellipsis)
+        const languageLeaks = lang === 'en' ? await cjkLeaks(page) : []
 
         /* --- contrast (axe) --- */
         let contrast = []
@@ -205,13 +232,14 @@ async function run() {
           }
         }
 
-        const bad = hard.length + contrast.length + errs.length + (hScroll ? 1 : 0)
+        const bad = hard.length + contrast.length + errs.length + languageLeaks.length + (hScroll ? 1 : 0)
         fails += bad
         lines.push(`\n=== ${tag} ${bad ? '✗ ' + bad : '✓'}${diff}`)
         lines.push(`    fold: pageH=${fold.scrollH} vs viewportH=${h}${hScroll ? '  ⚠ HORIZONTAL SCROLL' : ''}`)
         if (errs.length) lines.push(`    console (${errs.length}):\n${errs.slice(0, 4).map((e) => '      ' + e.slice(0, 110)).join('\n')}`)
         if (hard.length) lines.push(`    overflow HARD (${hard.length}):\n${hard.slice(0, 8).map((o) => `      ${o.sel} +${o.dx}x${o.dy} :: ${o.text}`).join('\n')}`)
         if (soft.length) lines.push(`    overflow ellipsis (${soft.length}, degrades ok):\n${soft.slice(0, 4).map((o) => `      ${o.sel} +${o.dx} :: ${o.text}`).join('\n')}`)
+        if (languageLeaks.length) lines.push(`    language leaks (${languageLeaks.length}):\n${languageLeaks.slice(0, 12).map((o) => `      ${o.sel} :: ${o.text}`).join('\n')}`)
         if (contrast.length) lines.push(`    contrast (${contrast.length}):\n${contrast.slice(0, 8).map((c) => `      [${c.impact}] ${c.target} :: ${c.msg}`).join('\n')}`)
         await ctx.close()
       }

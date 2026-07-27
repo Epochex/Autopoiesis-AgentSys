@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { GraphAnalysis, GraphDevice, SubnetGraph } from '../types'
+import type { DeviceProfile, GraphAnalysis, GraphDevice, ProfilePeer, SubnetGraph } from '../types'
 import type { Lang } from '../i18n'
 
 type Pt = { x: number; y: number }
@@ -77,6 +77,7 @@ export function SubnetGraphLayer({
   hoverIp,
   selectedIp,
   focusIp,
+  profile,
   marks,
   showPanel,
   onHover,
@@ -98,6 +99,8 @@ export function SubnetGraphLayer({
   selectedIp: string | null
   /** the host promoted to an isolated ego-network (click a node). */
   focusIp: string | null
+  /** traffic portrait of the focused host — drives the flow-topology overlay. */
+  profile?: DeviceProfile | null
   marks: Record<string, { severity: string; verdict: string }>
   showPanel: boolean
   onHover: (ip: string | null) => void
@@ -295,6 +298,131 @@ export function SubnetGraphLayer({
         })}
       </g>
 
+      {/* ── flow topology of the focused host: where its traffic actually GOES and
+          what comes AT it (per-pair aggregates mined from the raw syslog), drawn on
+          top of the relation ego-net. Internal peers use their real node positions;
+          external endpoints get anchor stubs fanned beside the focus — the traffic
+          log carries no hostnames, so ip + service + best-effort rDNS is exactly
+          what the evidence supports, and nothing more is claimed. ── */}
+      {ego && focusIp && profile && !profile.loading && pos[focusIp] ? (() => {
+        const pf = pos[focusIp]
+        const clampY = (y: number) => Math.max(40, Math.min(vbh - 40, y))
+        const intOut = profile.outbound.filter((r) => r.kind === 'host' && !r.external && pos[r.ip])
+        const intIn = profile.inbound.filter((r) => r.kind === 'host' && !r.external && pos[r.ip])
+        const extOut = profile.outbound.filter((r) => r.external).slice(0, 6)
+        const extIn = profile.inbound.filter((r) => r.external).slice(0, 4)
+        const bcast = profile.outbound.filter((r) => r.kind === 'bcast')
+        const svc = (r: ProfilePeer) => r.services[0] ?? (r.ports.length ? `:${r.ports[0]}` : '')
+        // live throughput per destination IP, from the router's session sampler.
+        const liveByIp: Record<string, { bps?: number }> = {}
+        for (const d of profile.live?.destinations ?? []) liveByIp[d.ip] = { bps: d.bps }
+        const fmtBw = (bps?: number | null) => {
+          if (!bps || bps <= 0) return ''
+          if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)}M`
+          if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)}k`
+          return `${bps}`
+        }
+        const bwTag = (ip: string) => {
+          const cur = fmtBw(liveByIp[ip]?.bps)
+          return cur ? ` · ${cur}bps` : ''
+        }
+        const arc = (a: Pt, b: Pt, sign: number) =>
+          `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2 - (b.y - a.y) * 0.18 * sign} ${(a.y + b.y) / 2 + (b.x - a.x) * 0.18 * sign} ${b.x} ${b.y}`
+        const flow = (a: Pt, b: Pt, r: ProfilePeer, key: string) => {
+          const d = arc(a, b, r.dir === 'in' ? -1 : 1)
+          const denied = r.deny > r.accept
+          return (
+            <g key={key} className="fp-flow">
+              <path d={d} className={`fp-line ${r.dir} ${denied ? 'denied' : ''}`} />
+              <circle r={2.2} className={`fp-drip ${denied ? 'denied' : ''}`}>
+                <animateMotion dur={`${Math.max(1.4, 4.5 - Math.log10(r.hits + 1))}s`} repeatCount="indefinite" path={d} />
+              </circle>
+            </g>
+          )
+        }
+        return (
+          <g className="fp-layer" pointerEvents="none">
+            {intOut.map((r) => flow(pf, pos[r.ip], r, `io${r.ip}`))}
+            {intIn.map((r) => flow(pos[r.ip], pf, r, `ii${r.ip}`))}
+            {intOut.map((r) => (
+              <text key={`iol${r.ip}`} x={pos[r.ip].x} y={pos[r.ip].y - 12} className="fp-lbl" textAnchor="middle">
+                ▸ {svc(r)} · {short(r.hits)}
+              </text>
+            ))}
+            {intIn.map((r) => (
+              <text key={`iil${r.ip}`} x={pos[r.ip].x} y={pos[r.ip].y + 20} className="fp-lbl in" textAnchor="middle">
+                ◂ {svc(r)} · {short(r.hits)}
+              </text>
+            ))}
+
+            {/* external destinations — fanned right of the focus */}
+            {extOut.map((r, i) => {
+              const p: Pt = { x: pf.x + 265, y: clampY(pf.y - ((extOut.length - 1) * 56) / 2 + i * 56) }
+              const denied = r.deny > r.accept
+              return (
+                <g key={`eo${r.ip}`} className="fp-ext">
+                  {flow(pf, p, r, `eof${r.ip}`)}
+                  <rect x={p.x - 4.5} y={p.y - 4.5} width="9" height="9" className={`fp-anchor ${denied ? 'denied' : ''}`} transform={`rotate(45 ${p.x} ${p.y})`} />
+                  <text x={p.x + 11} y={p.y - 1} className="fp-ext-name" textAnchor="start">
+                    {r.rdns ?? r.ip}
+                    {bwTag(r.ip) ? <tspan className="fp-bw">{bwTag(r.ip)}</tspan> : null}
+                  </text>
+                  <text x={p.x + 11} y={p.y + 11} className="fp-ext-sub" textAnchor="start">
+                    {r.rdns ? `${r.ip} · ` : ''}{svc(r)}{r.country ? ` · ${r.country}` : ''} · {short(r.hits)}
+                    {denied ? (lang === 'zh' ? ' · 被拦截' : ' · denied') : ''}
+                  </text>
+                </g>
+              )
+            })}
+            {extOut.length ? (
+              <text x={pf.x + 265} y={clampY(pf.y - ((extOut.length - 1) * 56) / 2 - 26)} className="fp-col" textAnchor="start">
+                {lang === 'zh' ? '外联去向' : 'WAN DESTINATIONS'}
+              </text>
+            ) : null}
+
+            {/* external sources hitting this host — fanned left */}
+            {extIn.map((r, i) => {
+              const p: Pt = { x: pf.x - 265, y: clampY(pf.y - ((extIn.length - 1) * 56) / 2 + i * 56) }
+              const denied = r.deny > r.accept
+              return (
+                <g key={`ei${r.ip}`} className="fp-ext">
+                  {flow(p, pf, r, `eif${r.ip}`)}
+                  <rect x={p.x - 4.5} y={p.y - 4.5} width="9" height="9" className={`fp-anchor in ${denied ? 'denied' : ''}`} transform={`rotate(45 ${p.x} ${p.y})`} />
+                  <text x={p.x - 11} y={p.y - 1} className="fp-ext-name" textAnchor="end">{r.rdns ?? r.ip}</text>
+                  <text x={p.x - 11} y={p.y + 11} className="fp-ext-sub" textAnchor="end">
+                    {r.rdns ? `${r.ip} · ` : ''}{svc(r)}{r.country ? ` · ${r.country}` : ''} · {short(r.hits)}
+                    {denied ? (lang === 'zh' ? ' · 被拦截' : ' · denied') : ''}
+                  </text>
+                </g>
+              )
+            })}
+            {extIn.length ? (
+              <text x={pf.x - 265} y={clampY(pf.y - ((extIn.length - 1) * 56) / 2 - 26)} className="fp-col" textAnchor="end">
+                {lang === 'zh' ? '入向来源' : 'INBOUND SOURCES'}
+              </text>
+            ) : null}
+
+            {/* broadcast/multicast chatter — one collective stub above the focus */}
+            {bcast.length ? (() => {
+              const p: Pt = { x: pf.x, y: clampY(pf.y - 150) }
+              const hits = bcast.reduce((a, r) => a + r.hits, 0)
+              return (
+                <g className="fp-ext">
+                  <path d={arc(pf, p, 1)} className="fp-line out bcast" />
+                  <circle cx={p.x} cy={p.y} r="5" className="fp-bcast-dot" />
+                  <text x={p.x} y={p.y - 14} className="fp-ext-name" textAnchor="middle">
+                    ⌁ {lang === 'zh' ? '广播 / 组播域' : 'broadcast / multicast'}
+                  </text>
+                  <text x={p.x + 10} y={p.y + 2} className="fp-ext-sub" textAnchor="start">
+                    {short(hits)} {lang === 'zh' ? '条' : 'msgs'} · {bcast.slice(0, 2).map(svc).join(' / ')}
+                  </text>
+                </g>
+              )
+            })() : null}
+          </g>
+        )
+      })() : null}
+
       {/* ── hover read-out (suppressed while an ego net owns the field) ── */}
       {hovered && !ego ? (
         (() => {
@@ -346,7 +474,7 @@ export function SubnetGraphLayer({
             <b>{st.edges}</b> {zh ? '条关联' : 'relations'} · {st.observedEdges} {zh ? '实测' : 'observed'} ·{' '}
             {st.edges - st.observedEdges} {zh ? '推断' : 'inferred'} · <b>{graph.clusters.length}</b> {zh ? '社区' : 'communities'}
           </div>
-          {!analysis ? (
+          {!analysis && graph.cidr !== 'mem://autopoiesis' ? (
             <button className="sg-cta" onClick={onAnalyze}>
               ⚡ {zh ? 'Agent 关联分析' : 'AGENT · CORRELATE'}
             </button>

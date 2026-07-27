@@ -52,6 +52,35 @@ def test_load_runtime_snapshot_emits_timeline_and_stage_telemetry_for_suggestion
     assert "aiops-agent" in stage_ids
 
 
+@pytest.mark.skipif(
+    not _has_netops_suggestions(),
+    reason="no NetOps runtime suggestions sink present",
+)
+def test_english_runtime_snapshot_localizes_all_visible_copy():
+    snapshot = load_runtime_snapshot(Settings.from_env(), "en")
+
+    visible: list[str] = []
+    for item in snapshot["feed"]:
+        visible.extend([item.get("device", ""), item.get("summary", "")])
+    for item in snapshot["clusterWatch"]:
+        visible.append(item.get("key", ""))
+    for suggestion in snapshot["suggestions"]:
+        visible.extend([
+            suggestion["summary"],
+            suggestion["device"],
+            suggestion["adaptiveMode"],
+            suggestion["impactLevel"],
+            suggestion["runbookDraft"]["title"],
+        ])
+        visible.extend(point["label"] for point in suggestion["timeline"])
+        visible.extend(stage["detail"] for stage in suggestion["stageTelemetry"])
+        visible.extend(item["statement"] for item in suggestion["hypothesisSet"]["items"])
+        visible.extend(suggestion["runbookDraft"]["actions"])
+
+    assert visible
+    assert all(not any("\u3400" <= char <= "\u9fff" for char in text) for text in visible)
+
+
 def test_build_runtime_stream_delta_from_new_alert_feed():
     previous = {
         "feed": [{"id": "feed-raw-1", "kind": "raw"}],
