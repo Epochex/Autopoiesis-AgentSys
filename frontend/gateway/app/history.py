@@ -24,6 +24,9 @@ _lock = threading.Lock()
 _cache: dict[str, Any] = {}
 _TTL = 120
 
+# facts.proto stores the raw IP protocol number as a string ("6", "17", …)
+_PROTO = {"1": "ICMP", "2": "IGMP", "6": "TCP", "17": "UDP", "47": "GRE", "50": "ESP", "58": "ICMPv6"}
+
 
 def _q(sql: str) -> list[dict]:
     """Run a read-only ClickHouse query, return rows as dicts (JSON format)."""
@@ -36,6 +39,17 @@ def _q(sql: str) -> list[dict]:
 def _esc(ip: str) -> str:
     # IPs only ever contain [0-9.]; strip anything else defensively.
     return "".join(c for c in ip if c in "0123456789.")
+
+
+def _port_row(r: dict) -> dict[str, Any]:
+    """One historical (dstport, proto) aggregate, same shape as the sample-window PortUse."""
+    proto = _PROTO.get(str(r.get("proto") or ""), str(r.get("proto") or "?"))
+    svc = r.get("service") or None
+    # drop labels that just restate port/proto ("udp/5050")
+    if svc and svc.lower() == f"{proto.lower()}/{r['dstport']}":
+        svc = None
+    return {"port": int(r["dstport"]), "proto": proto, "service": svc,
+            "hits": int(r["flows"]), "deny": int(r.get("denied") or 0)}
 
 
 def available() -> bool:
@@ -70,6 +84,16 @@ def device_history(ip: str, days: int = 7, full: bool = False) -> dict[str, Any]
             f"min(event_ts) AS first, max(event_ts) AS last FROM {_CH_DB}.facts WHERE {where}"
         )
         if not totals or int(totals[0].get("flows") or 0) == 0:
+            # a host can be long-offline yet fully recorded (retention starts
+            # 2026-05-01): widen once to the full retained span before giving up,
+            # so "last seen 13 days ago" still gets its historical portrait.
+            if days < 90:
+                widened = device_history(ip, 90, full)
+                if widened and not widened.get("empty"):
+                    widened = {**widened, "widened": True}
+                    with _lock:
+                        _cache[ck] = (time.time(), widened)
+                    return widened
             result = {"ok": True, "ip": ip, "days": days, "flows": 0, "empty": True}
             with _lock:
                 _cache[ck] = (time.time(), result)
@@ -91,8 +115,9 @@ def device_history(ip: str, days: int = 7, full: bool = False) -> dict[str, Any]
             f"WHERE {where} GROUP BY h ORDER BY h"
         )
         top_ports = _q(
-            f"SELECT dstport, count() AS flows FROM {_CH_DB}.facts WHERE {where} AND dstport>0 "
-            f"GROUP BY dstport ORDER BY flows DESC LIMIT 6"
+            f"SELECT dstport, proto, any(service) AS service, count() AS flows, "
+            f"countIf(action='deny') AS denied FROM {_CH_DB}.facts WHERE {where} AND dstport>0 "
+            f"GROUP BY dstport, proto ORDER BY flows DESC LIMIT 12"
         )
     except Exception:
         return None
@@ -129,7 +154,7 @@ def device_history(ip: str, days: int = 7, full: bool = False) -> dict[str, Any]
         ],
         "daily": [{"date": r["d"], "flows": int(r["flows"]), "bytes": int(r["bytes"])} for r in daily],
         "hours": hour_arr,
-        "topPorts": [int(r["dstport"]) for r in top_ports],
+        "topPorts": [_port_row(r) for r in top_ports],
     }
     with _lock:
         _cache[ck] = (time.time(), result)

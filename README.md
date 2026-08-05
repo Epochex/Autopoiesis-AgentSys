@@ -99,7 +99,7 @@ frontend/           React/Vite 战术态势界面 + 记忆 observatory + FastAPI
 
 ## 推理后端
 
-生产推理走 DeepSeek API(`core/llm/provider.py`,`DS_V4_*` 环境变量),确定性基准走内置规则推理器；语义支持评测可使用隔离的模型评审接口，边界与配对口径见 [docs/LLM_GROUNDING_JUDGE.md](./docs/LLM_GROUNDING_JUDGE.md)。鹏城 GPU 隧道配置见 [docs/PENGCHENG_PROVIDER.md](./docs/PENGCHENG_PROVIDER.md)。所有配置读 `AUTOPOIESIS_*` 变量,旧 `SELFEVO_*` 作为兼容回退保留。
+生产推理默认使用 DeepSeek V4 Flash(`deepseek-v4-flash`)。`DEEPSEEK_API_KEY` 可供整个项目共用；前端网关读取 `DS_V4_*`，核心评测与命令行路径读取 `AUTOPOIESIS_LLM_*`。确定性基准走内置规则推理器。语义支持评测可使用隔离的模型评审接口，边界与配对口径见 [docs/LLM_GROUNDING_JUDGE.md](./docs/LLM_GROUNDING_JUDGE.md)。鹏城 GPU 隧道配置见 [docs/PENGCHENG_PROVIDER.md](./docs/PENGCHENG_PROVIDER.md)。旧 `SELFEVO_*` 仅作为核心配置的兼容回退保留。
 
 ## 边界与 roadmap
 

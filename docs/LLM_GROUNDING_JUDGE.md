@@ -48,9 +48,9 @@
 
 配对报告给出完整架构相对基线的语义引用准确率增益、无依据断言率降幅、正确拒答率增益和拒答决策准确率增益。评测器只评分调用方提供的真实候选输出，不自行生成或伪造基线数字。
 
-## DeepSeek Pro 接入
+## DeepSeek V4 Flash 接入
 
-评审后端只依赖 `JudgeBackend` 协议。生产评测可将单独配置的 DeepSeek Pro/OpenAI 兼容客户端注入 `LLMJsonJudgeBackend`：
+评审后端只依赖 `JudgeBackend` 协议。生产评测可将单独配置的 DeepSeek V4 Flash/OpenAI 兼容客户端注入 `LLMJsonJudgeBackend`：
 
 ```python
 from core.eval import LLMJsonJudgeBackend
@@ -58,7 +58,7 @@ from core.eval import LLMJsonJudgeBackend
 judge = LLMJsonJudgeBackend(
     separately_configured_deepseek_client,
     provider_id="deepseek",
-    model_id="deepseek-pro",
+    model_id="deepseek-v4-flash",
 )
 ```
 

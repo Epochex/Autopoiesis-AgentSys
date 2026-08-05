@@ -238,7 +238,17 @@ export interface DeviceHistory {
   destinations?: HistoryDest[]
   daily?: { date: string; flows: number; bytes: number }[]
   hours?: number[]
-  topPorts?: number[]
+  topPorts?: PortUse[]
+  /** true when the requested window was empty and the query fell back to full retention. */
+  widened?: boolean
+}
+/** One (port, protocol) a profiled host used, with the syslog service label. */
+export interface PortUse {
+  port: number
+  proto: string
+  service: string | null
+  hits: number
+  deny: number
 }
 /** Traffic portrait of one host, mined from the raw syslog sample. */
 export interface DeviceProfile {
@@ -250,6 +260,8 @@ export interface DeviceProfile {
   status?: DeviceStatus | null
   /** current router-attested behavior (active sessions + resolved destinations); null when no FortiGate creds. */
   live?: ProfileLive | null
+  /** every (port, proto) seen in the sample — local = ports ON this host peers hit, remote = destination ports it reaches out to. */
+  ports?: { local: PortUse[]; remote: PortUse[] } | null
   outbound: ProfilePeer[]
   inbound: ProfilePeer[]
   hours: number[]

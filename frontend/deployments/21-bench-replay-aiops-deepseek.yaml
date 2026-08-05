@@ -46,7 +46,8 @@ spec:
             - name: AIOPS_PROVIDER_API_KEY
               valueFrom: { secretKeyRef: { key: api-key, name: deepseek-api } }
             - { name: AIOPS_PROVIDER_MODEL, value: deepseek-v4-flash }
-            - { name: AIOPS_PROVIDER_PRO_MODEL, value: deepseek-v4-pro }
+            # Keep every adaptive route on Flash; this deployment does not escalate to Pro.
+            - { name: AIOPS_PROVIDER_PRO_MODEL, value: deepseek-v4-flash }
             - { name: AIOPS_PROVIDER_TIMEOUT_SEC, value: "90" }
             - { name: AIOPS_PROVIDER_MAX_TOKENS, value: "4096" }
             - { name: AIOPS_PROVIDER_MAX_RETRIES, value: "1" }

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from core.env import autopoiesis_env
-from core.llm.provider import OpenAICompatibleClient
+from core.llm.provider import LLMConfigurationError, OpenAICompatibleClient
 from frontend.gateway.app.config import Settings
+from frontend.gateway.app.providers import _deepseek_cfg
 
 
 def test_autopoiesis_env_uses_default_when_both_names_are_absent(monkeypatch):
@@ -33,6 +36,42 @@ def test_llm_client_prefers_autopoiesis_configuration(monkeypatch):
     assert client.base_url == "https://current.example/v1"
     assert client.api_key == "current-key"
     assert client.model == "current-model"
+
+
+def test_llm_client_accepts_shared_deepseek_key(monkeypatch):
+    monkeypatch.setenv("AUTOPOIESIS_LLM_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.delenv("AUTOPOIESIS_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("AUTOPOIESIS_LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "shared-key")
+
+    client = OpenAICompatibleClient()
+
+    assert client.api_key == "shared-key"
+
+
+def test_llm_client_does_not_send_shared_deepseek_key_to_other_endpoints(monkeypatch):
+    monkeypatch.setenv("AUTOPOIESIS_LLM_BASE_URL", "https://other.example/v1")
+    monkeypatch.delenv("AUTOPOIESIS_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("AUTOPOIESIS_LLM_MODEL", "other-model")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "shared-key")
+
+    with pytest.raises(LLMConfigurationError):
+        OpenAICompatibleClient()
+
+
+def test_gateway_deepseek_defaults_to_v4_flash(monkeypatch):
+    monkeypatch.delenv("DS_V4_BASE_URL", raising=False)
+    monkeypatch.delenv("DS_V4_MODEL", raising=False)
+    monkeypatch.delenv("DS_V4_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    config = _deepseek_cfg()
+
+    assert config == {
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-v4-flash",
+        "api_key": "",
+    }
 
 
 def test_gateway_settings_accept_legacy_fallback_but_prefer_new(monkeypatch, tmp_path):

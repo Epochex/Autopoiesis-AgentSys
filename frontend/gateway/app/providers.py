@@ -34,7 +34,7 @@ def _endpoint_reachable(base_url: str) -> bool:
 def _deepseek_cfg() -> dict:
     return {
         "base_url": os.getenv("DS_V4_BASE_URL", "https://api.deepseek.com/v1"),
-        "model": os.getenv("DS_V4_MODEL", "deepseek-chat"),
+        "model": os.getenv("DS_V4_MODEL", "deepseek-v4-flash"),
         "api_key": os.getenv("DS_V4_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or "",
     }
 

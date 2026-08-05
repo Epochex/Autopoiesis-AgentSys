@@ -27,6 +27,7 @@ _REAL = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real"
 _FIELD = re.compile(
     r'srcip=(?P<src>[0-9.]+).*?dstip=(?P<dst>[0-9.]+)'
     r'(?:.*?dstport=(?P<port>\d+))?'
+    r'(?:.*?proto=(?P<proto>\d+))?'
     r'(?:.*?action="(?P<action>[a-z]+)")?'
     r'(?:.*?service="(?P<service>[^"]+)")?'
     r'(?:.*?dstcountry="(?P<country>[^"]+)")?'
@@ -36,6 +37,9 @@ _FIELD = re.compile(
 _VOIP = re.compile(r'srcip=(?P<src>[0-9.]+) src_port=\d+ dstip=(?P<dst>[0-9.]+) dst_port=(?P<port>\d+)')
 _TIME = re.compile(r' time=(?P<h>\d{2}):\d{2}:\d{2}')
 _DATE = re.compile(r'date=(?P<d>\d{4}-\d{2}-\d{2})')
+
+# IP protocol numbers as syslog reports them (proto=6 etc.)
+_PROTO = {1: "ICMP", 2: "IGMP", 6: "TCP", 17: "UDP", 47: "GRE", 50: "ESP", 58: "ICMPv6"}
 
 _lock = threading.Lock()
 _cache: dict[str, Any] = {}
@@ -79,6 +83,9 @@ def _mine() -> dict[str, Any]:
     pairs: dict[tuple[str, str], dict[str, Any]] = {}
     hours: dict[str, list[int]] = {}
     span: dict[str, list[str]] = {}
+    # per-host (side, port, proto) usage: side "local" = a port ON the host that
+    # peers hit; side "remote" = a destination port the host reaches out to.
+    port_use: dict[str, dict[tuple[str, int, str], dict[str, Any]]] = {}
     for path in paths:
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
             is_traffic = 'type="traffic"' in line
@@ -110,6 +117,21 @@ def _mine() -> dict[str, Any]:
                 p["country"] = g["country"]
             p["sent"] += int(g.get("sent") or 0)
             p["rcvd"] += int(g.get("rcvd") or 0)
+            if g.get("port"):
+                port = int(g["port"])
+                proto = (_PROTO.get(int(g["proto"]), f"IP/{g['proto']}") if g.get("proto")
+                         else ("UDP" if is_voip else "?"))
+                svc = g.get("service") or ("SIP" if is_voip else None)
+                for host, side in ((src, "remote"), (dst, "local")):
+                    if not _is_private(host) or _is_bcast(host):
+                        continue
+                    u = port_use.setdefault(host, {}).setdefault(
+                        (side, port, proto), {"hits": 0, "deny": 0, "services": Counter()})
+                    u["hits"] += 1
+                    if action == "deny":
+                        u["deny"] += 1
+                    if svc:
+                        u["services"][svc] += 1
             tm = _TIME.search(line)
             dm = _DATE.search(line)
             for ip in (src, dst):
@@ -121,7 +143,7 @@ def _mine() -> dict[str, Any]:
                     s = span.setdefault(ip, [dm.group("d"), dm.group("d")])
                     s[0] = min(s[0], dm.group("d"))
                     s[1] = max(s[1], dm.group("d"))
-    data = {"pairs": pairs, "hours": hours, "span": span}
+    data = {"pairs": pairs, "hours": hours, "span": span, "port_use": port_use}
     with _lock:
         _cache["key"] = key
         _cache["data"] = data
@@ -249,12 +271,26 @@ def device_profile(ip: str, lang: str = "zh") -> dict[str, Any]:
             tags.append(("常访问: " if zh else "visits: ") + ", ".join(sites))
         tags = tags[:7]
 
+    def _port_rows(side: str) -> list[dict[str, Any]]:
+        rows = []
+        for (s, port, proto), u in (data["port_use"].get(ip) or {}).items():
+            if s != side:
+                continue
+            # drop service labels that just restate port/proto ("udp/48689")
+            svc = next((name for name, _ in u["services"].most_common(2)
+                        if name.lower() != f"{proto.lower()}/{port}"), None)
+            rows.append({"port": port, "proto": proto, "service": svc,
+                         "hits": u["hits"], "deny": u["deny"]})
+        rows.sort(key=lambda r: -r["hits"])
+        return rows
+
     return {
         "ok": True,
         "ip": ip,
         "device": dev,
         "status": status,
         "live": live,
+        "ports": {"local": _port_rows("local"), "remote": _port_rows("remote")},
         "outbound": out_rows[:10],
         "inbound": in_rows[:8],
         "hours": data["hours"].get(ip, [0] * 24),

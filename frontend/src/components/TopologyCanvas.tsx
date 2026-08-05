@@ -1346,8 +1346,8 @@ export function TopologyCanvas({
             const hourMax = Math.max(...(p.hours ?? [0]), 1)
             const empty = !p.loading && !(p.outbound?.length || p.inbound?.length)
             return (
-              <foreignObject x={VBW - 396} y={90} width={376} height={700} className="ego-fo">
-                <div className="dp-panel">
+              <foreignObject x={VBW - 516} y={90} width={496} height={860} className="ego-fo">
+                <div className="dp-panel xl">
                   <div className="dp-h">
                     <span className="dp-k">{lang === 'zh' ? '流量画像' : 'TRAFFIC PORTRAIT'} · {focusDev}</span>
                   </div>
@@ -1431,6 +1431,36 @@ export function TopologyCanvas({
                               <span key={i} className={h ? 'on' : ''} style={{ height: `${3 + (h / hourMax) * 24}px` }} title={`${i}:00 · ${h}`} />
                             ))}
                           </div>
+                          {p.ports && (p.ports.local.length || p.ports.remote.length) ? (
+                            <>
+                              {p.ports.local.length ? (
+                                <>
+                                  <div className="dp-sec">{lang === 'zh' ? `本机端口 · 被访/监听 · ${p.ports.local.length}` : `LOCAL PORTS · ${p.ports.local.length}`}</div>
+                                  <div className="dp-portgrid">
+                                    {p.ports.local.map((u) => (
+                                      <span key={`l${u.port}/${u.proto}`} className={`dp-port ${u.deny > u.hits / 2 ? 'denied' : ''}`}
+                                        title={`${u.hits}× ${lang === 'zh' ? '命中' : 'hits'}${u.deny ? ` · ${u.deny} ${lang === 'zh' ? '被拦' : 'denied'}` : ''}`}>
+                                        <b>:{u.port}</b><i>{u.proto}</i>{u.service ? <em>{u.service}</em> : null}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </>
+                              ) : null}
+                              {p.ports.remote.length ? (
+                                <>
+                                  <div className="dp-sec">{lang === 'zh' ? `外访端口 · 它连出的目标端口 · ${p.ports.remote.length}` : `REMOTE PORTS · ${p.ports.remote.length}`}</div>
+                                  <div className="dp-portgrid">
+                                    {p.ports.remote.map((u) => (
+                                      <span key={`r${u.port}/${u.proto}`} className={`dp-port ${u.deny > u.hits / 2 ? 'denied' : ''}`}
+                                        title={`${u.hits}× ${lang === 'zh' ? '命中' : 'hits'}${u.deny ? ` · ${u.deny} ${lang === 'zh' ? '被拦' : 'denied'}` : ''}`}>
+                                        <b>:{u.port}</b><i>{u.proto}</i>{u.service ? <em>{u.service}</em> : null}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </>
+                              ) : null}
+                            </>
+                          ) : null}
                           {p.outbound?.length ? (
                             <>
                               <div className="dp-sec">{lang === 'zh' ? `流量去向 · ${p.outbound.length}` : `DESTINATIONS · ${p.outbound.length}`}</div>
@@ -1455,6 +1485,7 @@ export function TopologyCanvas({
                           <>
                             <div className="dp-sec hist">
                               {lang === 'zh' ? `历史画像 · ${history.days} 天` : `HISTORY · ${history.days}d`}
+                              {history.widened ? (lang === 'zh' ? ' · 近7天无流量,已扩至全保留期' : ' · widened to full retention') : ''}
                               <span className="dp-hist-badge" title={lang === 'zh' ? 'ClickHouse 全量日志(R230)' : 'ClickHouse full log (R230)'}>ClickHouse</span>
                             </div>
                             <div className="dp-stats">
@@ -1467,6 +1498,19 @@ export function TopologyCanvas({
                               <span className="down"><b>↓ {fmtB(history.down ?? 0)}</b> {lang === 'zh' ? '下行' : 'down'}</span>
                               <span><b>{fmtB(history.bytes ?? 0)}</b> {lang === 'zh' ? '总量' : 'total'}</span>
                             </div>
+                            {history.topPorts?.length ? (
+                              <>
+                                <div className="dp-sub">{lang === 'zh' ? `历史端口 · 目标端口/协议 · TOP ${history.topPorts.length}` : `HISTORICAL PORTS · TOP ${history.topPorts.length}`}</div>
+                                <div className="dp-portgrid">
+                                  {history.topPorts.map((u) => (
+                                    <span key={`h${u.port}/${u.proto}`} className={`dp-port ${u.deny > u.hits / 2 ? 'denied' : ''}`}
+                                      title={`${u.hits}× ${lang === 'zh' ? '命中' : 'hits'}${u.deny ? ` · ${u.deny} ${lang === 'zh' ? '被拦' : 'denied'}` : ''}`}>
+                                      <b>:{u.port}</b><i>{u.proto}</i>{u.service ? <em>{u.service}</em> : null}
+                                    </span>
+                                  ))}
+                                </div>
+                              </>
+                            ) : null}
                             {history.daily?.length ? (
                               <>
                                 <div className="dp-sub">{lang === 'zh' ? '每日流量 · 条/天' : 'DAILY FLOWS · per day'}</div>
@@ -1496,7 +1540,7 @@ export function TopologyCanvas({
                                     if (histBusy) return
                                     setHistBusy(true)
                                     try {
-                                      const rr = await fetch(`/api/rca/device_history?ip=${encodeURIComponent(focusDev)}&days=7&full=1`)
+                                      const rr = await fetch(`/api/rca/device_history?ip=${encodeURIComponent(focusDev)}&days=${history.days}&full=1`)
                                       const jj = await rr.json()
                                       if (jj?.ok) setHistFull(jj)
                                     } catch { /* keep collapsed */ }

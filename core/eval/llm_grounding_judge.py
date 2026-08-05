@@ -146,7 +146,7 @@ class JudgeBackend(Protocol):
 
 
 class LLMJsonJudgeBackend:
-    """Strict JSON adapter for DeepSeek Pro or another isolated judge model.
+    """Strict JSON adapter for DeepSeek V4 Flash or another isolated judge model.
 
     The API credential remains inside ``client``.  It is not read by this module
     and is never included in requests, cache metadata, fingerprints, or reports.

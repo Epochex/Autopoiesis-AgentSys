@@ -998,6 +998,51 @@
   padding: 0 4px;
   white-space: nowrap;
 }
+
+/* ── xl variant: the drilled traffic portrait only — wider frame, ~20% larger
+   type. Scoped so the memory/vlan panels that share dp-* keep base sizes. ── */
+.dp-panel.xl { max-height: 850px; padding: 12px 16px; }
+.dp-panel.xl .dp-k { font-size: 12.5px; }
+.dp-panel.xl .dp-wait { font-size: 13.5px; }
+.dp-panel.xl .dp-id { font-size: 15px; }
+.dp-panel.xl .dp-live { font-size: 10px; }
+.dp-panel.xl .dp-status { font-size: 13px; }
+.dp-panel.xl .dp-tag { font-size: 12px; padding: 3px 8px; }
+.dp-panel.xl .dp-empty { font-size: 13.5px; }
+.dp-panel.xl .dp-stats { font-size: 13px; gap: 16px; }
+.dp-panel.xl .dp-sec { font-size: 11px; }
+.dp-panel.xl .dp-sub { font-size: 10.5px; }
+.dp-panel.xl .dp-hours { height: 34px; }
+.dp-panel.xl .dp-row { font-size: 13.5px; gap: 8px; }
+.dp-panel.xl .dp-svc { font-size: 12px; }
+.dp-panel.xl .dp-bw { font-size: 12px; }
+.dp-panel.xl .dp-qos { font-size: 10.5px; }
+.dp-panel.xl .dp-io { font-size: 11px; }
+.dp-panel.xl .dp-live-badge, .dp-panel.xl .dp-hist-badge { font-size: 10px; }
+.dp-panel.xl .dp-expand { font-size: 11.5px; padding: 6px 10px; }
+.dp-panel.xl .dp-lat b { font-size: 16px; }
+.dp-panel.xl .dp-lat i { font-size: 10px; }
+.dp-panel.xl .dp-lat-none { font-size: 11.5px; }
+.dp-panel.xl .dp-lat-note { font-size: 10.5px; }
+.dp-panel.xl .dp-foot { font-size: 11px; }
+
+/* per-port chips of the port portrait (:port PROTO service) */
+.dp-portgrid { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.dp-port {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  border: 1px solid var(--line);
+  padding: 2px 7px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+.dp-port b { font-weight: 600; color: var(--net-ink); }
+.dp-port i { font-style: normal; font-size: 10px; letter-spacing: 0.06em; color: var(--fog); }
+.dp-port em { font-style: normal; font-size: 10.5px; color: var(--fog); }
+.dp-port.denied { border-color: var(--coral); }
+.dp-port.denied b { color: var(--coral); }
 .an-retry {
   background: none;
   border: 1px solid var(--amber);

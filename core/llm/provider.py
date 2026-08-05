@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from typing import Protocol
 from urllib import error, request
+from urllib.parse import urlparse
 
 from core.env import autopoiesis_env
 
@@ -27,7 +29,8 @@ class OpenAICompatibleClient:
     """Minimal stdlib client for any OpenAI-compatible /chat/completions endpoint.
 
     Configuration uses AUTOPOIESIS_LLM_BASE_URL / AUTOPOIESIS_LLM_API_KEY /
-    AUTOPOIESIS_LLM_MODEL; raises LLMConfigurationError when incomplete.
+    AUTOPOIESIS_LLM_MODEL. DEEPSEEK_API_KEY is accepted as a shared credential
+    fallback; raises LLMConfigurationError when configuration is incomplete.
     """
 
     def __init__(
@@ -40,12 +43,15 @@ class OpenAICompatibleClient:
     ):
         self.base_url = (base_url or autopoiesis_env("LLM_BASE_URL") or "").rstrip("/")
         self.api_key = api_key or autopoiesis_env("LLM_API_KEY")
+        if not self.api_key and urlparse(self.base_url).hostname == "api.deepseek.com":
+            self.api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("DS_V4_API_KEY")
         self.model = model or autopoiesis_env("LLM_MODEL")
         self.timeout_sec = timeout_sec
         if not self.base_url or not self.api_key or not self.model:
             raise LLMConfigurationError(
                 "LLM mode requires AUTOPOIESIS_LLM_BASE_URL, "
-                "AUTOPOIESIS_LLM_API_KEY, and AUTOPOIESIS_LLM_MODEL"
+                "AUTOPOIESIS_LLM_MODEL, and either AUTOPOIESIS_LLM_API_KEY "
+                "or DEEPSEEK_API_KEY"
             )
 
     def complete_json(self, messages: list[dict[str, str]], *, schema_name: str) -> dict:

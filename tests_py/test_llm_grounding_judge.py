@@ -291,7 +291,7 @@ def test_llm_backend_receives_claim_raw_evidence_and_expected_answerability():
     backend = LLMJsonJudgeBackend(
         client,
         provider_id="deepseek",
-        model_id="deepseek-pro",
+        model_id="deepseek-v4-flash",
         prompt_version="judge-v-test",
     )
     request_payload = {

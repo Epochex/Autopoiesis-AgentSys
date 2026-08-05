@@ -3,8 +3,8 @@ import { Scramble } from './Motion'
 import type { Lang } from '../i18n'
 
 const STEPS: Record<Lang, string[]> = {
-  zh: ['建立 R230 遥测会话…', '拉取设备流量与端口特征…', 'DeepSeek v4-pro 研判中…', '归纳威胁结论…'],
-  en: ['opening R230 telemetry…', 'pulling flow & port features…', 'DeepSeek v4-pro reasoning…', 'composing verdict…'],
+  zh: ['建立 R230 遥测会话…', '拉取设备流量与端口特征…', 'DeepSeek V4 Flash 研判中…', '归纳威胁结论…'],
+  en: ['opening R230 telemetry…', 'pulling flow & port features…', 'DeepSeek V4 Flash reasoning…', 'composing verdict…'],
 }
 
 export function Analyzing({ lang }: { lang: Lang }) {
