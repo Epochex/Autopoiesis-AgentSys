@@ -1,0 +1,34 @@
+name: deploy
+
+# Continuous deployment to the live r450 box (LAN-only, bare-metal systemd +
+# nginx). Runs on a self-hosted runner registered on r450. The runner operates
+# directly on the live tree at /data/Autopoiesis-AgentSys via deploy.sh, which
+# fast-forwards to main, rebuilds dist, refreshes gateway deps, restarts the
+# service, and health-checks :8026. Dirty-tree safe (see deploy.sh).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      allow_dirty:
+        description: "Deploy the live working tree as-is (skip git fast-forward)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-live-r450
+  cancel-in-progress: false
+
+jobs:
+  rollout:
+    # Register the r450 runner with labels: self-hosted, r450
+    runs-on: [self-hosted, r450]
+    steps:
+      - name: Roll out to live
+        env:
+          APP_DIR: /data/Autopoiesis-AgentSys
+          SERVICE: netops-ops-console-backend
+          HEALTH_URL: http://127.0.0.1:8026/api/healthz
+          ALLOW_DIRTY: ${{ inputs.allow_dirty && '1' || '0' }}
+        run: bash "$APP_DIR/frontend/script/deploy.sh"

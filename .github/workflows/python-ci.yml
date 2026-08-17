@@ -1,0 +1,42 @@
+name: python-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: python-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install core + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run deterministic test suite
+        run: python -m pytest -p no:cacheprovider -q tests_py
+
+      - name: Run mock-labeled Phase 1.5 report
+        run: python -m domains.network_rca.phase15
+
+      - name: Validate real dataset manifest if present
+        run: |
+          if [ -f domains/network_rca/fixtures/real/manifest.json ]; then
+            python -m domains.network_rca.validate_real_dataset
+          else
+            echo "No real dataset manifest present; real held-out evaluation stays gated to local runs."
+          fi

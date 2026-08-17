@@ -1,0 +1,46 @@
+name: frontend-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["frontend/**", ".github/workflows/frontend-ci.yml"]
+  pull_request:
+    paths: ["frontend/**", ".github/workflows/frontend-ci.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Type-check + build
+        run: npm run build
+
+      # Advisory: strict react-hooks rules (set-state-in-effect, refs-in-render)
+      # flag long-standing patterns in the tactical canvas components. Surfaced
+      # in CI but not a merge gate, so a new hook smell is visible without
+      # blocking on the pre-existing ones.
+      - name: Lint (advisory)
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Unit tests (vitest)
+        run: npx vitest run --passWithNoTests
