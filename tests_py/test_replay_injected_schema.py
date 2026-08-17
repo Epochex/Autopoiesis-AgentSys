@@ -17,12 +17,22 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from core.evolve.replay_stream import (
     REPLAY_TOPIC,
     _load_cases,
     case_fault_events,
     produce_replay,
 )
+
+# Local-only held-out cases (gitignored); skip the module when absent (CI).
+_cases, _gt = _load_cases()
+if not _cases:
+    pytest.skip(
+        "real held-out dataset not present (local-only, gitignored)",
+        allow_module_level=True,
+    )
 
 
 def test_every_injected_event_carries_fault_context_and_entity_key():

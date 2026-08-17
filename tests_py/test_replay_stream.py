@@ -17,6 +17,18 @@ from core.evolve.replay_stream import (
 )
 from frontend.gateway.app.rca_reader import load_evolution
 
+import pytest
+
+# The replay benchmark runs against the local-only held-out cases (gitignored).
+# Absent them — as on CI — skip the whole module rather than fail; every
+# assertion below still runs on the box that holds the real dataset.
+_cases, _gt = _load_cases()
+if not _cases:
+    pytest.skip(
+        "real held-out dataset not present (local-only, gitignored)",
+        allow_module_level=True,
+    )
+
 
 def test_trajectory_is_the_real_evolution_run():
     traj = replay_trajectory(passes=4)
