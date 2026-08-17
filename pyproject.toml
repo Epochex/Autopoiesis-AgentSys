@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "autopoiesis-agent-sys"
 version = "0.1.0"
@@ -46,6 +50,12 @@ rerank = [
   "sentence-transformers>=2.2",
   "torch>=2.0",
 ]
+
+# Flat repo layout: the importable packages are core/ and domains/. Pin
+# discovery so the editable install does not trip over frontend/, tests_py/,
+# eval_mem_compare/ and benchmark_results/ as stray top-level packages.
+[tool.setuptools.packages.find]
+include = ["core*", "domains*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests_py"]
