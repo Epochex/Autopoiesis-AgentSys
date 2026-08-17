@@ -1,0 +1,486 @@
+{
+  "schema_version": "1.0",
+  "dataset_kind": "historical-real-incidents",
+  "data_mode": "historical_fixture",
+  "current_online_observation": false,
+  "note": "The fixture combines operator-captured incident facts with timestamped ARP, system-log, file-metadata, and address readback evidence. replay_signals and produced replay events remain simulated and must not be presented as current observations.",
+  "incidents": [
+    {
+      "id": "inc-192-168-1-23-dual-mac-arp-drift",
+      "title": "192.168.1.23 dual-MAC ARP ownership drift",
+      "incident_type": "dual_mac_arp_drift",
+      "severity": "high",
+      "asset": {
+        "ip": "192.168.1.23",
+        "name": "R230"
+      },
+      "classification": "historical_real_incident",
+      "current_online_observation": false,
+      "summary": "The same IP was associated with two MAC addresses and its ARP ownership moved between them.",
+      "root_cause": "Duplicate IP ownership: 192.168.1.23 alternated between two MAC addresses inside a ten-second captured ARP window.",
+      "impact": "ARP consumers could direct traffic for 192.168.1.23 to different link-layer owners during the captured drift.",
+      "root_cause_evidence_ids": [
+        "observed-192-168-1-23-arp-sample-window"
+      ],
+      "captured_at": "2026-08-05T15:04:41.970Z",
+      "window": {
+        "start": "2026-08-05T15:03:34.927Z",
+        "end": "2026-08-05T15:04:41.970Z",
+        "basis": "observed_arp_and_ssh_key_sampling"
+      },
+      "evidence_timeline": [
+        {
+          "sequence": 1,
+          "occurred_at": null,
+          "source_kind": "manual",
+          "source_type": "operator_capture",
+          "evidence_locator": "operator-provided 2026-08-03 incident capture",
+          "evidence_id": "manual-192-168-1-23-dual-mac",
+          "phase": "detection",
+          "summary": "192.168.1.23 was reported with two MAC associations in the same incident window.",
+          "facts": {
+            "ip": "192.168.1.23",
+            "mac_count": 2,
+            "macs": [
+              "50:9A:4C:87:29:B3",
+              "D4:43:0E:1A:C5:88"
+            ]
+          }
+        },
+        {
+          "sequence": 2,
+          "occurred_at": null,
+          "source_kind": "manual",
+          "source_type": "operator_capture",
+          "evidence_locator": "operator-provided 2026-08-03 incident capture",
+          "evidence_id": "manual-192-168-1-23-arp-drift",
+          "phase": "diagnosis",
+          "summary": "ARP ownership for 192.168.1.23 was reported to drift between the two associations.",
+          "facts": {
+            "ip": "192.168.1.23",
+            "condition": "arp_ownership_drift"
+          }
+        },
+        {
+          "sequence": 3,
+          "occurred_at": "2026-08-05T15:03:34.927Z",
+          "source_kind": "observed",
+          "source_type": "arp_readback",
+          "evidence_locator": "ip neigh show 192.168.1.23 on eth2, sampled from .27",
+          "evidence_id": "observed-192-168-1-23-arp-sample-window",
+          "phase": "detection",
+          "summary": "A 9.754-second neighbor-table sample alternated repeatedly between the two known MAC addresses.",
+          "facts": {
+            "ip": "192.168.1.23",
+            "interface": "eth2",
+            "window_start": "2026-08-05T15:03:34.927Z",
+            "window_end": "2026-08-05T15:03:44.681Z",
+            "macs": [
+              "50:9A:4C:87:29:B3",
+              "D4:43:0E:1A:C5:88"
+            ],
+            "samples": [
+              ["2026-08-05T15:03:34.927Z", "D4:43:0E:1A:C5:88"],
+              ["2026-08-05T15:03:35.965Z", "50:9A:4C:87:29:B3"],
+              ["2026-08-05T15:03:38.525Z", "D4:43:0E:1A:C5:88"],
+              ["2026-08-05T15:03:40.577Z", "50:9A:4C:87:29:B3"],
+              ["2026-08-05T15:03:44.169Z", "D4:43:0E:1A:C5:88"]
+            ]
+          }
+        },
+        {
+          "sequence": 4,
+          "occurred_at": "2026-08-05T15:04:35.654Z",
+          "source_kind": "observed",
+          "source_type": "ssh_key_readback",
+          "evidence_locator": "ip neigh show 192.168.1.23 plus ssh-keyscan -T1 -t ed25519, sampled from .27",
+          "evidence_id": "observed-192-168-1-23-owner-ssh-key-correlation",
+          "phase": "impact",
+          "summary": "The ED25519 host key was returned in each sample owned by 50:9A:4C:87:29:B3 and was absent in the captured samples owned by D4:43:0E:1A:C5:88.",
+          "facts": {
+            "host_key_fingerprint": "SHA256:N5K25qNnpTIauPYHr6FUW/8DWMXeCYbfSEljOag0NWY",
+            "samples": [
+              ["2026-08-05T15:04:35.654Z", "D4:43:0E:1A:C5:88", false],
+              ["2026-08-05T15:04:38.011Z", "50:9A:4C:87:29:B3", true],
+              ["2026-08-05T15:04:38.561Z", "50:9A:4C:87:29:B3", true],
+              ["2026-08-05T15:04:39.095Z", "50:9A:4C:87:29:B3", true],
+              ["2026-08-05T15:04:39.644Z", "D4:43:0E:1A:C5:88", false],
+              ["2026-08-05T15:04:41.970Z", "D4:43:0E:1A:C5:88", false]
+            ]
+          }
+        }
+      ],
+      "detector": {
+        "kind": "dual_mac_window",
+        "window_seconds": 300,
+        "input_source_kind": "observed",
+        "time_basis": "captured_utc",
+        "events": [
+          {
+            "event_id": "arp-23-20260805-150334927",
+            "timestamp": "2026-08-05T15:03:34.927Z",
+            "ip": "192.168.1.23",
+            "mac": "D4:43:0E:1A:C5:88",
+            "source_kind": "observed"
+          },
+          {
+            "event_id": "arp-23-20260805-150335965",
+            "timestamp": "2026-08-05T15:03:35.965Z",
+            "ip": "192.168.1.23",
+            "mac": "50:9A:4C:87:29:B3",
+            "source_kind": "observed"
+          },
+          {
+            "event_id": "arp-23-20260805-150338525",
+            "timestamp": "2026-08-05T15:03:38.525Z",
+            "ip": "192.168.1.23",
+            "mac": "D4:43:0E:1A:C5:88",
+            "source_kind": "observed"
+          }
+        ]
+      },
+      "replay_signals": [
+        {
+          "at_seconds": 0,
+          "signal": "arp_observation",
+          "ip": "192.168.1.23",
+          "mac": "D4:43:0E:1A:C5:88"
+        },
+        {
+          "at_seconds": 1,
+          "signal": "arp_observation",
+          "ip": "192.168.1.23",
+          "mac": "50:9A:4C:87:29:B3"
+        },
+        {
+          "at_seconds": 4,
+          "signal": "arp_ownership_return",
+          "ip": "192.168.1.23",
+          "mac": "D4:43:0E:1A:C5:88"
+        }
+      ],
+      "disposition": {
+        "status": "awaiting_readback",
+        "operator_note": null,
+        "updated_at": null,
+        "readback": {
+          "state": "not_collected",
+          "source_kind": null,
+          "collected_at": null,
+          "checks": []
+        }
+      }
+    },
+    {
+      "id": "inc-192-168-1-27-cloud-init-network-drift",
+      "title": "192.168.1.27 post-restart cloud-init network drift",
+      "incident_type": "host_network_preflight_drift",
+      "severity": "critical",
+      "asset": {
+        "ip": "192.168.1.27",
+        "name": "autopoiesis"
+      },
+      "classification": "historical_real_incident",
+      "current_online_observation": false,
+      "summary": "SSH became unreachable; after restart, cloud-init network management overwrote the intended network state and the host had no business IP.",
+      "root_cause": "The post-restart address loss is supported by cloud-init rewriting netplan to DHCP. The preceding SSH disconnect remains bounded to the client, session proxy, or cross-subnet path because server logs show successful logins and client-side disconnects before reboot.",
+      "impact": "After reboot, network wait timed out and the host had no business address even though sshd later listened on port 22.",
+      "root_cause_evidence_ids": [
+        "observed-192-168-1-27-pre-reboot-ssh",
+        "observed-192-168-1-27-cloud-init-rewrite",
+        "observed-192-168-1-27-network-wait-timeout",
+        "observed-192-168-1-27-sshd-listening"
+      ],
+      "captured_at": "2026-08-05T14:53:59Z",
+      "window": {
+        "start": "2026-08-05T10:26:03Z",
+        "end": "2026-08-05T14:53:59Z",
+        "basis": "system_logs_file_metadata_and_readback"
+      },
+      "evidence_timeline": [
+        {
+          "sequence": 1,
+          "occurred_at": null,
+          "source_kind": "manual",
+          "source_type": "operator_capture",
+          "evidence_locator": "operator-provided incident description",
+          "evidence_id": "manual-192-168-1-27-ssh-unreachable",
+          "phase": "impact",
+          "summary": "SSH access to 192.168.1.27 was reported unreachable.",
+          "facts": {
+            "ip": "192.168.1.27",
+            "service": "ssh",
+            "reachability": "unreachable"
+          }
+        },
+        {
+          "sequence": 2,
+          "occurred_at": "2026-08-05T10:26:03Z",
+          "source_kind": "observed",
+          "source_type": "system_log",
+          "evidence_locator": "/var/log/auth.log:1484-1524",
+          "evidence_id": "observed-192-168-1-27-pre-reboot-ssh",
+          "phase": "impact",
+          "summary": "The SSH server logged client-side KEX closes, then three successful public-key logins and user disconnects before reboot; no server rejection is present in this excerpt.",
+          "facts": {
+            "kex_closed_by_remote_at": ["10:26:03", "10:26:35"],
+            "accepted_publickey_at": ["10:30:37", "10:30:52", "10:31:09"],
+            "reboot_logged_at": "10:31:10",
+            "server_rejection_observed": false
+          }
+        },
+        {
+          "sequence": 3,
+          "occurred_at": "2026-08-05T10:35:56Z",
+          "source_kind": "observed",
+          "source_type": "system_log",
+          "evidence_locator": "last -x -F",
+          "evidence_id": "observed-192-168-1-27-boot",
+          "phase": "action",
+          "summary": "The recorded system boot began at 2026-08-05 10:35:56 UTC.",
+          "facts": {
+            "action": "host_restart",
+            "shutdown_at": "2026-08-05T10:31:22Z"
+          }
+        },
+        {
+          "sequence": 4,
+          "occurred_at": "2026-08-05T10:36:17.250Z",
+          "source_kind": "observed",
+          "source_type": "system_log",
+          "evidence_locator": "/var/log/cloud-init.log:3985-3999",
+          "evidence_id": "observed-192-168-1-27-cloud-init-rewrite",
+          "phase": "diagnosis",
+          "summary": "cloud-init read a 293-byte netplan file, applied system_cfg with eno8403 DHCP, rewrote the file to 392 bytes, and ran netplan generate.",
+          "facts": {
+            "manager": "cloud-init",
+            "interface": "eno8403",
+            "dhcp4": true,
+            "bytes_before": 293,
+            "bytes_after": 392,
+            "command": "netplan generate"
+          }
+        },
+        {
+          "sequence": 5,
+          "occurred_at": "2026-08-05T10:38:19.098327Z",
+          "source_kind": "observed",
+          "source_type": "system_log",
+          "evidence_locator": "journalctl -b 0 --since 2026-08-05T10:38:00Z --until 2026-08-05T10:38:30Z",
+          "evidence_id": "observed-192-168-1-27-network-wait-timeout",
+          "phase": "impact",
+          "summary": "systemd-networkd-wait-online timed out and Wait for Network failed to start.",
+          "facts": {
+            "timeout_at": "2026-08-05T10:38:19.098327Z",
+            "failed_unit_at": "2026-08-05T10:38:19.100634Z",
+            "business_ip_present_in_cloud_init_device_table": false
+          }
+        },
+        {
+          "sequence": 6,
+          "occurred_at": "2026-08-05T10:38:24Z",
+          "source_kind": "observed",
+          "source_type": "system_log",
+          "evidence_locator": "/var/log/auth.log:1523-1524",
+          "evidence_id": "observed-192-168-1-27-sshd-listening",
+          "phase": "impact",
+          "summary": "sshd listened on IPv4 and IPv6 after boot, while the preceding network evidence showed no business address.",
+          "facts": {
+            "listen_addresses": ["0.0.0.0:22", "[::]:22"]
+          }
+        },
+        {
+          "sequence": 7,
+          "occurred_at": null,
+          "source_kind": "manual",
+          "source_type": "operator_capture",
+          "evidence_locator": "operator-provided post-restart address check",
+          "evidence_id": "manual-192-168-1-27-business-ip-missing",
+          "phase": "readback",
+          "summary": "The host was reported without its business IP after restart.",
+          "facts": {
+            "expected_business_ip": "192.168.1.27",
+            "business_ip_present": false
+          }
+        },
+        {
+          "sequence": 8,
+          "occurred_at": "2026-08-05T12:36:40.254581Z",
+          "source_kind": "observed",
+          "source_type": "file_metadata",
+          "evidence_locator": "/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg",
+          "evidence_id": "observed-192-168-1-27-cloud-init-disabled",
+          "phase": "mitigation",
+          "summary": "A cloud configuration file disabling cloud-init network management was present with this modification time.",
+          "facts": {
+            "manager": "cloud-init",
+            "network_config": "disabled",
+            "file_size_bytes": 28
+          }
+        },
+        {
+          "sequence": 9,
+          "occurred_at": "2026-08-05T13:00:56.738049Z",
+          "source_kind": "observed",
+          "source_type": "file_metadata",
+          "evidence_locator": "/etc/cloud/cloud-init.disabled",
+          "evidence_id": "observed-192-168-1-27-cloud-init-sentinel",
+          "phase": "mitigation",
+          "summary": "The cloud-init disabled sentinel was present with this modification time.",
+          "facts": {
+            "file_size_bytes": 83
+          }
+        },
+        {
+          "sequence": 10,
+          "occurred_at": "2026-08-05T13:19:51.735036Z",
+          "source_kind": "observed",
+          "source_type": "file_metadata",
+          "evidence_locator": "/etc/netplan/60-netops-lan.yaml",
+          "evidence_id": "observed-192-168-1-27-static-netplan",
+          "phase": "mitigation",
+          "summary": "The persistent netplan file contains the static 192.168.1.27/24 address and was modified at this time.",
+          "facts": {
+            "business_ip": "192.168.1.27/24",
+            "dhcp4": false,
+            "file_size_bytes": 404
+          }
+        },
+        {
+          "sequence": 11,
+          "occurred_at": "2026-08-05T14:53:59Z",
+          "source_kind": "readback",
+          "source_type": "command_readback",
+          "evidence_locator": "ip -brief address show eth2",
+          "evidence_id": "readback-192-168-1-27-business-ip-present",
+          "phase": "readback",
+          "summary": "A timestamped address readback showed eth2 UP with 192.168.1.27/24.",
+          "facts": {
+            "interface": "eth2",
+            "state": "UP",
+            "business_ip": "192.168.1.27/24"
+          }
+        },
+        {
+          "sequence": 12,
+          "occurred_at": "2026-08-05T14:53:59Z",
+          "source_kind": "readback",
+          "source_type": "command_readback",
+          "evidence_locator": "ip route show default",
+          "evidence_id": "readback-192-168-1-27-default-route",
+          "phase": "readback",
+          "summary": "The default route pointed to 192.168.1.1 through eth2.",
+          "facts": {
+            "gateway": "192.168.1.1",
+            "interface": "eth2"
+          }
+        },
+        {
+          "sequence": 13,
+          "occurred_at": "2026-08-05T14:53:59Z",
+          "source_kind": "readback",
+          "source_type": "command_readback",
+          "evidence_locator": "systemctl is-active ssh",
+          "evidence_id": "readback-192-168-1-27-ssh-active",
+          "phase": "readback",
+          "summary": "The SSH service readback returned active.",
+          "facts": {
+            "service": "ssh",
+            "state": "active"
+          }
+        }
+      ],
+      "detector": {
+        "kind": "host_network_preflight_drift",
+        "input_source_kind": "simulated",
+        "time_basis": "simulated_relative_clock",
+        "expected_business_ips": [
+          "192.168.1.27"
+        ],
+        "preflight": {
+          "cloud_init_enabled": true,
+          "cloud_init_network_disabled": false,
+          "persistent_business_ips": []
+        },
+        "after_restart": {
+          "actual_business_ips": []
+        }
+      },
+      "replay_signals": [
+        {
+          "at_seconds": 0,
+          "signal": "ssh_unreachable",
+          "ip": "192.168.1.27"
+        },
+        {
+          "at_seconds": 20,
+          "signal": "network_preflight_risk",
+          "ip": "192.168.1.27"
+        },
+        {
+          "at_seconds": 40,
+          "signal": "host_restart",
+          "ip": "192.168.1.27"
+        },
+        {
+          "at_seconds": 70,
+          "signal": "cloud_init_network_apply",
+          "ip": "192.168.1.27"
+        },
+        {
+          "at_seconds": 90,
+          "signal": "business_ip_missing",
+          "ip": "192.168.1.27"
+        }
+      ],
+      "disposition": {
+        "status": "awaiting_readback",
+        "operator_note": "Current address, route, SSH, and persistent configuration checks pass; controlled restart persistence has not been verified.",
+        "updated_at": "2026-08-05T14:53:59Z",
+        "readback": {
+          "state": "partial",
+          "source_kind": "readback",
+          "collected_at": "2026-08-05T14:53:59Z",
+          "checks": [
+            {
+              "check": "business_ip_present",
+              "passed": true,
+              "observed": "eth2 UP 192.168.1.27/24",
+              "evidence_id": "readback-192-168-1-27-business-ip-present"
+            },
+            {
+              "check": "cloud_init_network_disabled",
+              "passed": true,
+              "observed": "network: {config: disabled}",
+              "evidence_id": "observed-192-168-1-27-cloud-init-disabled"
+            },
+            {
+              "check": "persistent_static_config_present",
+              "passed": true,
+              "observed": "192.168.1.27/24 in /etc/netplan/60-netops-lan.yaml",
+              "evidence_id": "observed-192-168-1-27-static-netplan"
+            },
+            {
+              "check": "default_route_present",
+              "passed": true,
+              "observed": "default via 192.168.1.1 dev eth2",
+              "evidence_id": "readback-192-168-1-27-default-route"
+            },
+            {
+              "check": "ssh_service_active",
+              "passed": true,
+              "observed": "active",
+              "evidence_id": "readback-192-168-1-27-ssh-active"
+            },
+            {
+              "check": "controlled_restart_persistence",
+              "passed": false,
+              "observed": "not_run",
+              "evidence_id": null
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

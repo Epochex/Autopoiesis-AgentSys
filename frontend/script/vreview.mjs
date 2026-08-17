@@ -55,6 +55,9 @@ const VIEWS = {
   pentest: [/^渗透$/, /^PENTEST$/],
   retrieval: [/^检索$/, /^RETRIEVAL$/],
 }
+/* No view sits behind a scenario switch any more: the environment sweep and
+ * the archived incidents were folded into PENTEST. */
+const VIEW_SCENARIO = {}
 const VIEWPORTS = W && H ? [[W, H]] : [[1920, 1080], [1440, 900]]
 const LANGS = ONLY_LANG ? [ONLY_LANG] : ['zh', 'en']
 const VIEW_KEYS = ONLY_VIEW ? [ONLY_VIEW] : Object.keys(VIEWS)
@@ -162,8 +165,13 @@ async function run() {
         const want = VIEWS[view][lang === 'zh' ? 0 : 1]
         const onView = async () =>
           (await page.getAttribute('.stage', 'data-view')) === view
+        const scenarioWant = VIEW_SCENARIO[view]?.[lang === 'zh' ? 0 : 1]
         let switched = await onView()
         for (let i = 0; i < 8 && !switched; i++) {
+          if (scenarioWant) {
+            const scen = page.locator('nav button, header button').filter({ hasText: scenarioWant })
+            if (await scen.count()) await scen.first().click().catch(() => {})
+          }
           const nav = page.locator('nav button, header button').filter({ hasText: want })
           if (await nav.count()) await nav.first().click().catch(() => {})
           try {

@@ -29,6 +29,7 @@ class Settings:
     frontend_dist: Path
     cors_origins: tuple[str, ...]
     trace_ledger_path: Path
+    incident_disposition_ledger_path: Path
     knowledge_corpus_path: Path | None
     # Read-only mount of the NetOps real-time subsystem's landed output (alerts +
     # AIOps suggestion JSONL sinks + cluster-state.json). The gateway TAILS these
@@ -49,6 +50,12 @@ class Settings:
                 "/data/autopoiesis-runtime/network-rca-trace.jsonl",
             )
         ).resolve()
+        incident_disposition_ledger_path = Path(
+            autopoiesis_env(
+                "INCIDENT_DISPOSITION_LEDGER_PATH",
+                "/data/autopoiesis-runtime/incidents/disposition.jsonl",
+            )
+        ).resolve()
         knowledge_corpus_value = autopoiesis_env("KNOWLEDGE_CORPUS_PATH")
         knowledge_corpus_path = (
             Path(knowledge_corpus_value).resolve()
@@ -63,6 +70,7 @@ class Settings:
             frontend_dist=frontend_dist,
             cors_origins=cors_origins,
             trace_ledger_path=trace_ledger_path,
+            incident_disposition_ledger_path=incident_disposition_ledger_path,
             knowledge_corpus_path=knowledge_corpus_path,
             netops_runtime_dir=netops_runtime_dir,
         )

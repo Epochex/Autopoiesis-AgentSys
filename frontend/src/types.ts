@@ -476,3 +476,303 @@ export interface RcaSnapshot {
   baselines: Baseline[]
   note: string
 }
+
+/* ── bounded historical incidents ──────────────────────────────────────────
+ * These records come from /api/rca/incidents. They deliberately do not share
+ * the RcaCase shape: a benchmark diagnosis and a documented operational
+ * incident have different clocks, provenance, disposition and readback rules.
+ * The API currently carries historical/manual/observed/readback evidence plus
+ * an isolated simulated detector replay. The frontend must keep those sources
+ * visibly separate and must never promote replay signals into observations. */
+export type IncidentSourceKind = 'observed' | 'manual' | 'readback' | 'simulated'
+
+export interface IncidentAsset {
+  ip: string
+  name: string
+}
+
+export interface IncidentReadbackCheck {
+  check: string
+  passed: boolean
+  observed: string
+  evidence_id: string | null
+}
+
+export interface IncidentReadback {
+  state: string
+  source_kind: IncidentSourceKind | null
+  collected_at: string | null
+  checks: IncidentReadbackCheck[]
+}
+
+export interface IncidentDisposition {
+  status: string
+  operator_note: string | null
+  updated_at: string | null
+  readback: IncidentReadback
+}
+
+export interface IncidentEvidence {
+  sequence: number
+  occurred_at: string | null
+  source_kind: IncidentSourceKind
+  source_type?: string
+  evidence_locator?: string
+  evidence_id: string
+  phase: string
+  summary: string
+  facts: Record<string, unknown>
+}
+
+export interface IncidentSummary {
+  id: string
+  title: string
+  incident_type: string
+  severity: string
+  asset: IncidentAsset
+  classification: 'historical_real_incident'
+  summary: string
+  root_cause?: string
+  impact?: string
+  root_cause_evidence_ids?: string[]
+  captured_at?: string | null
+  window?: { start: string | null; end: string | null; basis: string }
+  disposition: IncidentDisposition
+  current_online_observation: false
+  evidence_count: number
+}
+
+export interface IncidentMetricPoint {
+  capturedAt: string | null
+  value: unknown
+  evidenceIds: string[]
+}
+
+export interface IncidentMetric {
+  id: string
+  label: string
+  unit: string
+  points: IncidentMetricPoint[]
+}
+
+export interface IncidentTimelineItem {
+  id: string
+  sequence: number
+  capturedAt: string | null
+  phase: string
+  summary: string
+  evidenceIds: string[]
+  sourceKind: IncidentSourceKind
+}
+
+export interface IncidentEvidenceRef {
+  id: string
+  sourceKind: IncidentSourceKind
+  sourceType: string
+  locator: string
+  capturedAt: string | null
+  summary: string
+}
+
+export interface IncidentTopologyNode {
+  id: string
+  kind: string
+  label: string
+  evidenceIds: string[]
+  sourceKind: IncidentSourceKind
+}
+
+export interface IncidentTopologyEdge {
+  source: string
+  target: string
+  kind: string
+  evidenceIds: string[]
+  sourceKind: IncidentSourceKind
+}
+
+export interface IncidentResponseStep {
+  id: string
+  status: string
+  evidenceIds: string[]
+}
+
+export interface IncidentResponseReadback {
+  id: string
+  passed: boolean
+  observed: string
+  evidenceIds: string[]
+  missingReason: string | null
+}
+
+export interface IncidentDetail extends Omit<IncidentSummary, 'evidence_count'> {
+  evidence_timeline: IncidentEvidence[]
+  detector: Record<string, unknown>
+  replay_signals: Record<string, unknown>[]
+  detection: Record<string, unknown>
+  capturedAt: string | null
+  rootCause: string
+  rootCauseEvidenceIds: string[]
+  metrics: IncidentMetric[]
+  timeline: IncidentTimelineItem[]
+  evidence: IncidentEvidenceRef[]
+  topology: { nodes: IncidentTopologyNode[]; edges: IncidentTopologyEdge[] }
+  response: { approvalRequired: boolean; steps: IncidentResponseStep[]; readbacks: IncidentResponseReadback[] }
+}
+
+export interface IncidentListResponse {
+  ok: true
+  live: false
+  dataMode: 'historical_fixture'
+  datasetKind: string
+  currentOnlineObservation: false
+  count: number
+  incidents: IncidentSummary[]
+  note: string
+}
+
+export interface IncidentDetailResponse {
+  ok: true
+  live: false
+  dataMode: 'historical_fixture'
+  currentOnlineObservation: false
+  incident: IncidentDetail
+}
+
+/* ---------------------------------------------------------------- *
+ * Environment perception (/api/rca/environment)
+ * ---------------------------------------------------------------- */
+
+export type EnvSeverity = 'critical' | 'high' | 'medium' | 'low'
+export type EnvCoverageState = 'covered' | 'partial' | 'blind'
+export type EnvCellState = 'leased' | 'unbound' | 'contested' | 'silent'
+
+export interface EnvVerification {
+  state: 'confirmed' | 'unverifiable' | 'resolved'
+  source: string
+  note: string
+  note_zh: string
+  checked_at: string
+}
+
+export interface EnvPlaybookStep {
+  risk: 'readonly' | 'gated'
+  what: string
+  what_zh: string
+  command: string
+}
+
+export interface EnvPlaybook {
+  verify: EnvPlaybookStep[]
+  fix: EnvPlaybookStep[]
+  note: string
+}
+
+export interface EnvSource {
+  id: string
+  label: string
+  kind: 'live' | 'historical'
+  window_start: string | null
+  window_end: string | null
+  age_seconds: number | null
+  flowing: boolean
+  volume: number
+  unit: string
+  note: string
+}
+
+export interface EnvFinding {
+  finding_id: string
+  detector: string
+  fault_class: string
+  subject: string
+  subject_kind: string
+  segment: string | null
+  severity: EnvSeverity
+  confidence: number
+  headline: string
+  measured: Record<string, unknown>
+  evidence: Record<string, unknown>
+  explains: string[]
+  cannot_prove: string[]
+  cannot_prove_zh: string[]
+  next_probe: string
+  source_kinds: string[]
+  current_online_observation: boolean
+  verification: EnvVerification
+  playbook: EnvPlaybook
+}
+
+export interface EnvCoverageRow {
+  fault_class: string
+  label: string
+  coverage: EnvCoverageState
+  requires: string[]
+  present: string[]
+  missing: string[]
+  closes_with: string | null
+  closes_with_zh: string | null
+}
+
+export interface EnvCell {
+  ip: string
+  host: number
+  state: EnvCellState
+  mac: string | null
+  hostname: string | null
+  flow_events: number
+  clash_events: number
+}
+
+export interface EnvSegment {
+  segment: string
+  interface: string | null
+  cells: EnvCell[]
+  counts: Partial<Record<EnvCellState, number>>
+}
+
+export interface EnvironmentReport {
+  schema_version: number
+  generated_from: string
+  checked_at: string
+  current_online_observation: boolean
+  corpus: { files: string[]; lines_read: number; window_start: string | null; window_end: string | null }
+  sources: EnvSource[]
+  sensors: {
+    present: string[]
+    l2_identity_records: number
+    l2_identity_env_var: string
+    l2_identity_captured_at: string | null
+    l2_identity_age_seconds: number | null
+    l2_identity_stale: boolean | null
+    l2_history_captures: number
+    l2_history_env_var: string
+    l2_history_window: [string, string] | null
+  }
+  totals: {
+    findings: number
+    by_severity: Partial<Record<EnvSeverity, number>>
+    by_fault_class: Record<string, number>
+    by_verification: Record<string, number>
+    resolved_dropped: number
+    blind_classes: number
+    leased_addresses: number
+    served_segments: string[]
+  }
+  findings: EnvFinding[]
+  resolved: EnvFinding[]
+  coverage: EnvCoverageRow[]
+  address_space: EnvSegment[]
+}
+
+export interface OwnershipProbeResult {
+  ok: true
+  ip: string
+  samples: number
+  ports: Record<string, string>
+  owner_samples: Record<string, number>
+  service_profiles: Record<string, string[]>
+  verdict: 'contested' | 'inconclusive'
+  verdict_note: string
+  impact: Record<string, { service: string; served_by: string[]; unreachable_share: number }>
+  read_only: true
+}

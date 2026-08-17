@@ -21,6 +21,7 @@ type MeshModel = {
 import type { DataStats, Device, GraphAnalysis, SubnetGraph, TheaterEvent, Topology } from './types'
 
 type View = 'console' | 'trajectory' | 'pentest' | 'retrieval'
+type Scenario = 'live' | 'bench'
 
 type State =
   | { s: 'load' }
@@ -30,7 +31,7 @@ type State =
 function App() {
   const [lang, setLang] = useState<Lang>('zh')
   const [view, setView] = useState<View>('console')
-  const [scenario, setScenario] = useState<'live' | 'bench'>('live')
+  const [scenario, setScenario] = useState<Scenario>('live')
   const [provider, setProvider] = useState('rule')
   const [st, setSt] = useState<State>({ s: 'load' })
   const [active, setActive] = useState('')
@@ -323,12 +324,13 @@ function App() {
             <button className={scenario === 'live' ? 'on' : ''} onClick={() => setScenario('live')}>{lang === 'zh' ? '内网实时' : 'LIVE NET'}</button>
             <button className={scenario === 'bench' ? 'on' : ''} onClick={() => setScenario('bench')}>{lang === 'zh' ? '基准 · ITBench+LME' : 'BENCHMARK'}</button>
           </div>
-          <div className="pager">
-            <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '态势' : 'CONSOLE'}</button>
-            <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
-            <button className={view === 'pentest' ? 'on' : ''} onClick={() => setView('pentest')}>{lang === 'zh' ? '渗透' : 'PENTEST'}</button>
-            <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '检索' : 'RETRIEVAL'}</button>
-          </div>
+            <div className="pager">
+              <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '态势' : 'CONSOLE'}</button>
+              <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
+              <button className={view === 'pentest' ? 'on' : ''} onClick={() => setView('pentest')}>{lang === 'zh' ? '渗透' : 'PENTEST'}</button>
+              <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '检索' : 'RETRIEVAL'}</button>
+            </div>
+
           {/* The selector governs exactly one thing: the case diagnosis in
               /api/rca/snapshot. Baselines, evolution and the live threat cards
               resolve their own reasoner server-side and ignore it — so it is

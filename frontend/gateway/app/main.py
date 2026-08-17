@@ -4,18 +4,26 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field, IPvAnyAddress
 
 from .config import Settings
 from .live import analyze_graph, assess_device, assess_mesh, assess_subnet, assess_wan, event_rate, subnet_graph
 from .providers import list_providers
 from .rca_reader import load_rca_snapshot, _load_topology
+from domains.network_rca.incidents import (
+    IncidentDispositionUpdate,
+    IncidentRepository,
+    build_incident_replay,
+    detect_dual_mac_window,
+    detect_host_network_drift,
+    detect_host_network_preflight,
+)
 
 settings = Settings.from_env()
 _CACHE_TTL_SEC = 5.0
@@ -25,6 +33,16 @@ _cache_loaded_at = 0.0
 _evolving_service = None
 _runtime_error: str | None = None
 _diagnosis_cases: dict[str, Any] = {}
+# The environment sweep reads the whole syslog corpus, so it is cached for
+# longer than the live snapshot; ?refresh=1 forces a re-sweep after a source or
+# ARP snapshot changes.
+_ENVIRONMENT_TTL_SEC = 300.0
+_environment_lock = asyncio.Lock()
+_environment_report: dict[str, Any] | None = None
+_environment_loaded_at = 0.0
+_incident_repository = IncidentRepository(
+    ledger_path=settings.incident_disposition_ledger_path
+)
 
 
 class RCADiagnosisRequest(BaseModel):
@@ -32,6 +50,151 @@ class RCADiagnosisRequest(BaseModel):
 
     case_id: str = Field(min_length=1)
     session_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class IncidentAssetResponse(BaseModel):
+    ip: str
+    name: str
+
+
+class IncidentReadbackResponse(BaseModel):
+    state: str
+    source_kind: str | None
+    collected_at: str | None
+    checks: list[dict[str, Any]]
+
+
+class IncidentDispositionResponse(BaseModel):
+    status: str
+    operator_note: str | None
+    updated_at: str | None
+    readback: IncidentReadbackResponse
+
+
+class IncidentEvidenceResponse(BaseModel):
+    sequence: int
+    occurred_at: str | None
+    source_kind: Literal["observed", "manual", "readback", "simulated"]
+    source_type: str
+    evidence_locator: str
+    evidence_id: str
+    phase: str
+    summary: str
+    facts: dict[str, Any]
+
+
+class IncidentSummaryResponse(BaseModel):
+    id: str
+    title: str
+    incident_type: str
+    severity: str
+    asset: IncidentAssetResponse
+    classification: Literal["historical_real_incident"]
+    summary: str
+    disposition: IncidentDispositionResponse
+    current_online_observation: Literal[False]
+    evidence_count: int
+
+
+class IncidentDetailPayload(BaseModel):
+    id: str
+    title: str
+    incident_type: str
+    severity: str
+    asset: IncidentAssetResponse
+    classification: Literal["historical_real_incident"]
+    current_online_observation: Literal[False]
+    summary: str
+    root_cause: str
+    impact: str
+    root_cause_evidence_ids: list[str]
+    captured_at: str | None
+    window: dict[str, Any]
+    evidence_timeline: list[IncidentEvidenceResponse]
+    detector: dict[str, Any]
+    replay_signals: list[dict[str, Any]]
+    disposition: IncidentDispositionResponse
+    detection: dict[str, Any]
+    capturedAt: str | None
+    rootCause: str
+    rootCauseEvidenceIds: list[str]
+    metrics: list[dict[str, Any]]
+    timeline: list[dict[str, Any]]
+    evidence: list[dict[str, Any]]
+    topology: dict[str, Any]
+    response: dict[str, Any]
+
+
+class IncidentListResponse(BaseModel):
+    ok: Literal[True]
+    live: Literal[False]
+    dataMode: Literal["historical_fixture"]
+    datasetKind: str
+    currentOnlineObservation: Literal[False]
+    count: int
+    incidents: list[IncidentSummaryResponse]
+    note: str
+
+
+class IncidentDetailResponse(BaseModel):
+    ok: Literal[True]
+    live: Literal[False]
+    dataMode: Literal["historical_fixture"]
+    currentOnlineObservation: Literal[False]
+    incident: IncidentDetailPayload
+
+
+class IncidentDispositionAPIResponse(BaseModel):
+    ok: Literal[True]
+    persistence: Literal["append_only_jsonl"]
+    currentOnlineObservation: Literal[False]
+    incident: IncidentDetailPayload
+
+
+class IncidentReplayResponse(BaseModel):
+    ok: Literal[True]
+    live: Literal[False]
+    topic: str
+    streamed: dict[str, Any] | None
+    topicStatus: dict[str, Any] | None
+    incident_id: str
+    replay: Literal[True]
+    source_kind: Literal["simulated"]
+    time_basis: Literal["simulated_relative_clock"]
+    current_online_observation: Literal[False]
+    events: list[dict[str, Any]]
+    detection: dict[str, Any]
+
+
+class DualMacObservationRequest(BaseModel):
+    event_id: str = Field(min_length=1)
+    timestamp: AwareDatetime
+    ip: IPvAnyAddress
+    mac: str = Field(pattern=r"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+    source_kind: Literal["observed", "manual", "readback", "simulated"] = "observed"
+
+
+class DualMacDetectionRequest(BaseModel):
+    events: list[DualMacObservationRequest] = Field(min_length=2)
+    window_seconds: int = Field(default=300, ge=1, le=86400)
+
+
+class NetworkPreflightDetectionRequest(BaseModel):
+    expected_business_ips: list[IPvAnyAddress] = Field(min_length=1)
+    cloud_init_enabled: bool
+    cloud_init_network_disabled: bool
+    persistent_business_ips: list[IPvAnyAddress]
+    actual_business_ips: list[IPvAnyAddress] | None = None
+    source_kind: Literal["observed", "manual", "readback", "simulated"] = "observed"
+
+
+class IncidentDetectionResponse(BaseModel):
+    ok: Literal[True]
+    readonly: Literal[True]
+    source_kind: str
+    currentOnlineObservation: Literal[False]
+    detection: dict[str, Any]
+    actionPlan: dict[str, Any]
 
 
 def _start_prewarm() -> None:
@@ -478,6 +641,333 @@ async def rca_replay(
         "streamed": streamed,
         **trajectory,
     }
+
+
+@app.post(
+    "/api/rca/incidents/detect/dual-mac",
+    response_model=IncidentDetectionResponse,
+)
+async def rca_detect_dual_mac(request: DualMacDetectionRequest) -> dict[str, Any]:
+    """Evaluate supplied ARP observations without collecting or changing host state."""
+    events = [event.model_dump(mode="json") for event in request.events]
+    source_kinds = sorted({event.source_kind for event in request.events})
+    detection = await asyncio.to_thread(
+        detect_dual_mac_window, events, request.window_seconds
+    )
+    return {
+        "ok": True,
+        "readonly": True,
+        "source_kind": source_kinds[0] if len(source_kinds) == 1 else "mixed",
+        "currentOnlineObservation": False,
+        "detection": detection,
+        "actionPlan": {
+            "approvalRequired": True,
+            "steps": [
+                "Confirm switch-port and DHCP ownership for every detected MAC.",
+                "Quarantine or readdress the unintended owner after operator approval.",
+            ],
+            "readbackRequirements": [
+                "Observe one stable MAC for the IP across a complete detection window.",
+                "Verify reachability from the affected network segment.",
+            ],
+        },
+    }
+
+
+@app.post(
+    "/api/rca/incidents/detect/network-preflight",
+    response_model=IncidentDetectionResponse,
+)
+async def rca_detect_network_preflight(
+    request: NetworkPreflightDetectionRequest,
+) -> dict[str, Any]:
+    """Check restart persistence and optional post-change drift without remediation."""
+    expected_business_ips = [str(ip) for ip in request.expected_business_ips]
+    persistent_business_ips = [str(ip) for ip in request.persistent_business_ips]
+    preflight = await asyncio.to_thread(
+        detect_host_network_preflight,
+        expected_business_ips=expected_business_ips,
+        cloud_init_enabled=request.cloud_init_enabled,
+        cloud_init_network_disabled=request.cloud_init_network_disabled,
+        persistent_business_ips=persistent_business_ips,
+        source_kind=request.source_kind,
+    )
+    drift = None
+    if request.actual_business_ips is not None:
+        drift = await asyncio.to_thread(
+            detect_host_network_drift,
+            expected_business_ips=expected_business_ips,
+            actual_business_ips=[str(ip) for ip in request.actual_business_ips],
+            source_kind=request.source_kind,
+        )
+    detection = {
+        "detector": "host_network_preflight_drift",
+        "detected": preflight["detected"] or bool(drift and drift["detected"]),
+        "preflight": preflight,
+        "drift": drift,
+        "source_kinds": [request.source_kind],
+        "observation_scope": preflight["observation_scope"],
+        "current_online_observation": False,
+    }
+    return {
+        "ok": True,
+        "readonly": True,
+        "source_kind": request.source_kind,
+        "currentOnlineObservation": False,
+        "detection": detection,
+        "actionPlan": {
+            "approvalRequired": True,
+            "steps": [
+                "Disable unintended cloud-init network management.",
+                "Persist the expected business IP before an approved restart.",
+            ],
+            "readbackRequirements": [
+                "Verify the expected IP, default route, and SSH listener after restart.",
+                "Run a controlled restart to verify configuration persistence.",
+            ],
+        },
+    }
+
+
+@app.get("/api/rca/incidents", response_model=IncidentListResponse)
+async def rca_incidents(
+    status: str | None = None,
+    incident_type: str | None = None,
+    asset_ip: str | None = None,
+) -> dict[str, Any]:
+    """List historical incident records without implying a current live finding."""
+    incidents = await asyncio.to_thread(
+        _incident_repository.list,
+        status=status,
+        incident_type=incident_type,
+        asset_ip=asset_ip,
+    )
+    metadata = _incident_repository.metadata
+    return {
+        "ok": True,
+        "live": False,
+        "dataMode": metadata["data_mode"],
+        "datasetKind": metadata["dataset_kind"],
+        "currentOnlineObservation": False,
+        "count": len(incidents),
+        "incidents": incidents,
+        "note": metadata["note"],
+    }
+
+
+@app.get("/api/rca/incidents/{incident_id}", response_model=IncidentDetailResponse)
+async def rca_incident_detail(incident_id: str) -> dict[str, Any]:
+    """Return the evidence timeline, detector result, disposition, and readback."""
+    try:
+        incident = await asyncio.to_thread(_incident_repository.get, incident_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="unknown incident_id") from exc
+    return {
+        "ok": True,
+        "live": False,
+        "dataMode": "historical_fixture",
+        "currentOnlineObservation": False,
+        "incident": incident,
+    }
+
+
+@app.patch(
+    "/api/rca/incidents/{incident_id}/disposition",
+    response_model=IncidentDispositionAPIResponse,
+)
+async def rca_incident_disposition(
+    incident_id: str, request: IncidentDispositionUpdate
+) -> dict[str, Any]:
+    """Append a handling-state update; resolving requires a passed readback."""
+    try:
+        incident = await asyncio.to_thread(
+            _incident_repository.update_disposition, incident_id, request
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="unknown incident_id") from exc
+    return {
+        "ok": True,
+        "persistence": "append_only_jsonl",
+        "currentOnlineObservation": False,
+        "incident": incident,
+    }
+
+
+@app.post("/api/rca/incidents/{incident_id}/replay", response_model=IncidentReplayResponse)
+async def rca_incident_replay(
+    incident_id: str,
+    inject: int = Query(default=0, ge=0, le=1),
+) -> dict[str, Any]:
+    """Replay one incident locally or through the existing isolated replay topic."""
+    from core.evolve.replay_stream import (
+        REPLAY_TOPIC,
+        produce_tagged_replay,
+        topic_status,
+    )
+
+    try:
+        replay = await asyncio.to_thread(
+            build_incident_replay, _incident_repository, incident_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="unknown incident_id") from exc
+
+    streamed = None
+    status = None
+    if inject == 1:
+        streamed = await asyncio.to_thread(
+            produce_tagged_replay,
+            replay["events"],
+            [incident_id],
+            topic=REPLAY_TOPIC,
+        )
+        status = await asyncio.to_thread(topic_status, REPLAY_TOPIC)
+    return {
+        "ok": True,
+        "live": False,
+        "topic": REPLAY_TOPIC,
+        "streamed": streamed,
+        "topicStatus": status,
+        **replay,
+    }
+
+
+@app.get("/api/rca/environment")
+async def rca_environment(refresh: int = Query(default=0, ge=0, le=1)) -> dict[str, Any]:
+    """Environment perception sweep: what the sources prove, and what they cannot.
+
+    Returns findings *and* the sensor-coverage matrix. The matrix is not
+    decoration: a fault class with no source present is reported as ``blind``
+    so an empty findings list can never be misread as a healthy segment.
+    """
+    global _environment_report, _environment_loaded_at
+    from domains.network_rca.environment import build_environment_report
+
+    async with _environment_lock:
+        stale = time.monotonic() - _environment_loaded_at > _ENVIRONMENT_TTL_SEC
+        if refresh == 1 or _environment_report is None or stale:
+            _environment_report = await asyncio.to_thread(build_environment_report)
+            _environment_loaded_at = time.monotonic()
+        return _environment_report
+
+
+class OwnershipProbeRequest(BaseModel):
+    """Operator-triggered verification of one contested address.
+
+    The address must already appear in a segment the sweep knows about, and the
+    ports come from the module's allowlist. Without both limits this endpoint is
+    a port scanner that anyone who can reach the console can aim at the LAN.
+    """
+
+    ip: IPvAnyAddress
+    ports: list[int] | None = Field(default=None, max_length=6)
+    samples: int = Field(default=16, ge=2, le=40)
+
+
+@app.post("/api/rca/environment/probe")
+async def rca_environment_probe(request: OwnershipProbeRequest) -> dict[str, Any]:
+    """Run the read-only differential ownership probe against one address.
+
+    Ping cannot settle a duplicate address -- both claimants answer it. This
+    samples which MAC owns the ARP entry alongside a small allowlisted port set,
+    so a changing service profile shows connections landing on different
+    machines, and quantifies how often the intended service is unreachable.
+    """
+    from domains.network_rca.ownership_probe import DEFAULT_PORTS, probe_address_ownership
+
+    target = str(request.ip)
+    report = await rca_environment()
+    known = set(report["totals"].get("served_segments") or [])
+    segment = ".".join(target.split(".")[:3]) + ".0/24"
+    if segment not in known:
+        raise HTTPException(
+            status_code=400,
+            detail=f"address is outside the segments this sweep covers: {sorted(known)}",
+        )
+
+    try:
+        result = await asyncio.to_thread(
+            probe_address_ownership,
+            target,
+            ports=tuple(request.ports) if request.ports else DEFAULT_PORTS,
+            samples=request.samples,
+            interval=0.8,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "live": True, **result}
+
+
+class ProbeStepRequest(BaseModel):
+    """Run one read-only verification step and return its real output.
+
+    ``command`` is not trusted caller text: it must byte-for-byte match a
+    read-only step the server itself put in a current playbook. That check plus
+    the executor's own parse/allowlist means the endpoint can only run probes
+    the platform already chose to display, against addresses it already covers.
+    """
+
+    command: str = Field(min_length=1, max_length=400)
+
+
+def _readonly_playbook_commands() -> set[str]:
+    """Every read-only command currently displayed in a playbook, env + recon."""
+    commands: set[str] = set()
+
+    report = _environment_report
+    if report is not None:
+        for finding in report.get("findings", []):
+            for step in finding.get("playbook", {}).get("verify", []):
+                if step.get("risk") == "readonly" and step.get("command"):
+                    commands.add(step["command"])
+
+    try:
+        from domains.active_recon.pentest import build_pentest_report
+
+        for scenario in ("live", "bench"):
+            pentest = build_pentest_report("en", "auto", scenario)
+            for finding in pentest.get("findings", []):
+                for step in (finding.get("playbook") or {}).get("steps", []):
+                    if step.get("mode") == "readonly" and step.get("cmd"):
+                        commands.add(step["cmd"])
+    except Exception:
+        pass
+    return commands
+
+
+@app.post("/api/rca/environment/run-step")
+async def rca_run_step(request: ProbeStepRequest) -> dict[str, Any]:
+    """Execute one non-mutating playbook step and return the real result.
+
+    Read-only probes (tcp connect, banner read, HTTP HEAD, TLS certificate) are
+    safe to run for the operator instead of asking them to copy-paste. Mutating
+    or intrusive steps have no executor and are refused before anything runs.
+    """
+    from domains.active_recon.probe_exec import run_probe
+
+    if _environment_report is None:
+        await rca_environment()
+    allowed = await asyncio.to_thread(_readonly_playbook_commands)
+    if request.command not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="command does not match a current read-only playbook step",
+        )
+
+    report = _environment_report or {}
+    served = set(report.get("totals", {}).get("served_segments") or [])
+
+    def _in_scope(ip: str) -> bool:
+        # No sweep yet (empty served set) → fall back to RFC1918, which the
+        # executor already enforces; never widen to public addresses.
+        segment = ".".join(ip.split(".")[:3]) + ".0/24"
+        return not served or segment in served
+
+    result = await asyncio.to_thread(run_probe, request.command, in_scope=_in_scope)
+    status = 200 if result.get("ran") else 422
+    if status != 200:
+        return {"ok": False, "live": True, **result}
+    return {"ok": True, "live": True, **result}
 
 
 @app.get("/api/rca/device_search")

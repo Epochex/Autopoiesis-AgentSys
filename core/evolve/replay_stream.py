@@ -100,6 +100,7 @@ def _event(case_id: str, seq: int, **over: Any) -> dict[str, Any]:
     ev.update(over)
     # honesty markers — always last so a generator can never clobber them
     ev["replay"] = True
+    ev["source_kind"] = "simulated"
     ev["case_id"] = case_id
     # Fault annotation → the REAL correlator's annotated_fault_v1 fires on ONE event
     # regardless of action type (login-failed / accept / dhcp-ack all covered), so
@@ -285,20 +286,49 @@ def produce_replay(case_ids: Sequence[str] | None = None, topic: str = REPLAY_TO
         events.extend(evs)
         used_cases.append(case.id)
 
+    return produce_tagged_replay(events, used_cases, topic=topic)
+
+
+def produce_tagged_replay(
+    events: Sequence[dict[str, Any]],
+    case_ids: Sequence[str],
+    *,
+    topic: str = REPLAY_TOPIC,
+) -> dict[str, Any]:
+    """Produce already-built, honesty-tagged events through the isolated replay path.
+
+    This shared transport lets dedicated incident replays reuse the same topic and
+    graceful-degradation behavior as the benchmark replay. It rejects untagged or
+    non-simulated inputs before invoking kubectl, which prevents historical fixture
+    records from being presented as current observations.
+    """
+    prepared = [dict(event) for event in events]
+    used_cases = list(case_ids)
+    for event in prepared:
+        if event.get("replay") is not True or event.get("source_kind") != "simulated":
+            return {
+                "ok": False,
+                "topic": topic,
+                "produced": 0,
+                "cases": used_cases,
+                "degraded": True,
+                "note": "replay transport accepts only replay:true simulated events",
+            }
+
     # QualityGate drops any event without a unique non-empty event_id before the rules
     # ever see it. Stamp a per-batch-unique id so repeat demos aren't swallowed by the
     # correlator's dedup cache.
     batch = uuid.uuid4().hex[:8]
-    for i, ev in enumerate(events):
+    for i, ev in enumerate(prepared):
         ev["event_id"] = f"{ev.get('case_id', 'replay')}-{i:03d}-{batch}"
 
-    if not events:
+    if not prepared:
         return {
             "ok": False, "topic": topic, "produced": 0, "cases": used_cases,
-            "degraded": True, "note": "no real cases available to replay",
+            "degraded": True, "note": "no replay events available",
         }
 
-    payload = "\n".join(json.dumps(ev, ensure_ascii=False) for ev in events) + "\n"
+    payload = "\n".join(json.dumps(ev, ensure_ascii=False) for ev in prepared) + "\n"
     try:
         proc = subprocess.run(
             _rpk_produce_cmd(topic),
@@ -318,9 +348,9 @@ def produce_replay(case_ids: Sequence[str] | None = None, topic: str = REPLAY_TO
             "degraded": True, "note": f"rpk produce failed (rc={proc.returncode}): {err or 'no stderr'}",
         }
     return {
-        "ok": True, "topic": topic, "produced": len(events), "cases": used_cases,
+        "ok": True, "topic": topic, "produced": len(prepared), "cases": used_cases,
         "degraded": False,
-        "note": f"produced {len(events)} replay:true events for {len(used_cases)} cases to {topic}",
+        "note": f"produced {len(prepared)} replay:true events for {len(used_cases)} cases to {topic}",
     }
 
 

@@ -52,4 +52,5 @@ testpaths = ["tests_py"]
 pythonpath = ["."]
 markers = [
   "performance: opt-in scale and latency benchmarks",
+  "live: opt-in checks that touch the real network/loopback",
 ]
