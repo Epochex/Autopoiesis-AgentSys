@@ -195,7 +195,7 @@ frontend/           React/Vite 战术态势界面 + 记忆 observatory + FastAPI
 `.github/workflows/` 下五条流水线：
 
 - **CI** — `python-ci`（3.11 装 `.[dev]`、跑全量 `tests_py`、mock-labeled Phase 1.5 报告、校验真实数据集 manifest）、`frontend-ci`（Node 20、tsc 类型检查 + vite 构建为 merge gate、eslint 为 advisory、vitest）、`benchmarks`（手动/周定时的确定性基准冒烟）。
-- **CD** — `release`（打 `v*` tag 时用 `frontend/Dockerfile` 构建控制台镜像并推到 GHCR）、`deploy`（手动触发，在 r450 自托管 runner 上跑 `frontend/script/deploy.sh`：ff 到 main → `npm run build` → 刷新 gateway 依赖 → `systemctl restart netops-ops-console-backend` → `/api/healthz` 健康检查；单机场景平时直接在机器上跑 `deploy.sh` 即可，注册 runner 后可改回 push 自动上线）。
+- **CD** — `release`（打 `v*` tag 时用 `frontend/Dockerfile` 构建控制台镜像并推到 GHCR）、`deploy`（push 到 main 后自动在 r450 自托管 runner 上跑 `frontend/script/deploy.sh`：ff 到 main → `npm run build` → 刷新 gateway 依赖 → `systemctl restart netops-ops-console-backend` → `/api/healthz` 健康检查；只认 push 与手动触发、不认 PR，fork 无法在自托管 runner 上执行代码）。
 
 见 [docs/CI_SETUP.md](./docs/CI_SETUP.md)。
 

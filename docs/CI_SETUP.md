@@ -51,14 +51,21 @@ The live site is bare-metal on r450 (LAN-only): systemd
 nginx serves `frontend/dist`. Because r450 is not reachable from GitHub's cloud
 runners, deployment runs on a **self-hosted runner registered on r450**.
 
-**Manual only.** `deploy.yml` triggers on `workflow_dispatch`, not on push: with
-no self-hosted runner registered a push trigger would just queue forever, and a
-single-box owner usually wants to choose *when* the live site changes. The job
-runs [`frontend/script/deploy.sh`](../frontend/script/deploy.sh) against the live
-tree: fast-forward to `origin/main` → `npm ci && npm run build` → refresh gateway
-deps into `.venv` → `systemctl restart` → poll `/api/healthz` (20× 1s). To turn
-on true push-to-deploy, register the runner and add a `push: {branches: [main]}`
-trigger back to `deploy.yml`. Day to day you can just run `deploy.sh` on the box.
+**Push-to-deploy (on).** A self-hosted runner is registered on r450
+(`r450-autopoiesis`, labels `self-hosted, r450`, installed as the systemd
+service `actions.runner.Epochex-Autopoiesis-AgentSys.r450-autopoiesis`, running
+as root so it can `systemctl restart`). Every push to `main` triggers `deploy`,
+which runs [`frontend/script/deploy.sh`](../frontend/script/deploy.sh) against
+the live tree: fast-forward to `origin/main` → `npm ci && npm run build` →
+refresh gateway deps into `.venv` → `systemctl restart` → poll `/api/healthz`
+(20× 1s). Only `push` (owner creds) and manual dispatch trigger it — no
+`pull_request` — so a fork PR can never run code on the self-hosted runner. You
+can still deploy by hand with `deploy.sh` on the box, or from the Actions tab.
+
+Runner admin: `cd /opt/gh-runner-autopoiesis`; `sudo ./svc.sh status|stop|start`
+manages it; `RUNNER_ALLOW_RUNASROOT=1 ./config.sh remove --token <t>` (token from
+`gh api -X POST repos/Epochex/Autopoiesis-AgentSys/actions/runners/remove-token`)
+unregisters it.
 
 **Dirty-tree safe.** r450 is also the dev box, so `deploy.sh` refuses to run
 against uncommitted changes (exit 2) rather than clobber work-in-progress.

@@ -1,18 +1,18 @@
 name: deploy
 
-# Deployment to the live r450 box (LAN-only, bare-metal systemd + nginx). Runs
-# on a self-hosted runner registered on r450, which operates directly on the
-# live tree at /data/Autopoiesis-AgentSys via deploy.sh: fast-forward to main,
-# rebuild dist, refresh gateway deps, restart the service, health-check :8026.
-# Dirty-tree safe (see deploy.sh).
+# Continuous deployment to the live r450 box (LAN-only, bare-metal systemd +
+# nginx). Runs on the self-hosted runner registered on r450 (labels:
+# self-hosted, r450), which operates directly on the live tree at
+# /data/Autopoiesis-AgentSys via deploy.sh: fast-forward to main, rebuild dist,
+# refresh gateway deps, restart the service, health-check :8026. Dirty-tree safe.
 #
-# MANUAL ONLY: triggered from the Actions tab (workflow_dispatch), not on push.
-# The box is LAN-only so GitHub-hosted runners can't reach it, and a push trigger
-# with no self-hosted runner just queues forever. Register a runner and add a
-# `push:` trigger here to turn on true push-to-deploy; until then deploy on
-# demand with this workflow or by running frontend/script/deploy.sh on the box.
+# Push-to-deploy: every push to main that passes review lands live here. Only
+# push (owner creds) and manual dispatch trigger this — no pull_request — so a
+# fork PR can never run code on the self-hosted runner.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       allow_dirty:
