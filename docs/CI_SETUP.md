@@ -51,10 +51,14 @@ The live site is bare-metal on r450 (LAN-only): systemd
 nginx serves `frontend/dist`. Because r450 is not reachable from GitHub's cloud
 runners, deployment runs on a **self-hosted runner registered on r450**.
 
-On push to `main` (or manual dispatch), the job runs
-[`frontend/script/deploy.sh`](../frontend/script/deploy.sh) directly against the
-live tree: fast-forward to `origin/main` → `npm ci && npm run build` → refresh
-gateway deps into `.venv` → `systemctl restart` → poll `/api/healthz` (20× 1s).
+**Manual only.** `deploy.yml` triggers on `workflow_dispatch`, not on push: with
+no self-hosted runner registered a push trigger would just queue forever, and a
+single-box owner usually wants to choose *when* the live site changes. The job
+runs [`frontend/script/deploy.sh`](../frontend/script/deploy.sh) against the live
+tree: fast-forward to `origin/main` → `npm ci && npm run build` → refresh gateway
+deps into `.venv` → `systemctl restart` → poll `/api/healthz` (20× 1s). To turn
+on true push-to-deploy, register the runner and add a `push: {branches: [main]}`
+trigger back to `deploy.yml`. Day to day you can just run `deploy.sh` on the box.
 
 **Dirty-tree safe.** r450 is also the dev box, so `deploy.sh` refuses to run
 against uncommitted changes (exit 2) rather than clobber work-in-progress.
