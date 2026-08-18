@@ -19,11 +19,17 @@
 
 ## 1 · 实时态势感知：全链路事件流处理
 
-系统的第一现场是内网态势。真实 FortiGate/R230 syslog 经 Redpanda 跨节点事件流接入，累计接入 **8900 万+ 网络事件与 93 万+ 告警**；事件时间水位线、迟到窗口、去重与原子检查点保证乱序处理与重启恢复。态势台把一条告警从原始事件走到处置预案的六段管线全部摊开——**关联器 → 告警流 → 簇窗口 → AIOps 推理 → 建议流 → 处置预案**——每段都标注真实耗时与该段用的模型（规则推理器或外部 provider）。
+系统的第一现场是内网态势。真实 FortiGate/R230 syslog 经 Redpanda 跨节点事件流接入，累计接入 **8900 万+ 网络事件与 93 万+ 告警**；事件时间水位线、迟到窗口、去重与原子检查点保证乱序处理与重启恢复。态势台把整个内网按厂商聚成设备星座，下钻子网后每台设备是可点选节点，威胁点亮、`AGENT 关联分析` 拉出关系。
+
+![子网态势感知 · 设备星座](./docs/assets/ui/subnet_situational_awareness.png)
+
+一条告警从原始事件走到处置预案的六段管线全部摊开——**关联器 → 告警流 → 簇窗口 → AIOps 推理 → 建议流 → 处置预案**——每段都标注真实耗时与该段用的模型（规则推理器或外部 provider）。
 
 ![实时态势 · 全链路事件流](./docs/assets/ui/live_situation_chain.png)
 
-界面右侧是被点选告警的诊断详情：诊断时间线（首个告警→簇末告警→AIOps 推理→建议产出→假设评审→预案生成）、各阶段巡逻记录、带支持/反证计数的假设集，以及只读的处置预案草案（每一步都标「只读核查」还是「需人工审批」）。整套「全链路拓扑剧场」可全屏展开，把该告警走过的自愈路径在设备/记忆拓扑上高亮。
+界面右侧是被点选告警的诊断详情：诊断时间线（首个告警→簇末告警→AIOps 推理→建议产出→假设评审→预案生成）、各阶段巡逻记录、带支持/反证计数的假设集，以及只读的处置预案草案（每一步都标「只读核查」还是「需人工审批」）。「全链路拓扑剧场」把这六段管线叠在 FortiGate → fortilink/LACP → 各子网的真实物理拓扑上，可全屏展开，把该告警走过的自愈路径在设备/记忆拓扑上高亮。
+
+![完整链路分析 · 流处理链叠在物理拓扑上](./docs/assets/ui/full_chain_analysis.png)
 
 ## 2 · 多智能体编排：路由、调度、升级、验证
 
@@ -46,7 +52,7 @@
 
 ![记忆观测舱 · 三层记忆生命周期](./docs/assets/ui/memory_observatory.png)
 
-**写入路由 `route()`** 是生命周期的入口判决：每条候选按与既有记忆的相似度落在 ADD/UPDATE/NOOP 三区。真实 R230 数据集上 6 次调用全部落在 ADD 区（相似度 0.00–0.40，离 0.62 的 UPDATE 闸门还差 0.22），标尺如实标出「本数据集路由结果 — ADD ×6 · UPDATE ×0 · NOOP ×0」，不粉饰。
+**写入路由 `route()`** 是生命周期的入口判决：每条候选按与既有记忆的相似度落在 ADD/UPDATE/NOOP 三区。真实 R230 数据集上 6 次调用全部落在 ADD 区（相似度 0.00–0.40，离 0.62 的 UPDATE 闸门还差 0.22），标尺标出「本数据集路由结果 — ADD ×6 · UPDATE ×0 · NOOP ×0」。
 
 ![写入路由 · route() 相似度标尺](./docs/assets/ui/write_route_ruler.png)
 
@@ -66,7 +72,7 @@
 
 ### 混合检索实录：真实案例可回放
 
-检索页不是抽象管线图，而是可回放的真实案例实录：顶部切换真实 RCA 案例（`eno1 无载波` / `showroom→office 不可达`，均为 phase-1 轨迹里 5× 真实运行），▶ 播放/点阶段跳步；正文里每篇命中文档带真实标题、真实正文、命中词高亮与全程轨迹徽章（命中#→融合#→上下文），末步「组装上下文」是真实喂给下游的段落加 token 预算填充。诚实降级：本机向量/重排离线时如实标注、图跳未扩展时写明「命中记忆之间无关系边可跳」。
+检索页不是抽象管线图，而是可回放的真实案例实录：顶部切换真实 RCA 案例（`eno1 无载波` / `showroom→office 不可达`，均为 phase-1 轨迹里 5× 真实运行），▶ 播放/点阶段跳步；正文里每篇命中文档带真实标题、真实正文、命中词高亮与全程轨迹徽章（命中#→融合#→上下文），末步「组装上下文」是真实喂给下游的段落加 token 预算填充。本机向量/重排离线时降级路径可见，图跳未扩展时标出「命中记忆之间无关系边可跳」。
 
 ![混合检索 · 真实案例实录](./docs/assets/ui/retrieval_record.png)
 
@@ -106,7 +112,7 @@ BM25 从查询时全量重建改为热增量倒排 + 不可变封存段 + 删除
 
 ![地址空间占用 · 三网段热力图](./docs/assets/ui/pentest_port_heatmap.png)
 
-每条结论点开是一套**可亲自运行的验证/修复 playbook**：目标、授权前提、编号步骤、判定、整改、证据来源。诚实门控——只读步骤（`ip neigh` / `nmap` / `openssl`）标「安全」可复制直接跑；入侵/利用步骤标红斜纹「需审批·勿直接跑」且 `# GATED · payload/wordlist withheld`，与「入侵动作停在闸门从未执行」一致；只在 RFC5737 文档网段/授权资产上参数化。
+每条结论点开是一套**可亲自运行的验证/整改 playbook**，按真实 ip/port/服务参数化：只读验证步骤（`nc` / `nmap` / `curl` / `openssl` / `ip neigh`）可复制或就地「执行」，判定给出确有问题 vs 已缓解的分界，**整改步骤是可直接跑的具体命令**（如网关侧限制管理端口来源、数据库改 bind、TLS 只留 1.2+ 与换证），不是「加固管理网络」这种空话。
 
 ![判定 · 每条结论带可运行 playbook](./docs/assets/ui/pentest_findings_playbook.png)
 
@@ -123,7 +129,7 @@ BM25 从查询时全量重建改为热增量倒排 + 不可变封存段 + 删除
 ![能力 → 基准 → 真实指标 映射](./docs/assets/ui/bench_capability_map.png)
 
 - **内网根因分析 → 网络 RCA 自愈回放（真跑）**：真实 R230 FortiGate 留出集（6 类事件 × 4 pass，规则推理器）上取证 32 次，根因准确率与引用核验均为 100%，关闭技能调度后落到 16.7%；6 真实用例注入 Redpanda 隔离 topic 后端到端检测/校验/自愈 100%、记忆自演化 +19。
-- **长期记忆/检索 → LongMemEval-500（真跑）**：recall@5 = 0.906，BM25 词法上限 0.97 领先（如实不粉饰）。
+- **长期记忆/检索 → LongMemEval-500（真跑）**：recall@5 = 0.906，BM25 词法上限 0.97 领先。
 - **自我渗透/安全 → ITBench·CISO（公开定义）**、**内网 RCA → ITBench·SRE（公开参照）**：ITBench 为公开基准（IBM，ICML 2025，arXiv:2502.05352），SRE 11.4% / CISO 25.2% / FinOps 25.8% 为公开 SOTA 基线，本地专用集群跑分标注「待跑」，未伪造本地分。
 
 ![LongMemEval-500 · 记忆检索](./docs/assets/ui/bench_longmemeval.png)
@@ -187,7 +193,7 @@ frontend/           React/Vite 战术态势界面 + 记忆 observatory + FastAPI
 `.github/workflows/` 下五条流水线：
 
 - **CI** — `python-ci`（3.11 装 `.[dev]`、跑全量 `tests_py`、mock-labeled Phase 1.5 报告、校验真实数据集 manifest）、`frontend-ci`（Node 20、tsc 类型检查 + vite 构建为 merge gate、eslint 为 advisory、vitest）、`benchmarks`（手动/周定时的确定性基准冒烟）。
-- **CD** — `release`（打 `v*` tag 时用 `frontend/Dockerfile` 构建控制台镜像并推到 GHCR，仅用内置 token）、`deploy`（push 到 main 时在 r450 上的自托管 runner 直发：ff 到 main → `npm run build` → 刷新 gateway 依赖 → `systemctl restart netops-ops-console-backend` → `/api/healthz` 健康检查；r450 同时是开发机，`deploy.sh` 对脏工作树 fail-safe 绝不覆盖未提交改动）。
+- **CD** — `release`（打 `v*` tag 时用 `frontend/Dockerfile` 构建控制台镜像并推到 GHCR）、`deploy`（在 r450 自托管 runner 上跑 `frontend/script/deploy.sh`：ff 到 main → `npm run build` → 刷新 gateway 依赖 → `systemctl restart netops-ops-console-backend` → `/api/healthz` 健康检查）。
 
 见 [docs/CI_SETUP.md](./docs/CI_SETUP.md)。
 
