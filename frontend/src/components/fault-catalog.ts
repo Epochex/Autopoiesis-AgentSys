@@ -209,7 +209,7 @@ export const FAULT_CATALOG: FaultFamily[] = [
     automation: 'manual',
     title: ['防火墙策略挡住了正常访问', 'FIREWALL POLICY IS BLOCKING SOMETHING REAL'],
     faultClasses: ['l2_loop_macflap', 'resolver_failure'],
-    confirm: ['被拒流量画像 + 和平时的流量对比', 'WHAT GOT DENIED, COMPARED WITH A NORMAL DAY'],
+    confirm: ['哪些流量被拒了 + 和平时比', 'WHAT GOT DENIED, COMPARED WITH A NORMAL DAY'],
     rationale: [
       '防火墙策略、VLAN、fortilink、LACP 是所有网段共用的一套东西,改错一条全网都受影响,而且没有撤销键,所以这一族永远由人来动。另外先别急着改:留出集里那条"策略拒绝"的正确答案其实是"本来就该拒",137/138 那些 NetBIOS 噪声是策略在正常工作。',
       'Policies, VLANs, fortilink and LACP are shared by every subnet: one wrong line hits everything and there is no undo, so a person always makes the change. And check before changing — the held-out deny case turned out to be "denied by design", with the 137/138 NetBIOS noise being the policy working correctly.',
