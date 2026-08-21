@@ -16,7 +16,7 @@
  */
 import { useMemo, useState } from 'react'
 import type { EnvSegment, GraphEdge, SubnetGraph } from '../types'
-import type { SurfaceHost } from './pentest-data'
+import type { SurfaceHost } from './scan-data'
 
 type Props = {
   graph: SubnetGraph | null
@@ -222,35 +222,35 @@ export function AttackSurfaceGraph({ graph, surface, segments, zh, selected, onS
     })
 
   return (
-    <div className="pt-graph">
-      <div className="pt-graph-legend">
+    <div className="dx-graph">
+      <div className="dx-graph-legend">
         {/* Two things a reader asks first: what does a circle mean, and what
             does a line mean. Both are spelled out here rather than left to a
             hover. NODES: size encodes exposure, fill encodes identity state
             (the same colours the address lattice uses). RELATIONS: each mined
             tie type, solid when observed and dashed when inferred. */}
-        <div className="pt-gl-row">
-          <span className="pt-gl-cap">{zh ? '节点' : 'NODES'}</span>
-          <span className="pt-gl-item">
+        <div className="dx-gl-row">
+          <span className="dx-gl-cap">{zh ? '节点' : 'NODES'}</span>
+          <span className="dx-gl-item">
             <svg width="34" height="16" aria-hidden="true">
-              <circle cx="6" cy="8" r="3" className="pt-gl-node" />
-              <circle cx="24" cy="8" r="7" className="pt-gl-node" />
+              <circle cx="6" cy="8" r="3" className="dx-gl-node" />
+              <circle cx="24" cy="8" r="7" className="dx-gl-node" />
             </svg>
             {zh ? '圈越大 = 暴露评分越高' : 'BIGGER = HIGHER EXPOSURE'}
           </span>
-          <span className="pt-gl-item"><i className="pt-gl-dot env-leased" />{zh ? '已绑定身份' : 'BOUND'}</span>
-          <span className="pt-gl-item"><i className="pt-gl-dot env-contested" />{zh ? '地址争用' : 'CONTESTED'}</span>
-          <span className="pt-gl-item"><i className="pt-gl-dot env-unbound" />{zh ? '有流量·无绑定' : 'UNBOUND'}</span>
-          <span className="pt-gl-item"><i className="pt-gl-dot env-silent" />{zh ? '无观测' : 'SILENT'}</span>
-          <span className="pt-gl-hint">{zh ? '点击节点 → 联动下方地址与判定' : 'CLICK A NODE → DRIVES THE LATTICE + LEDGER'}</span>
+          <span className="dx-gl-item"><i className="dx-gl-dot env-leased" />{zh ? '已绑定身份' : 'BOUND'}</span>
+          <span className="dx-gl-item"><i className="dx-gl-dot env-contested" />{zh ? '地址争用' : 'CONTESTED'}</span>
+          <span className="dx-gl-item"><i className="dx-gl-dot env-unbound" />{zh ? '有流量·无绑定' : 'UNBOUND'}</span>
+          <span className="dx-gl-item"><i className="dx-gl-dot env-silent" />{zh ? '无观测' : 'SILENT'}</span>
+          <span className="dx-gl-hint">{zh ? '点击节点 → 联动下方地址与判定' : 'CLICK A NODE → DRIVES THE LATTICE + LEDGER'}</span>
         </div>
-        <div className="pt-gl-row">
-          <span className="pt-gl-cap">{zh ? '连线 · 已挖掘的关系' : 'EDGES · MINED RELATIONS'}</span>
+        <div className="dx-gl-row">
+          <span className="dx-gl-cap">{zh ? '连线 · 已挖掘的关系' : 'EDGES · MINED RELATIONS'}</span>
           {kinds.map((kind) => (
             <button
               type="button"
               key={kind}
-              className={`pt-gl is-${kind}${muted.has(kind) ? ' is-off' : ''}`}
+              className={`dx-gl is-${kind}${muted.has(kind) ? ' is-off' : ''}`}
               onClick={() => toggleKind(kind)}
               aria-pressed={!muted.has(kind)}
               title={zh ? '点击可隐藏/显示该类关系' : 'click to hide / show this relation'}
@@ -261,19 +261,19 @@ export function AttackSurfaceGraph({ graph, surface, segments, zh, selected, onS
               {zh ? EDGE_LABEL[kind]?.[0] ?? kind : EDGE_LABEL[kind]?.[1] ?? kind}
             </button>
           ))}
-          <span className="pt-gl-hint">{zh ? '实线=硬证据 · 虚线=推断' : 'SOLID = OBSERVED · DASHED = INFERRED'}</span>
+          <span className="dx-gl-hint">{zh ? '实线=硬证据 · 虚线=推断' : 'SOLID = OBSERVED · DASHED = INFERRED'}</span>
         </div>
       </div>
 
-      <svg viewBox={`0 0 ${W} ${height}`} className="pt-graph-svg" role="img"
+      <svg viewBox={`0 0 ${W} ${height}`} className="dx-graph-svg" role="img"
         aria-label={zh ? '攻击面关系图' : 'Attack surface relation graph'}>
         <defs>
-          <pattern id="pt-node-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <pattern id="dx-node-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <line x1="0" y1="0" x2="0" y2="6" />
           </pattern>
         </defs>
         {looseCount ? (
-          <g className="pt-graph-band">
+          <g className="dx-graph-band">
             <line x1={PAD} y1={bandTop} x2={W - PAD} y2={bandTop} />
             <text x={PAD} y={bandTop + 16}>
               {zh
@@ -282,7 +282,7 @@ export function AttackSurfaceGraph({ graph, surface, segments, zh, selected, onS
             </text>
           </g>
         ) : null}
-        <g className="pt-graph-edges">
+        <g className="dx-graph-edges">
           {edges.map((edge, index) => {
             if (muted.has(edge.kind)) return null
             const a = byIp.get(edge.src)
@@ -293,7 +293,7 @@ export function AttackSurfaceGraph({ graph, surface, segments, zh, selected, onS
               <line
                 key={`${edge.src}-${edge.dst}-${index}`}
                 x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                className={`pt-ge is-${edge.kind}${edge.observed ? '' : ' is-inferred'}${lit ? ' is-lit' : ''}${active && !lit ? ' is-dim' : ''}`}
+                className={`dx-ge is-${edge.kind}${edge.observed ? '' : ' is-inferred'}${lit ? ' is-lit' : ''}${active && !lit ? ' is-dim' : ''}`}
                 strokeWidth={Math.min(2.4, 0.6 + edge.weight * 0.35)}
               >
                 <title>{`${edge.src} ↔ ${edge.dst} · ${edge.kind} · ${edge.evidence}`}</title>
@@ -301,14 +301,14 @@ export function AttackSurfaceGraph({ graph, surface, segments, zh, selected, onS
             )
           })}
         </g>
-        <g className="pt-graph-nodes">
+        <g className="dx-graph-nodes">
           {nodes.map((node) => {
             const isActive = active?.ip === node.ip
             const near = neighbours.has(node.ip)
             return (
               <g
                 key={node.ip}
-                className={`pt-gn env-${node.env}${isActive ? ' is-active' : ''}${active && !isActive && !near ? ' is-dim' : ''}`}
+                className={`dx-gn env-${node.env}${isActive ? ' is-active' : ''}${active && !isActive && !near ? ' is-dim' : ''}`}
                 transform={`translate(${node.x} ${node.y})`}
                 role="button"
                 tabIndex={0}
@@ -325,10 +325,10 @@ export function AttackSurfaceGraph({ graph, surface, segments, zh, selected, onS
                   }
                 }}
               >
-                <circle r={node.r} className="pt-gn-body" />
-                {node.env === 'unbound' ? <circle r={node.r} className="pt-gn-hatch" /> : null}
-                {node.risk >= 70 || node.env === 'contested' ? <circle r={node.r + 3.5} className="pt-gn-ring" /> : null}
-                <text y={node.r + 11} textAnchor="middle" className="pt-gn-label">
+                <circle r={node.r} className="dx-gn-body" />
+                {node.env === 'unbound' ? <circle r={node.r} className="dx-gn-hatch" /> : null}
+                {node.risk >= 70 || node.env === 'contested' ? <circle r={node.r + 3.5} className="dx-gn-ring" /> : null}
+                <text y={node.r + 11} textAnchor="middle" className="dx-gn-label">
                   {node.ip.split('.').pop()}
                 </text>
               </g>
@@ -337,7 +337,7 @@ export function AttackSurfaceGraph({ graph, surface, segments, zh, selected, onS
         </g>
       </svg>
 
-      <div className={`pt-readout${readout ? ` is-${readout.env}` : ' is-idle'}`}>
+      <div className={`dx-readout${readout ? ` is-${readout.env}` : ' is-idle'}`}>
         {readout ? (
           <>
             <b>{readout.ip}</b>

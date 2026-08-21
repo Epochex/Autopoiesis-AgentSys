@@ -66,7 +66,7 @@ export function BenchConsole({ lang }: { lang: Lang }) {
             onSub={noop}
             onDev={noop}
             onBatch={noop}
-            onPentest={noop}
+            onDiagnose={noop}
             theater={null}
             allGraphs={{}}
             onCloseTheater={noop}

@@ -1,13 +1,12 @@
-import './pentest.css'
+import './diagnose.css'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Lang } from '../i18n'
 import type { EnvFinding, EnvironmentReport, IncidentSummary, OwnershipProbeResult, SubnetGraph } from '../types'
-import type { PentestResp } from './pentest-data'
-import { isDocRange } from './pentest-data'
-import { FindingsRecord } from './pentest-record'
-import { AttackSurfaceGraph } from './pentest-surface-graph'
-import { AddressSpace, CoverageRail, OwnershipContention, OwnershipStable, ScopeStrip } from './pentest-environment'
-import { FAULT_LABEL, VERIFY_LABEL, pick } from './pentest-environment-labels'
+import type { Finding, ScanResp } from './scan-data'
+import { isDocRange, kindLabel, portsOf } from './scan-data'
+import { AttackSurfaceGraph } from './surface-graph'
+import { AddressSpace, CoverageRail, OwnershipContention, OwnershipStable, ScopeStrip } from './environment-blocks'
+import { FAULT_LABEL, VERIFY_LABEL, pick } from './environment-labels'
 import {
   AUTOMATION_LABEL,
   FAULT_CATALOG,
@@ -17,27 +16,28 @@ import {
   type FaultFamily,
 } from './fault-catalog'
 
-/* ── 渗透 · the one page that answers "what is wrong on this network now" ─────
+/* ── 诊断处置 · the one page that answers "what is wrong on this network, and
+ * who is allowed to fix it" ───────────────────────────────────────────────────
  *
- * Three readings used to live on three pages: the read-only recon record, the
- * environment sweep, and the archived incidents. They asked the same question
- * and each answered it in its own vocabulary, so the reader had to reconcile
- * three findings lists, three provenance headers and three verdict scales to
- * learn one thing. They are one ledger here, and the components that did the
- * same job twice are gone rather than stacked.
+ * The list is the fault-family catalog, ranked by how badly each family hurts.
+ * Everything the sources produce — the environment sweep, the exposure scan,
+ * the archived incidents — joins into the family it belongs to instead of
+ * standing as its own scored list. Three parallel findings lists with three
+ * verdict scales used to live here; the reader had to reconcile them to learn
+ * one thing, so they are one ledger now.
  *
- * Scope is live sources + full history. Findings the live sources show are gone
- * are retired out of the list and counted, never silently kept; findings no live
- * source can reach say so instead of borrowing the confidence of the ones that
- * can. */
+ * A family with no live hit still shows, on standby: the catalog is the fault
+ * space of this network, and the live sources only decide which families are
+ * firing right now — never which ones exist. */
 
-type St = { s: 'load' } | { s: 'err'; m: string } | { s: 'ok'; d: PentestResp }
+type St = { s: 'load' } | { s: 'err'; m: string } | { s: 'ok'; d: ScanResp }
 
-/** One ledger row: a catalog family joined with whatever the live sources
- * currently confirm inside it. */
+/** One ledger row: a catalog family joined with whatever the sources currently
+ * confirm inside it. */
 type CatRow = {
   fam: FaultFamily
   hits: EnvFinding[]
+  exposures: Finding[]
   archived: IncidentSummary[]
   live: boolean
 }
@@ -47,62 +47,68 @@ type CatRow = {
 const RUNNABLE = /^(nc|nmap|curl|openssl)\s/
 
 const T = (zh: boolean) => ({
-  codeMock: zh ? '模拟靶场 · 自我渗透 · 只读' : 'MOCK RANGE · SELF-PENTEST · READ-ONLY',
+  codeMock: zh ? '模拟靶场 · 只读扫描' : 'MOCK RANGE · READ-ONLY SCAN',
   codeReal: zh ? '内网真实资产 · 实时 + 全历史 · 只读' : 'REAL INTERNAL ASSETS · LIVE + FULL HISTORY · READ-ONLY',
   codeBench: zh ? 'ITBench · CISO 合规基准 · 公开定义' : 'ITBench · CISO COMPLIANCE · PUBLISHED DEFS',
   loading: zh ? '读取报告…' : 'READING REPORT…',
   offline: zh ? '报告不可用' : 'REPORT UNAVAILABLE',
   thesis: zh
-    ? '内核只跑只读侦察与环境扫描;入侵与变更动作全部停在审批闸门之前 —— 从未执行。每条结论都经过实时源复核,并给出可亲自运行的验证与修复 playbook。'
-    : 'The kernel runs read-only recon and an environment sweep; every intrusive or state-changing verb stops at the approval gate — never executed. Each finding is re-checked against the live sources and ships a runnable verify/fix playbook.',
+    ? '这个网络会出的问题分成九族,按严重程度排下来。每族写清楚三件事:怎么确认它真的发生了、谁来修(系统自己修 / 有条件自动 / 必须人工)、以及具体每一步跑什么。系统只跑过只读的检查;所有会改状态的动作都停在审批之前。'
+    : 'Every fault this network can have, folded into nine families and ranked by how badly each one hurts. Each says three things: how a hit gets confirmed, who is allowed to fix it (the system, the system under conditions, or a person), and the exact steps. Only read-only checks have ever run; everything that changes state stops before approval.',
   rfc: zh ? 'RFC 5737 文档保留网段 · 不可路由' : 'RFC 5737 DOC RANGE · NOT ROUTABLE',
   assets: zh ? '资产' : 'ASSETS',
   finds: zh ? '结论' : 'FINDINGS',
   confirmed: zh ? '实时确认' : 'CONFIRMED LIVE',
   retired: zh ? '已消失·移除' : 'RETIRED',
   blind: zh ? '盲区故障类' : 'BLIND CLASSES',
-  surface: zh ? '攻击面 · 资产' : 'ATTACK SURFACE',
+  surface: zh ? '开着哪些端口 · 资产' : 'OPEN PORTS BY ASSET',
   space: zh ? '地址空间占用' : 'ADDRESS-SPACE OCCUPANCY',
-  ledger: zh ? '判定 · 按实时确认与严重度 · 点开看验证与修复 playbook' : 'FINDINGS · BY LIVE STATE AND SEVERITY · EXPAND FOR THE PLAYBOOK',
+  ledger: zh ? '故障族 · 按严重程度排 · 点开看怎么确认、谁来修' : 'FAULT FAMILIES · WORST FIRST · EXPAND FOR HOW TO CONFIRM AND WHO FIXES IT',
   cov: zh ? '传感器覆盖 · 检测不到的必须点名' : 'SENSOR COVERAGE · WHAT CANNOT BE DETECTED IS NAMED',
-  recon: zh ? '只读侦察' : 'RECON',
-  env: zh ? '环境扫描' : 'ENV SWEEP',
-  inc: zh ? '归档事故' : 'ARCHIVED',
-  verify: zh ? '验证' : 'VERIFY',
-  fix: zh ? '修复' : 'FIX',
-  standby: zh ? '待命 · 未触发' : 'STANDBY · NOT FIRING',
-  liveHits: zh ? '实时命中' : 'LIVE HITS',
-  archivedHits: zh ? '历史事故' : 'ARCHIVED INCIDENTS',
-  rationale: zh ? '分级依据' : 'WHY THIS VERDICT',
-  protectedK: zh ? '保护约束' : 'PROTECTED',
+  standby: zh ? '目前没发生' : 'NOT HAPPENING NOW',
+  liveHits: zh ? '现在查到' : 'FOUND NOW',
+  exposureHits: zh ? '扫到敞开的' : 'FOUND OPEN',
+  archivedHits: zh ? '以前出过' : 'HAPPENED BEFORE',
+  rationale: zh ? '为什么这么定' : 'WHY',
+  protectedK: zh ? '不许动' : 'DO NOT TOUCH',
   probe: zh ? '运行归属探测' : 'RUN OWNERSHIP PROBE',
   probing: zh ? '探测中…' : 'PROBING…',
   run: zh ? '执行' : 'RUN',
   running: zh ? '执行中…' : 'RUNNING…',
   retiredNote: (n: number) =>
-    zh ? `${n} 条历史判定经实时复核已消失,已从列表移除` : `${n} FINDINGS RETIRED AFTER LIVE RE-CHECK`,
+    zh ? `${n} 条以前的判定,这次复查已经不在了,从列表里去掉` : `${n} FINDINGS GONE ON RE-CHECK, DROPPED FROM THE LIST`,
 })
 
-/** Join the catalog with the live sweep and the archive. The catalog is the
- * full fault-family space; the live sources only decide which families are
+/** Join the catalog with the sweep, the exposure scan and the archive. The
+ * catalog is the full fault space; the sources only decide which families are
  * firing right now, never which exist. */
-const joinCatalog = (findings: EnvFinding[], incidents: IncidentSummary[]): CatRow[] => {
+const joinCatalog = (
+  envFindings: EnvFinding[],
+  exposures: Finding[],
+  incidents: IncidentSummary[],
+): CatRow[] => {
   const rows = FAULT_CATALOG.map((fam) => {
-    const hits = findings.filter((f) => fam.faultClasses.includes(f.fault_class))
+    const hits = envFindings.filter((f) => fam.faultClasses.includes(f.fault_class))
+    const exp = exposures.filter((f) => (fam.reconKinds ?? []).includes(f.kind))
     const archived = incidents.filter((i) => INCIDENT_FAMILY[i.id] === fam.id)
-    return { fam, hits, archived, live: hits.some((h) => h.verification.state === 'confirmed') }
+    return {
+      fam,
+      hits,
+      exposures: exp,
+      archived,
+      live: hits.some((h) => h.verification.state === 'confirmed') || exp.length > 0,
+    }
   })
   rows.sort((a, b) => Number(b.live) - Number(a.live) || a.fam.prio - b.fam.prio)
   return rows
 }
 
-export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?: 'live' | 'bench' }) {
+export function DiagnosePage({ lang, scenario = 'live' }: { lang: Lang; scenario?: 'live' | 'bench' }) {
   const zh = lang === 'zh'
   const tx = T(zh)
   const [st, setSt] = useState<St>({ s: 'load' })
   const [envData, setEnv] = useState<EnvironmentReport | null>(null)
   const [incidentData, setIncidents] = useState<IncidentSummary[]>([])
-  const [selFind, setSelFind] = useState<string | null>(null)
   const [openRow, setOpenRow] = useState<string | null>(null)
   const [focusIp, setFocusIp] = useState<string | null>(null)
   const [relGraph, setRelGraph] = useState<SubnetGraph | null>(null)
@@ -112,10 +118,9 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
   useEffect(() => {
     let alive = true
     setSt({ s: 'load' })
-    setSelFind(null)
     fetch(`/api/rca/pentest?lang=${lang}&scenario=${scenario}`)
       .then((r) => r.json())
-      .then((d: PentestResp) => { if (alive) setSt(d && d.ok ? { s: 'ok', d } : { s: 'err', m: 'NO DATA' }) })
+      .then((d: ScanResp) => { if (alive) setSt(d && d.ok ? { s: 'ok', d } : { s: 'err', m: 'NO DATA' }) })
       .catch((e) => { if (alive) setSt({ s: 'err', m: e instanceof Error ? e.message : String(e) }) })
     return () => { alive = false }
   }, [lang, scenario])
@@ -146,7 +151,6 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
   const surface = useMemo(() => d?.surface ?? [], [d])
   const targetCidr = d?.target?.cidr ?? ''
   const findings = useMemo(() => d?.findings ?? [], [d])
-  const probes = useMemo(() => d?.probes ?? [], [d])
   const docRange = isDocRange(d?.target?.cidr)
 
   // The relations are already mined per subnet; the graph just draws them.
@@ -161,12 +165,14 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
   }, [targetCidr])
 
   const rows = useMemo(() => {
-    const joined = joinCatalog(env?.findings ?? [], incidents)
-    return focusIp
-      ? joined.filter((row) =>
-          row.hits.some((h) => h.subject === focusIp) || row.archived.some((i) => i.asset?.ip === focusIp))
-      : joined
-  }, [env, incidents, focusIp])
+    const joined = joinCatalog(env?.findings ?? [], findings, incidents)
+    if (!focusIp) return joined
+    const hostIp = (f: Finding) => surface.find((h) => h.host === f.host)?.ip
+    return joined.filter((row) =>
+      row.hits.some((h) => h.subject === focusIp)
+      || row.exposures.some((f) => hostIp(f) === focusIp)
+      || row.archived.some((i) => i.asset?.ip === focusIp))
+  }, [env, findings, incidents, surface, focusIp])
 
   const contested = useMemo(
     () => (env?.findings ?? []).filter((f) => f.fault_class === 'duplicate_ip_static'),
@@ -222,45 +228,38 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
       .catch((e: unknown) => setProbe({ ip, state: 'err', m: e instanceof Error ? e.message : String(e) }))
   }, [])
 
-  useEffect(() => {
-    if (st.s === 'ok' && findings.length && !selFind) {
-      const top = [...findings].sort((a, b) => b.severity - a.severity)[0]
-      setSelFind(top?.id ?? null)
-    }
-  }, [st, findings, selFind])
-
   return (
-    <div className="pt">
-      <header className="pt-head">
-        <div className="pt-head-l">
-          <div className="pt-head-code"><span>{d?.target?.cidr?.startsWith('itbench') ? tx.codeBench : docRange ? tx.codeMock : tx.codeReal}</span></div>
-          <h1 className="pt-head-title">{zh ? <>自我<mark>渗透</mark></> : <>SELF·<mark>PENTEST</mark></>}</h1>
-          <p className="pt-thesis">{tx.thesis}</p>
-          <div className="pt-target">
+    <div className="dx">
+      <header className="dx-head">
+        <div className="dx-head-l">
+          <div className="dx-head-code"><span>{d?.target?.cidr?.startsWith('itbench') ? tx.codeBench : docRange ? tx.codeMock : tx.codeReal}</span></div>
+          <h1 className="dx-head-title">{zh ? <>诊断<mark>处置</mark></> : <>DIAGNOSE &amp; <mark>FIX</mark></>}</h1>
+          <p className="dx-thesis">{tx.thesis}</p>
+          <div className="dx-target">
             <b>{d?.target?.label ?? '—'}</b><span>{d?.target?.cidr ?? '—'}</span>
-            {docRange ? <span className="pt-rfc"><span className="pt-lock" />{tx.rfc}</span> : null}
+            {docRange ? <span className="dx-rfc"><span className="dx-lock" />{tx.rfc}</span> : null}
           </div>
         </div>
         {d ? (
-          <div className="pt-metrics">
-            <div className="pt-metric"><b>{m.assets}</b><span>{tx.assets}</span></div>
-            <div className="pt-metric"><b>{m.finds}</b><span>{tx.finds}</span></div>
-            <div className="pt-metric crit"><b>{m.confirmed}</b><span>{tx.confirmed}</span></div>
-            <div className="pt-metric gate"><b>{m.blind}</b><span>{tx.blind}</span></div>
+          <div className="dx-metrics">
+            <div className="dx-metric"><b>{m.assets}</b><span>{tx.assets}</span></div>
+            <div className="dx-metric"><b>{m.finds}</b><span>{tx.finds}</span></div>
+            <div className="dx-metric crit"><b>{m.confirmed}</b><span>{tx.confirmed}</span></div>
+            <div className="dx-metric gate"><b>{m.blind}</b><span>{tx.blind}</span></div>
           </div>
         ) : null}
       </header>
 
-      {st.s === 'load' ? <div className="pt-state">{tx.loading}</div>
-        : st.s === 'err' ? <div className="pt-state">{tx.offline} · {st.m}</div>
+      {st.s === 'load' ? <div className="dx-state">{tx.loading}</div>
+        : st.s === 'err' ? <div className="dx-state">{tx.offline} · {st.m}</div>
         : (
           <>
             {env ? <ScopeStrip sources={env.sources} zh={zh} /> : null}
-            {env && m.retired ? <div className="pt-retired">{tx.retiredNote(m.retired)}</div> : null}
+            {env && m.retired ? <div className="dx-retired">{tx.retiredNote(m.retired)}</div> : null}
 
             {surface.length ? (
-              <section className="pt-sec">
-                <div className="pt-sec-k">{tx.surface}</div>
+              <section className="dx-sec">
+                <div className="dx-sec-k">{tx.surface}</div>
                 <AttackSurfaceGraph
                   graph={relGraph}
                   surface={surface}
@@ -273,8 +272,8 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
             ) : null}
 
             {env?.address_space?.length ? (
-              <section className="pt-sec">
-                <div className="pt-sec-k">{tx.space}</div>
+              <section className="dx-sec">
+                <div className="dx-sec-k">{tx.space}</div>
                 <AddressSpace
                   segments={env.address_space}
                   zh={zh}
@@ -289,7 +288,7 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
                 its stable/unbound status so the click always answers. With
                 nothing selected, the known drifts show by default. */}
             {focusIp ? (
-              <section className="pt-sec">
+              <section className="dx-sec">
                 {focusDrift ? (
                   <OwnershipContention finding={focusDrift} zh={zh} />
                 ) : (
@@ -298,29 +297,29 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
               </section>
             ) : (
               contested.map((finding) => (
-                <section className="pt-sec" key={`own-${finding.finding_id}`}>
+                <section className="dx-sec" key={`own-${finding.finding_id}`}>
                   <OwnershipContention finding={finding} zh={zh} />
                 </section>
               ))
             )}
 
-            <section className="pt-sec">
-              <div className="pt-sec-k">
+            <section className="dx-sec">
+              <div className="dx-sec-k">
                 {tx.ledger}
                 {focusIp ? (
-                  <button type="button" className="pt-clear" onClick={() => setFocusIp(null)}>
+                  <button type="button" className="dx-clear" onClick={() => setFocusIp(null)}>
                     {zh ? `按 ${focusIp} 过滤 · 清除` : `FILTERED BY ${focusIp} · CLEAR`}
                   </button>
                 ) : null}
               </div>
 
-              <div className="pt-guard">
-                <span className="pt-lock" />
+              <div className="dx-guard">
+                <span className="dx-lock" />
                 <p>{zh ? TAILSCALE_GUARD[0] : TAILSCALE_GUARD[1]}</p>
               </div>
 
               {scenario === 'live' && rows.length ? (
-                <div className="pt-ledger">
+                <div className="dx-ledger">
                   {rows.map((row) => {
                     const { fam } = row
                     const open = openRow === fam.id
@@ -332,30 +331,30 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
                       ? row.hits.find((h) => h.fault_class === 'duplicate_ip_static') ?? null
                       : null
                     return (
-                      <div className={`pt-row is-cat sev-${fam.severity} v-${liveState}${open ? ' is-open' : ''}`} key={fam.id}>
-                        <button type="button" className="pt-row-h is-cat" onClick={() => setOpenRow(open ? null : fam.id)} aria-expanded={open}>
-                          <span className="pt-row-p">P{fam.prio}</span>
-                          <span className="pt-row-sev">{fam.severity}</span>
-                          <span className={`pt-row-a a-${fam.automation}`}>{pick(AUTOMATION_LABEL[fam.automation], zh, fam.automation)}</span>
-                          <span className="pt-row-v">
+                      <div className={`dx-row is-cat sev-${fam.severity} v-${liveState}${open ? ' is-open' : ''}`} key={fam.id}>
+                        <button type="button" className="dx-row-h is-cat" onClick={() => setOpenRow(open ? null : fam.id)} aria-expanded={open}>
+                          <span className="dx-row-p">P{fam.prio}</span>
+                          <span className="dx-row-sev">{fam.severity}</span>
+                          <span className={`dx-row-a a-${fam.automation}`}>{pick(AUTOMATION_LABEL[fam.automation], zh, fam.automation)}</span>
+                          <span className="dx-row-v">
                             {liveState === 'standby' ? tx.standby : pick(VERIFY_LABEL[liveState], zh, liveState)}
-                            {row.hits.length ? ` · ${row.hits.length}` : ''}
+                            {row.hits.length + row.exposures.length ? ` · ${row.hits.length + row.exposures.length}` : ''}
                           </span>
-                          <span className="pt-row-t">{zh ? fam.title[0] : fam.title[1]}</span>
-                          <span className="pt-row-s">{zh ? fam.confirm[0] : fam.confirm[1]}</span>
+                          <span className="dx-row-t">{zh ? fam.title[0] : fam.title[1]}</span>
+                          <span className="dx-row-s">{zh ? fam.confirm[0] : fam.confirm[1]}</span>
                         </button>
                         {open ? (
-                          <div className="pt-row-b">
-                            <p className="pt-row-note"><b>{tx.rationale}</b> — {zh ? fam.rationale[0] : fam.rationale[1]}</p>
+                          <div className="dx-row-b">
+                            <p className="dx-row-note"><b>{tx.rationale}</b> — {zh ? fam.rationale[0] : fam.rationale[1]}</p>
                             {fam.protectedNote ? (
-                              <div className="pt-prot">
-                                <span className="pt-lock" />
+                              <div className="dx-prot">
+                                <span className="dx-lock" />
                                 <b>{tx.protectedK}</b>
                                 <p>{zh ? fam.protectedNote[0] : fam.protectedNote[1]}</p>
                               </div>
                             ) : null}
                             {row.hits.length ? (
-                              <div className="pt-hits">
+                              <div className="dx-hits">
                                 <span>{tx.liveHits}</span>
                                 {row.hits.map((hit) => (
                                   <em key={hit.finding_id} className={`v-${hit.verification.state}`}>
@@ -364,33 +363,47 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
                                 ))}
                               </div>
                             ) : null}
+                            {row.exposures.length ? (
+                              <div className="dx-hits">
+                                <span>{tx.exposureHits}</span>
+                                {row.exposures.map((f) => {
+                                  const host = surface.find((h) => h.host === f.host)
+                                  const ports = portsOf(host)
+                                  return (
+                                    <em key={f.id} className="v-confirmed">
+                                      {host?.ip ?? f.host} · {kindLabel(f.kind, zh)}{ports ? ` · ${ports}` : ''}
+                                    </em>
+                                  )
+                                })}
+                              </div>
+                            ) : null}
                             {row.archived.length ? (
-                              <div className="pt-hits">
+                              <div className="dx-hits">
                                 <span>{tx.archivedHits}</span>
                                 {row.archived.map((incident) => (
                                   <em key={incident.id} className="v-archived">{incident.asset?.ip ?? '—'} · {incident.title}</em>
                                 ))}
                               </div>
                             ) : null}
-                            <ol className="pt-pl">
+                            <ol className="dx-pl">
                               {fam.playbook.map((step, index) => {
                                 const runnable = step.risk === 'readonly' && RUNNABLE.test(step.command)
                                 const key = `${fam.id}-${index}`
                                 const out = ran[key]
                                 return (
-                                  <li className={`pt-pl-step is-${step.risk}`} key={key}>
-                                    <div className="pt-pl-meta">
-                                      <span className="pt-pl-risk">
-                                        {step.risk === 'gated' ? <><span className="pt-lock" /> {pick(STEP_LABEL.gated, zh, 'gated')}</> : pick(STEP_LABEL[step.risk], zh, step.risk)}
+                                  <li className={`dx-pl-step is-${step.risk}`} key={key}>
+                                    <div className="dx-pl-meta">
+                                      <span className="dx-pl-risk">
+                                        {step.risk === 'gated' ? <><span className="dx-lock" /> {pick(STEP_LABEL.gated, zh, 'gated')}</> : pick(STEP_LABEL[step.risk], zh, step.risk)}
                                       </span>
-                                      <span className="pt-pl-what">{zh ? step.what[0] : step.what[1]}</span>
+                                      <span className="dx-pl-what">{zh ? step.what[0] : step.what[1]}</span>
                                     </div>
-                                    <div className="pt-pl-cmd">
+                                    <div className="dx-pl-cmd">
                                       <code>{step.command}</code>
                                       {runnable ? (
                                         <button
                                           type="button"
-                                          className="pt-pl-run"
+                                          className="dx-pl-run"
                                           onClick={() => runStep(key, step.command)}
                                           disabled={out?.state === 'run'}
                                         >
@@ -399,28 +412,28 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
                                       ) : null}
                                     </div>
                                     {out && out.state !== 'run' ? (
-                                      <pre className={`pt-pl-out${out.state === 'err' ? ' is-err' : ''}`}>{out.text}</pre>
+                                      <pre className={`dx-pl-out${out.state === 'err' ? ' is-err' : ''}`}>{out.text}</pre>
                                     ) : null}
                                   </li>
                                 )
                               })}
                             </ol>
                             {probeHit ? (
-                              <div className="pt-probe">
+                              <div className="dx-probe">
                                 <button type="button" onClick={() => runProbe(probeHit.subject)} disabled={probe?.state === 'run'}>
                                   {probe?.ip === probeHit.subject && probe.state === 'run' ? tx.probing : tx.probe}
                                 </button>
                                 {probe?.ip === probeHit.subject && probe.state === 'done' && probe.data ? (
-                                  <div className="pt-probe-out">
+                                  <div className="dx-probe-out">
                                     <b>{probe.data.verdict}</b>
                                     <span>{probe.data.verdict_note}</span>
-                                    <div className="pt-probe-grid">
+                                    <div className="dx-probe-grid">
                                       {Object.entries(probe.data.service_profiles).map(([mac, ports]) => (
                                         <div key={mac}><dt>{mac}</dt><dd>{ports.join(' · ') || '—'}</dd></div>
                                       ))}
                                     </div>
                                     {Object.entries(probe.data.impact).map(([port, info]) => (
-                                      <div className="pt-probe-imp" key={port}>
+                                      <div className="dx-probe-imp" key={port}>
                                         {info.service} ({port}) —{' '}
                                         {zh
                                           ? `约 ${Math.round(info.unreachable_share * 100)}% 的时间不可达`
@@ -429,7 +442,7 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
                                     ))}
                                   </div>
                                 ) : null}
-                                {probe?.ip === probeHit.subject && probe.state === 'err' ? <span className="pt-probe-err">{probe.m}</span> : null}
+                                {probe?.ip === probeHit.subject && probe.state === 'err' ? <span className="dx-probe-err">{probe.m}</span> : null}
                               </div>
                             ) : null}
                           </div>
@@ -439,15 +452,11 @@ export function PentestPage({ lang, scenario = 'live' }: { lang: Lang; scenario?
                   })}
                 </div>
               ) : null}
-
-              {findings.length ? (
-                <FindingsRecord findings={findings} hosts={surface} probes={probes} zh={zh} sel={selFind} onSel={setSelFind} />
-              ) : null}
             </section>
 
             {env?.coverage?.length ? (
-              <section className="pt-sec">
-                <div className="pt-sec-k">{tx.cov}</div>
+              <section className="dx-sec">
+                <div className="dx-sec-k">{tx.cov}</div>
                 <CoverageRail rows={env.coverage} zh={zh} />
               </section>
             ) : null}

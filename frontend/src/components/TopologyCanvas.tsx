@@ -454,7 +454,7 @@ export function TopologyCanvas({
   onSub,
   onDev,
   onBatch,
-  onPentest,
+  onDiagnose,
   theater,
   allGraphs,
   onCloseTheater,
@@ -489,7 +489,7 @@ export function TopologyCanvas({
   onSub: (s: Subnet | null) => void
   onDev: (d: Device | null, cidr: string) => void
   onBatch: (cidr: string) => void
-  onPentest?: () => void
+  onDiagnose?: () => void
   /* ── event-driven full-chain topology theater ── */
   theater?: TheaterEvent | null
   allGraphs?: Record<string, SubnetGraph>
@@ -1233,8 +1233,8 @@ export function TopologyCanvas({
                           {wan.actions.map((a, i) => (<li key={i}>{a}</li>))}
                         </ol>
                       ) : null}
-                      {onPentest ? (
-                        <button className="wan-pentest-cta" onClick={onPentest}>
+                      {onDiagnose ? (
+                        <button className="wan-pentest-cta" onClick={onDiagnose}>
                           <span className="wpc-txt">{lang === 'zh' ? '去实测暴露面' : 'TEST THE EXPOSURE'}</span>
                           <span className="wpc-arrow">▸</span>
                         </button>

@@ -5,7 +5,7 @@ import { type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
 import { TrajectoryPage } from './components/TrajectoryPage'
-import { PentestPage } from './components/PentestPage'
+import { DiagnosePage } from './components/DiagnosePage'
 import { RetrievalPage } from './components/RetrievalPage'
 import { BenchConsole } from './components/BenchConsole'
 import { TopoSearch } from './components/TopoSearch'
@@ -20,7 +20,7 @@ type MeshModel = {
 }
 import type { DataStats, Device, GraphAnalysis, SubnetGraph, TheaterEvent, Topology } from './types'
 
-type View = 'console' | 'trajectory' | 'pentest' | 'retrieval'
+type View = 'console' | 'trajectory' | 'diagnose' | 'retrieval'
 type Scenario = 'live' | 'bench'
 
 type State =
@@ -327,16 +327,16 @@ function App() {
             <div className="pager">
               <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '态势' : 'CONSOLE'}</button>
               <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
-              <button className={view === 'pentest' ? 'on' : ''} onClick={() => setView('pentest')}>{lang === 'zh' ? '渗透' : 'PENTEST'}</button>
+              <button className={view === 'diagnose' ? 'on' : ''} onClick={() => setView('diagnose')}>{lang === 'zh' ? '诊断处置' : 'DIAGNOSE'}</button>
               <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '检索' : 'RETRIEVAL'}</button>
             </div>
 
           {/* The selector governs exactly one thing: the case diagnosis in
               /api/rca/snapshot. Baselines, evolution and the live threat cards
               resolve their own reasoner server-side and ignore it — so it is
-              captioned with its real scope, and hidden on pentest where it
+              captioned with its real scope, and hidden on the diagnose page where it
               governs nothing at all. */}
-          {scenario !== 'live' || view === 'pentest' ? null : (
+          {scenario !== 'live' || view === 'diagnose' ? null : (
             <div className="engines" role="group" aria-label={lang === 'zh' ? '案例诊断引擎' : 'Case-diagnosis reasoner'}>
               <span className="eng-scope">{lang === 'zh' ? '案例诊断' : 'Case diag'}</span>
               {d.providers.map((p) => {
@@ -371,8 +371,8 @@ function App() {
 
       {view === 'retrieval' ? (
         <RetrievalPage lang={lang} scenario={scenario} />
-      ) : view === 'pentest' ? (
-        <PentestPage lang={lang} scenario={scenario} />
+      ) : view === 'diagnose' ? (
+        <DiagnosePage lang={lang} scenario={scenario} />
       ) : view === 'console' && scenario === 'bench' ? (
         <BenchConsole lang={lang} />
       ) : view === 'trajectory' && scenario === 'bench' ? (
@@ -423,7 +423,7 @@ function App() {
                 onSub={(sub) => void openSubnet(sub?.cidr ?? null)}
                 onDev={researchDevice}
                 onBatch={researchSubnet}
-                onPentest={() => setView('pentest')}
+                onDiagnose={() => setView('diagnose')}
                 theater={theater}
                 allGraphs={allGraphs}
                 onCloseTheater={closeTheater}
@@ -529,7 +529,7 @@ function App() {
               onSub={() => {}}
               onDev={() => {}}
               onBatch={() => {}}
-              onPentest={() => {}}
+              onDiagnose={() => {}}
               theater={theater}
               allGraphs={{ [benchSnap.cidr]: benchSnap.graph }}
               onCloseTheater={closeTheater}

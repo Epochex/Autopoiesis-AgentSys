@@ -15,7 +15,7 @@ import type {
   EnvSegment,
   EnvSource,
 } from '../types'
-import { CELL_LABEL, COVERAGE_LABEL, FAULT_LABEL, ageText, clock, num, pick } from './pentest-environment-labels'
+import { CELL_LABEL, COVERAGE_LABEL, FAULT_LABEL, ageText, clock, num, pick } from './environment-labels'
 
 /* ── scope ────────────────────────────────────────────────────────────────
  * Which sources this report actually rests on, and which of them are still
@@ -26,8 +26,8 @@ import { CELL_LABEL, COVERAGE_LABEL, FAULT_LABEL, ageText, clock, num, pick } fr
 export function ScopeStrip({ sources, zh }: { sources: EnvSource[]; zh: boolean }) {
   const live = sources.filter((source) => source.flowing)
   return (
-    <div className="pt-scope">
-      <div className="pt-scope-k">
+    <div className="dx-scope">
+      <div className="dx-scope-k">
         {zh ? '口径' : 'SCOPE'}
         <b>
           {zh
@@ -35,20 +35,20 @@ export function ScopeStrip({ sources, zh }: { sources: EnvSource[]; zh: boolean 
             : `${live.length} LIVE + FULL HISTORY`}
         </b>
       </div>
-      <div className="pt-scope-rows">
+      <div className="dx-scope-rows">
         {sources.map((source) => (
-          <div className={`pt-src ${source.flowing ? 'is-live' : 'is-stalled'}`} key={source.id}>
-            <span className="pt-src-dot" aria-hidden="true" />
-            <span className="pt-src-name">{source.label}</span>
-            <span className="pt-src-kind">{source.flowing ? (zh ? '在写' : 'FLOWING') : (zh ? '不在写' : 'NOT FLOWING')}</span>
-            <span className="pt-src-window">
+          <div className={`dx-src ${source.flowing ? 'is-live' : 'is-stalled'}`} key={source.id}>
+            <span className="dx-src-dot" aria-hidden="true" />
+            <span className="dx-src-name">{source.label}</span>
+            <span className="dx-src-kind">{source.flowing ? (zh ? '在写' : 'FLOWING') : (zh ? '不在写' : 'NOT FLOWING')}</span>
+            <span className="dx-src-window">
               {clock(source.window_start)} → {clock(source.window_end)}
             </span>
-            <span className="pt-src-age">{ageText(source.age_seconds, zh)}</span>
-            <span className="pt-src-vol">
+            <span className="dx-src-age">{ageText(source.age_seconds, zh)}</span>
+            <span className="dx-src-vol">
               {num(source.volume)} {source.unit}
             </span>
-            <span className="pt-src-note">{source.note}</span>
+            <span className="dx-src-note">{source.note}</span>
           </div>
         ))}
       </div>
@@ -76,24 +76,24 @@ function Lattice({
   const rows: EnvCell[][] = []
   for (let index = 0; index < cells.length; index += 16) rows.push(cells.slice(index, index + 16))
   return (
-    <div className="pt-lattice" onMouseLeave={() => onReadout(null)}>
+    <div className="dx-lattice" onMouseLeave={() => onReadout(null)}>
       {rows.map((row) => (
-        <div className="pt-lattice-row" key={row[0].host}>
-          <span className="pt-lattice-label">.{row[0].host}</span>
+        <div className="dx-lattice-row" key={row[0].host}>
+          <span className="dx-lattice-label">.{row[0].host}</span>
           {row.map((cell) =>
             cell.state === 'silent' ? (
-              <span key={cell.ip} className="pt-cell is-silent" aria-hidden="true" />
+              <span key={cell.ip} className="dx-cell is-silent" aria-hidden="true" />
             ) : (
               <button
                 key={cell.ip}
                 type="button"
-                className={`pt-cell is-${cell.state}${selected === cell.ip ? ' is-sel' : ''}`}
+                className={`dx-cell is-${cell.state}${selected === cell.ip ? ' is-sel' : ''}`}
                 onMouseEnter={() => onReadout(cell)}
                 onFocus={() => onReadout(cell)}
                 onClick={() => onSelect(cell.ip)}
                 title={`${cell.ip} · ${pick(CELL_LABEL[cell.state], zh, cell.state)}`}
               >
-                <span className="pt-cell-n">{cell.host}</span>
+                <span className="dx-cell-n">{cell.host}</span>
               </button>
             ),
           )}
@@ -117,18 +117,18 @@ export function AddressSpace({
   const [hovered, setHovered] = useState<EnvCell | null>(null)
   return (
     <>
-      <div className="pt-legend">
+      <div className="dx-legend">
         {(['leased', 'unbound', 'contested', 'silent'] as EnvCellState[]).map((state) => (
-          <span className="pt-legend-i" key={state}>
-            <i className={`pt-cell is-${state}`} />
+          <span className="dx-legend-i" key={state}>
+            <i className={`dx-cell is-${state}`} />
             {pick(CELL_LABEL[state], zh, state)}
           </span>
         ))}
       </div>
-      <div className="pt-segments">
+      <div className="dx-segments">
         {segments.map((segment) => (
-          <div className="pt-segment" key={segment.segment}>
-            <div className="pt-segment-h">
+          <div className="dx-segment" key={segment.segment}>
+            <div className="dx-segment-h">
               <b>{segment.segment}</b>
               <span>{segment.interface ?? '—'}</span>
             </div>
@@ -139,7 +139,7 @@ export function AddressSpace({
               selected={selected}
               onSelect={onSelect}
             />
-            <div className="pt-segment-c">
+            <div className="dx-segment-c">
               {(['leased', 'unbound', 'contested', 'silent'] as EnvCellState[])
                 .filter((state) => segment.counts[state])
                 .map((state) => (
@@ -151,7 +151,7 @@ export function AddressSpace({
           </div>
         ))}
       </div>
-      <div className={`pt-readout${hovered ? ` is-${hovered.state}` : ' is-idle'}`}>
+      <div className={`dx-readout${hovered ? ` is-${hovered.state}` : ' is-idle'}`}>
         {hovered ? (
           <>
             <b>{hovered.ip}</b>
@@ -214,8 +214,8 @@ export function OwnershipTimeline({ finding, zh }: { finding: EnvFinding; zh: bo
   const ticks = Array.from({ length: 7 }, (_, i) => geom.min + (geom.span * i) / 6)
 
   return (
-    <div className="pt-own">
-      <div className="pt-own-h">
+    <div className="dx-own">
+      <div className="dx-own-h">
         <b>{zh ? '地址归属时间线' : 'ADDRESS OWNERSHIP TIMELINE'}</b>
         <span>{finding.subject}</span>
         <em>
@@ -224,13 +224,13 @@ export function OwnershipTimeline({ finding, zh }: { finding: EnvFinding; zh: bo
             : `${measured.handovers ?? transitions.length - 1} HANDOVERS · ${measured.captures ?? 0} CAPTURES · ${dayOf(geom.min)} → ${dayOf(geom.max)}`}
         </em>
       </div>
-      <svg viewBox="0 0 1200 230" className="pt-own-svg" role="img"
+      <svg viewBox="0 0 1200 230" className="dx-own-svg" role="img"
         aria-label={zh ? '地址归属阶梯图' : 'Address ownership step chart'}>
         {macs.slice(0, 2).map((mac) => (
           <g key={mac}>
-            <line x1="168" y1={laneY(mac)} x2="1178" y2={laneY(mac)} className="pt-own-lane" />
-            <text x="158" y={laneY(mac) - 10} textAnchor="end" className="pt-own-mac">{mac}</text>
-            <text x="158" y={laneY(mac) + 8} textAnchor="end" className="pt-own-role">
+            <line x1="168" y1={laneY(mac)} x2="1178" y2={laneY(mac)} className="dx-own-lane" />
+            <text x="158" y={laneY(mac) - 10} textAnchor="end" className="dx-own-mac">{mac}</text>
+            <text x="158" y={laneY(mac) + 8} textAnchor="end" className="dx-own-role">
               {leased.has(mac)
                 ? (zh ? '持有 DHCP 租约' : 'HOLDS THE DHCP LEASE')
                 : (zh ? '无租约记录' : 'NO LEASE ON RECORD')}
@@ -246,19 +246,19 @@ export function OwnershipTimeline({ finding, zh }: { finding: EnvFinding; zh: bo
           const ny = next ? laneY(next.mac) : y
           return (
             <g key={`${transition.captured_at}-${index}`} className={leased.has(transition.mac) ? 'is-leased' : 'is-unleased'}>
-              <path d={`M${x} ${y} H${nx} V${ny}`} className="pt-own-step" />
-              <circle cx={x} cy={y} r="3.5" className="pt-own-dot" />
+              <path d={`M${x} ${y} H${nx} V${ny}`} className="dx-own-step" />
+              <circle cx={x} cy={y} r="3.5" className="dx-own-dot" />
             </g>
           )
         })}
-        <line x1="168" y1="196" x2="1178" y2="196" className="pt-own-axis" />
+        <line x1="168" y1="196" x2="1178" y2="196" className="dx-own-axis" />
         {ticks.map((ms) => (
           <g key={ms}>
-            <line x1={geom.x(ms)} y1="192" x2={geom.x(ms)} y2="200" className="pt-own-axis" />
-            <text x={geom.x(ms)} y="214" textAnchor="middle" className="pt-own-tick">{hhmm(ms)}</text>
+            <line x1={geom.x(ms)} y1="192" x2={geom.x(ms)} y2="200" className="dx-own-axis" />
+            <text x={geom.x(ms)} y="214" textAnchor="middle" className="dx-own-tick">{hhmm(ms)}</text>
           </g>
         ))}
-        <text x="168" y="34" className="pt-own-cap">
+        <text x="168" y="34" className="dx-own-cap">
           {zh
             ? '每一次换手都是一段连接落到另一台机器的时间窗'
             : 'EVERY HANDOVER IS AN INTERVAL IN WHICH CONNECTIONS REACHED THE OTHER MACHINE'}
@@ -314,12 +314,12 @@ export function OwnershipSnapshot({ finding, zh }: { finding: EnvFinding; zh: bo
             ]
 
   const party = (macs: string[], kind: 'arp' | 'dhcp') => (
-    <div className={`pt-own-party ${kind}`}>
-      <span className="pt-own-party-k">
+    <div className={`dx-own-party ${kind}`}>
+      <span className="dx-own-party-k">
         {kind === 'arp' ? (zh ? 'ARP 当前应答' : 'ARP RESPONDER NOW') : zh ? 'DHCP 租约持有' : 'DHCP LEASE HOLDER'}
       </span>
       {(macs.length ? macs : ['—']).map((mac) => (
-        <div className="pt-own-mac-row" key={mac}>
+        <div className="dx-own-mac-row" key={mac}>
           <code>{mac}</code>
           <i>
             {mac === '—'
@@ -348,8 +348,8 @@ export function OwnershipSnapshot({ finding, zh }: { finding: EnvFinding; zh: bo
   )
 
   return (
-    <div className="pt-own is-snapshot">
-      <div className="pt-own-h">
+    <div className="dx-own is-snapshot">
+      <div className="dx-own-h">
         <b>{zh ? '地址争用 · 单次快照' : 'ADDRESS CONTENTION · SNAPSHOT'}</b>
         <span>{finding.subject}</span>
         <em>
@@ -360,12 +360,12 @@ export function OwnershipSnapshot({ finding, zh }: { finding: EnvFinding; zh: bo
             : ''}
         </em>
       </div>
-      <div className="pt-own-cxn">
+      <div className="dx-own-cxn">
         {party(arp, 'arp')}
-        <div className="pt-own-vs" aria-hidden="true">↔</div>
+        <div className="dx-own-vs" aria-hidden="true">↔</div>
         {party(leased, 'dhcp')}
       </div>
-      <p className="pt-own-verdict">{pick(verdict, zh, verdict[1])}</p>
+      <p className="dx-own-verdict">{pick(verdict, zh, verdict[1])}</p>
     </div>
   )
 }
@@ -404,13 +404,13 @@ export function OwnershipStable({ ip, cell, zh }: { ip: string; cell: EnvCell | 
     silent: ['该地址在本次采集里没有任何观测', 'no observation of this address in the current captures'],
   }
   return (
-    <div className="pt-own is-stable">
-      <div className="pt-own-h">
+    <div className="dx-own is-stable">
+      <div className="dx-own-h">
         <b>{zh ? '地址归属' : 'ADDRESS OWNERSHIP'}</b>
         <span>{ip}</span>
         <em>{pick(CELL_LABEL[state], zh, state)}</em>
       </div>
-      <p className="pt-own-stable-line">{pick(line[state], zh, state)}</p>
+      <p className="dx-own-stable-line">{pick(line[state], zh, state)}</p>
     </div>
   )
 }
@@ -421,17 +421,17 @@ export function OwnershipStable({ ip, cell, zh }: { ip: string; cell: EnvCell | 
  * with the sensor that would close each one. */
 export function CoverageRail({ rows, zh }: { rows: EnvCoverageRow[]; zh: boolean }) {
   return (
-    <div className="pt-cov">
+    <div className="dx-cov">
       {rows.map((row) => (
-        <div className={`pt-cov-r is-${row.coverage}`} key={row.fault_class}>
-          <span className="pt-cov-s">{pick(COVERAGE_LABEL[row.coverage], zh, row.coverage)}</span>
-          <span className="pt-cov-t" aria-hidden="true">
+        <div className={`dx-cov-r is-${row.coverage}`} key={row.fault_class}>
+          <span className="dx-cov-s">{pick(COVERAGE_LABEL[row.coverage], zh, row.coverage)}</span>
+          <span className="dx-cov-t" aria-hidden="true">
             {row.requires.map((source) => (
               <i className={row.present.includes(source) ? 'on' : 'off'} key={source} />
             ))}
           </span>
-          <span className="pt-cov-l">{pick(FAULT_LABEL[row.fault_class], zh, row.fault_class)}</span>
-          <span className="pt-cov-n">
+          <span className="dx-cov-l">{pick(FAULT_LABEL[row.fault_class], zh, row.fault_class)}</span>
+          <span className="dx-cov-n">
             {row.missing.length ? (
               <>
                 {zh ? '需要' : 'NEEDS'} <b>{row.missing.join(' + ')}</b> — {(zh ? row.closes_with_zh : row.closes_with) ?? row.closes_with}

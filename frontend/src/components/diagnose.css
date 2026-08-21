@@ -1,0 +1,352 @@
+/* The shell caps every page at 1420px, which suits a reading column. This page
+   is an instrument: a relation graph, three /24 lattices side by side and a
+   wide ledger all lose resolution when squeezed into a column and leave the
+   rest of a 1920 screen empty. */
+.stage[data-view='diagnose'] { max-width: none; padding: 24px 28px 60px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   PAGE 3 · 诊断处置 — the fault-family catalog for this network.
+   Families read as a list, worst first; each expands in place to how a hit is
+   confirmed, who is allowed to fix it, and the steps. Page-1/2/4 palette;
+   --acid = interaction only; severity in the crimson→amber→gray family.
+   ════════════════════════════════════════════════════════════════════════════ */
+.dx {
+  --paper:#e7e7e3; --paper-2:#efeee9; --paper-3:#dddcd5; --ink:#0d0d0d; --ink-soft:#2a2a27;
+  --gray:#605f5a; --rule:#cfcfca; --acid:#ccff00; --acid-ink:#0d0d0d; --teal:#12615c;
+  --hi:#c3384a; --mid:#a86a12; --lo:#8a8a86;
+  /* small-type variants: the fill tones above sit at 3.2–4.5:1 on paper, which
+     is legible at 26px and not at 8px. Type uses these; fills keep the above. */
+  --hi-t:#9e2937; --mid-t:#80500e;
+  --font-display:'IBM Plex Sans Condensed',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+  position:relative; min-height:100%; padding:0 0 40px; background:var(--paper); color:var(--ink); font-family:var(--font-mono);
+}
+.dx *,.dx *::before,.dx *::after { box-sizing:border-box; }
+.dx-lock { display:inline-block; width:9px; height:8px; position:relative; border:1.5px solid currentColor; border-top:none; vertical-align:middle; }
+.dx-lock::before { content:''; position:absolute; left:1px; top:-4px; width:5px; height:5px; border:1.5px solid currentColor; border-bottom:none; border-radius:3px 3px 0 0; }
+
+/* masthead */
+.dx-head { display:grid; grid-template-columns:1fr auto; align-items:start; gap:20px; padding:16px 0 14px; border-bottom:2px solid var(--ink); }
+.dx-head-code { font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-soft); margin-bottom:6px; }
+.dx-head-title { margin:0; font-family:var(--font-display); font-weight:600; font-size:clamp(30px,3.2vw,52px); line-height:.9; letter-spacing:-.02em; text-transform:uppercase; }
+.dx-head-title mark { background:var(--acid); color:var(--acid-ink); padding:0 .05em; }
+.dx-thesis { margin:10px 0 0; font-size:12.5px; line-height:1.5; color:var(--ink-soft); max-width:88ch; }
+.dx-target { margin-top:10px; display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:11px; }
+.dx-target b { color:var(--ink); } .dx-target span { color:var(--gray); }
+.dx-rfc { display:inline-flex; align-items:center; gap:6px; color:var(--ink); border:1px solid var(--ink); padding:2px 7px; font-size:9.5px; letter-spacing:.04em; }
+.dx-metrics { display:flex; }
+.dx-metric { display:flex; flex-direction:column; gap:2px; padding:4px 15px; border-left:2px solid var(--ink); }
+.dx-metric b { font-size:26px; line-height:1; font-variant-numeric:tabular-nums; display:inline-flex; align-items:baseline; gap:1px; }
+.dx-metric b i { font-size:.38em; font-style:normal; color:var(--gray); }
+.dx-metric span { font-size:8px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+.dx-metric.crit b { color:var(--hi); } .dx-metric.gate b { color:var(--ink); }
+.dx-state { padding:60px 0; text-align:center; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-soft); }
+
+.dx-sec { margin-top:18px; }
+.dx-sec-k { font-size:10.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--ink); padding-bottom:7px; border-bottom:2px solid var(--ink); margin-bottom:8px; }
+
+@keyframes dx-reveal { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
+
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Folded-in environment sweep + archived incidents. Same page-1/2/3 palette;
+   severity keeps the crimson→amber→gray family, --acid stays interaction-only.
+   Texture carries meaning here: SOLID = the gateway holds an identity binding
+   for this address, HATCH = something is talking that nothing can name.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* scope: which sources this rests on, and which are still writing */
+.dx-scope { margin-top:14px; border:1.5px solid var(--ink); background:var(--paper-2); }
+.dx-scope-k { display:flex; align-items:baseline; gap:10px; padding:7px 14px; border-bottom:1px solid var(--rule);
+  font-size:9px; letter-spacing:.18em; text-transform:uppercase; color:var(--gray); }
+.dx-scope-k b { font-size:11px; letter-spacing:.06em; color:var(--ink); }
+.dx-scope-rows { display:flex; flex-direction:column; }
+.dx-src { display:grid; grid-template-columns:10px minmax(150px,1fr) 84px minmax(230px,1fr) 92px 120px minmax(180px,1.4fr);
+  gap:12px; align-items:center; padding:5px 14px; font-size:10.5px; color:var(--ink-soft); border-top:1px solid var(--rule); }
+.dx-src:first-child { border-top:none; }
+.dx-src-dot { width:8px; height:8px; border:1.5px solid var(--ink); }
+.dx-src.is-live .dx-src-dot { background:var(--teal); border-color:var(--teal); }
+.dx-src.is-stalled .dx-src-dot { background:var(--hatch-stall,transparent);
+  background-image:repeating-linear-gradient(45deg,var(--gray) 0 1px,transparent 1px 3px); }
+.dx-src-name { color:var(--ink); }
+.dx-src-kind { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; }
+.dx-src.is-live .dx-src-kind { color:var(--teal); }
+.dx-src.is-stalled .dx-src-kind { color:var(--hi-t); }
+.dx-src-window,.dx-src-age,.dx-src-vol { color:var(--gray); font-variant-numeric:tabular-nums; }
+.dx-src-note { color:var(--gray); }
+.dx-src.is-stalled .dx-src-note { color:var(--hi-t); }
+.dx-retired { margin-top:8px; padding:6px 14px; border-left:3px solid var(--ink); background:var(--paper-3);
+  font-size:10.5px; color:var(--ink-soft); }
+
+/* address-space lattice */
+.dx-legend { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:10px; font-size:9px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--gray); }
+.dx-legend-i { display:flex; align-items:center; gap:6px; }
+.dx-legend-i .dx-cell { width:12px; height:12px; pointer-events:none; }
+.dx-segments { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:26px 40px; }
+.dx-segment { min-width:0; }
+.dx-segment-h { display:flex; align-items:baseline; gap:10px; padding-bottom:6px; margin-bottom:7px; border-bottom:1.5px solid var(--ink); }
+.dx-segment-h b { font-size:12.5px; }
+.dx-segment-h span { font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--gray); }
+.dx-segment-c { display:flex; flex-wrap:wrap; gap:6px 14px; padding-top:8px; font-size:9px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--gray); }
+.dx-segment-c b { font-weight:400; }
+.dx-segment-c b.is-contested { color:var(--hi-t); }
+.dx-lattice { display:flex; flex-direction:column; gap:2px; }
+.dx-lattice-row { display:grid; grid-template-columns:28px repeat(16,1fr); gap:2px; align-items:center; }
+.dx-lattice-label { font-size:8.5px; text-align:right; padding-right:4px; color:var(--gray); font-variant-numeric:tabular-nums; }
+.dx-cell { position:relative; display:block; width:100%; aspect-ratio:1; min-width:0; padding:0;
+  border:1px solid var(--rule); background:transparent; cursor:pointer; }
+.dx-cell-n { position:absolute; inset:0; display:grid; place-items:center; font-family:var(--font-mono);
+  font-size:7.5px; color:var(--paper); opacity:0; }
+.dx-cell.is-leased { background:var(--ink-soft); border-color:var(--ink-soft); }
+.dx-cell.is-leased .dx-cell-n { opacity:.85; }
+.dx-cell.is-unbound { border-color:var(--ink-soft);
+  background-image:repeating-linear-gradient(45deg,var(--ink-soft) 0 1px,transparent 1px 4px); }
+.dx-cell.is-contested { background:var(--hi-t); border-color:var(--hi-t); box-shadow:0 0 0 1px var(--paper),0 0 0 2px var(--hi-t); }
+.dx-cell.is-contested .dx-cell-n { opacity:1; color:#fff; }
+.dx-cell.is-silent { border-color:#e2e1db; cursor:default; }
+.dx-cell.is-sel { outline:2px solid var(--ink); outline-offset:1px; }
+.dx-cell:hover:not(.is-silent),.dx-cell:focus-visible { outline:1px solid var(--ink); outline-offset:1px; }
+.dx-readout { display:flex; flex-wrap:wrap; gap:16px; align-items:baseline; margin-top:12px; padding:7px 12px;
+  border:1.5px solid var(--ink); background:var(--paper-2); font-size:10.5px; color:var(--ink-soft); min-height:32px; }
+.dx-readout b { font-size:12.5px; color:var(--ink); }
+.dx-readout.is-idle { color:var(--gray); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; }
+.dx-readout.is-contested { border-color:var(--hi-t); }
+
+/* ownership timeline — the one chart, at a size where the steps read */
+.dx-own { border:1.5px solid var(--ink); background:var(--paper-2); }
+.dx-own-h { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; padding:9px 14px; border-bottom:1px solid var(--rule); }
+.dx-own-h b { font-family:var(--font-display); font-size:13px; letter-spacing:.08em; text-transform:uppercase; }
+.dx-own-h span { font-size:12px; color:var(--ink); }
+.dx-own-h em { margin-left:auto; font-style:normal; font-size:10px; color:var(--gray); font-variant-numeric:tabular-nums; }
+.dx-own-svg { display:block; width:100%; height:auto; }
+.dx-own-lane { stroke:var(--rule); stroke-width:1; }
+.dx-own-mac { font-family:var(--font-mono); font-size:11px; fill:var(--ink); }
+.dx-own-role { font-family:var(--font-mono); font-size:8.5px; letter-spacing:.1em; fill:var(--gray); }
+.dx-own-step { fill:none; stroke:var(--ink); stroke-width:1.6; }
+.is-unleased .dx-own-step { stroke:var(--hi); }
+.dx-own-dot { fill:var(--ink); }
+.is-unleased .dx-own-dot { fill:var(--hi); }
+.dx-own-axis { stroke:var(--ink); stroke-width:1; }
+.dx-own-tick { font-family:var(--font-mono); font-size:9.5px; fill:var(--gray); }
+.dx-own-cap { font-family:var(--font-mono); font-size:10px; fill:var(--ink-soft); }
+
+/* merged ledger */
+.dx-clear { margin-left:12px; border:1px solid var(--ink); background:var(--acid); color:var(--acid-ink);
+  font:inherit; font-size:9px; letter-spacing:.1em; padding:2px 8px; cursor:pointer; }
+.dx-ledger { display:flex; flex-direction:column; border-top:1.5px solid var(--ink); }
+.dx-row { border-bottom:1px solid var(--rule); }
+.dx-row-h { display:grid; grid-template-columns:74px 64px 128px minmax(200px,1.5fr) minmax(120px,.8fr);
+  gap:12px; align-items:baseline; width:100%; padding:7px 8px; border:0; border-left:3px solid transparent;
+  background:transparent; font:inherit; font-size:11px; text-align:left; color:var(--ink-soft); cursor:pointer; }
+.dx-row-h:hover,.dx-row.is-open .dx-row-h { background:var(--paper-2); color:var(--ink); }
+.dx-row.sev-critical .dx-row-h { border-left-color:var(--hi); }
+.dx-row.sev-high .dx-row-h { border-left-color:var(--mid); }
+.dx-row.sev-medium .dx-row-h { border-left-color:var(--lo); }
+.dx-row-sev,.dx-row-v { font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+.dx-row.sev-critical .dx-row-sev { color:var(--hi-t); }
+.dx-row.v-confirmed .dx-row-v { color:var(--teal); font-weight:600; }
+.dx-row.v-unverifiable .dx-row-v { color:var(--mid-t); }
+.dx-row-t { color:var(--ink); }
+.dx-row-s { color:var(--gray); font-variant-numeric:tabular-nums; }
+.dx-row-b { padding:6px 10px 16px 20px; background:var(--paper-2); border-top:1px solid var(--rule); }
+.dx-row-note { margin:6px 0 10px; font-size:11px; color:var(--ink-soft); }
+
+.dx-probe { margin-top:12px; padding-top:10px; border-top:1.5px solid var(--ink); }
+.dx-probe > button { border:1.5px solid var(--ink); background:var(--acid); color:var(--acid-ink); font:inherit;
+  font-size:10px; letter-spacing:.1em; text-transform:uppercase; padding:4px 12px; cursor:pointer; }
+.dx-probe > button:disabled { background:var(--paper-3); color:var(--gray); cursor:default; }
+.dx-probe-out { margin-top:9px; font-size:10.5px; color:var(--ink-soft); }
+.dx-probe-out > b { display:inline-block; margin-right:8px; text-transform:uppercase; letter-spacing:.1em; color:var(--hi-t); }
+.dx-probe-grid { display:flex; flex-wrap:wrap; gap:6px 22px; margin:7px 0; }
+.dx-probe-grid > div { display:flex; gap:8px; align-items:baseline; }
+.dx-probe-grid dt { font-size:10px; color:var(--ink); }
+.dx-probe-grid dd { margin:0; font-size:10px; color:var(--gray); }
+.dx-probe-imp { color:var(--hi-t); font-size:10.5px; }
+.dx-probe-err { margin-left:10px; color:var(--hi-t); font-size:10.5px; }
+
+/* sensor coverage */
+.dx-cov { display:flex; flex-direction:column; border-top:1.5px solid var(--ink); }
+.dx-cov-r { display:grid; grid-template-columns:70px 44px minmax(170px,250px) 1fr; gap:12px; align-items:center;
+  padding:5px 8px; border-bottom:1px solid var(--rule); font-size:10.5px; color:var(--ink-soft); }
+.dx-cov-r.is-blind { border-left:3px solid var(--hi); padding-left:5px; background:var(--paper-3); }
+.dx-cov-r.is-partial { border-left:3px dashed var(--gray); padding-left:5px; }
+.dx-cov-s { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.dx-cov-r.is-blind .dx-cov-s { color:var(--hi-t); font-weight:600; }
+.dx-cov-t { display:flex; gap:3px; }
+.dx-cov-t i { width:12px; height:8px; border:1px solid var(--gray); }
+.dx-cov-t i.on { background:var(--ink-soft); border-color:var(--ink-soft); }
+.dx-cov-t i.off { background-image:repeating-linear-gradient(45deg,var(--gray) 0 1px,transparent 1px 3px); }
+.dx-cov-l { color:var(--ink); }
+.dx-cov-n { color:var(--gray); font-size:10px; }
+.dx-cov-n b { color:var(--hi-t); font-weight:400; }
+.dx-cov-n em { font-style:normal; }
+
+@media (max-width:900px) {
+  .dx-src { grid-template-columns:10px 1fr; }
+  .dx-src-kind,.dx-src-window,.dx-src-age,.dx-src-vol,.dx-src-note { grid-column:2/3; }
+  .dx-row-h { grid-template-columns:70px 1fr; }
+  .dx-row-v,.dx-row-t,.dx-row-s { grid-column:2/3; }
+  .dx-cov-r { grid-template-columns:66px 40px 1fr; }
+  .dx-cov-n { grid-column:1/-1; }
+}
+
+/* ── attack surface as a relation graph ──────────────────────────────────
+   Edge grammar is the point: SOLID = hard evidence the miner saw (clash,
+   broadcast, shared destination), DASHED = inferred (vendor block, hostname
+   family). Averaging the two into one line would let an inference read as an
+   observation, which is the one thing this page must never do. */
+.dx-graph { border:1.5px solid var(--ink); background:var(--paper-2); }
+.dx-graph-legend { display:flex; flex-direction:column; gap:6px; padding:8px 14px; border-bottom:1px solid var(--rule); }
+.dx-gl-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; }
+.dx-gl-cap { flex:0 0 auto; font-size:8.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+.dx-gl-item { display:inline-flex; align-items:center; gap:6px; font-size:9px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); }
+.dx-gl-node { fill:var(--ink-soft); }
+.dx-gl-dot { width:12px; height:12px; flex:none; border:1px solid var(--paper-2); }
+.dx-gl-dot.env-leased { background:var(--ink); }
+.dx-gl-dot.env-contested { background:var(--hi-t); }
+.dx-gl-dot.env-unbound { border-color:var(--ink-soft); background-image:repeating-linear-gradient(45deg,var(--ink-soft) 0 1px,transparent 1px 4px); }
+.dx-gl-dot.env-silent { background:var(--gray); }
+.dx-gl-hint { margin-left:auto; font-size:9px; letter-spacing:.08em; text-transform:uppercase; color:var(--gray); }
+.dx-gl { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--rule); background:transparent;
+  padding:2px 8px; font:inherit; font-size:9px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft); cursor:pointer; }
+.dx-gl:hover { border-color:var(--ink); }
+.dx-gl.is-off { opacity:.4; }
+.dx-gl svg line { stroke:var(--ink-soft); stroke-width:1.6; }
+.dx-gl.is-clash svg line { stroke:var(--hi-t); stroke-width:2.2; }
+.dx-gl.is-bcast svg line { stroke:var(--teal); }
+.dx-gl.is-codst svg line { stroke:var(--ink); }
+.dx-gl.is-fleet svg line { stroke:var(--gray); stroke-dasharray:4 3; }
+.dx-gl.is-family svg line,.dx-gl.is-lease svg line,.dx-gl.is-portfp svg line { stroke:var(--gray); stroke-dasharray:2 3; }
+
+.dx-graph-svg { display:block; width:100%; height:auto; background:var(--paper-2); }
+.dx-graph-svg defs pattern line { stroke:var(--paper); stroke-width:2; }
+.dx-ge { stroke:var(--gray); opacity:.5; }
+.dx-ge.is-clash { stroke:var(--hi-t); opacity:.75; }
+.dx-ge.is-bcast { stroke:var(--teal); opacity:.45; }
+.dx-ge.is-codst { stroke:var(--ink); opacity:.5; }
+.dx-ge.is-inferred { stroke-dasharray:4 4; opacity:.35; }
+.dx-ge.is-lit { opacity:1; stroke-width:2.4; }
+.dx-ge.is-dim { opacity:.08; }
+.dx-gn { cursor:pointer; }
+.dx-gn-body { fill:var(--ink-soft); stroke:var(--paper-2); stroke-width:1.5; }
+.dx-gn-hatch { fill:url(#dx-node-hatch); stroke:var(--ink); stroke-width:1; }
+.dx-gn-ring { fill:none; stroke:var(--hi-t); stroke-width:1.6; }
+.dx-gn.env-leased .dx-gn-body { fill:var(--ink); }
+.dx-gn.env-contested .dx-gn-body { fill:var(--hi-t); }
+.dx-gn.env-silent .dx-gn-body { fill:var(--gray); }
+.dx-gn-label { font-family:var(--font-mono); font-size:9px; fill:var(--gray); pointer-events:none; }
+.dx-gn.is-active .dx-gn-body { stroke:var(--ink); stroke-width:2.5; }
+.dx-gn.is-active .dx-gn-label { fill:var(--ink); font-weight:600; }
+.dx-gn.is-dim { opacity:.18; }
+.dx-gn:hover .dx-gn-body,.dx-gn:focus-visible .dx-gn-body { stroke:var(--ink); stroke-width:2.5; }
+.dx-graph .dx-readout { border:0; border-top:1px solid var(--rule); }
+.dx-graph-band line { stroke:var(--rule); stroke-dasharray:3 4; }
+.dx-graph-band text { font-family:var(--font-mono); font-size:10px; fill:var(--gray); letter-spacing:.04em; }
+.dx-gn.is-loose .dx-gn-body { opacity:.8; }
+
+/* ── playbook steps (dx-pl-*) ────────────────────────────────────────────
+   Two rows per step — meta, then command — so a long command never fights a
+   label for the same track. */
+.dx-pl { margin:6px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; }
+.dx-pl-step { border-left:2px solid var(--teal); padding:7px 0 7px 12px; margin-bottom:8px; }
+.dx-pl-step.is-gated { border-left-color:var(--hi-t);
+  background:repeating-linear-gradient(-45deg,transparent 0 7px,color-mix(in srgb,var(--hi) 5%,transparent) 7px 8px); }
+.dx-pl-meta { display:flex; align-items:baseline; gap:10px; margin-bottom:5px; }
+.dx-pl-risk { flex:none; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--teal);
+  display:inline-flex; align-items:center; gap:5px; }
+.dx-pl-step.is-gated .dx-pl-risk { color:var(--hi-t); }
+.dx-pl-what { color:var(--ink-soft); font-size:11px; line-height:1.45; }
+.dx-pl-cmd { display:flex; align-items:stretch; gap:0; }
+.dx-pl-cmd code { flex:1; min-width:0; padding:5px 9px; background:var(--ink); color:#e9e9e2;
+  font-family:var(--font-mono); font-size:11px; white-space:pre; overflow-x:auto; }
+.dx-pl-run { flex:none; border:none; border-left:1px solid #3a3a35; background:var(--acid); color:var(--acid-ink);
+  font:inherit; font-size:9px; letter-spacing:.1em; text-transform:uppercase; padding:0 12px; cursor:pointer; }
+.dx-pl-run:hover:not(:disabled) { background:#d4ff33; }
+.dx-pl-run:disabled { background:var(--paper-3); color:var(--gray); cursor:default; }
+.dx-pl-out { margin:6px 0 0; padding:7px 10px; background:var(--paper-3); border-left:2px solid var(--teal);
+  font-family:var(--font-mono); font-size:10.5px; line-height:1.5; color:var(--ink); white-space:pre-wrap;
+  word-break:break-word; overflow-x:auto; }
+.dx-pl-out.is-err { border-left-color:var(--hi-t); color:var(--hi-t); }
+
+.dx-own.is-stable .dx-own-h { border-bottom:none; }
+.dx-own-stable-line { margin:0; padding:10px 14px 12px; font-size:12px; line-height:1.5; color:var(--ink-soft); }
+
+/* contention snapshot — two contending parties + verdict (no time axis) */
+.dx-own-cxn { display:flex; align-items:stretch; padding:12px 14px; }
+.dx-own-party { flex:1; display:flex; flex-direction:column; gap:6px; min-width:0; }
+.dx-own-party-k { font-family:var(--font-mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.dx-own-mac-row { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+.dx-own-mac-row code { font-family:var(--font-mono); font-size:12.5px; color:var(--ink); }
+.dx-own-party.arp .dx-own-mac-row code { color:var(--hi); }
+.dx-own-mac-row i { font-style:normal; font-size:10px; letter-spacing:.04em; color:var(--gray); }
+.dx-own-vs { display:flex; align-items:center; padding:0 18px; font-size:18px; color:var(--gray); }
+.dx-own-verdict { margin:0; padding:11px 14px 13px; border-top:1px solid var(--rule); font-size:12px; line-height:1.55; color:var(--ink-soft); }
+
+/* ── fault-family catalog ledger ─────────────────────────────────────────
+   The verdict ledger rows are now the full fault-family space of this
+   network, ranked by priority and joined with whatever the live sweep
+   confirms. The guard strip above the list is the one invariant that
+   outranks every playbook: the Tailscale path is never cut. */
+.dx-guard { display:flex; gap:10px; align-items:flex-start; margin:2px 0 10px; padding:9px 12px;
+  border:1.5px solid var(--ink); border-left:4px solid var(--hi); background:var(--paper-2); }
+.dx-guard p { margin:0; font-size:10.5px; line-height:1.55; color:var(--ink-soft); }
+.dx-row-h.is-cat { grid-template-columns:38px 64px 92px 138px minmax(200px,1.5fr) minmax(150px,.9fr); }
+.dx-row-p { font-size:9.5px; font-weight:700; letter-spacing:.08em; color:var(--ink); font-variant-numeric:tabular-nums; }
+.dx-row-a { font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; font-weight:600; }
+.dx-row-a.a-auto { color:var(--teal); }
+.dx-row-a.a-guarded { color:var(--mid-t); }
+.dx-row-a.a-manual { color:var(--hi-t); }
+.dx-row.v-standby .dx-row-v { color:var(--gray); }
+.dx-row.sev-low .dx-row-h { border-left-color:var(--rule); }
+.dx-prot { display:flex; gap:8px; align-items:baseline; margin:0 0 10px; padding:6px 10px;
+  border:1px solid var(--hi-t); border-left:3px solid var(--hi); }
+.dx-prot b { flex:0 0 auto; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--hi-t); font-weight:600; }
+.dx-prot p { margin:0; font-size:10.5px; line-height:1.5; color:var(--ink-soft); }
+.dx-hits { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:baseline; margin:0 0 10px; }
+.dx-hits > span { flex:0 0 auto; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+.dx-hits em { font-style:normal; font-size:10px; padding:2px 7px; border:1px solid var(--rule); color:var(--ink-soft); }
+.dx-hits em.v-confirmed { border-color:var(--teal); color:var(--teal); font-weight:600; }
+.dx-hits em.v-archived { border-style:dashed; }
+.dx-pl-step.is-auto { border-left-color:var(--teal); }
+.dx-pl-step.is-auto .dx-pl-risk { color:var(--teal); font-weight:600; }
+
+@media (max-width:900px) {
+  .dx-row-h.is-cat { grid-template-columns:38px 64px 1fr; }
+  .dx-row-h.is-cat .dx-row-v,.dx-row-h.is-cat .dx-row-t,.dx-row-h.is-cat .dx-row-s { grid-column:1/-1; }
+}
+
+/* ── fault-family catalog ledger ─────────────────────────────────────────
+   The ledger rows are the fault space of this network, ranked worst-first
+   and joined with whatever the sources confirm. The guard strip above the
+   list is the one rule that outranks every playbook: the Tailscale path is
+   never cut. */
+.dx-guard { display:flex; gap:10px; align-items:flex-start; margin:2px 0 10px; padding:9px 12px;
+  border:1.5px solid var(--ink); border-left:4px solid var(--hi); background:var(--paper-2); }
+.dx-guard p { margin:0; font-size:10.5px; line-height:1.55; color:var(--ink-soft); }
+.dx-row-h.is-cat { grid-template-columns:38px 64px 92px 122px minmax(190px,1.4fr) minmax(150px,1fr); }
+.dx-row-p { font-size:9.5px; font-weight:700; letter-spacing:.08em; color:var(--ink); font-variant-numeric:tabular-nums; }
+.dx-row-a { font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; font-weight:600; }
+.dx-row-a.a-auto { color:var(--teal); }
+.dx-row-a.a-guarded { color:var(--mid-t); }
+.dx-row-a.a-manual { color:var(--hi-t); }
+.dx-row.v-standby .dx-row-v { color:var(--gray); }
+.dx-row.v-standby .dx-row-h { border-left-color:var(--rule); }
+.dx-row.sev-low .dx-row-h { border-left-color:var(--rule); }
+.dx-prot { display:flex; gap:8px; align-items:baseline; margin:0 0 10px; padding:6px 10px;
+  border:1px solid var(--hi-t); border-left:3px solid var(--hi); }
+.dx-prot b { flex:0 0 auto; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--hi-t); font-weight:600; }
+.dx-prot p { margin:0; font-size:10.5px; line-height:1.5; color:var(--ink-soft); }
+.dx-hits { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:baseline; margin:0 0 10px; }
+.dx-hits > span { flex:0 0 auto; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+.dx-hits em { font-style:normal; font-size:10px; padding:2px 7px; border:1px solid var(--rule); color:var(--ink-soft); }
+.dx-hits em.v-confirmed { border-color:var(--teal); color:var(--teal); font-weight:600; }
+.dx-hits em.v-archived { border-style:dashed; }
+.dx-pl-step.is-auto { border-left-color:var(--teal); }
+.dx-pl-step.is-auto .dx-pl-risk { color:var(--teal); font-weight:600; }
+
+@media (max-width:900px) {
+  .dx-row-h.is-cat { grid-template-columns:38px 64px 1fr; }
+  .dx-row-h.is-cat .dx-row-a,.dx-row-h.is-cat .dx-row-v,.dx-row-h.is-cat .dx-row-t,.dx-row-h.is-cat .dx-row-s { grid-column:1/-1; }
+}
