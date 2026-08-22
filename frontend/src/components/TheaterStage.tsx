@@ -21,7 +21,7 @@ import { useMemo, useState } from 'react'
 import type { DataStats, SubnetGraph, TheaterEvent, Topology } from '../types'
 import type { Lang } from '../i18n'
 import { useReducedMotion } from '../reduced-motion'
-import { railFor, sentinelStageIds } from './netops-pipeline'
+import { currentRound, railFor, sentinelStageIds } from './netops-pipeline'
 import { useSentinelChain } from './use-sentinel-chain'
 import './theater.css'
 import { ExecutionLog } from './ExecutionLog'
@@ -280,16 +280,30 @@ export function TheaterStage({
   /* Live, not a snapshot from when the theater opened: the whole point of a
    * stage is watching the chain move across it. */
   const chain = useSentinelChain(isSentinel ? theater.device : null)
+  /* Read from the round on screen, not the whole chain: a round that was refused
+   * measured nothing, and the blast radius still sitting in its timeline belongs
+   * to the repairs that did run. */
   const liveRadius = useMemo(
-    () => [...(chain?.steps ?? [])].reverse().find((s) => s.blast_radius)?.blast_radius ?? null,
+    () => [...currentRound(chain?.steps ?? [])].reverse().find((s) => s.blast_radius)?.blast_radius ?? null,
+    [chain],
+  )
+  /* The refusal, if there was one. Read off the live chain rather than the card,
+   * so the stage shows it the moment it is written instead of on the next
+   * snapshot poll. */
+  const escalated = useMemo(
+    () => [...(chain?.steps ?? [])].reverse().find((s) => s.kind === 'escalated') ?? null,
     [chain],
   )
   const railStages = railFor(theater.scope).map((p, i) => ({ ...p, p: { x: RAIL_X0 + i * RAIL_DX, y: RAIL_Y } as Pt }))
   const hotStageSet = new Set(
     isSentinel && chain?.steps.length ? sentinelStageIds(chain.steps) : theater.stageIds,
   )
-  // The step the chain is on right now — the one that should read as moving.
-  const nowStage = [...railStages].reverse().find((r) => hotStageSet.has(r.id)) ?? null
+  // The step the chain is on right now — the one that should read as moving,
+  // on the rail and in the incident card's 当前 row. A refused chain has none:
+  // it stopped, and naming the step it stopped on would say otherwise.
+  const nowStage = escalated
+    ? null
+    : [...railStages].reverse().find((r) => hotStageSet.has(r.id)) ?? null
   const firstHot = railStages.find((s) => hotStageSet.has(s.id)) ?? railStages[0]
   const atk = stats.topAttackerSrc.slice(0, 3)
 
@@ -361,11 +375,26 @@ export function TheaterStage({
         const tx = onHostBox
           ? anchorP.x - INCIDENT_W / 2
           : anchorP.x < 1200 ? anchorP.x + 26 : anchorP.x - 26 - INCIDENT_W
-        const ty = Math.min(Math.max(anchorP.y + (onHostBox ? 34 : 18), RAIL_Y + 60), 880)
         const phase = nowStage
-        const extent = liveRadius?.summary ?? theater.blastSummary
+        // The card's own fallback carries the same stale radius, so a refused
+        // round falls through to no extent line at all rather than to a figure
+        // measured for the repair it was denied.
+        const extent = liveRadius?.summary ?? (escalated ? null : theater.blastSummary)
+        const cycles = escalated?.prior_cycles ?? []
+        const windowHours = escalated?.window_hours
+        const times = escalated?.recurrences ?? cycles.length
+        // A foreignObject clips whatever does not fit, and what would be clipped
+        // off the bottom here is the citation chain — the part that answers the
+        // question. So the box grows by a line per cycle.
+        const cardH = escalated ? 154 + 15 * cycles.length : 176
+        // The ordinary card keeps the clamp it has always had; the taller one is
+        // held clear of the bottom of the plate instead.
+        const ty = Math.min(
+          Math.max(anchorP.y + (onHostBox ? 34 : 18), RAIL_Y + 60),
+          escalated ? 992 - cardH : 880,
+        )
         return (
-          <g className="th-incident" pointerEvents="none">
+          <g className={`th-incident${escalated ? ' is-escalated' : ''}`} pointerEvents="none">
             {onHostBox ? (
               <rect x={anchorP.x - 68} y={anchorP.y - 21} width={136} height={42} className="th-inc-halo-box" />
             ) : (
@@ -378,13 +407,15 @@ export function TheaterStage({
             <line x1={anchorP.x} y1={anchorP.y + (onHostBox ? 16 : 0)}
               x2={onHostBox ? anchorP.x : (tx < anchorP.x ? tx + INCIDENT_W : tx)} y2={ty}
               className="th-inc-leader" />
-            <foreignObject x={tx} y={ty} width={INCIDENT_W} height={176}>
+            <foreignObject x={tx} y={ty} width={INCIDENT_W} height={cardH}>
               <div className="th-inc-card">
                 <div className="th-inc-h">
                   <span className="th-inc-k">
-                    {theater.originIp
-                      ? (zh ? '被攻击的是这台' : 'THIS HOST IS THE TARGET')
-                      : (zh ? '故障就在这台' : 'FAULT IS HERE')}
+                    {escalated
+                      ? (zh ? '已升级 · 需要人工' : 'ESCALATED — NEEDS A PERSON')
+                      : theater.originIp
+                        ? (zh ? '被攻击的是这台' : 'THIS HOST IS THE TARGET')
+                        : (zh ? '故障就在这台' : 'FAULT IS HERE')}
                   </span>
                   <span className="th-inc-ip">{anchor?.name && anchor.name !== anchor.ip ? `${anchor.name} · ` : ''}{anchor?.ip}</span>
                 </div>
@@ -399,6 +430,33 @@ export function TheaterStage({
                     {zh ? '本机 · 不在 FortiGate 日志语料内'
                         : 'this host — absent from the syslog corpus'}
                   </div>
+                ) : null}
+                {/* 复发次数, then the rounds it counted. Without the rounds the
+                    card only asserts a number, and "凭什么第三次就不修了" stays a
+                    question the operator has to take somebody's word on. */}
+                {escalated ? (
+                  <>
+                    <div className="th-inc-row">
+                      <span>{zh ? '复发' : 'RECURRED'}</span>
+                      {zh
+                        ? `${times} 次${windowHours ? ` / ${windowHours} 小时` : ''}`
+                        : `${times}×${windowHours ? ` in ${windowHours}h` : ''}`}
+                    </div>
+                    {cycles.length ? (
+                      <div className="th-inc-cite">
+                        <div className="th-inc-cite-k">
+                          {zh ? '凭什么不修了' : 'WHY IT REFUSED'}
+                        </div>
+                        {cycles.map((cycle, i) => (
+                          <div key={`${cycle.at}-${i}`} className="th-inc-cite-i">
+                            {zh
+                              ? `修好于 ${cycle.at.slice(11, 19)} → 又复发`
+                              : `fixed ${cycle.at.slice(11, 19)} → came back`}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
                 ) : null}
                 {phase ? (
                   <div className="th-inc-row">

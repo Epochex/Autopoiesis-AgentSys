@@ -1,20 +1,32 @@
 # 演示稿 · 感知 → 处置 → 验证
 
-约 8 分钟。两个场景：一个系统自己修好，一个系统检测到了但**故意不动手**。
+前五幕约 8 分钟，两个场景：一个系统自己修好，一个系统检测到了但**故意不动手**。
 第二个比第一个值钱，因为它证明分级不是摆设。
+
+第六幕再加约 9 分钟，全自动：同一个故障反复发生，系统修好三次，第四次**拒绝再修**。
+这一幕是全场落点——前面证明它会做事也会克制，这一幕证明它记得自己做过什么。
+
+时间紧就演前五幕。只有一次机会、又想留下最经得起追问的东西，就演第一、二、三幕
+加第六幕。
 
 访问地址 `http://192.168.1.27:2026`（nginx 监听 2026，反代到网关 127.0.0.1:8026）。
 
 ---
 
-## 开演前 30 秒（可选，让时间线干净）
+## 开演前 30 秒（要演第六幕就不是可选的）
 
 ```bash
 cd /data/Autopoiesis-AgentSys
-./scripts/inject_incident.sh cleanup                       # 清掉上次的残留
+./scripts/inject_incident.sh cleanup                       # 清掉上次的残留，并撤掉可能留下的演示覆盖
 rm -f /data/autopoiesis-runtime/sentinel-timeline.jsonl    # 清空历史，只留这次的链
 systemctl restart netops-ops-console-backend               # 重启后哨兵自动跑起来
 ```
+
+第二行对第六幕是硬要求：复发阶梯是从这份时间线上数出来的，上一轮排练留下的
+「修好又复发」会被算进去，阶梯就会从半路开始，甚至第一次就拒绝。跑之前用
+`./scripts/inject_incident.sh status` 看一眼窗口内还剩几级。
+
+时间线是审计日志，所以这一行只在开演前敲，别当日常操作。
 
 浏览器 **Ctrl+Shift+R 硬刷新**一次，停在「**态势**」页。
 
@@ -115,7 +127,7 @@ systemctl restart netops-ops-console-backend               # 重启后哨兵自�
 约 30 秒后态势页出现第二行，**琥珀色**，标着「只报不动」。点进去，环节条只亮到
 `02 二次确认` 就断了——后面四级是暗的。
 
-**这段是全场最该讲的：**
+**这段讲分级：**
 
 > 系统检测到了 12 次失败登录，但它选择不动手。封禁 IP 是可撤销的动作，
 > 按理说可以自动做——但**封错来源就等于堵住自己的管理通道**。我人在家里
@@ -126,6 +138,159 @@ systemctl restart netops-ops-console-backend               # 重启后哨兵自�
 >
 > 一个演示里什么都自动修好了，恰恰藏起了更重要的一半。
 
+第五幕停手是因为**这一族动作本来就没有**。下一幕停手是因为**它自己数出来该停了**，
+那个更难做，也更值钱。
+
+---
+
+## 第六幕 · 同一个故障第四次发生（约 9 分钟，全自动）
+
+```bash
+./scripts/inject_incident.sh recurring
+```
+
+敲完就不用管了。脚本自己杀四次 `demo-collector`，每次都等哨兵把整条链走完再杀下一次，
+终端同步打出每一步。九分钟里你要做的只有讲话。
+
+**节奏**：第 1 次跑的时候讲下面的时间压缩；第 2、3 次跑的时候讲 Bainbridge 和报菜名
+（那两段加起来正好三四分钟）；第 4 次开始就别说话了，让屏幕自己变红。
+
+**时间压缩要主动说，别等人问：**
+
+> 真实口径是 24 小时窗口、600 秒基础冷却，没有哪场演示等得起。所以脚本临时把窗口压到
+> 1 小时、冷却压到 30 秒。压的是时钟，不是判据——**拒绝阈值还是 3，和生产默认一模一样**，
+> 台上跑的是同一把梯子，只是走得快。
+>
+> 做法是给网关加一个 systemd drop-in，多挂一个 EnvironmentFile，没有改代码里的默认值；
+> `cleanup` 会把 drop-in 删掉并重启网关收回。`status` 里能看到网关**进程**里当前的实际值，
+> 不是文件里写的值——环境变量是进程启动时读一次的，文件对不上进程才是真问题。
+
+### 会看到什么
+
+前三次，是第三幕那条链**原样重复三遍**：
+
+```
+发现 → 等确认 → 发现 → 前置校验 → 执行 → 观察期 → 判定恢复      ← 第 1 次
+发现 → 等确认 → 发现 → 前置校验 → 执行 → 观察期 → 判定恢复      ← 第 2 次
+发现 → 等确认 → 发现 → 前置校验 → 执行 → 观察期 → 判定恢复      ← 第 3 次
+```
+
+第四次，链条走到「已确认」就断了：
+
+```
+发现 → 等确认 → 发现 → ✖ 拒绝执行 · 转人工                      ← 第 4 次
+```
+
+态势页那一行变成红色「**要人工**」，并且**排到所有告警的最前面**——它是唯一一条
+系统已经停手的，别的都还在自己往下走。表头计数从「N 项处理中」变成「1 项要人工」。
+
+> 中间那两次这一行不会来回变色：它按最终相位聚合，第一次自愈之后就一直显示「已自愈」，
+> 直到第四次把它顶成红的。三遍重复要在**长轨迹页和剧场**里看，那里画的是完整链条。
+
+刚演过第五幕的话，那条琥珀色的「只报不动」还挂在下面，正好摆成一组对照：
+**一条是压根没有动作可做，一条是有动作、做过、而且做成功过，现在不做了。**
+
+点进剧场，事故卡（挂在本机那个框下面）这时会多长出一段：
+
+```
+已升级 · 需要人工
+复发          3 次 / 1 小时
+凭什么不修了
+  修好于 20:41:07 → 又复发
+  修好于 20:44:12 → 又复发
+  修好于 20:47:20 → 又复发
+```
+
+**「凭什么第三次就不修了」的答案在屏幕上，不在文档里**，这是这一幕唯一必须落地的界面要求。
+
+### 要说的那一句
+
+> 自动化最贵的失败不是修错，是**每一次都修对**。Bainbridge 1983 年那篇 *Ironies of
+> Automation* 讲的就是这个：自动控制会「伪装」故障，它一直在把偏差纠回去，所以趋势不显现，
+> 等显现的时候已经收不住了。**一块网卡一天被重启四十次、每次重启都"成功"，就是那篇论文的
+> 例子加了个 MAC 地址。**前三次修好都是真修好了，也正因为都修好了，没有任何一条告警会告诉你
+> 这台机器有问题。
+
+### 这不是新东西，成熟系统都有
+
+被追问"这算什么创新"的时候报菜名：
+
+| 系统 | 机制 |
+|---|---|
+| systemd | `StartLimitBurst` / `StartLimitIntervalSec`，超了触发 `StartLimitAction`，要人工 `reset-failed` 才清 |
+| Pacemaker | `migration-threshold` + `failure-timeout`，失败计数到阈值就不在这个节点上再试 |
+| Kubernetes | KEP-5734，`maxRestartsOnNode: 7`，超了把 Pod 挪走而不是继续重启 |
+| medik8s | `escalatingRemediations`，按 order 逐级换更重的修复手段 |
+| fail2ban | `bantime.multipliers`，同一来源再犯，封禁时间翻倍 |
+| BGP | 路由抖动抑制，RFC 2439 / RFC 7196 |
+
+> 这张表本身就是论据：**「同一个动作对同一个目标反复生效又失效，是该停手的信号」在运维界
+> 是共识**，每个成熟的编排系统都实现了一遍。LLM agent 这一层普遍没有——它们记得对话，
+> 不记得自己修过什么。我做的是把这条成熟机制补进 agent 的处置回路，这个说法比"新颖的
+> 自演化"更强，也更经得起问。
+
+RFC 7196 那条教训值得主动交出去：
+
+> BGP 抖动抑制最早的惩罚常数定得太狠，把线路质量好的站点罚得最惨，运维界大规模关掉了它，
+> IETF 花了十五年才发文承认常数设错了。所以这里**没有惩罚分数**，只有一个一句话说得清的
+> 滑动窗口——一个我讲不清的评分函数，不如一个我能讲明白的计数。
+
+### 边界：这一幕不许说的话
+
+> 不是"系统越用越聪明"。它学会的只有**什么时候停手**，方向是更保守：做得更少，不是做得更多。
+> 动作集合一个都没变，还是那两个单调动作，只是多了一个不做的理由。
+>
+> 也不要叫它"自演化记忆"。这就是一个持久化计数器加一个阈值。
+
+### 两个一定会被问到的问题
+
+**「你怎么知道这不是换了个更长的 prompt？」**
+
+因为这里根本没有 prompt。计数是 append-only 日志上的一次聚合，形状就是一句 SQL：
+
+```sql
+SELECT count(DISTINCT r.at) AS recurrences        -- 一次"修好"只算一次
+FROM   timeline r
+JOIN   timeline d
+  ON   d.detector = r.detector AND d.subject = r.subject AND d.action = r.action
+ AND   d.kind = 'detected' AND d.at > r.at        -- 修好之后，又被发现了
+WHERE  r.kind = 'resolved'
+  AND  r.subject = 'demo-collector.service'
+  AND  r.at > now() - interval '24 hours';
+```
+
+没有 embedding、没有检索、没有模型判断，所以没有幻觉面。计数键是
+`(detector, subject, action)` 三元组——"重启 X 老是不生效"和"X 老出不同的毛病"是两件事。
+实现是 `core/remediate/recurrence.py::project()`，纯函数，谁都能拿同一份 JSONL 重放出同一个数：
+
+```bash
+cd /data/Autopoiesis-AgentSys && python3 - <<'PY'
+import json, time
+from core.remediate.recurrence import project
+events = [json.loads(l) for l in open("/data/autopoiesis-runtime/sentinel-timeline.jsonl")]
+print({k: h.recurrences for k, h in project(events, now=time.time(), window_sec=3600).items()})
+PY
+```
+
+顺带回答"为什么不做检索相似历史事故"（细节在 `docs/recurrence-contract.md` 开头）：
+ACL 2026 那篇测出 agent 是在**抄**检索到的案例，输入相似度和输出相似度 r≈1；天真累积
+比冻结记忆还差。在 6 个案例的规模上，一次幸运检索和真实增益分不开。所以这次做的是
+一个能把 SQL 摊开给人看的机制。
+
+**「万一计数是错的？」**
+
+它不是一份单独维护的状态，是那条不可变时间线的**投影**，要用的时候现算，进程重启后
+从日志重建。所以它不可能和审计线索对不上——一个悄悄和证据不一致的计数器，比没有计数器更糟，
+它错在没人看得见的地方。
+
+更要紧的是**错的方向**：这个数只决定"要不要停手"，不决定"做什么"。多算了，系统少动一次手、
+转人工；少算了，退回到没有这个机制之前的老行为。它的失败模式是保守，不是乱动。
+
+### 演完的状态
+
+`demo-collector` 会一直停在 failed，这是对的——"转人工"的意思就是它在等人。
+`cleanup` 会把它和演示覆盖一起收走。
+
 ---
 
 ## 收尾
@@ -133,6 +298,10 @@ systemctl restart netops-ops-console-backend               # 重启后哨兵自�
 ```bash
 ./scripts/inject_incident.sh cleanup
 ```
+
+演过第六幕的话，这一步还会删掉那个 systemd drop-in 并重启网关，把窗口和冷却收回生产口径
+（24 小时 / 600 秒）。**跑完必须敲**：一台没人演示的机器上留着 1 小时窗口 + 30 秒冷却，
+是一次没人会发现的配置事故。敲完用 `status` 确认「演示覆盖：未安装」。
 
 ---
 
@@ -149,8 +318,10 @@ systemctl restart netops-ops-console-backend               # 重启后哨兵自�
 `revert_unverified` 并要求人工介入。
 
 **「重启会不会陷入死循环？」**
-不会。连续两轮才动手；处置后进冷却直到恢复；重启前查 journal，如果是下游依赖
-不通导致的崩溃，重启修不好，直接拒绝——**无限重启会把一次降级放大成一场故障**。
+不会，四道闸：连续两轮检测到才动手；重启前查 journal，下游依赖不通导致的崩溃重启修不好，
+直接拒绝；处置后进冷却，**而且冷却随复发次数翻倍**（10 分钟 → 20 分钟 → 40 分钟，上限 4 小时）；
+同一个处置在窗口内生效过又复发满 3 次，直接拒绝执行、转人工。第六幕演的就是最后这一道。
+**无限重启会把一次降级放大成一场故障**，而且每次重启都"成功"，没人会发现。
 
 ---
 
@@ -164,3 +335,16 @@ systemctl restart netops-ops-console-backend               # 重启后哨兵自�
 | cleanup 后暴力破解那条还在 | journal 里那 12 条日志留在 10 分钟窗口内，会被重新检出 | 等 10 分钟，或演示时接受它一直在 |
 | 不想等 | 手动推一轮 | `curl -X POST localhost:8026/api/rca/sentinel/poll` |
 | 想看原始数据 | | `curl -s localhost:8026/api/rca/sentinel/timeline \| python3 -m json.tool` |
+
+第六幕专用：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 阶梯没触发，第四次又被修好了 | 压缩覆盖没真正进到网关进程里 | `./scripts/inject_incident.sh status`，看「网关进程实际读到的」窗口是不是 3600、阈值 3 |
+| status 里写「文件在但进程没读到」 | 环境变量在进程启动时读一次，drop-in 改了没重启 | `systemctl restart netops-ops-console-backend`，再看一次 status |
+| 覆盖装了但值还是生产口径 | drop-in 文件名排序错了：drop-in 按文件名字典序读，后一个 `EnvironmentFile=` 才盖得住前一个，而 `Environment=` 永远盖不住 `EnvironmentFile=` | `systemctl cat netops-ops-console-backend \| grep '^# /etc'`，`zz-demo-recurrence.conf` 必须排在 `provider-env.conf` **后面** |
+| 第一次就被拒绝，看不到"先修三次" | 窗口内还留着上一轮排练的复发计数 | `status` 看还剩几级；清时间线重来（开演前那三行），或等窗口过期 |
+| 某一轮迟迟不闭环，脚本超时退出 | 那一轮前置校验没过，或者网关在观察期里出事了 | `journalctl -u netops-ops-console-backend -n 50`；时间线里找 `declined` / `cooldown` |
+| escalated 之后 `demo-collector` 一直 failed | 设计如此，"转人工"就是它在等人 | 演完 `cleanup` |
+| 剧场事故卡上没有引用链 | 那一段只在 escalated 时长出来 | `grep '"kind": "escalated"' /data/autopoiesis-runtime/sentinel-timeline.jsonl` 先确认后端记下了 |
+| 演完忘了 cleanup | 压缩窗口留在机器上，是配置事故 | `./scripts/inject_incident.sh cleanup`，`status` 应显示「演示覆盖：未安装」 |

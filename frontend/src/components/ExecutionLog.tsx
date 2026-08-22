@@ -23,6 +23,9 @@ const PHASE_MARK: Record<string, [string, string]> = {
   resolved: ['判定恢复', 'RESOLVED'],
   no_safe_action: ['无安全动作', 'NO SAFE ACTION'],
   declined: ['拒绝执行', 'DECLINED'],
+  // The transcript below this line is empty on purpose: the refusal happened
+  // before any command was chosen, and the divider is what says so.
+  escalated: ['不再自动修，转人工', 'STOPPED — HANDED TO A PERSON'],
 }
 
 type Row =

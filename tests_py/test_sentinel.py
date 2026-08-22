@@ -12,6 +12,18 @@ import pytest
 from core.remediate.sentinel import Detection, Sentinel
 
 
+@pytest.fixture(autouse=True)
+def _own_timeline(tmp_path, monkeypatch):
+    """One timeline per test.
+
+    The loop now READS the timeline to count recurrences, so the shared
+    pytest-wide temp file made every test inherit the resolutions of the ones
+    before it — and a few tests inherited enough to trip the escalation ladder.
+    Isolation was optional while the timeline was write-only; it is not now.
+    """
+    monkeypatch.setenv("AUTOPOIESIS_SENTINEL_TIMELINE", str(tmp_path / "timeline.jsonl"))
+
+
 def _detection(subject="demo.service", action="restart_unit"):
     return Detection(detector="d", family="f", subject=subject, severity="high",
                      summary="s", action=action, target=subject)
@@ -102,15 +114,65 @@ def test_a_target_that_did_not_recover_goes_on_cooldown():
     assert len(calls["execute"]) == 1, "cooldown must suppress the repeat"
 
 
-def test_a_passing_action_clears_the_cooldown():
-    """A later unrelated fault on the same target must not be ignored."""
+def test_a_fix_that_did_not_hold_buys_a_longer_wait_than_the_first_one():
+    """The cooldown used to be cleared on success, so recurrence was invisible.
+
+    A fault that is repaired and returns is the signal this whole ladder exists
+    for; wiping the timer on the way out threw it away. The quiet period now
+    doubles each time the same repair fails to hold.
+    """
     now = {"t": 0.0}
     sentinel, calls = _sentinel([_detection()], outcome="passed", clock=lambda: now["t"])
     sentinel.poll_once(); sentinel.poll_once()
     assert len(calls["execute"]) == 1
-    now["t"] += 5
+    first_wait = sentinel._cooldown_until["d:demo.service"] - now["t"]
+
+    # It came back: past the first cooldown, the second repair runs...
+    now["t"] += first_wait + 1
     sentinel.poll_once(); sentinel.poll_once()
     assert len(calls["execute"]) == 2
+    second_wait = sentinel._cooldown_until["d:demo.service"] - now["t"]
+
+    assert second_wait > first_wait, "a repair that did not hold must buy a longer wait"
+
+
+def test_a_repair_that_keeps_not_holding_is_refused_and_handed_over():
+    """The point of the ladder: stop, and say who has to look at it.
+
+    Restarting something that keeps breaking does not fix it — it hides the
+    trend, which is the failure Bainbridge (1983) called automation camouflage.
+    """
+    from core.remediate.sentinel import timeline
+
+    now = {"t": 0.0}
+    sentinel, calls = _sentinel([_detection()], outcome="passed", clock=lambda: now["t"])
+    for _ in range(6):
+        sentinel.poll_once(); sentinel.poll_once()
+        now["t"] += 4 * 3600      # past any rung of the doubling ladder
+
+    escalations = [e for e in timeline(400) if e["kind"] == "escalated"]
+    assert escalations, "it must eventually refuse rather than repair forever"
+    first = escalations[0]
+    assert first["recurrences"] >= 3
+    assert first["subject"] == "demo.service"
+    # the chain of prior repairs is the answer to "why did it stop?"
+    assert len(first["prior_cycles"]) == first["recurrences"]
+    assert all(c["outcome"] == "passed" for c in first["prior_cycles"])
+    # and it is announced once, not every poll
+    assert len(escalations) == 1
+
+
+def test_an_escalated_target_is_not_acted_on_again():
+    now = {"t": 0.0}
+    sentinel, calls = _sentinel([_detection()], outcome="passed", clock=lambda: now["t"])
+    for _ in range(6):
+        sentinel.poll_once(); sentinel.poll_once()
+        now["t"] += 4 * 3600
+    settled = len(calls["execute"])
+    for _ in range(4):
+        sentinel.poll_once(); sentinel.poll_once()
+        now["t"] += 4 * 3600
+    assert len(calls["execute"]) == settled, "escalation means stop, not slow down"
 
 
 def test_a_broken_detector_does_not_stop_the_others():

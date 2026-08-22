@@ -292,6 +292,20 @@ export interface GraphAnalysis {
   model?: string
 }
 
+/* ── the sentinel's recurrence record ─────────────────────────────────────────
+ * One round of "we fixed it and it came back", as written onto the `escalated`
+ * timeline event. When the sentinel refuses to run a remediation because it has
+ * already worked too many times on the same target, these are the rounds that
+ * caused the refusal — the audit trail for a decision the operator will
+ * otherwise read as the system giving up for no reason. */
+export interface PriorCycle {
+  /** When the fix was confirmed to have worked. */
+  at: string
+  outcome: string
+  /** Readings taken in that round's watch window before it was called good. */
+  samples: number
+}
+
 /* ── event-driven full-chain topology theater ────────────────────────────────
  * A NetOps live-feed item promoted onto page 1: the console expands the WHOLE
  * topology (every subnet, every mined device) and plays the event's pipeline

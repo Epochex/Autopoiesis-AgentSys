@@ -54,6 +54,41 @@ REPORTED = [
      "reason": "这一族没有可自动执行的动作"},
 ]
 
+# The rounds that caused the refusal — each one a restart that worked and a
+# fault that came back anyway.
+PRIOR_CYCLES = [
+    {"at": _at(20), "outcome": "passed", "samples": 12},
+    {"at": _at(40), "outcome": "passed", "samples": 12},
+    {"at": _at(60), "outcome": "passed", "samples": 12},
+]
+
+ESCALATION_REASON = (
+    "同一处置在 24 小时内已经生效过 3 次又复发。重启治不好它——反复被弄坏说明另有原因，转人工。"
+)
+
+# One full successful cycle still in the window, then the detection the system
+# refused to act on. The successes are the point: they are what the escalation
+# is about, and the card must not read them as "this is fine".
+RECURRING = [
+    {"kind": "detected", "at": _at(15), "subject": "demo-collector.service", "severity": "high",
+     "detector": "failed_units", "action": "restart_unit", "family": "fam-perception-selfheal",
+     "summary": "demo-collector.service 挂了。",
+     "evidence": {"line": "demo-collector.service loaded failed"}, "streak": 2},
+    {"kind": "preflight", "at": _at(16), "subject": "demo-collector.service", "action": "restart_unit",
+     "eligible": True, "reason": "unit is failed",
+     "blast_radius": {"scope": "single-service", "summary": "只影响 demo-collector.service。"}},
+    {"kind": "remediated", "at": _at(19), "subject": "demo-collector.service", "action": "restart_unit",
+     "outcome": "passed", "needs_human": False, "samples": 12, "detail": "no probe regressed"},
+    {"kind": "resolved", "at": _at(20), "subject": "demo-collector.service", "note": "回读通过"},
+    {"kind": "detected", "at": _at(70), "subject": "demo-collector.service", "severity": "high",
+     "detector": "failed_units", "action": "restart_unit",
+     "summary": "demo-collector.service 又挂了。", "streak": 2},
+    {"kind": "escalated", "at": _at(72), "subject": "demo-collector.service",
+     "detector": "failed_units", "action": "restart_unit",
+     "recurrences": 3, "window_hours": 24, "prior_cycles": PRIOR_CYCLES,
+     "reason": ESCALATION_REASON},
+]
+
 
 def test_a_healed_chain_becomes_one_closed_card(tmp_path, monkeypatch):
     _write(tmp_path, HEALED, monkeypatch)
@@ -78,6 +113,79 @@ def test_report_only_chain_is_not_dressed_up_as_a_fix(tmp_path, monkeypatch):
     assert card["runbookDraft"]["approvalBoundary"]["approvalRequired"] is True
     assert card["reviewVerdict"]["checks"]["overreachRisk"]["status"] == "gated"
     assert any("没有可自动执行的动作" in a for a in card["runbookDraft"]["actions"])
+
+
+def test_escalation_outranks_the_successes_that_caused_it(tmp_path, monkeypatch):
+    """The same chain, with and without the refusal on the end.
+
+    A recurring subject's chain still holds every `remediated` and `resolved`
+    from the rounds that did work. Reading the last of those would report the
+    service as healed at the exact moment the system refused to touch it again.
+    """
+    _write(tmp_path, RECURRING[:4], monkeypatch)
+    assert sentinel_cards("zh", now=NOW + 200)[0]["reviewVerdict"]["verdictStatus"] == "closed"
+
+    _write(tmp_path, RECURRING, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    assert card["reviewVerdict"]["verdictStatus"] == "escalated"
+    assert card["reviewVerdict"]["recommendedDisposition"] == "needs_human"
+    assert card["priority"] == "P1"
+    assert card["runbookDraft"]["planStatus"] == "blocked"
+    assert card["runbookDraft"]["approvalBoundary"]["approvalRequired"] is True
+    assert card["reviewVerdict"]["checks"]["overreachRisk"]["status"] == "gated"
+
+
+def test_the_citation_chain_reaches_the_card(tmp_path, monkeypatch):
+    """"凭什么第三次就不修了" has to be answerable from the card, not the docs."""
+    _write(tmp_path, RECURRING, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    assert card["recurrences"] == 3
+    assert card["priorCycles"] == PRIOR_CYCLES
+    # and the runbook stops claiming it will restart the unit
+    assert ESCALATION_REASON in card["runbookDraft"]["actions"]
+
+
+def test_the_escalation_is_a_stage_of_its_own(tmp_path, monkeypatch):
+    _write(tmp_path, RECURRING, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    stage = next(s for s in card["stageTelemetry"] if s["stageId"] == "escalated")
+    # an aggregation over the timeline, not a detector and not a model
+    assert stage["provider"] == "recurrence"
+    assert stage["detail"] == ESCALATION_REASON
+    assert card["timeline"][-1]["kind"] == "escalated"
+    # deliberately not the same words as `needs_human`: that one means a revert
+    # could not be verified, this one means the system chose to stop repairing
+    assert card["timeline"][-1]["label"] == "不再自动修，转人工"
+
+
+def test_the_refusal_sticks_while_the_detector_keeps_firing(tmp_path, monkeypatch):
+    """The sentinel announces an escalation once per key, then keeps detecting.
+
+    Read from the tail, such a chain is a run of bare `detected` events with the
+    decision scrolled off the end. Nothing may read that as a fresh incident the
+    system is about to work on.
+    """
+    still_broken = [
+        {"kind": "detected", "at": _at(90 + 20 * i), "subject": "demo-collector.service",
+         "severity": "high", "detector": "failed_units", "action": "restart_unit",
+         "summary": "demo-collector.service 又挂了。", "streak": 2}
+        for i in range(3)
+    ]
+    _write(tmp_path, RECURRING + still_broken, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 300)[0]
+    assert card["reviewVerdict"]["verdictStatus"] == "escalated"
+    assert card["runbookDraft"]["planStatus"] == "blocked"
+    assert card["recurrences"] == 3
+    # its clock still advances, so it stays at the top of the live list
+    assert card["ts"] == still_broken[-1]["at"]
+
+
+def test_a_chain_that_never_escalated_still_answers_the_question(tmp_path, monkeypatch):
+    """Empty, not absent — a reader must not have to know the chain's kind first."""
+    _write(tmp_path, HEALED, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    assert card["recurrences"] == 0
+    assert card["priorCycles"] == []
 
 
 def test_an_in_flight_chain_reads_as_in_flight(tmp_path, monkeypatch):
@@ -141,8 +249,9 @@ def test_the_card_id_is_stable_across_polls(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("lang", ["zh", "en"])
-def test_both_languages_render_every_step(tmp_path, monkeypatch, lang):
-    _write(tmp_path, HEALED, monkeypatch)
+@pytest.mark.parametrize("events", [HEALED, RECURRING], ids=["healed", "escalated"])
+def test_both_languages_render_every_step(tmp_path, monkeypatch, lang, events):
+    _write(tmp_path, events, monkeypatch)
     card = sentinel_cards(lang, now=NOW + 200)[0]
     assert all(step["label"] for step in card["timeline"])
     assert all(stage["label"] for stage in card["stageTelemetry"])
@@ -196,3 +305,39 @@ def test_the_host_address_is_the_carrier_bearing_private_one(monkeypatch):
         )})(),
     )
     assert sentinel_projection.host_address() == "192.168.1.27"
+
+
+def test_an_escalation_ends_when_the_target_stops_failing(tmp_path, monkeypatch):
+    """A person fixed it. The card has to be able to notice that.
+
+    The loop's in-process latch is invisible to anything reading the log, so
+    without an event for it the card would stay "needs a person" forever after
+    the person had been.
+    """
+    healed = [*RECURRING, {
+        "kind": "escalation_cleared", "at": _at(9_000), "subject": "demo.service",
+        "detector": "failed_units", "action": "restart_unit",
+        "note": "该目标已不再报错，升级状态解除；复发计数仍在窗口内保留",
+    }]
+    _write(tmp_path, healed, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 9_200)[0]
+    assert card["reviewVerdict"]["verdictStatus"] != "escalated"
+    assert card["runbookDraft"]["approvalBoundary"]["approvalRequired"] is False
+
+
+def test_a_clearance_from_an_earlier_escalation_does_not_lift_a_later_one(tmp_path, monkeypatch):
+    """Escalated, cleared, escalated again — the newest decision is the one that counts."""
+    events = [
+        *RECURRING,
+        {"kind": "escalation_cleared", "at": _at(9_000), "subject": "demo.service",
+         "detector": "failed_units", "action": "restart_unit", "note": "n"},
+        {"kind": "detected", "at": _at(10_000), "subject": "demo.service",
+         "detector": "failed_units", "action": "restart_unit", "severity": "high",
+         "summary": "demo.service 挂了。"},
+        {"kind": "escalated", "at": _at(10_100), "subject": "demo.service",
+         "detector": "failed_units", "action": "restart_unit", "recurrences": 3,
+         "window_hours": 24, "prior_cycles": [], "reason": ESCALATION_REASON},
+    ]
+    _write(tmp_path, events, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 10_300)[0]
+    assert card["reviewVerdict"]["verdictStatus"] == "escalated"

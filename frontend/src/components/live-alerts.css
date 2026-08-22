@@ -19,6 +19,10 @@
   background:none; text-align:left; cursor:pointer; font-family:inherit; }
 .la-row:hover { background:var(--paper-2, #efeee9); }
 .la-row:focus-visible { outline:2px solid var(--ink, #0d0d0d); outline-offset:-2px; }
+/* Escalated and needs_human both ask for a person and both read red. The deeper
+   red is the only thing separating them at a glance, and it belongs on the one
+   the system has given up on. */
+.la-row.p-escalated { border-left-color:#7a1526; background:rgba(122,21,38,.05); }
 .la-row.p-needs_human { border-left-color:#9e2937; }
 .la-row.p-watching { border-left-color:#ccff00; }
 .la-row.p-detected { border-left-color:#0d0d0d; }
@@ -27,6 +31,7 @@
 
 .la-phase { font-family:var(--font-mono, monospace); font-size:8.5px; font-weight:600;
   letter-spacing:.09em; text-transform:uppercase; }
+.p-escalated .la-phase { color:#7a1526; font-weight:700; }
 .p-needs_human .la-phase { color:#9e2937; }
 .p-watching .la-phase { color:#0d0d0d; }
 .p-reported .la-phase { color:#80500e; }

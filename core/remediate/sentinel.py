@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.remediate import recurrence
+
 def _default_timeline() -> Path:
     """Where the sentinel writes what it saw and did.
 
@@ -140,6 +142,10 @@ class Sentinel:
     clock: Callable[[], float] = time.monotonic
 
     _streak: dict[str, int] = field(default_factory=dict)
+    # Keys already announced as escalated, so a fault that stays broken does not
+    # re-announce every fifteen seconds. Cleared when the condition clears, and
+    # deliberately not persisted: a fresh process should say it again once.
+    _escalated: set[str] = field(default_factory=set)
     _cooldown_until: dict[str, float] = field(default_factory=dict)
     _stop: threading.Event = field(default_factory=threading.Event)
 
@@ -158,6 +164,19 @@ class Sentinel:
         for key in list(self._streak):
             if key not in active:
                 del self._streak[key]
+        # An escalation ends when the condition does. Recording that is not
+        # bookkeeping: the in-process latch is invisible to anything reading the
+        # log, so without this line a card stays "needs a person" forever after
+        # the person fixed it — the system would be unable to notice it had been
+        # helped.
+        for key in sorted(self._escalated - active):
+            detector, _, rest = key.partition(":")
+            subject, _, action = rest.rpartition(":")
+            record("escalation_cleared", {
+                "subject": subject, "detector": detector, "action": action or None,
+                "note": "该目标已不再报错，升级状态解除；复发计数仍在窗口内保留",
+            })
+        self._escalated &= active
 
         acted: list[dict[str, Any]] = []
         for detection in seen:
@@ -180,6 +199,24 @@ class Sentinel:
                 })
                 continue
 
+            history = self._history(detection)
+            if history.escalate:
+                if detection.key not in self._escalated:
+                    self._escalated.add(detection.key)
+                    record("escalated", {
+                        "subject": detection.subject,
+                        "detector": detection.detector,
+                        "action": detection.action,
+                        "recurrences": history.recurrences,
+                        "window_hours": int(recurrence.WINDOW_SEC // 3600) or 1,
+                        # The chain of prior repairs that caused this refusal —
+                        # the answer to "why did it stop?" belongs next to the
+                        # decision, not in a doc.
+                        "prior_cycles": [c.as_dict() for c in history.cycles],
+                        "reason": recurrence.escalation_note(history),
+                    })
+                continue
+
             until = self._cooldown_until.get(detection.key, 0.0)
             if self.clock() < until:
                 record("cooldown", {
@@ -193,6 +230,18 @@ class Sentinel:
 
         record("cycle", {"detections": len(seen), "acted": len(acted)})
         return {"detections": [d.as_dict() for d in seen], "acted": acted}
+
+    def _history(self, detection: Detection) -> recurrence.History:
+        """How often this exact repair has already worked and not held.
+
+        Read from the timeline every time rather than kept alongside the loop's
+        own counters: a separately-maintained tally can drift from the audit
+        trail it claims to summarise, and one that disagrees with the evidence
+        is worse than none — it is wrong where nobody can see it.
+        """
+        return recurrence.history_for(
+            detection.detector, detection.target or detection.subject, detection.action
+        )
 
     def _act(self, detection: Detection) -> dict[str, Any]:
         """Preflight, execute under the watch window, and record the verdict."""
@@ -219,23 +268,37 @@ class Sentinel:
                                 "reason": check.get("reason", "preconditions not met")})
             return {"subject": target, "action": action, "outcome": "declined"}
 
-        self._cooldown_until[detection.key] = self.clock() + self.cooldown_sec
+        # Each failed-to-hold repair buys the next one a longer quiet period —
+        # fail2ban's bantime.multipliers, doubling. Room for a slower real cause
+        # to surface instead of being papered over on a fixed cadence.
+        history = self._history(detection)
+        self._cooldown_until[detection.key] = self.clock() + recurrence.cooldown_for(
+            history.recurrences, self.cooldown_sec
+        )
         result = self.execute(action, target, on_command=log_command)
         verdict = (result or {}).get("verdict") or {}
         record("remediated", {
-            "subject": target, "action": action,
+            "subject": target, "action": action, "detector": detection.detector,
             "outcome": verdict.get("outcome") or ("refused" if result.get("refused") else "unknown"),
             "needs_human": result.get("needs_human"),
             "detail": result.get("detail") or result.get("reason"),
             "samples": len(verdict.get("samples") or []),
             "baseline": verdict.get("baseline"),
         })
-        # A pass clears the cooldown: the thing is fixed, and a later unrelated
-        # fault on the same target should not be ignored for ten minutes.
+        # The streak clears — the fault is gone, so a return has to re-confirm
+        # from scratch. The cooldown does NOT clear, and that is the change: it
+        # was set above to a length that grows with how often this same repair
+        # has already failed to hold. Clearing it on success was what made
+        # recurrence invisible; the fix would work, the fault would come back
+        # twenty minutes later, and nothing remembered.
         if verdict.get("outcome") == "passed":
-            self._cooldown_until.pop(detection.key, None)
             self._streak.pop(detection.key, None)
+            # detector + action are what the recurrence projection keys on; a
+            # resolution that does not say what it resolved cannot be counted.
             record("resolved", {"subject": target, "action": action,
+                                "detector": detection.detector,
+                                "outcome": verdict.get("outcome"),
+                                "samples": len(verdict.get("samples") or []),
                                 "note": "改完回读通过，观察期内没有回归"})
         return {"subject": target, "action": action,
                 "outcome": verdict.get("outcome"), "needs_human": result.get("needs_human")}

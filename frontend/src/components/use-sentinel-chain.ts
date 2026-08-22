@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { PriorCycle } from '../types'
 
 /* ── one live read of a sentinel chain, shared by everything that draws it ────
  *
@@ -26,12 +27,17 @@ export interface ChainStep {
   needs_human?: boolean
   blast_radius?: { scope: string; summary: string } | null
   baseline?: Record<string, boolean> | null
+  /* Carried only by `escalated`: how many times this exact fix has already
+     worked and been undone, over what window, and the rounds themselves. */
+  recurrences?: number
+  window_hours?: number
+  prior_cycles?: PriorCycle[]
 }
 
 /** Events that belong to a subject's chain; the rest is loop bookkeeping. */
 export const SUBJECT_KINDS = new Set([
   'detected', 'awaiting_confirmation', 'no_safe_action', 'cooldown',
-  'preflight', 'declined', 'remediated', 'resolved',
+  'preflight', 'declined', 'remediated', 'resolved', 'escalated',
 ])
 
 /** One shell command the sentinel ran, and what came back. */
@@ -50,7 +56,9 @@ export interface Chain {
   commands: CommandLine[]
 }
 
-const TERMINAL_KINDS = new Set(['resolved', 'remediated', 'no_safe_action', 'declined', 'cooldown'])
+const TERMINAL_KINDS = new Set([
+  'resolved', 'remediated', 'no_safe_action', 'declined', 'cooldown', 'escalated',
+])
 /** Keep reading briefly past the first terminal step — see the note on the hook. */
 const GRACE_POLLS = 3
 

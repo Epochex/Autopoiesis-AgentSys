@@ -32,7 +32,8 @@ from typing import Any
 # loop bookkeeping with no subject and are skipped.
 _CHAIN_KINDS = frozenset({
     "detected", "awaiting_confirmation", "no_safe_action", "cooldown",
-    "preflight", "declined", "remediated", "resolved",
+    "preflight", "declined", "remediated", "resolved", "escalated",
+    "escalation_cleared",
 })
 
 # Cards older than this are history the ledger already keeps; the live list is
@@ -52,6 +53,8 @@ _STEP_LABEL: dict[str, tuple[str, str]] = {
     "no_safe_action": ("无安全动作，只报不动", "no safe action — reported only"),
     "declined": ("前置条件不通过，拒绝执行", "preconditions failed — declined"),
     "cooldown": ("冷却中", "cooling down"),
+    "escalated": ("不再自动修，转人工", "STOPPED — HANDED TO A PERSON"),
+    "escalation_cleared": ("目标恢复，升级解除", "TARGET RECOVERED, ESCALATION LIFTED"),
 }
 
 _ACTION_LABEL: dict[str, tuple[str, str]] = {
@@ -125,6 +128,18 @@ def _last(chain: list[dict[str, Any]], kind: str) -> dict[str, Any] | None:
 def _outcome(chain: list[dict[str, Any]]) -> tuple[str, str, bool]:
     """(verdict_status, disposition, still_running) for this subject's chain."""
     remediated = _last(chain, "remediated")
+    # First, and above every other terminal: a chain that escalated contains the
+    # *previous* cycles' `remediated` and `resolved` events, because those cycles
+    # are what caused the escalation. Reading the last success would report this
+    # subject as healed at the exact moment the system refused to touch it again.
+    escalated = _last(chain, "escalated")
+    if escalated is not None:
+        # ...unless a person already dealt with it. The loop records that the
+        # condition stopped firing; without honouring it here the card would
+        # stay "needs a person" forever after the person had been.
+        cleared = _last(chain, "escalation_cleared")
+        if cleared is None or str(cleared.get("at", "")) < str(escalated.get("at", "")):
+            return "escalated", "needs_human", False
     if _last(chain, "resolved"):
         return "closed", "resolved", False
     if remediated is not None:
@@ -147,13 +162,19 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     remediated = _last(chain, "remediated")
     resolved = _last(chain, "resolved")
     no_action = _last(chain, "no_safe_action")
+    escalated = _last(chain, "escalated")
     radius = (preflight or {}).get("blast_radius") or {}
     verdict_status, disposition, running = _outcome(chain)
     action = str(detection.get("action") or (preflight or {}).get("action") or "")
     last_ts = str(chain[-1].get("at") or "")
 
+    # Both branches where the system stopped short of acting on its own. They are
+    # different findings — nothing safe to run vs. this has been fixed too often
+    # already — but they gate the card identically: a person has to decide.
+    gated = bool(no_action) or bool(escalated)
+
     severity = str(detection.get("severity") or "high")
-    if verdict_status == "needs_human":
+    if verdict_status in {"escalated", "needs_human"}:
         priority = "P1"
     elif running:
         priority = "P1" if severity == "critical" else "P2"
@@ -215,6 +236,16 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "ts": str(no_action.get("at") or ""),
             "detail": str(no_action.get("reason") or no_action.get("note") or ""),
         })
+    if escalated:
+        stages.append({
+            "stageId": "escalated",
+            "label": "复发次数已到上限" if not en else "recurrence limit reached",
+            # Not a detector and not a model: the count is an aggregation over the
+            # same append-only timeline this card is projected from.
+            "provider": "recurrence",
+            "ts": str(escalated.get("at") or ""),
+            "detail": str(escalated.get("reason") or ""),
+        })
 
     statement = str(detection.get("summary") or "")
     hypothesis_id = _stable_id(subject, "hypothesis", statement)
@@ -232,6 +263,24 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         actions.append(str(radius["summary"]))
     if no_action:
         actions.append(str(no_action.get("reason") or ""))
+    if escalated:
+        # Without this the runbook still reads "restart the unit" on a card whose
+        # whole point is that the restart was refused.
+        actions.append(str(escalated.get("reason") or ""))
+
+    # The citation chain: which recorded fix-then-break rounds produced the
+    # refusal. Carried on the card so the surfaces that draw it never have to
+    # re-derive the count — and so "why the third time?" is answerable from the
+    # same record the operator is already looking at.
+    prior_cycles = [
+        {
+            "at": str(cycle.get("at") or ""),
+            "outcome": str(cycle.get("outcome") or ""),
+            "samples": int(cycle.get("samples") or 0),
+        }
+        for cycle in ((escalated or {}).get("prior_cycles") or [])
+        if isinstance(cycle, dict)
+    ]
 
     return {
         "id": f"sentinel-{_stable_id(subject)[:16]}",
@@ -257,6 +306,10 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         "impactLevel": str(radius.get("scope") or ("待评估" if not en else "not yet measured")),
         "timeline": timeline,
         "stageTelemetry": stages,
+        # Empty and zero on every card that never escalated, so a consumer can read
+        # these without first asking what kind of chain it is holding.
+        "priorCycles": prior_cycles,
+        "recurrences": int((escalated or {}).get("recurrences") or 0),
         "hypothesisSet": {
             "setId": _stable_id(subject, "set"),
             "primaryHypothesisId": hypothesis_id,
@@ -277,7 +330,14 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
                 f"{subject} · {action_text}" if not en
                 else f"{action_text} on {subject}"
             ),
-            "planStatus": "executed" if remediated else ("blocked" if no_action else "in_flight"),
+            # `escalated` is read before `remediated`, because the successful
+            # remediations still in this chain are the ones being escalated over.
+            "planStatus": (
+                "blocked" if escalated
+                else "executed" if remediated
+                else "blocked" if no_action
+                else "in_flight"
+            ),
             "applicability": {
                 "rule_id": str(detection.get("detector") or ""),
                 "service": subject,
@@ -287,9 +347,9 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "approvalBoundary": {
                 # Honest per-record value: the sentinel executes unattended inside a
                 # closed allowlist, so this is not the NetOps blanket True.
-                "approvalRequired": bool(no_action) or verdict_status == "needs_human",
+                "approvalRequired": gated or verdict_status == "needs_human",
                 "disposition": disposition,
-                "reviewerApprovalFlag": bool(no_action),
+                "reviewerApprovalFlag": gated,
             },
         },
         "reviewVerdict": {
@@ -298,8 +358,8 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "recommendedDisposition": disposition,
             "checks": {
                 "overreachRisk": {
-                    "status": "gated" if no_action else ("running" if running else "cleared"),
-                    "approvalRequired": bool(no_action),
+                    "status": "gated" if gated else ("running" if running else "cleared"),
+                    "approvalRequired": gated,
                 },
             },
         },

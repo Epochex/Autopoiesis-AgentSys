@@ -18,19 +18,26 @@ interface Row {
   severity: string
   summary: string
   at: string
-  phase: 'watching' | 'resolved' | 'needs_human' | 'reported' | 'detected'
+  phase: 'escalated' | 'watching' | 'resolved' | 'needs_human' | 'reported' | 'detected'
   action: string | null
 }
 
 const SUBJECT_KINDS = new Set([
   'detected', 'awaiting_confirmation', 'no_safe_action', 'cooldown',
-  'preflight', 'declined', 'remediated', 'resolved',
+  'preflight', 'declined', 'remediated', 'resolved', 'escalated',
 ])
 
 const PHASE_LABEL: Record<Row['phase'], [string, string]> = {
   detected: ['刚发现', 'DETECTED'],
   watching: ['处置中', 'IN FLIGHT'],
   resolved: ['已自愈', 'SELF-HEALED'],
+  // Both ask for a person, so both say so. They are not the same ask: needs_human
+  // is one attempt that went wrong, escalated is the system declining to try at
+  // all because it has already fixed this three times. The row's summary and the
+  // theater card carry that difference.
+  // Distinct from needs_human on purpose: that one means a revert could not
+  // be verified, this one means the system decided to stop repairing.
+  escalated: ['不再自动修', 'STOPPED REPAIRING'],
   needs_human: ['要人工', 'NEEDS A PERSON'],
   reported: ['只报不动', 'REPORTED ONLY'],
 }
@@ -60,7 +67,11 @@ function summarise(events: Record<string, unknown>[]): Row[] {
     const kinds = chain.map((e) => String(e.kind))
     const remediated = [...chain].reverse().find((e) => e.kind === 'remediated')
     let phase: Row['phase'] = 'detected'
-    if (kinds.includes('resolved')) phase = 'resolved'
+    // Escalation is read first: the chain of a subject that keeps coming back
+    // still holds every fix that worked, and the newest of those would otherwise
+    // paint the row 已自愈 on the incident nobody is dealing with.
+    if (kinds.includes('escalated')) phase = 'escalated'
+    else if (kinds.includes('resolved')) phase = 'resolved'
     else if (remediated?.needs_human) phase = 'needs_human'
     else if (kinds.includes('no_safe_action')) phase = 'reported'
     else if (kinds.includes('preflight')) phase = 'watching'
@@ -76,8 +87,10 @@ function summarise(events: Record<string, unknown>[]): Row[] {
     })
   }
   // Anything still moving goes first; a healed incident is reassurance, not news.
+  // Escalated outranks even that: it is the only row where the system has
+  // stopped, so nothing else will move it until someone does.
   const order: Record<Row['phase'], number> = {
-    needs_human: 0, watching: 1, detected: 2, reported: 3, resolved: 4,
+    escalated: 0, needs_human: 1, watching: 2, detected: 3, reported: 4, resolved: 5,
   }
   rows.sort((a, b) => order[a.phase] - order[b.phase] || (a.at < b.at ? 1 : -1))
   return rows
@@ -110,16 +123,21 @@ export function LiveAlerts({ lang, onOpen }: { lang: Lang; onOpen: (subject: str
 
   if (!rows.length) return null
 
-  const live = rows.filter((r) => r.phase !== 'resolved').length
+  // An escalated incident is not being handled — counting it as 处理中 would tell
+  // the operator the system has it when the whole point is that it has stopped.
+  const stopped = rows.filter((r) => r.phase === 'escalated').length
+  const live = rows.filter((r) => r.phase !== 'resolved' && r.phase !== 'escalated').length
+  const counts = [
+    stopped ? (zh ? `${stopped} 项要人工` : `${stopped} need a person`) : '',
+    live ? (zh ? `${live} 项处理中` : `${live} in flight`) : '',
+  ].filter(Boolean)
 
   return (
     <div className="la">
       <div className="la-head">
         <span className="la-k">{zh ? '系统自己发现的' : 'FOUND BY THE SYSTEM'}</span>
         <span className="la-count">
-          {live
-            ? (zh ? `${live} 项处理中` : `${live} in flight`)
-            : (zh ? '都已自愈' : 'all healed')}
+          {counts.length ? counts.join(' · ') : (zh ? '都已自愈' : 'all healed')}
         </span>
         <span className="la-hint">{zh ? '点一条看完整处置链路 ▸' : 'click a row for its chain ▸'}</span>
       </div>

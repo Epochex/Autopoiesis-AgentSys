@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { Lang } from '../i18n'
+import { currentRound } from './netops-pipeline'
 import { type ChainStep as Step, useSentinelChain } from './use-sentinel-chain'
 
 /* ── 处置进度 — what the system is doing to this device, right now ───────────
@@ -54,6 +55,14 @@ function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal
         reached.add('closed')
         terminal = 'no_safe_action'
         break
+      case 'escalated':
+        // Refused on the confirmed detection: nothing was measured, nothing was
+        // run. The rail ends here rather than at a preflight this round was
+        // never allowed to reach.
+        reached.add('confirmed')
+        reached.add('closed')
+        terminal = 'escalated'
+        break
       case 'declined':
       case 'cooldown':
         reached.add('closed')
@@ -76,6 +85,7 @@ function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal
 const TERMINAL_LABEL: Record<string, [string, string]> = {
   resolved: ['已恢复', 'RESOLVED'],
   passed: ['已恢复', 'RESOLVED'],
+  escalated: ['反复复发，已转人工', 'ESCALATED — NEEDS A PERSON'],
   needs_human: ['需人工介入', 'NEEDS A PERSON'],
   no_safe_action: ['只报不动', 'REPORTED, NOT ACTED'],
   declined: ['前置条件不通过', 'PRECONDITIONS FAILED'],
@@ -88,11 +98,14 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
   const zh = lang === 'zh'
   const steps = useSentinelChain(subject)?.steps ?? null
 
-  const view = useMemo(() => (steps ? phaseOf(steps) : null), [steps])
+  // Read the round, not the whole chain: a subject that keeps coming back has
+  // several finished rounds behind it, and this panel is about the one now.
+  const round = useMemo(() => (steps ? currentRound(steps) : null), [steps])
+  const view = useMemo(() => (round ? phaseOf(round) : null), [round])
 
-  if (!steps || !steps.length || !view) return null
+  if (!round || !round.length || !view) return null
 
-  const samples = [...steps].reverse().find((s) => typeof s.samples === 'number')?.samples
+  const samples = [...round].reverse().find((s) => typeof s.samples === 'number')?.samples
   const running = !view.reached.has('closed')
 
   return (

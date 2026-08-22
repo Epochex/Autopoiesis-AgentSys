@@ -193,6 +193,9 @@
   letter-spacing:.1em; text-transform:uppercase; padding:2px 8px; border:1px solid currentColor; }
 .rp-terminal.t-resolved,.rp-terminal.t-passed { color:#12615c; }
 .rp-terminal.t-needs_human,.rp-terminal.t-revert_unverified { color:#9e2937; }
+/* Filled, not outlined: the only terminal where the system stopped on purpose
+   and nothing further will happen without a person. */
+.rp-terminal.t-escalated { color:var(--paper); background:#7a1526; border-color:#7a1526; }
 .rp-terminal.t-no_safe_action,.rp-terminal.t-declined,.rp-terminal.t-cooldown { color:#80500e; }
 .rp-terminal.t-running { color:var(--ink); background:var(--acid); border-color:var(--ink); }
 
@@ -250,6 +253,29 @@
   color: var(--ink-soft, #2a2a27); }
 .th-inc-row > span { flex: none; min-width: 40px; font-size: 8px; font-weight: 700;
   letter-spacing: .1em; color: var(--gray, #605f5a); padding-top: 2px; }
+
+/* ── the citation chain on an escalated card ──────────────────────────────
+   Which recorded rounds produced the refusal. Set apart by a rule and its own
+   indent rather than by another colour: the card is already red, and a second
+   accent inside it would make the count and the evidence compete. */
+.th-inc-cite { margin: 3px 0; padding: 3px 0 3px 47px; border-top: 1px solid rgba(122, 21, 38, .3);
+  border-bottom: 1px solid rgba(122, 21, 38, .3); }
+.th-inc-cite-k { font-size: 8px; font-weight: 700; letter-spacing: .1em; color: #7a1526;
+  margin-bottom: 1px; }
+.th-inc-cite-i { font-size: 9.5px; line-height: 1.4; color: var(--ink, #0d0d0d);
+  font-variant-numeric: tabular-nums; }
+
+/* Escalation is a harder state than an incident in flight, and it has to look
+   like one before the text is read. */
+.th-incident.is-escalated .th-inc-card { border-width: 2.6px; border-color: #7a1526;
+  box-shadow: 3px 3px 0 rgba(122, 21, 38, .18); }
+.th-incident.is-escalated .th-inc-k { color: #7a1526; }
+.th-incident.is-escalated .th-inc-halo,
+.th-incident.is-escalated .th-inc-halo-box,
+.th-incident.is-escalated .th-inc-ring,
+.th-incident.is-escalated .th-inc-leader { stroke: #7a1526; }
+.th-incident.is-escalated .th-inc-ring { stroke-width: 3.2; }
+.th-incident.is-escalated .th-inc-core { fill: #7a1526; }
 
 /* the host running this system: a real device the mined graph cannot see */
 .th-self-box { fill: var(--paper, #e7e7e3); stroke: var(--ink, #0d0d0d); stroke-width: 1.6; }
