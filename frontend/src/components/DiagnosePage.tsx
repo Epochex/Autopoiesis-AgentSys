@@ -6,6 +6,7 @@ import type { Finding, ScanResp } from './scan-data'
 import { isDocRange, kindLabel, portsOf } from './scan-data'
 import { AttackSurfaceGraph } from './surface-graph'
 import { AddressSpace, CoverageRail, OwnershipContention, OwnershipStable, ScopeStrip } from './environment-blocks'
+import { InvestigateChat } from './InvestigateChat'
 import { FAULT_LABEL, VERIFY_LABEL, pick } from './environment-labels'
 import {
   AUTOMATION_LABEL,
@@ -65,6 +66,7 @@ const T = (zh: boolean) => ({
   space: zh ? '地址空间占用' : 'ADDRESS-SPACE OCCUPANCY',
   ledger: zh ? '故障族 · 按严重程度排 · 点开看怎么确认、谁来修' : 'FAULT FAMILIES · WORST FIRST · EXPAND FOR HOW TO CONFIRM AND WHO FIXES IT',
   cov: zh ? '传感器覆盖 · 检测不到的必须点名' : 'SENSOR COVERAGE · WHAT CANNOT BE DETECTED IS NAMED',
+  chat: zh ? '问一个具体问题 · 先自动取证,再给方案' : 'ASK ABOUT ONE FAULT · EVIDENCE FIRST, THEN A PLAN',
   standby: zh ? '目前没发生' : 'NOT HAPPENING NOW',
   liveHits: zh ? '现在查到' : 'FOUND NOW',
   exposureHits: zh ? '扫到敞开的' : 'FOUND OPEN',
@@ -453,6 +455,13 @@ export function DiagnosePage({ lang, scenario = 'live' }: { lang: Lang; scenario
                 </div>
               ) : null}
             </section>
+
+            {scenario === 'live' ? (
+              <section className="dx-sec">
+                <div className="dx-sec-k">{tx.chat}</div>
+                <InvestigateChat lang={lang} family={openRow ?? undefined} subject={focusIp ?? undefined} />
+              </section>
+            ) : null}
 
             {env?.coverage?.length ? (
               <section className="dx-sec">

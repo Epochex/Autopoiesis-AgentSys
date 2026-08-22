@@ -350,3 +350,137 @@
   .dx-row-h.is-cat { grid-template-columns:38px 64px 1fr; }
   .dx-row-h.is-cat .dx-row-a,.dx-row-h.is-cat .dx-row-v,.dx-row-h.is-cat .dx-row-t,.dx-row-h.is-cat .dx-row-s { grid-column:1/-1; }
 }
+
+/* ── investigate one fault (dx-iv-*) ─────────────────────────────────────
+   Three bands stacked in one frame: the commands already run, the verdict
+   and its steps, then the follow-up questions. Everything cites the command
+   it rests on, and a citation chip lands on that command's output.
+   The gated step is the load-bearing detail — its button is rendered
+   disabled, so the panel has no path that lets the machine press it. */
+.dx-iv { border:1.5px solid var(--ink); background:var(--paper-2); font-family:var(--font-mono); color:var(--ink); }
+.dx-iv :focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+
+.dx-iv-head { padding:11px 14px 12px; border-bottom:1.5px solid var(--ink); }
+.dx-iv-head-k { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; }
+.dx-iv-title { margin:0; font-family:var(--font-mono); font-size:10.5px; font-weight:600; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--ink); }
+.dx-iv-scope { font-size:9.5px; letter-spacing:.1em; color:var(--gray); font-variant-numeric:tabular-nums; }
+.dx-iv-lead { margin:7px 0 0; font-size:10.5px; line-height:1.55; color:var(--ink-soft); max-width:92ch; }
+
+/* question forms — the top one opens a session, the bottom one adds a turn */
+.dx-iv-ask { display:flex; flex-direction:column; gap:5px; margin-top:11px; }
+.dx-iv-lab { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.dx-iv-ask-row { display:flex; align-items:stretch; min-width:0; }
+.dx-iv-in { flex:1; min-width:0; border:1.5px solid var(--ink); background:var(--paper); color:var(--ink);
+  font:inherit; font-size:11.5px; padding:6px 10px; }
+.dx-iv-in::placeholder { color:var(--gray); }
+.dx-iv-in:disabled { background:var(--paper-3); color:var(--gray); }
+.dx-iv-go { flex:none; border:1.5px solid var(--ink); border-left:0; background:var(--acid); color:var(--acid-ink);
+  font:inherit; font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; padding:0 16px; cursor:pointer; }
+.dx-iv-go:hover:not(:disabled) { background:#d4ff33; }
+.dx-iv-go:disabled { background:var(--paper-3); color:var(--gray); cursor:default; }
+.dx-iv-go.is-inline { margin-left:auto; border-left:1.5px solid var(--ink); padding:3px 12px; }
+
+.dx-iv-err { margin:0; padding:8px 14px; border-bottom:1px solid var(--rule); border-left:3px solid var(--hi);
+  background:var(--paper-3); font-size:10.5px; line-height:1.5; color:var(--hi-t); }
+.dx-iv-sum { margin:0; padding:9px 14px; border-bottom:1px solid var(--rule); font-size:11px; line-height:1.55;
+  color:var(--ink-soft); }
+
+/* background context: what was already run, with its real output */
+.dx-iv-ev { border-bottom:1px solid var(--rule); }
+.dx-iv-ev-h { display:grid; grid-template-columns:1fr auto auto; gap:14px; align-items:baseline; width:100%;
+  padding:7px 14px; border:0; background:transparent; font:inherit; text-align:left; cursor:pointer; }
+.dx-iv-ev-h:hover { background:var(--paper-3); }
+.dx-iv-ev-k { font-size:9.5px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--ink); }
+.dx-iv-count { font-size:9.5px; color:var(--gray); font-variant-numeric:tabular-nums; }
+.dx-iv-ev-t { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.dx-iv-ev-list { margin:0; padding:2px 14px 12px; list-style:none; display:flex; flex-direction:column; gap:10px;
+  max-height:430px; overflow-y:auto; }
+.dx-iv-ev-i { min-width:0; border-left:2px solid var(--rule); padding:2px 0 2px 10px; }
+.dx-iv-ev-i.is-bad { border-left-color:var(--hi-t); }
+.dx-iv-ev-i.is-empty { border-left-color:transparent; padding-left:0; font-size:9.5px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--gray); }
+.dx-iv-ev-i.is-flash { border-left-color:var(--ink); animation:dx-iv-flash 1.8s ease-out; }
+@keyframes dx-iv-flash { from { background:var(--acid); } to { background:transparent; } }
+.dx-iv-ev-m { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; margin-bottom:4px;
+  font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+/* evidence ids read back as the citation chips print them, never upper-cased */
+.dx-iv-id { color:var(--ink); letter-spacing:.06em; text-transform:none; }
+.dx-iv-bad { color:var(--hi-t); font-weight:600; }
+
+/* command and output blocks — both scroll inside themselves, never wider */
+.dx-iv-cmd { display:block; min-width:0; padding:5px 9px; background:var(--ink); color:#e9e9e2;
+  font-family:var(--font-mono); font-size:11px; line-height:1.5; white-space:pre; overflow-x:auto; }
+.dx-iv-out { margin:5px 0 0; padding:6px 10px; background:var(--paper-3); border-left:2px solid var(--teal);
+  font-family:var(--font-mono); font-size:10.5px; line-height:1.5; color:var(--ink); white-space:pre;
+  max-height:230px; overflow:auto; }
+.dx-iv-out.is-err { border-left-color:var(--hi-t); color:var(--hi-t); }
+.dx-iv-exit { margin:4px 0 0; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+
+/* the one prominent action on the panel */
+.dx-iv-act { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:11px 14px; border-bottom:1px solid var(--rule); }
+.dx-iv-main { border:1.5px solid var(--ink); background:var(--acid); color:var(--acid-ink); font:inherit;
+  font-size:11px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; padding:6px 26px; cursor:pointer; }
+.dx-iv-main:hover:not(:disabled) { background:#d4ff33; }
+.dx-iv-main:disabled { background:var(--paper-3); color:var(--gray); cursor:default; }
+.dx-iv-hint { font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+
+.dx-iv-k { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:0; padding:9px 14px 6px;
+  font-family:var(--font-mono); font-size:9.5px; font-weight:600; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--ink); border-top:1px solid var(--rule); }
+.dx-iv-k-t { margin:0; font:inherit; letter-spacing:inherit; text-transform:inherit; }
+.dx-iv-sec { padding:0 14px 13px; }
+.dx-iv-diag { margin:0; font-size:11.5px; line-height:1.6; color:var(--ink-soft); white-space:pre-wrap; }
+
+/* runbook steps: teal for what only reads or only touches what is already
+   broken, crimson hatch for what a person runs */
+.dx-iv-steps { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; }
+.dx-iv-step { min-width:0; border-left:2px solid var(--teal); padding:7px 0 8px 12px; margin-bottom:9px; }
+.dx-iv-step.is-gated { border-left-color:var(--hi-t);
+  background:repeating-linear-gradient(-45deg,transparent 0 7px,color-mix(in srgb,var(--hi) 5%,transparent) 7px 8px); }
+.dx-iv-step.is-stop { outline:2px solid var(--hi-t); outline-offset:3px; }
+.dx-iv-step-m { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; margin-bottom:5px; }
+.dx-iv-n { flex:none; font-size:9.5px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
+.dx-iv-risk { flex:none; display:inline-flex; align-items:center; gap:5px; font-size:8.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--teal); }
+.dx-iv-step.is-auto .dx-iv-risk { font-weight:600; }
+.dx-iv-step.is-gated .dx-iv-risk { color:var(--hi-t); font-weight:600; }
+.dx-iv-what { font-size:11px; line-height:1.45; color:var(--ink-soft); }
+.dx-iv-why { margin:0 0 6px; font-size:10px; line-height:1.5; color:var(--gray); }
+.dx-iv-line { display:flex; align-items:stretch; min-width:0; }
+.dx-iv-line .dx-iv-cmd { flex:1; }
+.dx-iv-gate { display:flex; flex:none; }
+.dx-iv-run { flex:none; border:0; border-left:1px solid #3a3a35; background:var(--acid); color:var(--acid-ink);
+  font:inherit; font-size:9px; letter-spacing:.1em; text-transform:uppercase; padding:0 12px; cursor:pointer; }
+.dx-iv-run:hover:not(:disabled) { background:#d4ff33; }
+.dx-iv-run:disabled { background:var(--paper-3); color:var(--gray); cursor:default; }
+.dx-iv-run.is-locked:disabled { background:var(--paper-3); color:var(--hi-t); cursor:not-allowed; }
+.dx-iv-note { display:flex; gap:7px; align-items:baseline; margin:6px 0 0; font-size:9.5px; line-height:1.5; color:var(--hi-t); }
+.dx-iv-stop { display:flex; flex-wrap:wrap; gap:8px; align-items:baseline; margin:0 0 10px; padding:6px 10px;
+  border:1px solid var(--hi-t); border-left:3px solid var(--hi); font-size:10.5px; line-height:1.5; color:var(--ink-soft); }
+.dx-iv-stop b { flex:none; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--hi-t); }
+
+/* citation chips — evidence ids, clickable back to the command */
+.dx-iv-cites { display:flex; flex-wrap:wrap; gap:5px 7px; align-items:baseline; margin-top:8px; }
+.dx-iv-cites-k { flex:0 0 auto; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+.dx-iv-chip { border:1px solid var(--rule); background:transparent; font:inherit; font-size:9.5px; padding:1px 7px;
+  color:var(--ink-soft); cursor:pointer; }
+.dx-iv-chip:hover { border-color:var(--ink); background:var(--paper-3); color:var(--ink); }
+.dx-iv-chip.is-miss { border-style:dashed; color:var(--gray); cursor:default; }
+
+/* transcript */
+.dx-iv-chat { display:flex; flex-direction:column; gap:11px; max-height:360px; overflow-y:auto; }
+.dx-iv-chat:not(:empty) { margin-bottom:11px; }
+.dx-iv-turn { min-width:0; border-top:1px solid var(--rule); padding-top:9px; }
+.dx-iv-turn:first-child { border-top:0; padding-top:0; }
+.dx-iv-q,.dx-iv-a { display:flex; gap:9px; align-items:baseline; margin:0; min-width:0; }
+.dx-iv-q { font-size:11.5px; line-height:1.5; color:var(--ink); margin-bottom:5px; }
+.dx-iv-a { font-size:11px; line-height:1.6; color:var(--ink-soft); white-space:pre-wrap; }
+.dx-iv-a.is-err { color:var(--hi-t); }
+.dx-iv-q b,.dx-iv-a b { flex:0 0 auto; font-size:8.5px; font-weight:600; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--gray); white-space:nowrap; }
+
+@media (max-width:900px) {
+  .dx-iv-ev-h { grid-template-columns:1fr; gap:4px; }
+  .dx-iv-go.is-inline { margin-left:0; }
+}
