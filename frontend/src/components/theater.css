@@ -155,3 +155,45 @@
 .th-banner-sum { font-size: 10.5px; color: var(--gray); line-height: 1.5; }
 .th-banner-meta { font-size: 9.5px; color: var(--ink); }
 .th-banner-note { font-size: 8.5px; color: var(--gray); letter-spacing: 0.05em; border-top: 1px solid var(--rule); padding-top: 5px; }
+
+/* ── 处置进度（叠在剧场里）───────────────────────────────────────────────
+   The watch window looks like a hang unless something visibly ticks, so the
+   sample count and the current phase are the two things that must move. */
+.th-rp-fo { overflow:visible; }
+.rp { max-width:100%;
+  border:1.5px solid var(--ink); background:var(--paper); padding:11px 14px 12px; }
+.rp.is-running { border-left:4px solid var(--acid); }
+.rp-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:9px; }
+.rp-k { font-family:var(--font-mono); font-size:8.5px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--gray); }
+.rp-subject { font-family:var(--font-display); font-size:15px; font-weight:700; color:var(--ink); }
+.rp-terminal { margin-left:auto; font-family:var(--font-mono); font-size:9px; font-weight:600;
+  letter-spacing:.1em; text-transform:uppercase; padding:2px 8px; border:1px solid currentColor; }
+.rp-terminal.t-resolved,.rp-terminal.t-passed { color:#12615c; }
+.rp-terminal.t-needs_human,.rp-terminal.t-revert_unverified { color:#9e2937; }
+.rp-terminal.t-no_safe_action,.rp-terminal.t-declined,.rp-terminal.t-cooldown { color:#80500e; }
+.rp-terminal.t-running { color:var(--ink); background:var(--acid); border-color:var(--ink); }
+
+.rp-rail { list-style:none; display:flex; margin:0 0 9px; padding:0; gap:0; }
+.rp-phase { flex:1; display:flex; flex-direction:column; gap:3px; position:relative; padding-top:9px; }
+.rp-phase::before { content:''; position:absolute; top:3px; left:0; right:0; height:1px; background:var(--rule); }
+.rp-phase.is-done::before { background:var(--ink); }
+.rp-dot { position:absolute; top:0; left:0; width:7px; height:7px; border:1px solid var(--rule);
+  background:var(--paper); }
+.rp-phase.is-done .rp-dot { background:var(--ink); border-color:var(--ink); }
+.rp-phase.is-now .rp-dot { background:var(--acid); border-color:var(--ink); }
+.rp-phase.is-now .rp-lab { color:var(--ink); font-weight:600; }
+.rp-lab { font-family:var(--font-mono); font-size:8.5px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--gray); }
+.rp-count { font-family:var(--font-mono); font-size:9px; color:var(--ink); font-variant-numeric:tabular-nums; }
+
+.rp-line { margin:0 0 4px; font-size:11.5px; line-height:1.5; color:var(--ink-soft); }
+.rp-line span { display:inline-block; min-width:60px; font-family:var(--font-mono); font-size:8.5px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+.rp-hint { margin:6px 0 0; padding-top:6px; border-top:1px solid var(--rule);
+  font-size:11px; line-height:1.5; color:var(--ink-soft); }
+
+@media (prefers-reduced-motion:no-preference) {
+  .rp.is-running .rp-phase.is-now .rp-dot { animation:rp-pulse 1.4s ease-in-out infinite; }
+}
+@keyframes rp-pulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }

@@ -22,6 +22,7 @@ import type { DataStats, SubnetGraph, TheaterEvent, Topology } from '../types'
 import type { Lang } from '../i18n'
 import { PIPELINE } from './netops-pipeline'
 import './theater.css'
+import { RemediationProgress } from './RemediationProgress'
 
 type Pt = { x: number; y: number }
 const bez = (a: Pt, b: Pt) => `M${a.x} ${a.y} C ${(a.x + b.x) / 2} ${a.y}, ${(a.x + b.x) / 2} ${b.y}, ${b.x} ${b.y}`
@@ -513,6 +514,13 @@ export function TheaterStage({
             {zh ? `实网设备图 ${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} 节点 · NetOps 实时落地事件` : `${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} mined nodes · landed NetOps events`}
           </div>
         </div>
+      </foreignObject>
+
+      {/* Live response for the device on stage. Anchored bottom-left so it sits
+          clear of the banner, and only drawn once the sentinel has something to
+          say about this subject. */}
+      <foreignObject x={20} y={640} width={620} height={230} className="th-rp-fo">
+        <RemediationProgress subject={theater.device} lang={lang} />
       </foreignObject>
     </g>
   )
