@@ -140,19 +140,29 @@ def preflight(action_name: str, target: str, command: Command | None = None) -> 
     try:
         outcome = action.preflight(command, target)
     except UnsafeTarget as refusal:
+        from .blast_radius import estimate
+
+        # A refusal is exactly when the operator most wants to know what the
+        # action would have touched, so the radius is attached here too.
         return {
             "action": action_name,
             "target": target,
             "eligible": False,
             "refused": True,
             "reason": str(refusal),
+            "blast_radius": estimate(action_name, target),
         }
+    from .blast_radius import estimate
+
     return {
         "action": action_name,
         "target": target,
         "family": action.family,
         "refused": False,
         "reverts": action.revert is not None,
+        # Measured now, on this box, rather than described in the abstract:
+        # the operator needs a number they can check, not a reassurance.
+        "blast_radius": estimate(action_name, target),
         **outcome,
     }
 

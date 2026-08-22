@@ -18,6 +18,7 @@ import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
 from pathlib import Path
+from core.net.addr import is_multicast_or_broadcast, is_private
 from typing import Any
 
 from .rca_reader import _REPO_ROOT, _load_device_graphs
@@ -47,22 +48,13 @@ _rdns_cache: dict[str, str | None] = {}
 
 
 def _is_private(ip: str) -> bool:
-    if ip.startswith(("192.168.", "10.")):
-        return True
-    if ip.startswith("172."):
-        try:
-            return 16 <= int(ip.split(".")[1]) <= 31
-        except (IndexError, ValueError):
-            return False
-    return False
+    """See core.net.addr; kept as a local name for the many call sites."""
+    return is_private(ip)
 
 
 def _is_bcast(ip: str) -> bool:
-    try:
-        first = int(ip.split(".")[0])
-    except ValueError:
-        return False
-    return ip == "255.255.255.255" or ip.endswith(".255") or 224 <= first <= 239
+    """A /24 broadcast address, or any group address; see core.net.addr."""
+    return ip.endswith(".255") or is_multicast_or_broadcast(ip)
 
 
 def _log_paths() -> list[Path]:

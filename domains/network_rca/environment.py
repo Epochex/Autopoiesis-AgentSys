@@ -39,6 +39,8 @@ from __future__ import annotations
 import json
 import os
 import re
+
+from core.net.addr import is_private
 import statistics
 import urllib.parse
 import urllib.request
@@ -64,7 +66,6 @@ L2_LEDGER_ENV_VAR: str = "AUTOPOIESIS_L2_LEDGER_PATH"
 
 _KV = re.compile(r'(\w+)=("[^"]*"|\S+)')
 _CLASH_SRC = re.compile(r"(\d+\.\d+\.\d+\.\d+):\d+->")
-_PRIVATE_PREFIXES = ("192.168.", "10.", "172.16.", "172.17.", "172.18.")
 
 # Detector thresholds, kept here so a finding can quote the rule that fired.
 DUPLICATE_IP_WINDOW_SECONDS = 300
@@ -84,7 +85,8 @@ def _segment_of(ip: str) -> str:
 
 
 def _is_private(ip: str) -> bool:
-    return ip.startswith(_PRIVATE_PREFIXES)
+    """See core.net.addr; kept as a local name for the many call sites."""
+    return is_private(ip)
 
 
 def _is_structural(ip: str) -> bool:

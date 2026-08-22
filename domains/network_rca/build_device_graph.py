@@ -29,6 +29,8 @@ from __future__ import annotations
 import json
 import math
 import re
+
+from core.net.addr import is_multicast_or_broadcast, is_private
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -39,9 +41,6 @@ _OUT = _REAL / "real_device_graph.json"
 
 _KV = re.compile(r'(\w+)=("[^"]*"|\S+)')
 _CLASH_IP = re.compile(r"(192\.168\.\d+\.\d+):\d+->")
-_PRIVATE = ("192.168.", "10.", "172.16.", "172.17.")
-_BCAST_SUFFIX = (".255",)
-_MCAST_PREFIX = ("224.", "239.", "255.")
 
 # Common OUI blocks in this deployment. Unknown blocks stay honest ("unknown").
 _OUI: dict[str, str] = {
@@ -70,11 +69,12 @@ def _cidr_of(ip: str) -> str:
 
 
 def _internal(ip: str) -> bool:
-    return ip.startswith(_PRIVATE)
+    return is_private(ip)
 
 
 def _is_bcast(ip: str) -> bool:
-    return ip.endswith(_BCAST_SUFFIX) or ip.startswith(_MCAST_PREFIX)
+    """A /24 broadcast address, or any group address; see core.net.addr."""
+    return ip.endswith(".255") or is_multicast_or_broadcast(ip)
 
 
 def _vendor(mac: str | None) -> str:
