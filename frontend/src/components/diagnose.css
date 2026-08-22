@@ -284,38 +284,6 @@
 .dx-own-vs { display:flex; align-items:center; padding:0 18px; font-size:18px; color:var(--gray); }
 .dx-own-verdict { margin:0; padding:11px 14px 13px; border-top:1px solid var(--rule); font-size:12px; line-height:1.55; color:var(--ink-soft); }
 
-/* ── fault-family catalog ledger ─────────────────────────────────────────
-   The verdict ledger rows are now the full fault-family space of this
-   network, ranked by priority and joined with whatever the live sweep
-   confirms. The guard strip above the list is the one invariant that
-   outranks every playbook: the Tailscale path is never cut. */
-.dx-guard { display:flex; gap:10px; align-items:flex-start; margin:2px 0 10px; padding:9px 12px;
-  border:1.5px solid var(--ink); border-left:4px solid var(--hi); background:var(--paper-2); }
-.dx-guard p { margin:0; font-size:10.5px; line-height:1.55; color:var(--ink-soft); }
-.dx-row-h.is-cat { grid-template-columns:38px 64px 92px 138px minmax(200px,1.5fr) minmax(150px,.9fr); }
-.dx-row-p { font-size:9.5px; font-weight:700; letter-spacing:.08em; color:var(--ink); font-variant-numeric:tabular-nums; }
-.dx-row-a { font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; font-weight:600; }
-.dx-row-a.a-auto { color:var(--teal); }
-.dx-row-a.a-guarded { color:var(--mid-t); }
-.dx-row-a.a-manual { color:var(--hi-t); }
-.dx-row.v-standby .dx-row-v { color:var(--gray); }
-.dx-row.sev-low .dx-row-h { border-left-color:var(--rule); }
-.dx-prot { display:flex; gap:8px; align-items:baseline; margin:0 0 10px; padding:6px 10px;
-  border:1px solid var(--hi-t); border-left:3px solid var(--hi); }
-.dx-prot b { flex:0 0 auto; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--hi-t); font-weight:600; }
-.dx-prot p { margin:0; font-size:10.5px; line-height:1.5; color:var(--ink-soft); }
-.dx-hits { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:baseline; margin:0 0 10px; }
-.dx-hits > span { flex:0 0 auto; font-size:8.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
-.dx-hits em { font-style:normal; font-size:10px; padding:2px 7px; border:1px solid var(--rule); color:var(--ink-soft); }
-.dx-hits em.v-confirmed { border-color:var(--teal); color:var(--teal); font-weight:600; }
-.dx-hits em.v-archived { border-style:dashed; }
-.dx-pl-step.is-auto { border-left-color:var(--teal); }
-.dx-pl-step.is-auto .dx-pl-risk { color:var(--teal); font-weight:600; }
-
-@media (max-width:900px) {
-  .dx-row-h.is-cat { grid-template-columns:38px 64px 1fr; }
-  .dx-row-h.is-cat .dx-row-v,.dx-row-h.is-cat .dx-row-t,.dx-row-h.is-cat .dx-row-s { grid-column:1/-1; }
-}
 
 /* ── fault-family catalog ledger ─────────────────────────────────────────
    The ledger rows are the fault space of this network, ranked worst-first

@@ -28,11 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.remediate import HealthProbe
-
-# The one path that must survive every fix.
-TAILSCALE_INTERFACES = frozenset({"tailscale0", "tailscale1"})
-TAILSCALE_UNITS = frozenset({"tailscaled", "tailscaled.service"})
-TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+from core.safety.tailscale import is_tailscale_target
 
 # Physical NIC names we are willing to bounce. A name that does not match is
 # refused rather than guessed at — `lo`, bridges, veths and tunnels all read
@@ -63,18 +59,9 @@ class Command:
 
 
 def assert_not_tailscale(target: str) -> None:
-    """Refuse any target that is, or sits on, the remote-work path."""
-    name = target.strip()
-    if name in TAILSCALE_INTERFACES or name in TAILSCALE_UNITS:
-        raise UnsafeTarget(f"{name} carries the only remote route into this network")
-    if name.startswith("tailscale"):
-        raise UnsafeTarget(f"{name} looks like a Tailscale interface")
-    try:
-        address = ipaddress.ip_address(name)
-    except ValueError:
-        return
-    if address in TAILSCALE_CGNAT:
-        raise UnsafeTarget(f"{name} is inside {TAILSCALE_CGNAT}, the Tailscale range")
+    """Refuse any target on the protected path; see core.safety.tailscale."""
+    if is_tailscale_target(target):
+        raise UnsafeTarget(f"{target} carries the only remote route into this network")
 
 
 # ── interface: bounce a NIC that already has no carrier ──────────────────────

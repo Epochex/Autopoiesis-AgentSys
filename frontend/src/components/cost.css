@@ -1,0 +1,217 @@
+/* The shell caps every page at 1420px, which suits a reading column. This page
+   is a ledger: a 168-bar hour strip, a five-column spend table and a six-column
+   call log all lose resolution when squeezed into a column. */
+.stage[data-view='cost'] { max-width: none; padding: 24px 28px 60px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   PAGE · 模型花销 — what the model calls cost, and which feature spent it.
+   Page-1/2/3 palette; --acid = interaction only. Crimson marks the two things
+   that need a second look: the dearest bar, and a row whose cost is unknown
+   rather than zero.
+   ════════════════════════════════════════════════════════════════════════════ */
+.cx {
+  --paper:#e7e7e3; --paper-2:#efeee9; --paper-3:#dddcd5; --ink:#0d0d0d; --ink-soft:#2a2a27;
+  --gray:#605f5a; --rule:#cfcfca; --acid:#ccff00; --acid-ink:#0d0d0d; --teal:#12615c;
+  --hi:#c3384a; --mid:#a86a12; --lo:#8a8a86;
+  /* small-type variants: the fill tones above sit at 3.2–4.5:1 on paper, which
+     is legible at 26px and not at 8px. Type uses these; fills keep the above. */
+  --hi-t:#9e2937; --mid-t:#80500e;
+  --font-display:'IBM Plex Sans Condensed',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+  position:relative; min-height:100%; padding:0 0 40px; background:var(--paper); color:var(--ink); font-family:var(--font-mono);
+}
+.cx *,.cx *::before,.cx *::after { box-sizing:border-box; }
+.cx :focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+.cx .n { font-variant-numeric:tabular-nums; }
+.cx-sr { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden;
+  clip-path:inset(50%); white-space:nowrap; border:0; }
+
+/* masthead */
+.cx-head { display:grid; grid-template-columns:1fr auto; align-items:start; gap:20px 28px;
+  padding:16px 0 14px; border-bottom:2px solid var(--ink); }
+.cx-head-l { min-width:0; }
+.cx-head-code { font-size:9.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-soft); margin-bottom:6px; }
+.cx-head-title { margin:0; font-family:var(--font-display); font-weight:600; font-size:clamp(30px,3.2vw,52px);
+  line-height:.9; letter-spacing:-.02em; text-transform:uppercase; }
+.cx-head-title mark { background:var(--acid); color:var(--acid-ink); padding:0 .05em; }
+.cx-thesis { margin:10px 0 0; font-size:12.5px; line-height:1.5; color:var(--ink-soft); max-width:88ch; }
+
+.cx-ctl { display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
+.cx-win { display:flex; align-items:center; }
+.cx-win-k { margin-right:10px; font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.cx-win-b { border:1.5px solid var(--ink); border-right:0; background:transparent; color:var(--ink); font:inherit;
+  font-size:10px; letter-spacing:.08em; text-transform:uppercase; padding:4px 13px; cursor:pointer;
+  font-variant-numeric:tabular-nums; }
+.cx-win-b:last-child { border-right:1.5px solid var(--ink); }
+.cx-win-b:hover:not(.is-on) { background:var(--paper-2); }
+.cx-win-b.is-on { background:var(--acid); color:var(--acid-ink); font-weight:600; }
+.cx-fresh { display:flex; flex-wrap:wrap; align-items:center; gap:10px; font-size:8.5px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--gray); }
+.cx-fresh b { font-size:11px; letter-spacing:.04em; color:var(--ink); font-variant-numeric:tabular-nums; }
+.cx-fresh-b { border:1.5px solid var(--ink); background:transparent; color:var(--ink); font:inherit; font-size:9px;
+  letter-spacing:.1em; text-transform:uppercase; padding:3px 11px; cursor:pointer; }
+.cx-fresh-b:hover:not(:disabled) { background:var(--acid); }
+.cx-fresh-b:disabled { border-color:var(--rule); color:var(--gray); cursor:default; }
+
+.cx-state { padding:56px 0; text-align:center; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-soft); }
+.cx-state.is-err { color:var(--hi-t); }
+.cx-state.is-inline { padding:16px 14px; text-align:left; font-size:9.5px; letter-spacing:.12em; color:var(--gray); }
+
+.cx-sec { margin-top:18px; }
+.cx-sec-k { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; font-size:10.5px; font-weight:600;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--ink); padding-bottom:7px;
+  border-bottom:2px solid var(--ink); margin-bottom:8px; }
+.cx-sec-k em { font-style:normal; font-weight:400; font-size:8.5px; letter-spacing:.14em; color:var(--gray); }
+
+/* ── switches and cache ──────────────────────────────────────────────────
+   Read from a second endpoint that knows nothing about the spend window, so
+   the strip stays up while the ledger is loading, empty or unreachable — a
+   total of zero means one thing when calls are on and another when they are
+   switched off. */
+.cx-cache { margin-top:14px; border:1.5px solid var(--ink); background:var(--paper-2); }
+.cx-cache-k { padding:6px 14px; border-bottom:1px solid var(--rule); font-size:9px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--gray); }
+.cx-cache-r { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px 26px; padding:9px 14px 8px; }
+.cx-sw { display:inline-flex; align-items:baseline; gap:8px; }
+.cx-sw em,.cx-cache-dir em { font-style:normal; font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.cx-sw b { font-size:10px; font-weight:600; letter-spacing:.08em; color:var(--ink); border:1px solid var(--ink);
+  padding:1px 8px; font-variant-numeric:tabular-nums; }
+.cx-sw.is-on b { background:var(--teal); border-color:var(--teal); color:var(--paper); }
+.cx-sw.is-off b { color:var(--gray); border-color:var(--gray);
+  background-image:repeating-linear-gradient(45deg,var(--rule) 0 1px,transparent 1px 4px); }
+.cx-cache-dir { display:inline-flex; align-items:baseline; gap:8px; margin-left:auto; min-width:0; }
+.cx-cache-dir code { font-size:10px; color:var(--ink-soft); overflow-wrap:anywhere; }
+.cx-ns { display:flex; flex-wrap:wrap; gap:6px 8px; padding:0 14px 10px; }
+.cx-ns-i { display:inline-flex; align-items:baseline; gap:9px; border:1px solid var(--rule); padding:2px 9px;
+  font-size:10px; color:var(--gray); }
+.cx-ns-i b { font-weight:400; color:var(--ink); }
+.cx-ns-i i { font-style:normal; font-variant-numeric:tabular-nums; }
+.cx-ns-none { font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.cx-cache-p { margin:0; padding:8px 14px 9px; border-top:1px solid var(--rule); font-size:10.5px; line-height:1.55;
+  color:var(--ink-soft); }
+
+/* ── headline figures ────────────────────────────────────────────────────
+   The money figure is the biggest thing on the page on purpose; the three
+   counts beside it are what that number is made of. */
+.cx-figs { display:grid; grid-template-columns:minmax(240px,1.7fr) repeat(3,minmax(110px,1fr));
+  margin-top:14px; border:1.5px solid var(--ink); background:var(--paper-2); }
+.cx-fig { display:flex; flex-direction:column; justify-content:flex-end; gap:6px; min-width:0;
+  padding:12px 16px 11px; border-left:1px solid var(--rule); }
+.cx-fig:first-child { border-left:0; }
+.cx-fig b { font-size:28px; line-height:1; font-variant-numeric:tabular-nums; }
+.cx-fig span { font-size:8px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.cx-fig.is-money { background:var(--paper); }
+.cx-fig.is-money b { font-size:clamp(46px,6.2vw,90px); line-height:.86; letter-spacing:-.02em; }
+.cx-fig.is-money b i { font-size:.34em; font-style:normal; color:var(--gray); margin-right:.08em; vertical-align:baseline; }
+.cx-fig.is-money span { font-size:9px; color:var(--ink-soft); }
+
+/* ── tables ──────────────────────────────────────────────────────────────
+   Every table scrolls inside its own frame; the page itself never does. */
+.cx-scroll { overflow-x:auto; border:1.5px solid var(--ink); background:var(--paper-2); }
+.cx-t { width:100%; border-collapse:collapse; font-size:11px; color:var(--ink-soft); }
+.cx-t th,.cx-t td { padding:6px 11px; text-align:left; vertical-align:baseline; border-bottom:1px solid var(--rule); }
+.cx-t thead th { font-size:8.5px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--gray);
+  white-space:nowrap; border-bottom:1.5px solid var(--ink); background:var(--paper-3); }
+.cx-t tbody tr:last-child th,.cx-t tbody tr:last-child td { border-bottom:0; }
+.cx-t tbody th { font-weight:400; color:var(--ink); }
+.cx-t tbody th code { display:block; margin-top:2px; font-size:8.5px; letter-spacing:.02em; color:var(--gray); }
+.cx-t .n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.cx-t td.strong { color:var(--ink); font-weight:600; }
+
+.cx-t-spend { min-width:700px; }
+.cx-t-spend tbody tr.is-top th { border-left:3px solid var(--ink); padding-left:8px; }
+.cx-share-c { display:flex; align-items:center; gap:10px; min-width:190px; }
+.cx-share { flex:1; min-width:60px; height:9px; border:1px solid var(--rule); background:var(--paper-3); }
+.cx-share i { display:block; height:100%; background:var(--ink-soft); }
+.cx-t-spend tbody tr.is-top .cx-share i { background:var(--hi); }
+.cx-share-c em { flex:none; width:48px; text-align:right; font-style:normal; color:var(--ink);
+  font-variant-numeric:tabular-nums; }
+
+.cx-t-recent { min-width:760px; }
+/* A call the provider reported no usage for costs an unknown amount, not zero.
+   Hatch + crimson rule so the row can never be read as a cheap one. */
+.cx-t-recent tbody tr.is-nousage td { color:var(--gray);
+  background-image:repeating-linear-gradient(-45deg,transparent 0 6px,color-mix(in srgb,var(--hi) 7%,transparent) 6px 7px); }
+.cx-t-recent tbody tr.is-nousage td:first-child { border-left:3px solid var(--hi); padding-left:8px; }
+.cx-t-recent tbody tr.is-nousage td.strong { color:var(--gray); font-weight:400; }
+.cx-flag { display:inline-block; margin-left:8px; padding:0 5px; border:1px solid var(--hi-t); font-style:normal;
+  font-size:8px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--hi-t); }
+
+/* ── by model ────────────────────────────────────────────────────────────  */
+.cx-models { display:flex; flex-wrap:wrap; border:1.5px solid var(--ink); background:var(--paper-2); }
+.cx-model { display:flex; align-items:baseline; gap:14px; padding:7px 15px; border-right:1px solid var(--rule);
+  font-size:10px; color:var(--gray); font-variant-numeric:tabular-nums; }
+.cx-model:last-child { border-right:0; }
+.cx-model b { font-size:12px; font-weight:400; color:var(--ink); }
+.cx-model-c { color:var(--ink); font-weight:600; font-size:11px; }
+
+/* ── hour strip ──────────────────────────────────────────────────────────
+   Pure CSS heights over a contiguous axis: an hour that cost nothing is a gap,
+   not a closed-up bar. Every value the bars carry is also printed underneath,
+   so nothing here is readable only as a height. */
+.cx-chart { border:1.5px solid var(--ink); background:var(--paper-2); }
+.cx-chart-h { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; padding:7px 14px;
+  border-bottom:1px solid var(--rule); }
+.cx-chart-k { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.cx-chart-h b { font-size:12px; color:var(--ink); font-variant-numeric:tabular-nums; }
+.cx-chart-n { margin-left:auto; font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray);
+  font-variant-numeric:tabular-nums; }
+/* Scale gutter + half-height reference rule, so a bar's value can be read off
+   the frame instead of only against its neighbours. */
+.cx-chart { --gut:64px; }
+.cx-plot { display:flex; align-items:stretch; height:128px; margin:16px 14px 0; }
+.cx-plot-ax { flex:none; width:var(--gut); padding-right:8px; display:flex; flex-direction:column;
+  justify-content:space-between; align-items:flex-end; font-size:8.5px; line-height:1; color:var(--gray);
+  font-variant-numeric:tabular-nums; }
+.cx-plot-ax span:nth-child(2) { transform:translateY(-50%); }
+.cx-plot-ax span:last-child { transform:translateY(50%); }
+.cx-plot-in { position:relative; flex:1; min-width:0; }
+.cx-plot-mid { position:absolute; left:0; right:0; top:50%; border-top:1px dashed var(--rule); }
+.cx-bars { position:relative; display:flex; align-items:flex-end; gap:1px; height:100%; margin:0; padding:0;
+  list-style:none; border-bottom:1.5px solid var(--ink); }
+.cx-bar { position:relative; flex:1 1 0; min-width:0; height:100%; display:flex; align-items:flex-end; }
+.cx-bar-f { display:block; width:100%; background:var(--ink-soft); }
+.cx-bar.is-peak .cx-bar-f { background:var(--hi); }
+.cx-bar:hover::after { content:''; position:absolute; inset:0; border:1px solid var(--ink); }
+.cx-chart-f { display:flex; justify-content:space-between; gap:12px; padding:5px 14px 0 calc(14px + var(--gut)); font-size:9px;
+  letter-spacing:.06em; color:var(--gray); font-variant-numeric:tabular-nums; }
+.cx-chart-top { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 16px; margin:9px 0 0;
+  padding:8px 14px 9px; border-top:1px solid var(--rule); font-size:10px; color:var(--ink-soft);
+  font-variant-numeric:tabular-nums; }
+.cx-chart-t b { font-weight:400; color:var(--ink); }
+.cx-chart-t:first-of-type b { color:var(--hi-t); }
+
+/* ── dearest single call ─────────────────────────────────────────────────  */
+.cx-big { display:flex; flex-wrap:wrap; border:1.5px solid var(--ink); background:var(--paper-2); }
+.cx-big-c { display:flex; flex-direction:column; justify-content:flex-end; gap:5px; min-width:200px;
+  padding:13px 20px 12px; border-right:1.5px solid var(--ink); background:var(--paper); }
+.cx-big-c b { font-size:38px; line-height:.9; font-variant-numeric:tabular-nums; }
+.cx-big-c b i { font-size:.36em; font-style:normal; color:var(--gray); margin-right:.08em; }
+.cx-big-c span { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray);
+  font-variant-numeric:tabular-nums; }
+.cx-big-d { display:flex; flex-wrap:wrap; flex:1; margin:0; }
+.cx-big-d > div { display:flex; flex-direction:column; gap:5px; padding:13px 18px 12px; border-right:1px solid var(--rule); }
+.cx-big-d > div:last-child { border-right:0; }
+.cx-big-d dt { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.cx-big-d dd { margin:0; font-size:12px; color:var(--ink); font-variant-numeric:tabular-nums; }
+.cx-big-d dd code { margin-left:6px; font-size:9px; color:var(--gray); }
+
+/* ── caveats ─────────────────────────────────────────────────────────────  */
+.cx-warn { display:flex; gap:10px; align-items:baseline; margin-top:8px; padding:7px 12px;
+  border:1px solid var(--hi-t); border-left:3px solid var(--hi); }
+.cx-warn-k { flex:none; font-size:8.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--hi-t); }
+.cx-warn p { margin:0; font-size:10.5px; line-height:1.55; color:var(--ink-soft); }
+.cx-note { display:flex; gap:10px; align-items:baseline; margin-top:18px; padding:8px 12px;
+  border-left:3px solid var(--ink); background:var(--paper-3); }
+.cx-note-k { flex:none; font-size:8.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
+.cx-note p { margin:0; font-size:10.5px; line-height:1.55; color:var(--ink-soft); }
+
+@media (max-width:900px) {
+  .cx-head { grid-template-columns:1fr; }
+  .cx-ctl { align-items:flex-start; }
+  .cx-figs { grid-template-columns:1fr 1fr; }
+  .cx-fig { border-top:1px solid var(--rule); }
+  .cx-fig.is-money { grid-column:1/-1; border-top:0; }
+  .cx-fig:nth-child(2) { border-left:0; }
+  .cx-cache-dir { margin-left:0; }
+  .cx-big-c { border-right:0; border-bottom:1.5px solid var(--ink); width:100%; }
+}

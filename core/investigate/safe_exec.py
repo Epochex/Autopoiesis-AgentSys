@@ -32,12 +32,11 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any
 
+from core.safety.tailscale import any_tailscale_target
+
 # Shell metacharacters. Their presence means the caller is trying to compose,
 # and composition is exactly what this layer refuses to reason about.
 SHELL_METACHARACTERS = ("|", ";", "&", ">", "<", "`", "$(", "\n", "\r", "&&", "||")
-
-TAILSCALE_TOKENS = ("tailscale0", "tailscale1", "tailscaled")
-TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 # Programs whose argv[0] may run at all.
 ALLOWED = frozenset({
@@ -121,17 +120,8 @@ class Execution:
 
 
 def _touches_tailscale(argv: list[str]) -> bool:
-    for token in argv:
-        lowered = token.lower()
-        if any(marker in lowered for marker in TAILSCALE_TOKENS):
-            return True
-        candidate = token.split("/")[0]
-        try:
-            if ipaddress.ip_address(candidate) in TAILSCALE_CGNAT:
-                return True
-        except ValueError:
-            continue
-    return False
+    """Delegates to the shared predicate; see core.safety.tailscale."""
+    return any_tailscale_target(argv)
 
 
 def _is_private_host(host: str) -> bool:

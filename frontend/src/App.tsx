@@ -5,6 +5,7 @@ import { type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
 import { TrajectoryPage } from './components/TrajectoryPage'
+import { CostPage } from './components/CostPage'
 import { DiagnosePage } from './components/DiagnosePage'
 import { RetrievalPage } from './components/RetrievalPage'
 import { BenchConsole } from './components/BenchConsole'
@@ -20,7 +21,7 @@ type MeshModel = {
 }
 import type { DataStats, Device, GraphAnalysis, SubnetGraph, TheaterEvent, Topology } from './types'
 
-type View = 'console' | 'trajectory' | 'diagnose' | 'retrieval'
+type View = 'console' | 'trajectory' | 'diagnose' | 'retrieval' | 'cost'
 type Scenario = 'live' | 'bench'
 
 type State =
@@ -329,6 +330,7 @@ function App() {
               <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
               <button className={view === 'diagnose' ? 'on' : ''} onClick={() => setView('diagnose')}>{lang === 'zh' ? '诊断处置' : 'DIAGNOSE'}</button>
               <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '检索' : 'RETRIEVAL'}</button>
+              <button className={view === 'cost' ? 'on' : ''} onClick={() => setView('cost')}>{lang === 'zh' ? '成本' : 'COST'}</button>
             </div>
 
           {/* The selector governs exactly one thing: the case diagnosis in
@@ -369,7 +371,9 @@ function App() {
         </div>
       </header>
 
-      {view === 'retrieval' ? (
+      {view === 'cost' ? (
+        <CostPage lang={lang} />
+      ) : view === 'retrieval' ? (
         <RetrievalPage lang={lang} scenario={scenario} />
       ) : view === 'diagnose' ? (
         <DiagnosePage lang={lang} scenario={scenario} />
