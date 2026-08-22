@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import type { Lang } from '../i18n'
+import { type ChainStep as Step, useSentinelChain } from './use-sentinel-chain'
 
 /* ── 处置进度 — what the system is doing to this device, right now ───────────
  *
@@ -11,23 +12,6 @@ import type { Lang } from '../i18n'
  * log. Ninety seconds of "nothing visible is happening" is exactly when an
  * operator assumes the thing has hung — so the sample count ticks up while it
  * waits, and the bar says what it is waiting for. */
-
-interface Step {
-  at: string
-  kind: string
-  action?: string | null
-  eligible?: boolean
-  reason?: string
-  outcome?: string
-  samples?: number
-  streak?: number
-  need?: number
-  note?: string
-  summary?: string
-  needs_human?: boolean
-  blast_radius?: { scope: string; summary: string } | null
-  baseline?: Record<string, boolean> | null
-}
 
 /** The chain's shape, in the order the system walks it. */
 const PHASES = ['detected', 'confirmed', 'preflight', 'acting', 'watching', 'closed'] as const
@@ -100,42 +84,9 @@ const TERMINAL_LABEL: Record<string, [string, string]> = {
   revert_unverified: ['回滚未能验证', 'REVERT UNVERIFIED'],
 }
 
-const SUBJECT_KINDS = new Set([
-  'detected', 'awaiting_confirmation', 'no_safe_action', 'cooldown',
-  'preflight', 'declined', 'remediated', 'resolved',
-])
-
 export function RemediationProgress({ subject, lang }: { subject: string; lang: Lang }) {
   const zh = lang === 'zh'
-  const [steps, setSteps] = useState<Step[] | null>(null)
-  const inFlight = useRef(false)
-
-  useEffect(() => {
-    if (!subject) return
-    let alive = true
-    const load = async () => {
-      if (inFlight.current) return
-      inFlight.current = true
-      try {
-        const response = await fetch('/api/rca/sentinel/timeline?limit=400')
-        const body = (await response.json()) as { events?: (Step & { subject?: string })[] }
-        if (!alive) return
-        const mine = (body.events ?? []).filter(
-          (e) => SUBJECT_KINDS.has(e.kind) && (e.subject ?? '').includes(subject),
-        )
-        setSteps(mine)
-      } catch {
-        if (alive) setSteps([])
-      } finally {
-        inFlight.current = false
-      }
-    }
-    void load()
-    // Fast poll: this panel is watched during the window, and the window is the
-    // part that otherwise looks like a hang.
-    const timer = window.setInterval(() => void load(), 3000)
-    return () => { alive = false; window.clearInterval(timer) }
-  }, [subject])
+  const steps = useSentinelChain(subject)
 
   const view = useMemo(() => (steps ? phaseOf(steps) : null), [steps])
 

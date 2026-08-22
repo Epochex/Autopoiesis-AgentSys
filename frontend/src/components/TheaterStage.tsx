@@ -20,7 +20,8 @@
 import { useMemo, useState } from 'react'
 import type { DataStats, SubnetGraph, TheaterEvent, Topology } from '../types'
 import type { Lang } from '../i18n'
-import { railFor } from './netops-pipeline'
+import { railFor, sentinelStageIds } from './netops-pipeline'
+import { useSentinelChain } from './use-sentinel-chain'
 import './theater.css'
 import { RemediationProgress } from './RemediationProgress'
 
@@ -271,8 +272,19 @@ export function TheaterStage({
   const impact = useMemo(() => new Set(impactNodes ?? []), [impactNodes])
   const rows = Math.ceil(stats.distinctSrc / TALLY.cols)
   const isSentinel = theater.scope === 'sentinel'
+  /* Live, not a snapshot from when the theater opened: the whole point of a
+   * stage is watching the chain move across it. */
+  const chain = useSentinelChain(isSentinel ? theater.device : null)
+  const liveRadius = useMemo(
+    () => [...(chain ?? [])].reverse().find((s) => s.blast_radius)?.blast_radius ?? null,
+    [chain],
+  )
   const railStages = railFor(theater.scope).map((p, i) => ({ ...p, p: { x: RAIL_X0 + i * RAIL_DX, y: RAIL_Y } as Pt }))
-  const hotStageSet = new Set(theater.stageIds)
+  const hotStageSet = new Set(
+    isSentinel && chain?.length ? sentinelStageIds(chain) : theater.stageIds,
+  )
+  // The step the chain is on right now — the one that should read as moving.
+  const nowStage = [...railStages].reverse().find((r) => hotStageSet.has(r.id)) ?? null
   const firstHot = railStages.find((s) => hotStageSet.has(s.id)) ?? railStages[0]
   const atk = stats.topAttackerSrc.slice(0, 3)
 
@@ -292,7 +304,7 @@ export function TheaterStage({
           const armHot = i < railStages.length - 1 && hot && hotStageSet.has(railStages[i + 1].id)
           const armD = `M ${s.p.x + 74} ${s.p.y} L ${railStages[i + 1]?.p.x - 74} ${railStages[i + 1]?.p.y}`
           return (
-            <g key={s.id} className={`th-stage st-${s.id} ${hot ? 'hot' : ''}`}>
+            <g key={s.id} className={`th-stage st-${s.id} ${hot ? 'hot' : ''} ${nowStage?.id === s.id ? 'now' : ''}`}>
               {i < railStages.length - 1 ? (
                 <line x1={s.p.x + 74} y1={s.p.y} x2={railStages[i + 1].p.x - 74} y2={railStages[i + 1].p.y}
                   className={`th-rail-arm ${armHot ? 'hot' : ''}`} />
@@ -334,7 +346,8 @@ export function TheaterStage({
           ? anchorP.x - INCIDENT_W / 2
           : anchorP.x < 1200 ? anchorP.x + 26 : anchorP.x - 26 - INCIDENT_W
         const ty = Math.min(Math.max(anchorP.y + (onHostBox ? 34 : 18), RAIL_Y + 60), 880)
-        const phase = [...railStages].reverse().find((r) => hotStageSet.has(r.id))
+        const phase = nowStage
+        const extent = liveRadius?.summary ?? theater.blastSummary
         return (
           <g className="th-incident" pointerEvents="none">
             {onHostBox ? (
@@ -349,7 +362,7 @@ export function TheaterStage({
             <line x1={anchorP.x} y1={anchorP.y + (onHostBox ? 16 : 0)}
               x2={onHostBox ? anchorP.x : (tx < anchorP.x ? tx + INCIDENT_W : tx)} y2={ty}
               className="th-inc-leader" />
-            <foreignObject x={tx} y={ty} width={INCIDENT_W} height={104}>
+            <foreignObject x={tx} y={ty} width={INCIDENT_W} height={176}>
               <div className="th-inc-card">
                 <div className="th-inc-h">
                   <span className="th-inc-k">
@@ -367,8 +380,8 @@ export function TheaterStage({
                 </div>
                 {onHostBox ? (
                   <div className="th-inc-note">
-                    {zh ? '本机 · 系统就跑在这台上，不在 FortiGate 日志语料内'
-                        : 'this host — the system runs here; absent from the syslog corpus'}
+                    {zh ? '本机 · 不在 FortiGate 日志语料内'
+                        : 'this host — absent from the syslog corpus'}
                   </div>
                 ) : null}
                 {phase ? (
@@ -376,11 +389,18 @@ export function TheaterStage({
                     <span>{zh ? '当前' : 'NOW'}</span>{zh ? phase.zh : phase.en}
                   </div>
                 ) : null}
-                {theater.blastSummary ? (
+                {extent ? (
                   <div className="th-inc-row">
-                    <span>{zh ? '影响面' : 'EXTENT'}</span>{theater.blastSummary}
+                    <span>{zh ? '影响面' : 'EXTENT'}</span>{extent}
                   </div>
                 ) : null}
+                {/* the question the red dots provoke, answered on the canvas */}
+                <div className="th-inc-row">
+                  <span>{zh ? '涉及设备' : 'DEVICES'}</span>
+                  {zh
+                    ? '仅这一台。图上其余红点是语料里的高威胁设备，与本次无关。'
+                    : 'just this one. The other red dots are corpus high-threat devices, unrelated.'}
+                </div>
                 {theater.originIp ? (
                   <div className="th-inc-row">
                     <span>{zh ? '来源' : 'SOURCE'}</span>

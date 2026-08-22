@@ -257,3 +257,12 @@
 .th-self-ip { font: 500 9px 'IBM Plex Mono', monospace; fill: var(--gray, #605f5a); }
 .th-self-cap { font: 500 8px 'IBM Plex Mono', monospace; fill: var(--gray, #605f5a); letter-spacing: .07em; }
 .th-self-link { stroke: var(--rule, #cfcfca); stroke-width: 1.2; stroke-dasharray: 3 4; }
+
+/* the step the chain is on right now — the rail has to look like it is moving,
+   otherwise the whole stage reads as a static diagram of something already over */
+.th-stage.now .th-stage-box { stroke: var(--sc, var(--ink)); stroke-width: 2.6; }
+.th-stage.now .th-stage-l, .th-stage.now .th-stage-n { fill: var(--sc, var(--ink)); font-weight: 700; }
+@media (prefers-reduced-motion: no-preference) {
+  .th-stage.now .th-stage-box { animation: th-now 1.5s ease-in-out infinite; }
+}
+@keyframes th-now { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
