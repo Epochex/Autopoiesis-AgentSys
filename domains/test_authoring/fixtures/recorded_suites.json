@@ -1,0 +1,648 @@
+{
+  "note": "记录下来的模型输出，用来让评测离线跑、不花钱。每一套都带 flaw 字段说明它的毛病是什么，改了 fixture 而评测分数没变，就说明打分器坏了。",
+  "model": "deepseek-v4-pro",
+  "suites": [
+    {
+      "spec_id": "gateway_rca_cost",
+      "source": "recorded:deepseek-v4-pro",
+      "flaw": "只写了 min 和 max 两个边界，刚好在内和刚好越界都没写；越界那条用了 1000，离上界太远，测不到差一位。",
+      "cases": [
+        {
+          "name": "cost_happy_default",
+          "kind": "happy_path",
+          "inputs": {},
+          "expected": {
+            "status": 200
+          },
+          "rationale": "不带参数，走默认的 24 小时。"
+        },
+        {
+          "name": "cost_happy_week",
+          "kind": "happy_path",
+          "inputs": {
+            "hours": 168
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "看一周的花费。"
+        },
+        {
+          "name": "cost_boundary_min",
+          "kind": "boundary",
+          "inputs": {
+            "hours": 1
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "最小值 1 小时。",
+          "targets_param": "hours",
+          "boundary_role": "min"
+        },
+        {
+          "name": "cost_boundary_max",
+          "kind": "boundary",
+          "inputs": {
+            "hours": 720
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "最大值 720 小时。",
+          "targets_param": "hours",
+          "boundary_role": "max"
+        },
+        {
+          "name": "cost_negative_type",
+          "kind": "negative",
+          "inputs": {
+            "hours": "twenty"
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "hours 传字符串。",
+          "targets_param": "hours"
+        },
+        {
+          "name": "cost_error_over_range",
+          "kind": "error_path",
+          "inputs": {
+            "hours": 1000
+          },
+          "expected": {
+            "status": "422"
+          },
+          "rationale": "超出范围。",
+          "targets_error": "422"
+        }
+      ]
+    },
+    {
+      "spec_id": "gateway_remediation_preflight",
+      "source": "recorded:deepseek-v4-pro",
+      "flaw": "有一条自称是越界用例，传的却是合法值；还有一条对着文档里没有的 500 断言。",
+      "cases": [
+        {
+          "name": "preflight_happy",
+          "kind": "happy_path",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "正常的一次预检。"
+        },
+        {
+          "name": "preflight_boundary_action_min",
+          "kind": "boundary",
+          "inputs": {
+            "action": "x",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "action 取最短的一个字符。",
+          "targets_param": "action",
+          "boundary_role": "min"
+        },
+        {
+          "name": "preflight_boundary_action_outside",
+          "kind": "boundary",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "自称测越界，传的却是正常动作名。",
+          "targets_param": "action",
+          "boundary_role": "just_outside"
+        },
+        {
+          "name": "preflight_negative_missing_target",
+          "kind": "negative",
+          "inputs": {
+            "action": "restart_unit"
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "不传 target。",
+          "targets_param": "target"
+        },
+        {
+          "name": "preflight_error_phantom",
+          "kind": "error_path",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": "500"
+          },
+          "rationale": "对着文档里没写过的 500 断言。",
+          "targets_error": "500"
+        },
+        {
+          "name": "preflight_error_refused",
+          "kind": "error_path",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "eth0"
+          },
+          "expected": {
+            "status": "refused"
+          },
+          "rationale": "目标不满足前置条件，返回 200 带拒绝原因。",
+          "targets_error": "refused"
+        }
+      ]
+    },
+    {
+      "spec_id": "gateway_investigate_run_step",
+      "source": "recorded:deepseek-v4-pro",
+      "flaw": "没有明显缺陷，作为均衡对照组：五类里能用的四类都有，错误码全覆盖。",
+      "cases": [
+        {
+          "name": "step_happy",
+          "kind": "happy_path",
+          "inputs": {
+            "session_id": "sess-7f3a91",
+            "step": 3
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "跑手册里的第三步。"
+        },
+        {
+          "name": "step_boundary_step_min",
+          "kind": "boundary",
+          "inputs": {
+            "session_id": "sess-7f3a91",
+            "step": 1
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "第一步。",
+          "targets_param": "step",
+          "boundary_role": "min"
+        },
+        {
+          "name": "step_boundary_step_max",
+          "kind": "boundary",
+          "inputs": {
+            "session_id": "sess-7f3a91",
+            "step": 99
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "最后一步。",
+          "targets_param": "step",
+          "boundary_role": "max"
+        },
+        {
+          "name": "step_boundary_step_just_inside",
+          "kind": "boundary",
+          "inputs": {
+            "session_id": "sess-7f3a91",
+            "step": 2
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "刚好在下界里面。",
+          "targets_param": "step",
+          "boundary_role": "just_inside"
+        },
+        {
+          "name": "step_boundary_step_just_outside",
+          "kind": "boundary",
+          "inputs": {
+            "session_id": "sess-7f3a91",
+            "step": 0
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "刚好越过下界。",
+          "targets_param": "step",
+          "boundary_role": "just_outside"
+        },
+        {
+          "name": "step_boundary_session_min",
+          "kind": "boundary",
+          "inputs": {
+            "session_id": "x",
+            "step": 3
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "会话 id 只有一个字符。",
+          "targets_param": "session_id",
+          "boundary_role": "min"
+        },
+        {
+          "name": "step_boundary_session_just_outside",
+          "kind": "boundary",
+          "inputs": {
+            "session_id": "",
+            "step": 3
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "会话 id 为空。",
+          "targets_param": "session_id",
+          "boundary_role": "just_outside"
+        },
+        {
+          "name": "step_negative_missing_session",
+          "kind": "negative",
+          "inputs": {
+            "step": 3
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "不传会话 id。",
+          "targets_param": "session_id"
+        },
+        {
+          "name": "step_negative_type_step",
+          "kind": "negative",
+          "inputs": {
+            "session_id": "sess-7f3a91",
+            "step": "first"
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "step 传字符串。",
+          "targets_param": "step"
+        },
+        {
+          "name": "step_error_404",
+          "kind": "error_path",
+          "inputs": {
+            "session_id": "no-such-session",
+            "step": 3
+          },
+          "expected": {
+            "status": "404"
+          },
+          "rationale": "会话不存在。",
+          "targets_error": "404"
+        },
+        {
+          "name": "step_error_422",
+          "kind": "error_path",
+          "inputs": {
+            "session_id": "sess-7f3a91",
+            "step": "first"
+          },
+          "expected": {
+            "status": "422"
+          },
+          "rationale": "step 不合法。",
+          "targets_error": "422"
+        },
+        {
+          "name": "step_error_refused",
+          "kind": "error_path",
+          "inputs": {
+            "session_id": "sess-7f3a91",
+            "step": 2
+          },
+          "expected": {
+            "status": "refused"
+          },
+          "rationale": "这一步是写操作，会被拒掉。",
+          "targets_error": "refused"
+        }
+      ]
+    },
+    {
+      "spec_id": "gateway_remediation_execute",
+      "source": "recorded:deepseek-v4-pro",
+      "flaw": "边界和错误码都写全了，但一条重复调用的用例都没有——而 execute 恰恰是不可重复的那个。",
+      "cases": [
+        {
+          "name": "execute_happy",
+          "kind": "happy_path",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "正常执行一次。"
+        },
+        {
+          "name": "execute_happy_other_target",
+          "kind": "happy_path",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "netops-alerts-sink"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "换一个目标再执行一次。"
+        },
+        {
+          "name": "execute_boundary_action_min",
+          "kind": "boundary",
+          "inputs": {
+            "action": "x",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "action 一个字符。",
+          "targets_param": "action",
+          "boundary_role": "min"
+        },
+        {
+          "name": "execute_boundary_action_max",
+          "kind": "boundary",
+          "inputs": {
+            "action": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "action 顶到 64 个字符。",
+          "targets_param": "action",
+          "boundary_role": "max"
+        },
+        {
+          "name": "execute_boundary_action_just_inside",
+          "kind": "boundary",
+          "inputs": {
+            "action": "xx",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "action 刚好在下界里面。",
+          "targets_param": "action",
+          "boundary_role": "just_inside"
+        },
+        {
+          "name": "execute_boundary_action_just_outside",
+          "kind": "boundary",
+          "inputs": {
+            "action": "",
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "action 空字符串。",
+          "targets_param": "action",
+          "boundary_role": "just_outside"
+        },
+        {
+          "name": "execute_boundary_target_min",
+          "kind": "boundary",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "x"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "target 一个字符。",
+          "targets_param": "target",
+          "boundary_role": "min"
+        },
+        {
+          "name": "execute_boundary_target_max",
+          "kind": "boundary",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "target 顶到 128 个字符。",
+          "targets_param": "target",
+          "boundary_role": "max"
+        },
+        {
+          "name": "execute_boundary_target_just_inside",
+          "kind": "boundary",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "xx"
+          },
+          "expected": {
+            "status": 200
+          },
+          "rationale": "target 刚好在下界里面。",
+          "targets_param": "target",
+          "boundary_role": "just_inside"
+        },
+        {
+          "name": "execute_boundary_target_just_outside",
+          "kind": "boundary",
+          "inputs": {
+            "action": "restart_unit",
+            "target": ""
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "target 空字符串。",
+          "targets_param": "target",
+          "boundary_role": "just_outside"
+        },
+        {
+          "name": "execute_negative_missing_action",
+          "kind": "negative",
+          "inputs": {
+            "target": "netops-correlator"
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "不传 action。",
+          "targets_param": "action"
+        },
+        {
+          "name": "execute_negative_type_target",
+          "kind": "negative",
+          "inputs": {
+            "action": "restart_unit",
+            "target": 0
+          },
+          "expected": {
+            "status": 422
+          },
+          "rationale": "target 传数字。",
+          "targets_param": "target"
+        },
+        {
+          "name": "execute_error_400",
+          "kind": "error_path",
+          "inputs": {
+            "action": "restart_unit",
+            "target": "eth0"
+          },
+          "expected": {
+            "status": "400"
+          },
+          "rationale": "被拒绝执行，execute 这里抛 400。",
+          "targets_error": "400"
+        },
+        {
+          "name": "execute_error_422",
+          "kind": "error_path",
+          "inputs": {
+            "action": "restart_unit",
+            "target": 0
+          },
+          "expected": {
+            "status": "422"
+          },
+          "rationale": "请求体不合法。",
+          "targets_error": "422"
+        }
+      ]
+    }
+  ],
+  "designed_negative": {
+    "spec_id": "gateway_rca_cost",
+    "source": "designed_negative",
+    "why": "这一套里每条用例自己都是对的：参数合法、断言合理，真跑起来会全绿。但十条里有九条是同一种正常路径，错误码一条都没测。如果打分器给它高分，说明它只在数通过率，没在看题出偏没出偏。",
+    "cases": [
+      {
+        "name": "cost_happy_6h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 6
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 6 小时的花费。"
+      },
+      {
+        "name": "cost_happy_12h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 12
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 12 小时的花费。"
+      },
+      {
+        "name": "cost_happy_24h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 24
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 24 小时的花费。"
+      },
+      {
+        "name": "cost_happy_36h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 36
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 36 小时的花费。"
+      },
+      {
+        "name": "cost_happy_48h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 48
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 48 小时的花费。"
+      },
+      {
+        "name": "cost_happy_72h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 72
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 72 小时的花费。"
+      },
+      {
+        "name": "cost_happy_96h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 96
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 96 小时的花费。"
+      },
+      {
+        "name": "cost_happy_168h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 168
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 168 小时的花费。"
+      },
+      {
+        "name": "cost_happy_360h",
+        "kind": "happy_path",
+        "inputs": {
+          "hours": 360
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "看最近 360 小时的花费。"
+      },
+      {
+        "name": "cost_boundary_min",
+        "kind": "boundary",
+        "inputs": {
+          "hours": 1
+        },
+        "expected": {
+          "status": 200
+        },
+        "rationale": "最小值 1 小时。",
+        "targets_param": "hours",
+        "boundary_role": "min"
+      }
+    ]
+  }
+}

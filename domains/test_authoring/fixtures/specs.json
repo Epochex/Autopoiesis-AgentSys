@@ -1,0 +1,245 @@
+{
+  "note": "每一条 spec 都是从 frontend/gateway/app/main.py 里真实的 Pydantic 模型和 Query 约束抄下来的，不是编的。source 字段写了对应的文件和符号；网关那边改了约束，这里就会过期，tests_py/test_test_authoring.py 里有一条用例专门盯这件事。",
+  "specs": [
+    {
+      "id": "gateway_remediation_preflight",
+      "name": "remediation_preflight",
+      "kind": "http_endpoint",
+      "method": "POST",
+      "path": "/api/rca/remediation/preflight",
+      "summary": "判断一个动作在当前状态下能不能跑，什么都不改。",
+      "params": [
+        {
+          "name": "action",
+          "type": "str",
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "example": "restart_unit",
+          "description": "服务端固定清单里的动作名"
+        },
+        {
+          "name": "target",
+          "type": "str",
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "example": "netops-correlator",
+          "description": "动作作用的唯一目标"
+        }
+      ],
+      "errors": [
+        {
+          "code": "422",
+          "condition": "action 或 target 类型不对、为空、或者超过长度上限",
+          "trigger": {"action": 12345}
+        },
+        {
+          "code": "refused",
+          "condition": "动作不在允许清单里，或目标当前不满足前置条件；这时返回 200 并带上拒绝原因，不当成错误",
+          "trigger": {"action": "restart_unit", "target": "eth0"}
+        }
+      ],
+      "idempotent": true,
+      "idempotency_note": "preflight 只读，连着调多少次系统状态都不变。",
+      "expected_success": {"status": 200},
+      "source": {"file": "frontend/gateway/app/main.py", "symbol": "RemediationRequest"},
+      "lessons": [
+        "preflight 拒绝执行时返回的是 200 加拒绝原因，不是 4xx，用例不要断言成错误码。"
+      ]
+    },
+    {
+      "id": "gateway_remediation_execute",
+      "name": "remediation_execute",
+      "kind": "http_endpoint",
+      "method": "POST",
+      "path": "/api/rca/remediation/execute",
+      "summary": "真的执行一个动作，撑开观察窗口，然后判定通过还是回滚。",
+      "params": [
+        {
+          "name": "action",
+          "type": "str",
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "example": "restart_unit",
+          "description": "服务端固定清单里的动作名"
+        },
+        {
+          "name": "target",
+          "type": "str",
+          "required": true,
+          "min_length": 1,
+          "max_length": 128,
+          "example": "netops-correlator",
+          "description": "动作作用的唯一目标"
+        }
+      ],
+      "errors": [
+        {
+          "code": "400",
+          "condition": "动作被拒绝执行，这里直接抛 400，和 preflight 不一样",
+          "trigger": {"action": "restart_unit", "target": "eth0"}
+        },
+        {
+          "code": "422",
+          "condition": "请求体不合法",
+          "trigger": {"target": 0}
+        }
+      ],
+      "idempotent": false,
+      "idempotency_note": "execute 会真的动系统，还有重启预算；第二次调用不保证还能跑。",
+      "expected_success": {"status": 200},
+      "source": {"file": "frontend/gateway/app/main.py", "symbol": "RemediationRequest"},
+      "lessons": [
+        "execute 和 preflight 用同一个请求体，但被拒绝的时候 execute 抛 400，preflight 返回 200。"
+      ]
+    },
+    {
+      "id": "gateway_investigate_start",
+      "name": "investigate_start",
+      "kind": "http_endpoint",
+      "method": "POST",
+      "path": "/api/rca/investigate/start",
+      "summary": "跑一轮只读探针开一个排查会话，先出证据再谈分析。",
+      "params": [
+        {
+          "name": "question",
+          "type": "str",
+          "required": true,
+          "min_length": 1,
+          "max_length": 1000,
+          "example": "eth1 没有载波，是不是网口坏了",
+          "description": "本轮要查的问题"
+        },
+        {
+          "name": "family",
+          "type": "str",
+          "required": false,
+          "default": null,
+          "max_length": 64,
+          "example": "fam-host-config-drift",
+          "description": "问题归类，决定开哪些探针"
+        },
+        {
+          "name": "subject",
+          "type": "str",
+          "required": false,
+          "default": null,
+          "max_length": 64,
+          "example": "eth1",
+          "description": "探针指向的对象"
+        },
+        {
+          "name": "lang",
+          "type": "enum",
+          "required": false,
+          "default": "zh",
+          "enum_values": ["zh", "en"],
+          "example": "zh",
+          "description": "回答语言"
+        }
+      ],
+      "errors": [
+        {
+          "code": "422",
+          "condition": "question 缺失或不是字符串",
+          "trigger": {"question": null}
+        }
+      ],
+      "idempotent": false,
+      "idempotency_note": "每次调用都新开一个会话，第二次拿到的是另一个 id。",
+      "expected_success": {"status": 200},
+      "source": {"file": "frontend/gateway/app/main.py", "symbol": "InvestigateStart"},
+      "lessons": [
+        "lang 只收 zh 和 en，传别的值会被 Literal 校验挡掉。"
+      ]
+    },
+    {
+      "id": "gateway_rca_cost",
+      "name": "rca_cost",
+      "kind": "http_endpoint",
+      "method": "GET",
+      "path": "/api/rca/cost",
+      "summary": "一段时间窗口内的模型花费，按调用方归因。",
+      "params": [
+        {
+          "name": "hours",
+          "type": "int",
+          "required": false,
+          "default": 24,
+          "minimum": 1,
+          "maximum": 720,
+          "example": 24,
+          "description": "回看多少小时"
+        }
+      ],
+      "errors": [
+        {
+          "code": "422",
+          "condition": "hours 超出 1 到 720 的范围",
+          "trigger": {"hours": 1000}
+        }
+      ],
+      "idempotent": true,
+      "idempotency_note": "只读汇总，同一个窗口重复调结果一样。",
+      "expected_success": {"status": 200},
+      "source": {"file": "frontend/gateway/app/main.py", "symbol": "rca_cost"},
+      "lessons": [
+        "hours 的上限是 720，也就是 30 天；超了返回 422，不会自动截断。"
+      ]
+    },
+    {
+      "id": "gateway_investigate_run_step",
+      "name": "investigate_run_step",
+      "kind": "http_endpoint",
+      "method": "POST",
+      "path": "/api/rca/investigate/run-step",
+      "summary": "跑排查手册里的某一步，只有只读的步骤这里才有执行器。",
+      "params": [
+        {
+          "name": "session_id",
+          "type": "str",
+          "required": true,
+          "min_length": 1,
+          "max_length": 64,
+          "example": "sess-7f3a91",
+          "description": "已经开过的会话 id"
+        },
+        {
+          "name": "step",
+          "type": "int",
+          "required": true,
+          "minimum": 1,
+          "maximum": 99,
+          "example": 1,
+          "description": "手册里的第几步"
+        }
+      ],
+      "errors": [
+        {
+          "code": "404",
+          "condition": "会话不存在",
+          "trigger": {"session_id": "no-such-session"}
+        },
+        {
+          "code": "422",
+          "condition": "step 不是整数或者不在 1 到 99 之间",
+          "trigger": {"step": "first"}
+        },
+        {
+          "code": "refused",
+          "condition": "这一步被判成写操作，这里没有执行器，会拒绝执行",
+          "trigger": {"step": 2}
+        }
+      ],
+      "idempotent": null,
+      "idempotency_note": "接口本身没说重复跑同一步会怎样，所以这条先不算覆盖缺口。",
+      "expected_success": {"status": 200},
+      "source": {"file": "frontend/gateway/app/main.py", "symbol": "InvestigateStep"},
+      "lessons": [
+        "run-step 只跑只读步骤，写操作的步骤会被拒掉，这两种情况要分开写用例。"
+      ]
+    }
+  ]
+}
