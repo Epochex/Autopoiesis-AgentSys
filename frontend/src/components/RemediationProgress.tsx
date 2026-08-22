@@ -86,15 +86,13 @@ const TERMINAL_LABEL: Record<string, [string, string]> = {
 
 export function RemediationProgress({ subject, lang }: { subject: string; lang: Lang }) {
   const zh = lang === 'zh'
-  const steps = useSentinelChain(subject)
+  const steps = useSentinelChain(subject)?.steps ?? null
 
   const view = useMemo(() => (steps ? phaseOf(steps) : null), [steps])
 
   if (!steps || !steps.length || !view) return null
 
-  const last = steps[steps.length - 1]
   const samples = [...steps].reverse().find((s) => typeof s.samples === 'number')?.samples
-  const radius = [...steps].reverse().find((s) => s.blast_radius)?.blast_radius
   const running = !view.reached.has('closed')
 
   return (
@@ -127,14 +125,8 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
         })}
       </ol>
 
-      {radius ? (
-        <p className="rp-line">
-          <span>{zh ? '影响面' : 'BLAST RADIUS'}</span>{radius.summary}
-        </p>
-      ) : null}
-      {last.note || last.reason || last.summary ? (
-        <p className="rp-line"><span>{zh ? '当前' : 'NOW'}</span>{last.note || last.reason || last.summary}</p>
-      ) : null}
+      {/* 影响面 and 当前 are on the incident marker out on the map, where the eye
+          already is. Repeating them here only cost the transcript its room. */}
       {running && view.current === 'watching' ? (
         <p className="rp-hint">
           {zh

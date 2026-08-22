@@ -34,6 +34,22 @@ export const SUBJECT_KINDS = new Set([
   'preflight', 'declined', 'remediated', 'resolved',
 ])
 
+/** One shell command the sentinel ran, and what came back. */
+export interface CommandLine {
+  at: string
+  argv: string[]
+  rc: number
+  out: string
+  truncated?: boolean
+}
+
+export interface Chain {
+  /** The graded steps, in order — what the rail and the phase labels read. */
+  steps: ChainStep[]
+  /** The transcript, in order — every command, streamed as it ran. */
+  commands: CommandLine[]
+}
+
 const TERMINAL_KINDS = new Set(['resolved', 'remediated', 'no_safe_action', 'declined', 'cooldown'])
 /** Keep reading briefly past the first terminal step — see the note on the hook. */
 const GRACE_POLLS = 3
@@ -50,12 +66,12 @@ const GRACE_POLLS = 3
  * otherwise freeze the stage at five of six steps forever. A couple of grace
  * polls costs nothing and removes that race.
  */
-export function useSentinelChain(subject: string | null | undefined, intervalMs = 3000): ChainStep[] | null {
-  const [steps, setSteps] = useState<ChainStep[] | null>(null)
+export function useSentinelChain(subject: string | null | undefined, intervalMs = 3000): Chain | null {
+  const [chain, setChain] = useState<Chain | null>(null)
   const inFlight = useRef(false)
 
   useEffect(() => {
-    if (!subject) { setSteps(null); return }
+    if (!subject) { setChain(null); return }
     let alive = true
     let timer: number | undefined
     let settled = 0
@@ -64,13 +80,17 @@ export function useSentinelChain(subject: string | null | undefined, intervalMs 
       if (inFlight.current) return
       inFlight.current = true
       try {
-        const response = await fetch('/api/rca/sentinel/timeline?limit=400')
-        const body = (await response.json()) as { events?: ChainStep[] }
+        // 800: the transcript is one line per command, and a watch window alone
+        // adds two dozen. A short tail would drop the start of the chain.
+        const response = await fetch('/api/rca/sentinel/timeline?limit=800')
+        const body = (await response.json()) as { events?: (ChainStep & CommandLine)[] }
         if (!alive) return
-        const mine = (body.events ?? []).filter(
-          (e) => SUBJECT_KINDS.has(e.kind) && (e.subject ?? '').includes(subject),
-        )
-        setSteps(mine)
+        const ours = (body.events ?? []).filter((e) => (e.subject ?? '').includes(subject))
+        const mine = ours.filter((e) => SUBJECT_KINDS.has(e.kind))
+        setChain({
+          steps: mine,
+          commands: ours.filter((e) => e.kind === 'command') as unknown as CommandLine[],
+        })
         if (mine.some((e) => TERMINAL_KINDS.has(e.kind))) {
           settled += 1
           if (settled >= GRACE_POLLS && timer) {
@@ -92,5 +112,5 @@ export function useSentinelChain(subject: string | null | undefined, intervalMs 
     return () => { alive = false; if (timer) window.clearInterval(timer) }
   }, [subject, intervalMs])
 
-  return steps
+  return chain
 }

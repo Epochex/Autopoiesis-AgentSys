@@ -7,7 +7,8 @@
  *   2. clicking it lands on 长轨迹 with that subject's card selected
  *   3. the card's rail is the sentinel loop, not the NetOps pipeline
  *   4. the theater anchors the fault to a node and draws the chain to the rail
- *   5. — the point of this script — the rail ADVANCES while nothing is touched
+ *   5. the transcript shows the real commands and what they returned
+ *   6. — the point of this script — the rail ADVANCES while nothing is touched
  *
  * Step 5 exists because the stage used to freeze: it computed which steps had
  * run at the moment it opened and never looked again, so an incident could walk
@@ -78,8 +79,21 @@ try {
   const marker = (await page.locator('.th-inc-card').innerText()).replace(/\n/g, ' | ')
   log(`3. 剧场把故障标在节点上       ${marker}`)
 
-  // ── 4. and then it has to MOVE, with nobody touching anything ─────────────
-  log('\n4. 现在什么都不碰，看轨道自己走：')
+  // ── 4. the transcript: what it ran, not just how far it got ───────────────
+  await page.waitForSelector('.xl', { timeout: 60_000 }).catch(() => die(
+    'no execution transcript in the theater — commands are not reaching the timeline',
+  ))
+  const box = await page.locator('.xl').boundingBox()
+  if (box && box.y + box.height > page.viewportSize().height) {
+    die(`the transcript runs ${Math.round(box.y + box.height - page.viewportSize().height)}px below the fold`)
+  }
+  const firstCmds = await page.locator('.xl-cmd .xl-argv').allInnerTexts()
+  log(`4. 执行记录（前 3 条，共 ${firstCmds.length}）：`)
+  firstCmds.slice(0, 3).forEach((c) => log(`     ${c.replace(/\s+/g, ' ')}`))
+  if (!firstCmds.length) die('the transcript panel is empty')
+
+  // ── 5. and then it has to MOVE, with nobody touching anything ─────────────
+  log('\n5. 现在什么都不碰，看轨道自己走：')
   const seen = new Set()
   const trail = []
   const started = Date.now()
@@ -108,6 +122,13 @@ try {
       + 'This is the frozen-stage regression: the theater is reading a snapshot, not the live chain.')
   }
   log(`\n   轨道自己前进了 ${trail.length} 次：${trail.map((t) => `${t.lit}`).join(' → ')} 级`)
+
+  const grownCmds = await page.locator('.xl-cmd').count()
+  if (grownCmds <= firstCmds.length) {
+    log(`   （执行记录停在 ${grownCmds} 条——链路可能在打开前就走完了）`)
+  } else {
+    log(`   执行记录同步长到 ${grownCmds} 条`)
+  }
 
   if (errors.length) die(`console errors: ${errors.slice(0, 4).join(' / ')}`)
   log(`\n✓ 整条链在真浏览器里走通，剧场是活的。截图在 ${SHOTS}/`)

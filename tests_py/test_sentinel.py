@@ -18,14 +18,22 @@ def _detection(subject="demo.service", action="restart_unit"):
 
 
 def _sentinel(detections, *, eligible=True, outcome="passed", clock=None):
-    calls = {"preflight": [], "execute": []}
+    calls = {"preflight": [], "execute": [], "logged": []}
 
-    def preflight(action, target):
+    # Both take a `log` sink the sentinel uses to stream each command it runs
+    # into the timeline; the doubles accept it so the contract stays honest.
+    def preflight(action, target, on_command=None):
         calls["preflight"].append((action, target))
+        if on_command is not None:
+            on_command({"argv": ["systemctl", "show", target], "rc": 0, "out": "", "truncated": False})
+            calls["logged"].append("preflight")
         return {"eligible": eligible, "reason": "" if eligible else "preconditions not met"}
 
-    def execute(action, target):
+    def execute(action, target, on_command=None):
         calls["execute"].append((action, target))
+        if on_command is not None:
+            on_command({"argv": ["systemctl", "restart", target], "rc": 0, "out": "", "truncated": False})
+            calls["logged"].append("execute")
         return {"ran": True, "needs_human": False, "verdict": {"outcome": outcome, "samples": []}}
 
     sentinel = Sentinel(
@@ -54,8 +62,8 @@ def test_a_condition_that_clears_resets_its_streak():
     """An intermittent fault must re-confirm, not accumulate across hours."""
     findings: list[Detection] = [_detection()]
     sentinel = Sentinel(detectors=[lambda: list(findings)],
-                        execute=lambda a, t: {"verdict": {"outcome": "passed"}},
-                        preflight=lambda a, t: {"eligible": True}, confirm_polls=2)
+                        execute=lambda a, t, on_command=None: {"verdict": {"outcome": "passed"}},
+                        preflight=lambda a, t, on_command=None: {"eligible": True}, confirm_polls=2)
     sentinel.poll_once()
     findings.clear()
     sentinel.poll_once()
@@ -111,8 +119,8 @@ def test_a_broken_detector_does_not_stop_the_others():
 
     sentinel = Sentinel(
         detectors=[explodes, lambda: [_detection()]],
-        execute=lambda a, t: {"verdict": {"outcome": "passed"}},
-        preflight=lambda a, t: {"eligible": True}, confirm_polls=1,
+        execute=lambda a, t, on_command=None: {"verdict": {"outcome": "passed"}},
+        preflight=lambda a, t, on_command=None: {"eligible": True}, confirm_polls=1,
     )
     result = sentinel.poll_once()
     assert len(result["detections"]) == 1
@@ -130,3 +138,16 @@ def test_the_background_loop_is_off_unless_enabled(monkeypatch):
     monkeypatch.setenv("AUTOPOIESIS_SENTINEL", "1")
     sentinel_wiring.start_background()
     assert started == ["x"]
+
+
+def test_every_command_reaches_the_timeline_as_it_runs():
+    """A verdict with no transcript cannot be checked by the person reading it."""
+    from core.remediate.sentinel import timeline
+
+    sentinel, calls = _sentinel([_detection()])
+    sentinel.poll_once()
+    sentinel.poll_once()
+    assert calls["logged"] == ["preflight", "execute"]
+    lines = [e for e in timeline(200) if e["kind"] == "command"]
+    assert [e["argv"][1] for e in lines[-2:]] == ["show", "restart"]
+    assert all(e["subject"] == "demo.service" for e in lines[-2:])

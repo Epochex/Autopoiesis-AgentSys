@@ -24,7 +24,8 @@ import re
 import shutil
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from core.remediate import HealthProbe
@@ -41,6 +42,44 @@ class UnsafeTarget(ValueError):
 
 
 @dataclass
+class CommandLog:
+    """Every command an action really ran, and what came back.
+
+    Without this the system could restart a service, watch it for ninety
+    seconds and declare it fixed while the operator saw only the verdict — no
+    way to check the reasoning, and nothing to review afterwards. Actions get
+    trusted by being watched, so the transcript is part of the product.
+
+    Output is trimmed rather than dropped: a `journalctl` dump would bury the
+    log, but a truncated head still shows what the action was reading.
+    """
+
+    entries: list[dict[str, Any]] = field(default_factory=list)
+    on_entry: Callable[[dict[str, Any]], None] | None = None
+    max_output: int = 400
+    limit: int = 200
+
+    def add(self, argv: list[str], done: subprocess.CompletedProcess) -> None:
+        raw = ((done.stdout or "") + (done.stderr or "")).strip()
+        entry = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "argv": list(argv),
+            "rc": done.returncode,
+            "out": raw[: self.max_output],
+            "truncated": len(raw) > self.max_output,
+        }
+        if len(self.entries) < self.limit:
+            self.entries.append(entry)
+        if self.on_entry is not None:
+            # Streamed as it happens: a log that only lands when the phase ends
+            # is not a log the operator can read along with.
+            try:
+                self.on_entry(entry)
+            except Exception:  # noqa: BLE001 - logging must never break the action
+                pass
+
+
+@dataclass
 class Command:
     """A shell command plus how to read its result.
 
@@ -51,9 +90,12 @@ class Command:
     run: Callable[[list[str]], subprocess.CompletedProcess]
 
     @staticmethod
-    def local() -> "Command":
+    def local(log: CommandLog | None = None) -> "Command":
         def run(argv: list[str]) -> subprocess.CompletedProcess:
-            return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
+            if log is not None:
+                log.add(argv, done)
+            return done
 
         return Command(run=run)
 

@@ -1,0 +1,32 @@
+/* ── 执行记录 ────────────────────────────────────────────────────────────
+   Open by default and following its own tail: a transcript the operator has
+   to go find is a transcript they read after the fact, which is the one time
+   it cannot help them. */
+.xl { border: 1.5px solid var(--ink, #0d0d0d); background: var(--paper, #e7e7e3);
+  display: flex; flex-direction: column; height: 100%; }
+.xl-head { display: flex; align-items: baseline; gap: 10px; flex: none;
+  padding: 5px 9px; border-bottom: 1px solid var(--rule, #cfcfca);
+  background: var(--sunk, #dddcd5); font-family: 'IBM Plex Mono', monospace; }
+.xl-k { font-size: 8.5px; font-weight: 700; letter-spacing: .14em; color: var(--ink, #0d0d0d); }
+.xl-n { font-size: 9px; color: var(--gray, #605f5a); }
+.xl-hint { margin-left: auto; font-size: 8px; color: var(--gray, #605f5a); }
+
+.xl-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 4px 0;
+  font-family: 'IBM Plex Mono', monospace; scrollbar-width: thin; }
+
+.xl-mark { display: flex; align-items: center; gap: 8px; margin: 6px 9px 4px; }
+.xl-mark::after { content: ''; flex: 1; border-top: 1px solid var(--rule, #cfcfca); }
+.xl-mark > span { font-size: 8px; font-weight: 700; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink, #0d0d0d); }
+
+.xl-cmd { padding: 2px 9px 3px; }
+.xl-argv { font-size: 10px; color: var(--ink, #0d0d0d); word-break: break-all; line-height: 1.5; }
+.xl-at { color: var(--gray, #605f5a); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.xl-dollar { color: var(--gray, #605f5a); margin-right: 5px; }
+/* a fact, not a verdict — see the note in ExecutionLog */
+.xl-rc { margin-left: 7px; padding: 0 4px; font-size: 8.5px; font-weight: 600;
+  color: var(--gray, #605f5a); border: 1px solid var(--rule, #cfcfca); }
+.xl-out { margin: 1px 0 0 22px; font-size: 9.5px; line-height: 1.45;
+  color: var(--ink-soft, #2a2a27); white-space: pre-wrap; word-break: break-word;
+  max-height: 76px; overflow: hidden; }
+.xl-out.muted { color: var(--gray, #605f5a); font-style: italic; }

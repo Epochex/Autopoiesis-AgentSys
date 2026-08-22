@@ -23,6 +23,7 @@ import type { Lang } from '../i18n'
 import { railFor, sentinelStageIds } from './netops-pipeline'
 import { useSentinelChain } from './use-sentinel-chain'
 import './theater.css'
+import { ExecutionLog } from './ExecutionLog'
 import { RemediationProgress } from './RemediationProgress'
 
 type Pt = { x: number; y: number }
@@ -276,12 +277,12 @@ export function TheaterStage({
    * stage is watching the chain move across it. */
   const chain = useSentinelChain(isSentinel ? theater.device : null)
   const liveRadius = useMemo(
-    () => [...(chain ?? [])].reverse().find((s) => s.blast_radius)?.blast_radius ?? null,
+    () => [...(chain?.steps ?? [])].reverse().find((s) => s.blast_radius)?.blast_radius ?? null,
     [chain],
   )
   const railStages = railFor(theater.scope).map((p, i) => ({ ...p, p: { x: RAIL_X0 + i * RAIL_DX, y: RAIL_Y } as Pt }))
   const hotStageSet = new Set(
-    isSentinel && chain?.length ? sentinelStageIds(chain) : theater.stageIds,
+    isSentinel && chain?.steps.length ? sentinelStageIds(chain.steps) : theater.stageIds,
   )
   // The step the chain is on right now — the one that should read as moving.
   const nowStage = [...railStages].reverse().find((r) => hotStageSet.has(r.id)) ?? null
@@ -313,6 +314,17 @@ export function TheaterStage({
               <rect x={s.p.x - 70} y={s.p.y - 15} width={140} height={30} className="th-stage-box" />
               <text x={s.p.x} y={s.p.y - 2} className="th-stage-n" textAnchor="middle">{String(i + 1).padStart(2, '0')}</text>
               <text x={s.p.x} y={s.p.y + 10} className="th-stage-l" textAnchor="middle">{zh ? s.zh : s.en}</text>
+              {/* every stage already carries its own hue, so a heavier border
+                  cannot say "this one is happening now" — it needs a mark of
+                  its own. */}
+              {nowStage?.id === s.id ? (
+                <>
+                  <rect x={s.p.x - 70} y={s.p.y - 15} width={140} height={30} className="th-stage-fill" />
+                  <text x={s.p.x} y={s.p.y - 22} className="th-stage-now" textAnchor="middle">
+                    ▶ {zh ? '正在进行' : 'IN FLIGHT'}
+                  </text>
+                </>
+              ) : null}
             </g>
           )
         })}
@@ -671,9 +683,17 @@ export function TheaterStage({
       {/* Live response for the device on stage. Anchored bottom-left so it sits
           clear of the banner, and only drawn once the sentinel has something to
           say about this subject. */}
-      <foreignObject x={20} y={640} width={620} height={230} className="th-rp-fo">
+      <foreignObject x={20} y={556} width={620} height={126} className="th-rp-fo">
         <RemediationProgress subject={theater.device} lang={lang} />
       </foreignObject>
+
+      {/* the transcript, under the progress rail: what it did, not just how far
+          along it is. Open by default — see ExecutionLog. */}
+      {isSentinel && chain?.commands.length ? (
+        <foreignObject x={20} y={690} width={620} height={210} className="th-xl-fo">
+          <ExecutionLog steps={chain.steps} commands={chain.commands} lang={lang} />
+        </foreignObject>
+      ) : null}
     </g>
   )
 }

@@ -130,8 +130,10 @@ class Sentinel:
     """Polls detectors and drives the graded pipeline when one fires."""
 
     detectors: list[Callable[[], list[Detection]]]
-    execute: Callable[[str, str], dict[str, Any]]
-    preflight: Callable[[str, str], dict[str, Any]]
+    # Both take an optional `on_command=` sink, called with each command as
+    # it runs, so the transcript reaches the timeline while the phase is live.
+    execute: Callable[..., dict[str, Any]]
+    preflight: Callable[..., dict[str, Any]]
     interval_sec: float = 20.0
     cooldown_sec: float = COOLDOWN_SEC
     confirm_polls: int = CONFIRM_POLLS
@@ -195,7 +197,19 @@ class Sentinel:
     def _act(self, detection: Detection) -> dict[str, Any]:
         """Preflight, execute under the watch window, and record the verdict."""
         action, target = detection.action, detection.target or detection.subject
-        check = self.preflight(action, target)
+
+        def log_command(entry: dict[str, Any]) -> None:
+            """One timeline line per command, as it runs.
+
+            Streamed rather than attached at the end of the phase: the watch
+            window is ninety seconds long, and a transcript that only appears
+            once the window closes cannot be read while it is happening.
+            """
+            record("command", {"subject": target, "action": action,
+                               "argv": entry["argv"], "rc": entry["rc"],
+                               "out": entry["out"], "truncated": entry["truncated"]})
+
+        check = self.preflight(action, target, on_command=log_command)
         record("preflight", {"subject": target, "action": action,
                              "eligible": check.get("eligible"),
                              "reason": check.get("reason"),
@@ -206,7 +220,7 @@ class Sentinel:
             return {"subject": target, "action": action, "outcome": "declined"}
 
         self._cooldown_until[detection.key] = self.clock() + self.cooldown_sec
-        result = self.execute(action, target)
+        result = self.execute(action, target, on_command=log_command)
         verdict = (result or {}).get("verdict") or {}
         record("remediated", {
             "subject": target, "action": action,

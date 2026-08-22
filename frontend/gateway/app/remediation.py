@@ -27,6 +27,7 @@ from typing import Any, Callable
 from core.remediate import BakeIn, FollowUp, HealthProbe
 from domains.network_rca.remediation import (
     Command,
+    CommandLog,
     UnsafeTarget,
     bounce_interface,
     gateway_probe,
@@ -133,10 +134,21 @@ def _resolve(action_name: str) -> Action:
     return action
 
 
-def preflight(action_name: str, target: str, command: Command | None = None) -> dict[str, Any]:
-    """Report whether this action would run, and why, without running it."""
+def preflight(
+    action_name: str,
+    target: str,
+    command: Command | None = None,
+    on_command: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Report whether this action would run, and why, without running it.
+
+    ``on_command`` receives each command as it runs. A caller that supplies its
+    own ``command`` is already carrying its own transport, and whatever journal
+    it wants lives there — so the sink only applies to the one built here.
+    """
     action = _resolve(action_name)
-    command = command or Command.local()
+    log = CommandLog(on_entry=on_command) if command is None else None
+    command = command or Command.local(log)
     try:
         outcome = action.preflight(command, target)
     except UnsafeTarget as refusal:
@@ -149,6 +161,7 @@ def preflight(action_name: str, target: str, command: Command | None = None) -> 
             "target": target,
             "eligible": False,
             "refused": True,
+            "commands": log.entries if log else [],
             "reason": str(refusal),
             "blast_radius": estimate(action_name, target),
         }
@@ -174,6 +187,7 @@ def execute(
     bake_in: BakeIn | None = None,
     emit: Callable[[str, dict[str, Any]], None] | None = None,
     sleep: Callable[[float], None] | None = None,
+    on_command: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Run the action under a watch window and return the full verdict.
 
@@ -181,8 +195,11 @@ def execute(
     it: a suite that really waits out every bake-in stops being run.
     """
     action = _resolve(action_name)
-    command = command or Command.local()
+    log = CommandLog(on_entry=on_command)
+    command = command or Command.local(log)
 
+    # preflight runs through the same journaling command, so its reads land in
+    # the one transcript rather than a second, separate list.
     check = preflight(action_name, target, command)
     if not check.get("eligible"):
         return {"ran": False, "verdict": None, **check}
@@ -223,6 +240,7 @@ def execute(
         "detail": verdict.detail,
         "verdict": verdict.model_dump(mode="json"),
         "events": events,
+        "commands": log.entries,
     }
     _append_run(record_payload)
     return {"ran": True, **record_payload}

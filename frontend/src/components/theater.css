@@ -260,9 +260,16 @@
 
 /* the step the chain is on right now — the rail has to look like it is moving,
    otherwise the whole stage reads as a static diagram of something already over */
-.th-stage.now .th-stage-box { stroke: var(--sc, var(--ink)); stroke-width: 2.6; }
+.th-stage.now .th-stage-box { stroke: var(--sc, var(--ink)); stroke-width: 3; }
 .th-stage.now .th-stage-l, .th-stage.now .th-stage-n { fill: var(--sc, var(--ink)); font-weight: 700; }
+/* the wash is what separates "this one is running" from "this one has a hue" */
+.th-stage-fill { fill: var(--sc, var(--ink)); opacity: .16; pointer-events: none; }
+.th-stage-now { font: 700 9px 'IBM Plex Mono', monospace; letter-spacing: .12em;
+  fill: var(--sc, var(--ink)); }
 @media (prefers-reduced-motion: no-preference) {
-  .th-stage.now .th-stage-box { animation: th-now 1.5s ease-in-out infinite; }
+  .th-stage.now .th-stage-fill { animation: th-now 1.4s ease-in-out infinite; }
+  .th-stage.now .th-stage-now { animation: th-now 1.4s ease-in-out infinite; }
 }
-@keyframes th-now { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
+@keyframes th-now { 0%, 100% { opacity: .16 } 50% { opacity: .42 } }
+.th-stage.now .th-stage-now { animation-name: th-now-text; }
+@keyframes th-now-text { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
