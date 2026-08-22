@@ -83,7 +83,7 @@ const suggestionEvent = (s: Suggestion): TheaterEvent => ({
     : ['aiops-agent', 'suggestions-topic', 'remediation'],
 })
 
-export function LiveSituation({ zh, onTheater, scenario = 'live' }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; scenario?: 'live' | 'bench' }) {
+export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live' }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; onTrace?: (subject: string) => void; scenario?: 'live' | 'bench' }) {
   const [snap, setSnap] = useState<LiveSnapshot | null>(null)
   const [state, setState] = useState<'load' | 'ok' | 'empty' | 'err'>('load')
   const [selId, setSelId] = useState<string | null>(null)
@@ -186,6 +186,14 @@ export function LiveSituation({ zh, onTheater, scenario = 'live' }: { zh: boolea
               <span className="ls-d-dev">{selected.device}</span>
               <span className="ls-d-svc">{selected.service}</span>
               <span className="ls-d-mode">{selected.adaptiveMode} · {selected.impactLevel}</span>
+              {onTrace ? (
+                <button
+                  className="ls-theater-cta"
+                  onClick={() => onTrace(selected.scope || selected.device || selected.id)}
+                >
+                  {zh ? '看处置链路 ▸' : 'RESPONSE CHAIN ▸'}
+                </button>
+              ) : null}
               {onTheater ? (
                 <button className="ls-theater-cta" onClick={() => onTheater(suggestionEvent(selected))}>
                   ⧉ {zh ? '全链路拓扑剧场' : 'TOPOLOGY THEATER'} ▸

@@ -197,7 +197,7 @@ function StepDetail({ event, zh, tx }: { event: TimelineEvent; zh: boolean; tx: 
   )
 }
 
-export function SentinelTimeline({ lang }: { lang: Lang }) {
+export function SentinelTimeline({ lang, focus }: { lang: Lang; focus?: string }) {
   const zh = lang === 'zh'
   const tx = T(zh)
   const [st, setSt] = useState<St>({ s: 'load' })
@@ -248,16 +248,21 @@ export function SentinelTimeline({ lang }: { lang: Lang }) {
     }
   }, [load])
 
-  const { incidents, quiet } = useMemo(
+  const { incidents: all, quiet } = useMemo(
     () => (st.s === 'ok' ? group(st.events) : { incidents: [], quiet: 0 }),
     [st],
+  )
+  // A selected address on the ledger above narrows this to that address's own
+  // chain; with nothing selected the whole history shows.
+  const incidents = useMemo(
+    () => (focus ? all.filter((i) => i.subject.includes(focus)) : all),
+    [all, focus],
   )
 
   return (
     <div className="sx">
       <header className="sx-head">
         <div>
-          <div className="sx-eyebrow">{tx.title}</div>
           <p className="sx-lede">{tx.lede}</p>
         </div>
         <div className="sx-controls">
@@ -276,10 +281,21 @@ export function SentinelTimeline({ lang }: { lang: Lang }) {
       {st.s === 'load' ? <div className="sx-state">{tx.loading}</div> : null}
       {st.s === 'err' ? <div className="sx-state is-err">{st.m}</div> : null}
 
-      {st.s === 'ok' && !incidents.length ? <div className="sx-state">{tx.empty}</div> : null}
+      {st.s === 'ok' && !incidents.length ? (
+        <div className="sx-state">
+          {focus
+            ? (zh ? `${focus} 还没有被自动处置过。` : `Nothing handled for ${focus} yet.`)
+            : tx.empty}
+        </div>
+      ) : null}
 
       {st.s === 'ok' && incidents.length ? (
         <>
+          {focus ? (
+            <p className="sx-quiet">
+              {zh ? `只显示与 ${focus} 相关的处置链，共 ${incidents.length} 条` : `Filtered to ${focus}: ${incidents.length}`}
+            </p>
+          ) : null}
           {quiet ? <p className="sx-quiet">{quiet} {tx.quiet}</p> : null}
           <ol className="sx-incidents">
             {incidents.map((incident) => (

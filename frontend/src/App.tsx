@@ -6,7 +6,6 @@ import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
 import { TrajectoryPage } from './components/TrajectoryPage'
 import { CostPage } from './components/CostPage'
-import { SentinelTimeline } from './components/SentinelTimeline'
 import { DiagnosePage } from './components/DiagnosePage'
 import { RetrievalPage } from './components/RetrievalPage'
 import { BenchConsole } from './components/BenchConsole'
@@ -22,7 +21,7 @@ type MeshModel = {
 }
 import type { DataStats, Device, GraphAnalysis, SubnetGraph, TheaterEvent, Topology } from './types'
 
-type View = 'console' | 'trajectory' | 'diagnose' | 'retrieval' | 'cost' | 'sentinel'
+type View = 'console' | 'trajectory' | 'diagnose' | 'retrieval' | 'cost'
 type Scenario = 'live' | 'bench'
 
 type State =
@@ -33,6 +32,9 @@ type State =
 function App() {
   const [lang, setLang] = useState<Lang>('zh')
   const [view, setView] = useState<View>('console')
+  // Set when a live-situation row asks to see its response chain; the
+  // diagnose page opens focused on that subject instead of everything.
+  const [traceSubject, setTraceSubject] = useState<string | null>(null)
   const [scenario, setScenario] = useState<Scenario>('live')
   const [provider, setProvider] = useState('rule')
   const [st, setSt] = useState<State>({ s: 'load' })
@@ -331,7 +333,6 @@ function App() {
               <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
               <button className={view === 'diagnose' ? 'on' : ''} onClick={() => setView('diagnose')}>{lang === 'zh' ? '诊断处置' : 'DIAGNOSE'}</button>
               <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '检索' : 'RETRIEVAL'}</button>
-              <button className={view === 'sentinel' ? 'on' : ''} onClick={() => setView('sentinel')}>{lang === 'zh' ? '哨兵' : 'SENTINEL'}</button>
               <button className={view === 'cost' ? 'on' : ''} onClick={() => setView('cost')}>{lang === 'zh' ? '成本' : 'COST'}</button>
             </div>
 
@@ -373,14 +374,12 @@ function App() {
         </div>
       </header>
 
-      {view === 'sentinel' ? (
-        <SentinelTimeline lang={lang} />
-      ) : view === 'cost' ? (
+      {view === 'cost' ? (
         <CostPage lang={lang} />
       ) : view === 'retrieval' ? (
         <RetrievalPage lang={lang} scenario={scenario} />
       ) : view === 'diagnose' ? (
-        <DiagnosePage lang={lang} scenario={scenario} />
+        <DiagnosePage lang={lang} scenario={scenario} focusSubject={traceSubject ?? undefined} />
       ) : view === 'console' && scenario === 'bench' ? (
         <BenchConsole lang={lang} />
       ) : view === 'trajectory' && scenario === 'bench' ? (
@@ -393,6 +392,7 @@ function App() {
           activeId={active}
           onPick={setActive}
           onTheater={openTheater}
+          onTrace={(subject) => { setTraceSubject(subject); setView('diagnose') }}
         />
       ) : d.datasetReady && s && c ? (
         <>

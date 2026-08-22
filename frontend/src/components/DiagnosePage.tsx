@@ -7,6 +7,7 @@ import { isDocRange, kindLabel, portsOf } from './scan-data'
 import { AttackSurfaceGraph } from './surface-graph'
 import { AddressSpace, CoverageRail, OwnershipContention, OwnershipStable, ScopeStrip } from './environment-blocks'
 import { InvestigateChat } from './InvestigateChat'
+import { SentinelTimeline } from './SentinelTimeline'
 import { FAULT_LABEL, VERIFY_LABEL, pick } from './environment-labels'
 import {
   AUTOMATION_LABEL,
@@ -67,6 +68,7 @@ const T = (zh: boolean) => ({
   ledger: zh ? '故障族 · 按严重程度排 · 点开看怎么确认、谁来修' : 'FAULT FAMILIES · WORST FIRST · EXPAND FOR HOW TO CONFIRM AND WHO FIXES IT',
   cov: zh ? '传感器覆盖 · 检测不到的必须点名' : 'SENSOR COVERAGE · WHAT CANNOT BE DETECTED IS NAMED',
   chat: zh ? '问一个具体问题 · 先自动取证,再给方案' : 'ASK ABOUT ONE FAULT · EVIDENCE FIRST, THEN A PLAN',
+  acted: zh ? '系统自己做过什么 · 发现 → 判断 → 动手 → 验证' : 'WHAT THE SYSTEM DID ON ITS OWN',
   standby: zh ? '目前没发生' : 'NOT HAPPENING NOW',
   liveHits: zh ? '现在查到' : 'FOUND NOW',
   exposureHits: zh ? '扫到敞开的' : 'FOUND OPEN',
@@ -105,17 +107,28 @@ const joinCatalog = (
   return rows
 }
 
-export function DiagnosePage({ lang, scenario = 'live' }: { lang: Lang; scenario?: 'live' | 'bench' }) {
+export function DiagnosePage({ lang, scenario = 'live', focusSubject }: {
+  lang: Lang
+  scenario?: 'live' | 'bench'
+  /** Arrived here from a live-situation row: open focused on that subject. */
+  focusSubject?: string
+}) {
   const zh = lang === 'zh'
   const tx = T(zh)
   const [st, setSt] = useState<St>({ s: 'load' })
   const [envData, setEnv] = useState<EnvironmentReport | null>(null)
   const [incidentData, setIncidents] = useState<IncidentSummary[]>([])
   const [openRow, setOpenRow] = useState<string | null>(null)
-  const [focusIp, setFocusIp] = useState<string | null>(null)
+  const [focusIp, setFocusIp] = useState<string | null>(focusSubject ?? null)
   const [relGraph, setRelGraph] = useState<SubnetGraph | null>(null)
   const [ran, setRan] = useState<Record<string, { state: 'run' | 'done' | 'err'; text: string }>>({})
   const [probe, setProbe] = useState<{ ip: string; state: 'run' | 'done' | 'err'; data?: OwnershipProbeResult; m?: string } | null>(null)
+
+  // A second jump from the live-situation list must move the focus, not be
+  // swallowed by the state initialiser having already run once.
+  useEffect(() => {
+    if (focusSubject) setFocusIp(focusSubject)
+  }, [focusSubject])
 
   useEffect(() => {
     let alive = true
@@ -455,6 +468,13 @@ export function DiagnosePage({ lang, scenario = 'live' }: { lang: Lang; scenario
                 </div>
               ) : null}
             </section>
+
+            {scenario === 'live' ? (
+              <section className="dx-sec">
+                <div className="dx-sec-k">{tx.acted}</div>
+                <SentinelTimeline lang={lang} focus={focusIp ?? undefined} />
+              </section>
+            ) : null}
 
             {scenario === 'live' ? (
               <section className="dx-sec">
