@@ -20,6 +20,7 @@
 import { useMemo, useState } from 'react'
 import type { DataStats, SubnetGraph, TheaterEvent, Topology } from '../types'
 import type { Lang } from '../i18n'
+import { useReducedMotion } from '../reduced-motion'
 import { railFor, sentinelStageIds } from './netops-pipeline'
 import { useSentinelChain } from './use-sentinel-chain'
 import './theater.css'
@@ -125,6 +126,9 @@ function relax(pos: Record<string, Pt>, cx: number, cy: number, rx: number, ry: 
 
 /** a small train of pulses flowing along a path (the stage-2 motion language) */
 function Flow({ d, n = 3, dur = 2.6, cls = '' }: { d: string; n?: number; dur?: number; cls?: string }) {
+  // SMIL ignores the stylesheet, so honouring the setting means not emitting it.
+  // The path itself still draws; only the travelling dots go away.
+  if (useReducedMotion()) return null
   return (
     <g pointerEvents="none">
       {Array.from({ length: n }).map((_, i) => (

@@ -5,6 +5,7 @@
  * the real kernel run (core/evolve/observatory.py); nothing is synthesized here.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { prefersReducedMotion } from '../reduced-motion'
 import type { MemEvent, MemRecall, Observatory } from '../types'
 import { MemoryGraph } from './MemoryGraph'
 import { MemoryInspector } from './MemoryInspector'
@@ -16,13 +17,11 @@ import './memory-observatory.css'
 /** One real event per tick: 257 events ≈ 15s, the length of a demo beat. */
 const TICK_MS = 60
 
-/** Read at mount, not subscribed to: playback intent is a decision taken once,
- *  when the viewer arrives. Flipping a running replay because the OS setting
- *  changed mid-demo would be a bigger surprise than not reacting to it. */
-const reducedMotion = () =>
-  typeof window !== 'undefined' &&
-  typeof window.matchMedia === 'function' &&
-  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+/* Read at mount, not subscribed to: playback intent is a decision taken once,
+ * when the viewer arrives. Flipping a running replay because the OS setting
+ * changed mid-demo would be a bigger surprise than not reacting to it — which
+ * is why this reads the plain function and not the subscribing hook. */
+const reducedMotion = prefersReducedMotion
 
 export function MemoryObservatory({
   obs,

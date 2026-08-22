@@ -8,7 +8,8 @@
  *   3. the card's rail is the sentinel loop, not the NetOps pipeline
  *   4. the theater anchors the fault to a node and draws the chain to the rail
  *   5. the transcript shows the real commands and what they returned
- *   6. — the point of this script — the rail ADVANCES while nothing is touched
+ *   6. the incident's own path pulses, in phase, and nothing else does
+ *   7. — the point of this script — the rail ADVANCES while nothing is touched
  *
  * Step 5 exists because the stage used to freeze: it computed which steps had
  * run at the moment it opened and never looked again, so an incident could walk
@@ -92,8 +93,34 @@ try {
   firstCmds.slice(0, 3).forEach((c) => log(`     ${c.replace(/\s+/g, ' ')}`))
   if (!firstCmds.length) die('the transcript panel is empty')
 
-  // ── 5. and then it has to MOVE, with nobody touching anything ─────────────
-  log('\n5. 现在什么都不碰，看轨道自己走：')
+  // ── 6. the involved path has to stand out, as one pulse rather than many ──
+  const PATH = [
+    ['.th-self.is-hit .th-self-box', '本机方块'],
+    ['.th-self.is-hit .th-self-link', '本机→网段连线'],
+    ['.th-inc-leader', '事故卡引线'],
+    ['.th-chain-line', '节点→轨道链'],
+    ['.th-inc-halo-box', '事故光晕'],
+  ]
+  const periods = new Set()
+  for (const [sel, name] of PATH) {
+    if (!(await page.locator(sel).count())) die(`${name} 没渲染 (${sel})`)
+    const css = await page.locator(sel).first().evaluate((el) => {
+      const c = getComputedStyle(el)
+      return { names: c.animationName, durs: c.animationDuration }
+    })
+    if (css.names === 'none') die(`${name} 不闪 — 涉事链路必须突出`)
+    // th-march is directional flow; the breathing pulse is the shared one
+    css.durs.split(',').map((d) => d.trim()).forEach((d) => { if (d === '1.6s') periods.add(d) })
+  }
+  if (periods.size !== 1) die(`the path pulses at ${[...periods].join('/')} — out of phase reads as random blinking`)
+  const lively = await page.evaluate(() => [...document.querySelectorAll('.theater *')]
+    .filter((el) => getComputedStyle(el).animationName !== 'none').length)
+  const nodes = await page.locator('.theater *').count()
+  if (lively > nodes * 0.05) die(`${lively}/${nodes} elements animate — the highlight only means something if the rest holds still`)
+  log(`6. 涉事链路统一闪烁          ${PATH.length} 处同相位 1.6s，全场 ${lively}/${nodes} 个元素有动效`)
+
+  // ── 7. and then it has to MOVE, with nobody touching anything ─────────────
+  log('\n7. 现在什么都不碰，看轨道自己走：')
   const seen = new Set()
   const trail = []
   const started = Date.now()
@@ -131,6 +158,21 @@ try {
   }
 
   if (errors.length) die(`console errors: ${errors.slice(0, 4).join(' / ')}`)
+
+  // ── and none of that motion may be forced on someone who asked for none ───
+  const still = await browser.newPage({ viewport: { width: 1900, height: 1050 }, reducedMotion: 'reduce' })
+  await still.goto(BASE, { waitUntil: 'networkidle' })
+  await still.locator('.la-row').filter({ hasText: SUBJECT }).first().click()
+  await still.waitForSelector('.ls:not(.ls-msg)', { timeout: 60_000 })
+  await still.locator('text=/全链路拓扑剧场|FULL-CHAIN/i').first().click()
+  await still.waitForTimeout(3000)
+  const moving = await still.evaluate(() => [...document.querySelectorAll('.theater *')]
+    .filter((el) => getComputedStyle(el).animationName !== 'none').length)
+  const smil = await still.locator('.theater animateMotion').count()
+  await still.close()
+  if (moving || smil) die(`prefers-reduced-motion is ignored: ${moving} css + ${smil} smil animations still running`)
+  log('8. 关掉动效偏好后完全静止    0 css + 0 smil')
+
   log(`\n✓ 整条链在真浏览器里走通，剧场是活的。截图在 ${SHOTS}/`)
 } finally {
   await browser.close()
