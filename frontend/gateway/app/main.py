@@ -1136,6 +1136,102 @@ async def remediation_runs(limit: int = Query(default=50, ge=1, le=500)) -> dict
     return {"ok": True, "runs": rows, "count": len(rows)}
 
 
+class InvestigateStart(BaseModel):
+    question: str = Field(min_length=1, max_length=1000)
+    family: str | None = Field(default=None, max_length=64)
+    subject: str | None = Field(default=None, max_length=64)
+    lang: Literal["zh", "en"] = "zh"
+
+
+class InvestigateAsk(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    question: str = Field(min_length=1, max_length=1000)
+    lang: Literal["zh", "en"] = "zh"
+
+
+class InvestigateStep(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    step: int = Field(ge=1, le=99)
+
+
+class InvestigateSession(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    lang: Literal["zh", "en"] = "zh"
+
+
+@app.post("/api/rca/investigate/start")
+async def investigate_start(request: InvestigateStart) -> dict[str, Any]:
+    """Open a session by running its read-only probes, before anything reasons.
+
+    The evidence comes back with the session id: the caller can see exactly
+    what the host said before a model has been asked to interpret any of it.
+    """
+    from .investigate import start
+
+    result = await asyncio.to_thread(start, request.question, request.family, request.subject)
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/investigate/analyze")
+async def investigate_analyze(request: InvestigateSession) -> dict[str, Any]:
+    """Turn the collected evidence into a diagnosis and a graded runbook."""
+    from .investigate import analyze
+
+    try:
+        result = await asyncio.to_thread(analyze, request.session_id, request.lang)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/investigate/ask")
+async def investigate_ask(request: InvestigateAsk) -> dict[str, Any]:
+    """One follow-up turn, with every earlier reading and turn still in view."""
+    from .investigate import ask
+
+    try:
+        result = await asyncio.to_thread(ask, request.session_id, request.question, request.lang)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/investigate/run-step")
+async def investigate_run_step(request: InvestigateStep) -> dict[str, Any]:
+    """Run one runbook step. Only read-only steps have an executor here."""
+    from .investigate import run_step
+
+    try:
+        result = await asyncio.to_thread(run_step, request.session_id, request.step)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/investigate/run-all")
+async def investigate_run_all(request: InvestigateSession) -> dict[str, Any]:
+    """Run the runbook in order, stopping at the first step we may not run."""
+    from .investigate import run_all
+
+    try:
+        result = await asyncio.to_thread(run_all, request.session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **result}
+
+
+@app.get("/api/rca/investigate/{session_id}")
+async def investigate_session(session_id: str) -> dict[str, Any]:
+    """The whole session: every reading, every turn, the current runbook."""
+    from .investigate import get
+
+    try:
+        session = await asyncio.to_thread(get, session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **session.as_dict()}
+
+
 @app.get("/", include_in_schema=False)
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_frontend(full_path: str = ""):
