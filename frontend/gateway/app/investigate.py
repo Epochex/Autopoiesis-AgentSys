@@ -72,6 +72,26 @@ BASELINE_PROBES = ["hostname", "uptime", "ip -br addr show"]
 MAX_EVIDENCE = 120
 MAX_TURNS = 40
 
+# Generating a runbook over a full evidence block takes longer than a chat
+# reply. Too short a timeout does not save money — the tokens are billed
+# whether or not we wait for the answer.
+LLM_TIMEOUT_SEC = 180
+
+# Context budget. These exist because the naive version — send every reading in
+# full on every turn — makes a ten-turn session cost quadratically more than a
+# one-turn session for no extra insight. The model does not need 20,000
+# characters of `journalctl` to answer a question about a NIC.
+EVIDENCE_HEAD_CHARS = 700      # per reading, in the full block
+EVIDENCE_TAIL_CHARS = 300      # tails matter: errors land at the end
+DIGEST_CHARS = 180             # per reading, in a follow-up digest
+MAX_CONTEXT_CHARS = 22_000     # whole evidence block, hard ceiling
+FOLLOW_UP_FULL = 3             # readings sent in full on a follow-up turn
+
+# A follow-up gets a tighter ceiling than the opening analysis: the earlier
+# answers already carry the conclusions drawn from the older readings, so
+# re-sending them buys a summary the session already has.
+MAX_FOLLOWUP_CHARS = 12_000
+
 
 @dataclass
 class Session:
@@ -164,14 +184,54 @@ def get(session_id: str) -> Session:
     return session
 
 
-def _evidence_block(session: Session) -> str:
-    """Everything the model is allowed to reason from, and nothing else."""
-    lines = []
-    for item in session.evidence:
-        header = f"[{item['evidence_id']}] $ {item['command']}"
-        body = item.get("output") or f"(no output; {item.get('refused') or 'empty'})"
-        lines.append(f"{header}\n{body}")
-    return "\n\n".join(lines)
+def _excerpt(text: str, head: int, tail: int) -> str:
+    """Keep the start and the end. Truncating only the tail loses the error."""
+    text = text.strip()
+    if len(text) <= head + tail:
+        return text
+    dropped = len(text) - head - tail
+    return f"{text[:head]}\n… [略去 {dropped:,} 字符] …\n{text[-tail:]}"
+
+
+def _render(item: dict[str, Any], head: int, tail: int) -> str:
+    header = f"[{item['evidence_id']}] $ {item['command']}"
+    body = item.get("output") or f"(no output; {item.get('refused') or 'empty'})"
+    return f"{header}\n{_excerpt(body, head, tail)}"
+
+
+def _evidence_block(session: Session, *, full_ids: set[str] | None = None) -> str:
+    """The readings the model may reason from, trimmed to a budget.
+
+    ``full_ids`` names the readings that stay long — on a follow-up that is the
+    most recent handful, since the earlier ones have already been summarised in
+    a previous answer. Everything else collapses to a digest so its existence
+    and shape stay visible without being paid for twice.
+    """
+    parts: list[str] = []
+    budget = MAX_FOLLOWUP_CHARS if full_ids is not None else MAX_CONTEXT_CHARS
+
+    # Order matters when the ceiling bites. A reading an earlier answer cited is
+    # load-bearing regardless of age, so it is allocated before merely-recent
+    # ones; walking newest-first alone would drop exactly the evidence the
+    # conversation has been building on.
+    ordered = list(reversed(session.evidence))
+    if full_ids:
+        cited_first = [i for i in ordered if i["evidence_id"] in full_ids]
+        ordered = cited_first + [i for i in ordered if i["evidence_id"] not in full_ids]
+
+    for item in ordered:
+        detailed = full_ids is None or item["evidence_id"] in full_ids
+        rendered = (
+            _render(item, EVIDENCE_HEAD_CHARS, EVIDENCE_TAIL_CHARS)
+            if detailed
+            else _render(item, DIGEST_CHARS, 0)
+        )
+        if len(rendered) > budget:
+            parts.append(f"[… 还有 {len(session.evidence) - len(parts)} 条读数未纳入本次上下文 …]")
+            break
+        parts.append(rendered)
+        budget -= len(rendered)
+    return "\n\n".join(parts)
 
 
 ANALYZE_SCHEMA = {
@@ -183,11 +243,31 @@ ANALYZE_SCHEMA = {
 }
 
 
-def _client():
+def _client(provider_id: str = "deepseek-v4"):
+    """Build a client from the console's own provider registry.
+
+    Reusing ``resolve_reasoner`` rather than reading env vars directly means
+    there is one place credentials live — the console's provider config — and
+    no second copy of a key to drift or leak. It also means this path honours
+    whichever provider the console is pointed at.
+    """
     from core.llm.provider import LLMConfigurationError, OpenAICompatibleClient
 
+    from .providers import resolve_reasoner
+
+    mode, env = resolve_reasoner(provider_id)
+    if mode != "llm" or not env:
+        return None
     try:
-        return OpenAICompatibleClient()
+        return OpenAICompatibleClient(
+            base_url=env["AUTOPOIESIS_LLM_BASE_URL"],
+            api_key=env["AUTOPOIESIS_LLM_API_KEY"],
+            model=env["AUTOPOIESIS_LLM_MODEL"],
+            # An analysis prompt carries every reading collected so far, and the
+            # answer is a whole runbook. The 30s default is a chat timeout and
+            # cuts these off mid-generation — which still bills for the tokens.
+            timeout_sec=LLM_TIMEOUT_SEC,
+        )
     except LLMConfigurationError:
         return None
 
@@ -237,7 +317,14 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
             ),
         },
     ]
-    payload = client.complete_json(messages, schema_name="rca_analysis")
+    try:
+        payload = client.complete_json(messages, schema_name="rca_analysis")
+    except Exception as error:  # noqa: BLE001 - surfaced to the caller, not hidden
+        return {
+            "diagnosis": f"推理调用没有完成（{type(error).__name__}）。已采集的证据仍然有效，可以直接看上面的命令输出，或重试。",
+            "citations": [], "runbook": [], "degraded": True,
+            "error": f"{type(error).__name__}: {error}"[:300],
+        }
     runbook = _sanitise_runbook(payload.get("runbook") or [])
     session.runbook = runbook
     session.diagnosis = str(payload.get("diagnosis") or "")
@@ -293,8 +380,12 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
                 "citations": [], "evidence": [], "degraded": True}
 
     history = "\n".join(
-        f"问：{turn['question']}\n答：{turn['answer']}" for turn in session.turns[-6:]
+        f"问：{turn['question']}\n答：{turn['answer'][:600]}" for turn in session.turns[-4:]
     )
+    recent_ids = {item["evidence_id"] for item in session.evidence[-FOLLOW_UP_FULL:]}
+    # Anything an earlier answer cited stays in full: it is load-bearing.
+    for turn in session.turns[-4:]:
+        recent_ids.update(turn.get("citations") or [])
     messages = [
         {"role": "system", "content": _system_prompt(language)},
         {
@@ -302,7 +393,8 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
             "content": (
                 f"原始问题：{session.question}\n"
                 + (f"\n此前对话：\n{history}\n" if history else "")
-                + f"\n全部已采集证据：\n{_evidence_block(session)}\n\n"
+                + f"\n已采集证据（最近 {FOLLOW_UP_FULL} 条为全文，更早的为摘要）：\n"
+                + f"{_evidence_block(session, full_ids=recent_ids)}\n\n"
                 f"追问：{question}\n\n"
                 '按 {"answer": "...", "citations": ["ev-001"], '
                 '"need_commands": ["只读命令"]} 回答。'
@@ -310,7 +402,14 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
             ),
         },
     ]
-    payload = client.complete_json(messages, schema_name="rca_followup")
+    try:
+        payload = client.complete_json(messages, schema_name="rca_followup")
+    except Exception as error:  # noqa: BLE001 - surfaced to the caller, not hidden
+        return {
+            "answer": f"推理调用没有完成（{type(error).__name__}）。可以重试，或换个更具体的问法。",
+            "citations": [], "evidence": [], "degraded": True,
+            "error": f"{type(error).__name__}: {error}"[:300],
+        }
 
     # The model may ask for more readings. Run the safe ones, refuse the rest,
     # and file whatever came back so the next turn can see it.

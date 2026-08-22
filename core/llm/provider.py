@@ -21,6 +21,10 @@ class LLMConfigurationError(RuntimeError):
     """LLM mode was requested but required configuration is absent."""
 
 
+class LLMBudgetError(RuntimeError):
+    """The prompt exceeds what one call is allowed to spend."""
+
+
 class LLMResponseError(RuntimeError):
     """The provider replied, but not with a usable JSON completion."""
 
@@ -40,6 +44,8 @@ class OpenAICompatibleClient:
         api_key: str | None = None,
         model: str | None = None,
         timeout_sec: int = 30,
+        max_prompt_chars: int = 120_000,
+        usage_tag: str = "",
     ):
         self.base_url = (base_url or autopoiesis_env("LLM_BASE_URL") or "").rstrip("/")
         self.api_key = api_key or autopoiesis_env("LLM_API_KEY")
@@ -47,6 +53,8 @@ class OpenAICompatibleClient:
             self.api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("DS_V4_API_KEY")
         self.model = model or autopoiesis_env("LLM_MODEL")
         self.timeout_sec = timeout_sec
+        self.max_prompt_chars = max_prompt_chars
+        self.usage_tag = usage_tag
         if not self.base_url or not self.api_key or not self.model:
             raise LLMConfigurationError(
                 "LLM mode requires AUTOPOIESIS_LLM_BASE_URL, "
@@ -58,10 +66,25 @@ class OpenAICompatibleClient:
         """POST `messages` and return the completion parsed as one JSON object.
 
         Raises ValueError on empty `messages`, LLMResponseError on transport
-        failure, a malformed completion envelope, or non-JSON content.
+        failure, a malformed completion envelope, or non-JSON content, and
+        LLMBudgetError when the prompt is larger than one call is allowed to be.
+
+        The usage the API reports is filed to the cost ledger before the result
+        is returned, so a call that succeeds is always accounted for.
         """
         if not messages:
             raise ValueError("messages must not be empty")
+
+        # A prompt is charged whether or not the answer is useful, so the size
+        # check happens here rather than at each call site — one place that
+        # cannot be forgotten.
+        prompt_chars = sum(len(item.get("content") or "") for item in messages)
+        if prompt_chars > self.max_prompt_chars:
+            raise LLMBudgetError(
+                f"prompt is {prompt_chars:,} characters, over the {self.max_prompt_chars:,} "
+                f"limit for one call (schema {schema_name}); trim the context rather than "
+                "paying to send it"
+            )
         payload = {
             "model": self.model,
             "messages": [
@@ -98,6 +121,13 @@ class OpenAICompatibleClient:
             content = data["choices"][0]["message"]["content"]
         except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise LLMResponseError(f"malformed completion envelope for schema {schema_name}: {raw[:500]}") from exc
+        try:
+            from core.llm.cost import record
+
+            record(self.model, schema_name, data.get("usage"), self.usage_tag)
+        except Exception:  # noqa: BLE001 - accounting must not break the call
+            pass
+
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:

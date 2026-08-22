@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -198,8 +199,23 @@ class IncidentDetectionResponse(BaseModel):
 
 
 def _start_prewarm() -> None:
-    """Warm the DeepSeek subnet models in a daemon thread so the UI gets instant cached hits."""
+    """Warm the subnet models so the first UI hit is a cache hit — off by default.
+
+    This costs one paid model call per subnet per language on *every* process
+    start, and the cache it fills is in-process, so a restart pays again. With
+    push-to-deploy restarting the service on every commit, that turned a
+    convenience into a per-commit charge that nothing logged and nothing
+    surfaced — failures here are swallowed by design.
+
+    Set AUTOPOIESIS_PREWARM=1 to enable it on a long-lived deployment where the
+    process is not restarted often. The only thing lost by leaving it off is
+    that the first click on a subnet waits for the model instead of reading a
+    cache.
+    """
     import threading
+
+    if os.getenv("AUTOPOIESIS_PREWARM", "0") != "1":
+        return
 
     from .rca_reader import _load_meshes
 
@@ -1230,6 +1246,19 @@ async def investigate_session(session_id: str) -> dict[str, Any]:
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown session") from None
     return {"ok": True, **session.as_dict()}
+
+
+@app.get("/api/rca/cost")
+async def rca_cost(hours: int = Query(default=24, ge=1, le=720)) -> dict[str, Any]:
+    """Model spend over a window, attributed to the feature that asked for it.
+
+    Token counts come from the provider's usage object and are exact; the money
+    figure is computed from a local rate table and is an estimate, so the
+    response carries that caveat rather than implying it is a bill.
+    """
+    from core.llm.cost import summary
+
+    return {"ok": True, **await asyncio.to_thread(summary, hours)}
 
 
 @app.get("/", include_in_schema=False)
