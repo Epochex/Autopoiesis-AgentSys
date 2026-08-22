@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from frontend.gateway.app.blast_radius import estimate
 
-from hostgate import requires_active_unit, requires_host_interfaces
+from hostgate import requires_active_unit, requires_host_interfaces, requires_idle_interface
 
 
 def test_the_protected_path_is_refused_before_anything_is_measured():
@@ -30,7 +30,7 @@ def test_a_carrying_interface_reports_what_rides_on_it():
     assert result["measured"]["routes"] >= 1
 
 
-@requires_host_interfaces("eth0")
+@requires_idle_interface("eth0")
 def test_an_idle_interface_reports_a_measured_zero():
     result = estimate("bounce_interface", "eth0")
     assert result["scope"] == "single-nic"
