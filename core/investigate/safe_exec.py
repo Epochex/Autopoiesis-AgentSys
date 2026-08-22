@@ -91,6 +91,16 @@ MUTATING = frozenset({
     "try", "clean", "init",
 })
 
+# Options that consume the next token as their value. Listed once so both the
+# flag check and the verb-slot scan agree on where a value ends.
+VALUE_TAKING = frozenset({
+    "-p", "--priority", "--property", "-n", "--lines", "-u", "--unit", "-o",
+    "--output", "-t", "--type", "--state", "-c", "-l", "-w", "-m", "--max-time",
+    "--connect-timeout", "-I", "-i", "-s", "--since", "--until", "-H", "-A",
+    "--tail", "--namespace", "--selector", "--container", "--format", "--level",
+    "--root-dir", "-x",
+})
+
 # Programs where an unbounded run can hang the whole investigation.
 DEFAULT_TIMEOUT = 20.0
 
@@ -225,12 +235,20 @@ def check(command: str) -> list[str]:
 
     permitted_flags = ALLOWED_FLAGS.get(program, frozenset())
     if permitted_flags:
+        # An option's *value* can itself look like a flag — `--since -24h`,
+        # `-p err`, `-n 40`. Skipping the token after a value-taking option
+        # stops the checker rejecting a legitimate argument as an unknown flag.
+        skip_next = False
         for token in argv[1:]:
+            if skip_next:
+                skip_next = False
+                continue
             if not token.startswith("-") and not token.startswith("+"):
                 continue
             head = token.split("=", 1)[0]
             if head not in permitted_flags:
                 raise Refused(f"{program} {head!r} is not a permitted flag here")
+            skip_next = head in VALUE_TAKING and "=" not in token
 
     verbs = READ_VERBS.get(program)
     if verbs:

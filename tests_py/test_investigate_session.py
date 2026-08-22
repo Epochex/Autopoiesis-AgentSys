@@ -229,3 +229,80 @@ def test_without_a_model_the_evidence_still_stands(monkeypatch, session_id):
 def test_unknown_session_is_a_clear_error():
     with pytest.raises(KeyError):
         investigate.get("nope")
+
+
+# ── the investigation has to actually investigate ────────────────────────────
+
+
+def test_an_open_question_gets_the_full_triage_sweep():
+    """Three generic readings cannot answer 'what is wrong with this network'."""
+    opened = investigate.start("这个网络现在有什么问题")
+    commands = {item["command"] for item in opened["evidence"]}
+    assert len(opened["evidence"]) >= 12
+    for expected in ("ip route show", "systemctl --failed --no-legend", "ss -tulpn", "df -h"):
+        assert expected in commands
+
+
+def test_a_named_family_gets_its_targeted_checks_not_the_whole_sweep():
+    opened = investigate.start("采集挂了吗", family="fam-perception-selfheal")
+    commands = {item["command"] for item in opened["evidence"]}
+    assert "systemctl --failed --no-legend" in commands
+    assert "ss -tulpn" not in commands, "a targeted question should stay targeted"
+
+
+def test_the_summary_is_recomputed_not_frozen_at_start(monkeypatch, session_id):
+    """The header said 3 while the counter said 13 — the summary was cached."""
+    session = investigate.get(session_id)
+    before = investigate._summarise(session)
+    session.collect("date")
+    after = investigate._summarise(session)
+    assert before != after
+    assert str(len(session.evidence)) in after
+
+
+def test_analyze_runs_the_commands_the_model_asks_for(monkeypatch, session_id):
+    """Telling the operator to run a read-only command is not an answer."""
+    client = FakeClient(
+        {"diagnosis": "还不确定", "root_cause": "inconclusive",
+         "citations": [], "need_commands": ["date", "uptime"], "runbook": []},
+        {"diagnosis": "现在清楚了", "root_cause": "确定的根因",
+         "citations": [], "need_commands": [], "runbook": []},
+    )
+    _use(monkeypatch, client)
+    before = len(investigate.get(session_id).evidence)
+    result = investigate.analyze(session_id)
+    assert len(result["follow_up_evidence"]) == 2
+    assert len(investigate.get(session_id).evidence) == before + 2
+    assert result["root_cause"] == "确定的根因"
+    assert len(client.seen) == 2, "it must reason again after collecting"
+
+
+def test_analyze_stops_asking_after_the_round_cap(monkeypatch, session_id):
+    """Each round is a paid call; an unbounded loop is an unbounded bill."""
+    client = FakeClient(*[
+        {"diagnosis": "d", "root_cause": "inconclusive", "citations": [],
+         "need_commands": ["date"], "runbook": []}
+        for _ in range(6)
+    ])
+    _use(monkeypatch, client)
+    investigate.analyze(session_id)
+    assert len(client.seen) == investigate.MAX_ANALYZE_ROUNDS
+
+
+def test_the_last_round_is_told_to_conclude(monkeypatch, session_id):
+    client = FakeClient(
+        {"diagnosis": "d", "root_cause": "inconclusive", "citations": [],
+         "need_commands": ["date"], "runbook": []},
+        {"diagnosis": "d", "root_cause": "x", "citations": [], "need_commands": [], "runbook": []},
+    )
+    _use(monkeypatch, client)
+    investigate.analyze(session_id)
+    assert "最后一轮" in client.seen[-1][-1]["content"]
+
+
+def test_the_model_is_told_what_is_normal_here():
+    """docker0 DOWN was being reported as a fault. It is not one."""
+    prompt = investigate._system_prompt("zh")
+    assert "docker0" in prompt
+    assert "NO-CARRIER" in prompt
+    assert "root cause" in prompt

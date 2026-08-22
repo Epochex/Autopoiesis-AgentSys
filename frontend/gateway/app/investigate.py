@@ -69,6 +69,36 @@ FAMILY_PROBES: dict[str, list[str]] = {
 # Run for every session regardless of family: the shape of the box.
 BASELINE_PROBES = ["hostname", "uptime", "ip -br addr show"]
 
+# When the question does not name a fault family — "what is wrong with this
+# network" — three generic readings cannot reach a root cause, and asking the
+# model to nominate more just moves the work back to the operator. This is the
+# sweep that runs instead: the checks a person would actually type first.
+TRIAGE_PROBES = [
+    "ip -br link show",
+    "ip route show",
+    "ip neigh show",
+    "systemctl --failed --no-legend",
+    "df -h",
+    "free -m",
+    "ss -tulpn",
+    "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+    "journalctl -p err -n 40 --no-pager --since -24h",
+    "dmesg -T --level err,crit,alert -x",
+]
+
+# Findings that are normal on this box and would otherwise be reported as
+# faults. Stated to the model rather than filtered out of the evidence: the
+# reading stays visible, but it is told not to raise an alarm about it.
+KNOWN_NORMAL = [
+    "docker0 和 br-* 网桥在没有容器挂载时处于 DOWN，是正常的，不是故障。",
+    "veth* 是容器网卡对，flannel.1 与 cni0 属于 k3s，UNKNOWN/UP 都正常。",
+    "eth0/eth1/eth3/eth4/eth5 没有接网线，NO-CARRIER 是预期状态；"
+    "这台机器只有 eth2 接了网线，承载 192.168.1.27/24 与默认路由。",
+    "idrac 口未配置时 DOWN 属正常。",
+    "ARP 表里出现 FAILED 条目通常只表示对端此刻没响应（关机、休眠、或本来就不在线），"
+    "只有在该地址应当在线时才算异常。",
+]
+
 MAX_EVIDENCE = 120
 MAX_TURNS = 40
 
@@ -150,7 +180,10 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
     _SESSIONS[session.session_id] = session
 
     planned = list(BASELINE_PROBES)
-    for command in FAMILY_PROBES.get(family or "", []):
+    # A named family gets its targeted checks; an open question gets the full
+    # triage sweep, because "what is wrong here" has no smaller honest answer.
+    extra = FAMILY_PROBES.get(family or "") or TRIAGE_PROBES
+    for command in extra:
         if command not in planned:
             planned.append(command)
     if subject and re.fullmatch(r"[\w.:-]{1,64}", subject):
@@ -172,9 +205,11 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
 
 
 def _summarise(session: Session) -> str:
+    """Recomputed from the session, never cached — later turns add evidence."""
     ran = sum(1 for item in session.evidence if item.get("ok"))
-    failed = sum(1 for item in session.evidence if not item.get("ok"))
-    return f"已跑 {len(session.evidence)} 条只读检查，{ran} 条有结果，{failed} 条无结果或被拒绝"
+    failed = len(session.evidence) - ran
+    text = f"已跑 {len(session.evidence)} 条只读检查，{ran} 条有结果"
+    return text + (f"，{failed} 条无结果或被拒绝" if failed else "")
 
 
 def get(session_id: str) -> Session:
@@ -236,11 +271,18 @@ def _evidence_block(session: Session, *, full_ids: set[str] | None = None) -> st
 
 ANALYZE_SCHEMA = {
     "diagnosis": "one paragraph, in the user's language, naming evidence ids inline",
+    "root_cause": "the single most likely cause, or the word 'inconclusive'",
     "citations": ["ev-001"],
+    "need_commands": ["a read-only command that would settle what is still unclear"],
     "runbook": [
         {"n": 1, "risk": "readonly|auto|gated", "what": "plain sentence", "command": "shell command", "why": "why this step"}
     ],
 }
+
+# How many times analyze may collect more evidence and reason again. Two rounds
+# is the point where an extra pass stops changing the conclusion on the cases
+# we have, and each round is a paid call.
+MAX_ANALYZE_ROUNDS = 2
 
 
 def _client(provider_id: str = "deepseek-v4"):
@@ -286,8 +328,14 @@ def _system_prompt(language: str = "zh") -> str:
         "4. Never propose anything touching tailscale0, tailscaled, or 100.64.0.0/10 — "
         "that path is the only way into this network and is off limits.\n"
         "5. Write in plain language. No invented jargon.\n"
-        f"6. Answer in {'Chinese' if language == 'zh' else 'English'}.\n"
-        "Return JSON only."
+        "6. Name a single root cause when the evidence supports one. If it does "
+        "not, say 'inconclusive' and put the read-only commands that WOULD settle "
+        "it in need_commands — they will be run for the operator, so ask for what "
+        "you need rather than telling them to run it.\n"
+        "7. Do not report the following as faults; they are normal here:\n"
+        + "".join(f"   - {line}\n" for line in KNOWN_NORMAL)
+        + f"8. Answer in {'Chinese' if language == 'zh' else 'English'}.\n"
+        + "Return JSON only."
     )
 
 
@@ -304,33 +352,60 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
             "degraded": True,
         }
 
-    messages = [
-        {"role": "system", "content": _system_prompt(language)},
-        {
-            "role": "user",
-            "content": (
-                f"问题：{session.question}\n"
-                f"故障族：{session.family or '未指定'}\n"
-                f"对象：{session.subject or '未指定'}\n\n"
-                f"已采集的真实命令输出：\n{_evidence_block(session)}\n\n"
-                f"按这个 JSON 结构回答：{json.dumps(ANALYZE_SCHEMA, ensure_ascii=False)}"
-            ),
-        },
-    ]
-    try:
-        payload = client.complete_json(messages, schema_name="rca_analysis")
-    except Exception as error:  # noqa: BLE001 - surfaced to the caller, not hidden
-        return {
-            "diagnosis": f"推理调用没有完成（{type(error).__name__}）。已采集的证据仍然有效，可以直接看上面的命令输出，或重试。",
-            "citations": [], "runbook": [], "degraded": True,
-            "error": f"{type(error).__name__}: {error}"[:300],
-        }
+    payload: dict[str, Any] = {}
+    collected: list[dict[str, Any]] = []
+
+    # Reason, and if the model says it cannot conclude, run what it asked for
+    # and reason once more. Telling the operator "you should also run X" is
+    # not an answer when X is a read-only command the system can run itself.
+    for round_index in range(MAX_ANALYZE_ROUNDS):
+        messages = [
+            {"role": "system", "content": _system_prompt(language)},
+            {
+                "role": "user",
+                "content": (
+                    f"问题：{session.question}\n"
+                    f"故障族：{session.family or '未指定'}\n"
+                    f"对象：{session.subject or '未指定'}\n\n"
+                    f"已采集的真实命令输出：\n{_evidence_block(session)}\n\n"
+                    + ("这是最后一轮，必须基于现有证据给出结论；need_commands 请留空。\n\n"
+                       if round_index == MAX_ANALYZE_ROUNDS - 1 else "")
+                    + f"按这个 JSON 结构回答：{json.dumps(ANALYZE_SCHEMA, ensure_ascii=False)}"
+                ),
+            },
+        ]
+        try:
+            payload = client.complete_json(messages, schema_name="rca_analysis")
+        except Exception as error:  # noqa: BLE001 - surfaced, not hidden
+            return {
+                "diagnosis": f"推理调用没有完成（{type(error).__name__}）。已采集的证据仍然有效，可以直接看上面的命令输出，或重试。",
+                "citations": [], "runbook": [], "degraded": True,
+                "error": f"{type(error).__name__}: {error}"[:300],
+            }
+
+        wanted = [str(c).strip() for c in (payload.get("need_commands") or []) if str(c).strip()]
+        if not wanted or round_index == MAX_ANALYZE_ROUNDS - 1:
+            break
+        for command in wanted[:8]:
+            collected.append(session.collect(command))
+
     runbook = _sanitise_runbook(payload.get("runbook") or [])
     session.runbook = runbook
     session.diagnosis = str(payload.get("diagnosis") or "")
+    root_cause = str(payload.get("root_cause") or "").strip()
     citations = _verified_citations(session, payload.get("citations") or [])
-    return {"diagnosis": session.diagnosis, "citations": citations, "runbook": runbook,
-            "degraded": False}
+    return {
+        "diagnosis": session.diagnosis,
+        "root_cause": root_cause,
+        "citations": citations,
+        "runbook": runbook,
+        # What the model asked for and the harness ran, so the reader can see
+        # the investigation deepened rather than stalling on a request.
+        "follow_up_evidence": collected,
+        "evidence_total": len(session.evidence),
+        "summary": _summarise(session),
+        "degraded": False,
+    }
 
 
 def _sanitise_runbook(raw: list[Any]) -> list[dict[str, Any]]:
