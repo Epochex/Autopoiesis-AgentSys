@@ -1261,6 +1261,28 @@ async def rca_cost(hours: int = Query(default=24, ge=1, le=720)) -> dict[str, An
     return {"ok": True, **await asyncio.to_thread(summary, hours)}
 
 
+@app.get("/api/rca/sentinel/timeline")
+async def sentinel_timeline(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, Any]:
+    """What the sentinel saw, decided, did and verified — oldest first.
+
+    Includes the branches where it declined: a detection with no safe action,
+    a target still in cooldown, a preflight that refused. A timeline with only
+    successes in it would not be an audit trail.
+    """
+    from core.remediate.sentinel import timeline
+
+    rows = await asyncio.to_thread(timeline, limit)
+    return {"ok": True, "events": rows, "count": len(rows)}
+
+
+@app.post("/api/rca/sentinel/poll")
+async def sentinel_poll() -> dict[str, Any]:
+    """Run one detect-decide-act cycle now, instead of waiting for the timer."""
+    from .sentinel_wiring import poll_once
+
+    return {"ok": True, **await asyncio.to_thread(poll_once)}
+
+
 @app.get("/api/rca/cost/cache")
 async def rca_cost_cache() -> dict[str, Any]:
     """What is cached on disk — i.e. what the next deploy will not have to re-buy."""
