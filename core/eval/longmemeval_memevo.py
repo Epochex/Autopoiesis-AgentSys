@@ -213,42 +213,6 @@ def _latest_answer_sid(item: dict) -> str | None:
 
 # ── experiments ────────────────────────────────────────────────────────────────
 
-def eviction_experiment(items: list[dict], *, budget: int, k: int,
-                        policies=("utility", "ebbinghaus", "lru", "random"),
-                        random_seeds=(0, 1, 2)) -> dict:
-    """Fair under-budget comparison. Each item: populate corpus signals once, clone, evict
-    to `budget` under each policy, retrieve top-k, score recall & answer-session survival."""
-    answerable = [it for it in items if it.get("answer_session_ids")]
-    agg: dict[str, dict[str, float]] = {p: {"recall": 0.0, "survive": 0.0, "astr": 0.0} for p in policies}
-    counts = {p: 0 for p in policies}
-    for it in answerable:
-        mem0, mid_to_sid, _ = build_store(it)
-        populate_signals(mem0)
-        ans = set(it["answer_session_ids"])
-        astr = str(it.get("answer", "")).strip().lower()
-        for p in policies:
-            seeds = random_seeds if p == "random" else (0,)
-            for sd in seeds:
-                mem = clone_store(mem0)
-                evict_to_budget(mem, budget, p, seed=sd)
-                survivors = {mid_to_sid[r.memory_id] for r in mem.active()}
-                rsids, got = _retrieve_sids(mem, it, k, mid_to_sid)
-                agg[p]["survive"] += 1.0 if (ans & survivors) else 0.0
-                agg[p]["recall"] += 1.0 if (ans & rsids) else 0.0
-                agg[p]["astr"] += 1.0 if (astr and any(astr in r.text.lower() for r in got)) else 0.0
-                counts[p] += 1
-    return {
-        "budget": budget, "k": k, "n_items": len(answerable),
-        "policies": {
-            p: {
-                "recall_at_k": round(agg[p]["recall"] / counts[p], 4),
-                "answer_survival": round(agg[p]["survive"] / counts[p], 4),
-                "answer_string_hit": round(agg[p]["astr"] / counts[p], 4),
-            } for p in policies
-        },
-    }
-
-
 def conflict_experiment(items: list[dict], *, k: int, tau: float = 0.20) -> dict:
     """Knowledge-update subset: naive append vs conflict-resolving supersede."""
     ku = [it for it in items if it.get("question_type") == "knowledge-update"]
@@ -281,31 +245,6 @@ def conflict_experiment(items: list[dict], *, k: int, tau: float = 0.20) -> dict
     out["tau"] = tau
     out["avg_supersedes_per_item"] = round(fired_total / len(ku), 2)
     return out
-
-
-def overall_experiment(items: list[dict], *, k: int, budget: int, tau: float = 0.20) -> dict:
-    """Headline recall@k on all answerable items: baseline vs +supersede vs +eviction@B
-    vs both. Shows what the mechanisms do to the top-line number, not just their subset."""
-    answerable = [it for it in items if it.get("answer_session_ids")]
-    conds = {c: {"recall": 0, "astr": 0} for c in ("baseline", "supersede", "evict", "both")}
-    for it in answerable:
-        base, mid_to_sid, _ = build_store(it)
-        populate_signals(base)
-        ans = set(it["answer_session_ids"])
-        astr = str(it.get("answer", "")).strip().lower()
-        for c in conds:
-            mem = clone_store(base)
-            if c in ("supersede", "both"):
-                apply_supersede(mem, it, tau=tau)
-            if c in ("evict", "both"):
-                evict_to_budget(mem, budget, "utility")
-            rsids, got = _retrieve_sids(mem, it, k, mid_to_sid)
-            conds[c]["recall"] += bool(ans & rsids)
-            conds[c]["astr"] += bool(astr and any(astr in r.text.lower() for r in got))
-    n = len(answerable)
-    return {"k": k, "budget": budget, "tau": tau, "n_items": n,
-            "conditions": {c: {"recall_at_k": round(v["recall"] / n, 4),
-                               "answer_string_hit": round(v["astr"] / n, 4)} for c, v in conds.items()}}
 
 
 def full_report(items: list[dict], *, k: int = 5, budgets=(10, 20, 30),

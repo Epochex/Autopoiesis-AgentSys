@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: autopoiesis-agent-sys
+Version: 0.1.0
+Summary: Python Phase 0-1 implementation for a trace-backed self-evolving agent framework and network RCA seed domain.
+Requires-Python: <3.12,>=3.11
+Requires-Dist: pydantic>=2.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Provides-Extra: vector-bench
+Requires-Dist: numpy>=1.24; extra == "vector-bench"
+Requires-Dist: faiss-cpu>=1.7; extra == "vector-bench"
+Provides-Extra: postgres
+Requires-Dist: psycopg[binary]<4,>=3.2; extra == "postgres"
+Provides-Extra: observability
+Requires-Dist: langfuse<5,>=4.7; extra == "observability"
+Provides-Extra: ingestor
+Requires-Dist: fastapi>=0.115; extra == "ingestor"
+Requires-Dist: uvicorn[standard]>=0.30; extra == "ingestor"
+Provides-Extra: dense
+Requires-Dist: sentence-transformers>=2.2; extra == "dense"
+Requires-Dist: faiss-cpu>=1.7; extra == "dense"
+Requires-Dist: torch>=2.0; extra == "dense"
+Provides-Extra: rerank
+Requires-Dist: sentence-transformers>=2.2; extra == "rerank"
+Requires-Dist: torch>=2.0; extra == "rerank"

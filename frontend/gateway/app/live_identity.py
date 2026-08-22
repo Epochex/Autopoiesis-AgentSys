@@ -450,24 +450,3 @@ def device_status(ip: str, lang: str = "zh") -> dict[str, Any] | None:
         "hasLiveSession": has_session,
     }
 
-
-def edge_bandwidth(ip_a: str, ip_b: str) -> dict[str, Any] | None:
-    """Live bandwidth of the actual traffic between two hosts, either direction.
-
-    For a relation edge in the constellation, most pairs never exchange traffic
-    (the link is a correlation, not a flow) → returns {active: False}. When a real
-    session exists, returns its current bps + configured shaper cap.
-    """
-    if not _creds():
-        return None
-    bw = live_bandwidth()
-    bps = 0
-    limit = None
-    active = False
-    for (sa, da, _p), v in bw.items():
-        if {sa, da} == {ip_a, ip_b}:
-            active = True
-            bps += v["bps"] or 0
-            if v.get("limitBps"):
-                limit = max(limit or 0, v["limitBps"])
-    return {"active": active, "bps": bps, "limitBps": limit}

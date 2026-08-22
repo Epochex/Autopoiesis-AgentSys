@@ -385,8 +385,6 @@ function App() {
         <TrajectoryPage
           key={`${active}:${lang}`}
           cases={d.cases}
-          baselines={d.baselines}
-          reasoner={d.reasonerMode}
           lang={lang}
           activeId={active}
           onPick={setActive}

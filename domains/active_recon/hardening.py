@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
-
 
 RISK_ORDER = [
     "critical_cve_exposed",
@@ -33,11 +31,6 @@ APPROVAL_REQUIRED = {
     "public_database_exposure",
     "weak_tls_exposed",
 }
-
-
-class HardeningReport(BaseModel):
-    recommendations: list[dict]
-    generated_from_case_id: str | None = None
 
 
 def recommend_hardening(picture: dict, evidence: list[dict]) -> list[dict]:

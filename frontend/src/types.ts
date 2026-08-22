@@ -462,6 +462,37 @@ export interface Observatory {
   capability_status?: Record<string, RuntimeCapabilityStatus>
 }
 
+/* ── /api/rca/evolution ────────────────────────────────────────────────────
+ * Cold-vs-warm recurrence result: one self replayed over a recurring real
+ * incident stream. Consumed by TrajectoryPage, which reads `ready` and hands
+ * `observatory` to the memory observatory. */
+export interface EvoByPass {
+  pass: number
+  probes: number
+  recalled: number
+  memory_end: number
+  accuracy: number
+}
+
+export interface MemHealth {
+  active: number
+  forgotten: number
+  insights: number
+  links: number
+  by_tier?: Record<string, number>
+}
+
+export interface EvoData {
+  ready: boolean
+  nCases: number
+  passes: number
+  delta: { probes_cold: number; probes_warm: number; probes_saved_pct: number; memory_grown: number; accuracy_warm: number }
+  warm: { by_pass: EvoByPass[] }
+  cold: { by_pass: EvoByPass[] }
+  memory?: MemHealth
+  observatory?: Observatory
+}
+
 export interface RcaSnapshot {
   readiness: Readiness
   datasetReady: boolean
@@ -617,25 +648,6 @@ export interface IncidentDetail extends Omit<IncidentSummary, 'evidence_count'> 
   evidence: IncidentEvidenceRef[]
   topology: { nodes: IncidentTopologyNode[]; edges: IncidentTopologyEdge[] }
   response: { approvalRequired: boolean; steps: IncidentResponseStep[]; readbacks: IncidentResponseReadback[] }
-}
-
-export interface IncidentListResponse {
-  ok: true
-  live: false
-  dataMode: 'historical_fixture'
-  datasetKind: string
-  currentOnlineObservation: false
-  count: number
-  incidents: IncidentSummary[]
-  note: string
-}
-
-export interface IncidentDetailResponse {
-  ok: true
-  live: false
-  dataMode: 'historical_fixture'
-  currentOnlineObservation: false
-  incident: IncidentDetail
 }
 
 /* ---------------------------------------------------------------- *

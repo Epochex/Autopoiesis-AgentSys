@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import type { Baseline, RcaCase, TheaterEvent } from '../types'
+import type { EvoData, RcaCase, TheaterEvent } from '../types'
 import type { Lang } from '../i18n'
 import { rc } from '../i18n'
 import { LiveSituation } from './LiveSituation'
 import { MemoryObservatory } from './MemoryObservatory'
 import { TraceReplay } from './TraceReplay'
-import type { EvoData } from './EvolutionStream'
 import './trajectory.css'
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
@@ -13,7 +12,7 @@ const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…'
 export function TrajectoryPage({
   cases, lang, activeId, onPick, onTheater,
 }: {
-  cases: RcaCase[]; baselines: Baseline[]; reasoner: string; lang: Lang; activeId: string; onPick: (id: string) => void
+  cases: RcaCase[]; lang: Lang; activeId: string; onPick: (id: string) => void
   onTheater?: (e: TheaterEvent) => void
 }) {
   const zh = lang === 'zh'

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>攻击面呈现 · 方案效果图</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; background: #0b0d0e; color: #ece9e3;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+  header { padding: 26px 34px 10px; border-bottom: 1px solid #565b5d; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .04em; }
+  header p { margin: 8px 0 0; color: #b8b3ab; font-size: 13px; line-height: 1.6; max-width: 90ch; }
+  header b { color: #ccff00; font-weight: 600; }
+  .panel { padding: 30px 34px 44px; border-bottom: 1px solid #303538; }
+  .panel-h { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; }
+  .panel-h .no { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 700; color: #ccff00; }
+  .panel-h h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: .06em; }
+  .panel-h .tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #e6552d; border: 1px solid #e6552d; padding: 2px 8px; }
+  .panel-d { color: #b8b3ab; font-size: 12.5px; line-height: 1.6; margin: 0 0 18px; max-width: 92ch; }
+  .panel-d code { font-family: 'IBM Plex Mono', monospace; color: #ece9e3; }
+  .frame { border: 1px solid #565b5d; background: #101315; display: grid; place-items: center; padding: 10px; }
+  .stage { width: 100%; height: auto; max-height: 900px; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>攻击面呈现 · 四种方案效果图</h1>
+  <p>都用<b>当前真实数据</b>渲染:52 个资产 · 96 条已挖掘关系 · 3 个 /24 网段 · <b>192.168.1.23 争用(红,70 次换手)</b> · 573 外网源 / 6709 次管理登录失败 · 暴露评分来自真实端口扫描。套的是现在这套 SOC 暗色配色。<b>没有改动任何现有代码。</b>会动的元素(扫描线/告警脉冲/攻击流)在这里都在跑。</p>
+</header>
+
+<section class="panel">
+  <div class="panel-h"><span class="no">1</span><h2>雷达态势盘</h2><span class="tag">推荐</span></div>
+  <p class="panel-d">中心是 <code>FortiGate</code>,同心环由内向外是<b>信任层级</b>(核心→服务器/摄像机→终端→外网)。资产是环上光点,<b>圈大小=暴露评分</b>,颜色=身份状态(灰=已绑定 / 红=争用 / 青=有流量无绑定)。跨环的弦线是已挖掘关系。一道酸绿<b>扫描线在旋转</b>,<b>.23 争用点在持续红色脉冲</b>。好理解:中心是自己,越外圈越不可信,红点=问题,不需要懂图。</p>
+  <div class="frame"><div id="radar"></div></div>
+</section>
+
+<section class="panel">
+  <div class="panel-h"><span class="no">2</span><h2>攻击链纵深</h2></div>
+  <p class="panel-d">自上而下=<b>外面怎么打进来</b>。顶层是 573 个外网攻击源(真实的爆破源 /24 块 + 次数),红色数据包<b>持续下坠</b>被 <code>FortiGate</code> 闸门挡下;下方三条泳道是三个网段,主机按暴露评分定大小,<b>.23 争用主机有红色脉冲</b>,一条攻击虚线从闸门伸向它。直接把"渗透"叙事变成可视进攻,塔防/AD 攻击图语汇。</p>
+  <div class="frame"><div id="chain"></div></div>
+</section>
+
+<section class="panel">
+  <div class="panel-h"><span class="no">3</span><h2>等距作战地图</h2></div>
+  <p class="panel-d">地址空间做成 <b>2.5D 俯视战场</b>,三块等距战区=三个 /24。每个地址是一个立方瓦片,<b>高度=暴露评分</b>(越危险拔得越高),顶面颜色=身份状态,<b>.23 争用瓦片顶着一团红色脉冲光</b>。最"游戏"的一版,一眼看到"哪片密、哪里在打"——代价是最需要克制配色,别滑向廉价科幻。</p>
+  <div class="frame"><div id="iso"></div></div>
+</section>
+
+<section class="panel" style="border-bottom:none">
+  <div class="panel-h"><span class="no">4</span><h2>六边形控制区</h2></div>
+  <p class="panel-d">资产是六边形,按<b>关系连通分量聚成同色阵营</b>(硬证据边把一伙设备圈在一起,颜色区分阵营)。<b>.23 争用格填红并闪烁</b>。聚簇比点线图更直观看出"谁和谁一伙"——比如大华摄像机批次会自然抱团。文明/战棋语汇。</p>
+  <div class="frame"><div id="hex"></div></div>
+</section>
+
+<script src="mock.js"></script>
+</body>
+</html>

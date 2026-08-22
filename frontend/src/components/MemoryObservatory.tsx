@@ -13,14 +13,6 @@ import { RouteRuler } from './RouteRuler'
 import { MemoryTimeline } from './MemoryTimeline'
 import './memory-observatory.css'
 
-export interface ObsByPass {
-  pass: number
-  probes: number
-  recalled: number
-  accuracy: number
-  memory_end: number
-}
-
 /** One real event per tick: 257 events ≈ 15s, the length of a demo beat. */
 const TICK_MS = 60
 

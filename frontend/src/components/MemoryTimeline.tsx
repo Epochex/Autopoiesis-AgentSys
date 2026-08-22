@@ -3,9 +3,6 @@ import type { JSX, PointerEvent as RPointerEvent, KeyboardEvent as RKeyboardEven
 import type { MemEvent, MemOp } from '../types'
 import './memory-timeline.css'
 
-/* the ribbon lives in ./CausalRibbon — re-exported here so the container may
- * import both panels from either path */
-
 /* ═══════════════════════════════════════════════════════════════════════════
    MEMORY TIMELINE — scrubbable lifecycle rail over the real event ledger.
 

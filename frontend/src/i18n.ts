@@ -1,22 +1,5 @@
 export type Lang = 'en' | 'zh'
 
-const T: Record<string, [string, string]> = {
-  failedLogins: ['failed admin logins', '失败登录'],
-  denied: ['denied flows', '拒绝流量'],
-  lockouts: ['lockouts', '锁定'],
-  sources: ['source IPs', '源IP'],
-  attackers: ['attackers', '攻击源'],
-  gateway: ['gateway', '网关'],
-  ports: ['blocked ports', '拦截端口'],
-  sink: ['syslog sink', '日志汇聚'],
-  engine: ['engine', '引擎'],
-  confidence: ['confidence', '置信'],
-  verified: ['verified', '已校验'],
-  accuracy: ['accuracy', '准确率'],
-  withControl: ['skill control', '技能调度'],
-  withoutControl: ['no control', '无调度'],
-}
-
 // affirmative root-cause labels
 const RC: Record<string, [string, string]> = {
   admin_bruteforce_lockout: ['Admin lockout · exposure controlled', '管理口锁定 · 暴露面已控'],
@@ -29,5 +12,4 @@ const RC: Record<string, [string, string]> = {
   unknown: ['Pending', '待分类'],
 }
 
-export const t = (k: string, lang: Lang) => (T[k] ? T[k][lang === 'zh' ? 1 : 0] : k)
 export const rc = (k: string, lang: Lang) => (RC[k] ? RC[k][lang === 'zh' ? 1 : 0] : k)

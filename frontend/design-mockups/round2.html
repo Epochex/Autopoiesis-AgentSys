@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>攻击面呈现 · 第二批(硬核向)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0b0d0e; color: #ece9e3; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+  header { padding: 26px 34px 12px; border-bottom: 1px solid #565b5d; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .04em; }
+  header p { margin: 8px 0 0; color: #b8b3ab; font-size: 13px; line-height: 1.6; max-width: 96ch; }
+  header b { color: #ccff00; font-weight: 600; }
+  .panel { padding: 30px 34px 44px; border-bottom: 1px solid #303538; }
+  .panel-h { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; }
+  .panel-h .no { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 700; color: #ccff00; }
+  .panel-h h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: .06em; }
+  .panel-h .tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #3bb7a6; border: 1px solid #3bb7a6; padding: 2px 8px; }
+  .panel-d { color: #b8b3ab; font-size: 12.5px; line-height: 1.6; margin: 0 0 18px; max-width: 96ch; }
+  .panel-d code { font-family: 'IBM Plex Mono', monospace; color: #ece9e3; }
+  .panel-d b { color: #ece9e3; }
+  .frame { border: 1px solid #565b5d; background: #0e1112; padding: 12px; overflow-x: auto; }
+  .stage { width: 100%; height: auto; min-width: 700px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>攻击面呈现 · 第二批 · 硬核工具向</h1>
+  <p>上一批太"模板"了(圆点摆进各种形状 + 发光脉冲 = AI 感)。这批换掉基本单元,参照 <b>Wireshark / Zeek / 网络测量科研 / Bloomberg 终端</b>:矩阵、时序回放、桑基流、地址填充曲线。<b>去掉一切发光脉冲</b>,靠结构和信息密度取胜。真实数据不变。<b>依旧没碰任何现有代码。</b></p>
+</header>
+
+<section class="panel">
+  <div class="panel-h"><span class="no">5</span><h2>关系邻接矩阵</h2><span class="tag">硬核</span></div>
+  <p class="panel-d">点线图在关系一密就变毛球,<b>矩阵永远清晰</b>。行列都是资产,按连通分量<b>重排序,让同簇沿对角线成实心块</b>——比如 23 台大华摄像机的 clash 簇会成一个显眼的红块。格子颜色=关系类型(红=地址冲突/青=同广播域/蓝=同目的地/黄=同批次),对角线=身份状态,左侧色条=暴露评分。这是网络分析师真正用的图,不是给外行看的动画。</p>
+  <div class="frame"><div id="matrix"></div></div>
+</section>
+
+<section class="panel">
+  <div class="panel-h"><span class="no">6</span><h2>全链路时间回放</h2><span class="tag">最贴主题</span></div>
+  <p class="panel-d">"外部流量进入内网全链路回放"本质是<b>时间序列</b>,就该用时序呈现:共享 48h 时间轴,多轨堆叠。<b>192.168.1.23 那条是真实逐事件</b>——70 次换手的真实时间戳,双泳道 step 线画出地址在服务器/占用方之间来回。上面两轨(爆破压力、租约抖动)是聚合密度,<b>明确标注"聚合"</b>不假造逐条时间。像多轨示波器 / Wireshark IO graph。</p>
+  <div class="frame"><div id="replay"></div></div>
+</section>
+
+<section class="panel">
+  <div class="panel-h"><span class="no">7</span><h2>外→内流量桑基</h2></div>
+  <p class="panel-d">桑基图<b>量化每一条流的粗细</b>,不是画个箭头。左半:8 个真实爆破源 /24 块(<code>87.251.64.0/24 1285次</code> 等),流带按次数汇入 <code>FortiGate</code>,再全部流向"拒绝/禁用"——把"被挡在外面"画成可量化的事实。右半独立一块:内网网段 → 真实端口扫描出的暴露服务(telnet/3306/6379 高危标红)。能量流/资金流那套专业语汇。</p>
+  <div class="frame"><div id="sankey"></div></div>
+</section>
+
+<section class="panel" style="border-bottom:none">
+  <div class="panel-h"><span class="no">8</span><h2>Hilbert 地址空间</h2><span class="tag">最内行</span></div>
+  <p class="panel-d">网络测量领域画 IP 空间的标准做法(Team Cymru / IPv4-map 用它画整个互联网)。<b>Hilbert 填充曲线让相邻 IP 在平面上也相邻</b>,于是一个 /24 的结构变成"形状"——连续的已绑定段、无绑定的空洞、争用地址的位置,一眼读出。亮块大小=暴露评分,空心=无观测,底下淡线是曲线本身。完全没有生成艺术味,纯粹内行。</p>
+  <div class="frame"><div id="hilbert"></div></div>
+</section>
+
+<script src="mock2.js"></script>
+</body>
+</html>

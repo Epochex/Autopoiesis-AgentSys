@@ -381,104 +381,6 @@
   backdrop-filter: blur(8px);
   animation: slidein 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-@keyframes slidein {
-  from { opacity: 0; transform: translateX(14px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-.drill-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-}
-.drill-cidr {
-  display: block;
-  font-size: 14px;
-  color: var(--text);
-}
-.drill-sub {
-  font-size: 10px;
-  color: var(--fog);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.drill-x {
-  background: none;
-  border: none;
-  color: var(--fog);
-  cursor: pointer;
-  font-size: 13px;
-}
-.drill-list {
-  list-style: none;
-  margin: 0;
-  padding: 6px 0;
-  max-height: 360px;
-  overflow-y: auto;
-}
-.dev-row {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 12px 1fr 60px auto;
-  align-items: center;
-  gap: 8px;
-  background: none;
-  border: none;
-  color: var(--text);
-  padding: 7px 14px;
-  cursor: pointer;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-}
-.dev-row:hover {
-  background: rgba(95, 228, 209, 0.04);
-}
-.dev-dot {
-  width: 7px;
-  height: 7px;
-}
-.dev-dot.high { background: var(--coral); box-shadow: 0 0 7px var(--coral); }
-.dev-dot.watch { background: var(--amber); }
-.dev-dot.ok { background: var(--mint); }
-.dev-ip {
-  text-align: left;
-}
-.dev-bar {
-  height: 3px;
-  background: var(--line);
-  position: relative;
-}
-.dev-bar b {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-}
-.dev-bar b.high { background: var(--coral); }
-.dev-bar b.watch { background: var(--amber); }
-.dev-bar b.ok { background: var(--mint); }
-.dev-n {
-  font-size: 11px;
-  color: var(--fog);
-  text-align: right;
-}
-.dev-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 4px 14px 10px 34px;
-  font-size: 11px;
-  color: var(--fog);
-  font-family: 'IBM Plex Mono', monospace;
-}
-.dev-tag {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--coral);
-}
-.dev.watch .dev-tag { color: var(--amber); }
-.dev.ok .dev-tag { color: var(--mint); }
 
 /* in-graph tree branches */
 .branch-in {
@@ -1059,12 +961,6 @@
 }
 
 /* WAN intrusion deep-analysis */
-.atk-node .m-attack { transition: fill 0.2s; }
-.atk-node.sel .m-attack { fill: rgba(255, 90, 106, 0.5); }
-.atk-node .probe-hint { fill: var(--fog); font-size: 9px; opacity: 0; transition: opacity 0.2s; }
-.atk-node:hover .probe-hint { opacity: 1; }
-.atk-halo { fill: none; stroke: var(--coral); stroke-width: 1; animation: haloPulse 1.7s ease-out infinite; }
-@keyframes haloPulse { 0% { r: 10; opacity: 0.75; } 100% { r: 24; opacity: 0; } }
 
 .wan-spine { fill: none; stroke: rgba(255, 90, 106, 0.72); stroke-width: 2; filter: drop-shadow(0 0 4px rgba(255, 90, 106, 0.5)); }
 .wan-spine-tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--coral); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
@@ -1113,55 +1009,6 @@
 .wan-pb-why { font-family: 'IBM Plex Sans Condensed', sans-serif; font-size: 10.5px; color: var(--fog); margin-left: auto; }
 .wan-pb-cmds { margin: 0; padding: 7px 10px; background: #14140f; color: #cdff8f; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; border-top: 1px solid var(--line); }
 
-/* device behavioral mesh */
-.mesh-toggle-row {
-  margin-top: 14px;
-}
-.mesh-toggle {
-  background: rgba(95, 228, 209, 0.06);
-  border: 1px solid rgba(95, 228, 209, 0.4);
-  color: var(--mint);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  padding: 8px 16px;
-  cursor: pointer;
-}
-.mesh-toggle:hover {
-  background: rgba(95, 228, 209, 0.14);
-}
-.mesh-toggle:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-.mesh-toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.mesh-hint {
-  font-size: 11px;
-  color: var(--fog);
-  font-family: 'IBM Plex Mono', monospace;
-  letter-spacing: 0.04em;
-}
-.mesh-anchor-link {
-  fill: none;
-  stroke: rgba(95, 228, 209, 0.14);
-  stroke-width: 1;
-  stroke-dasharray: 2 7;
-}
-.mesh-rel {
-  fill: none;
-  stroke: rgba(255, 90, 106, 0.5);
-}
-.mesh-rel-particle {
-  fill: var(--coral);
-  filter: drop-shadow(0 0 4px var(--coral));
-}
-
-/* 3D constellation portal on the topology */
 /* 3D portal — another dark-theme leftover: this painted a near-black disc
    (rgba(8,13,12,0.6)) with teal halo/links, an infinite `aura` pulse and a glow
    drop-shadow on hover, i.e. a dark blob floating on light paper. Flattened to
@@ -1312,15 +1159,6 @@
   font-size: 11px;
   font-family: 'IBM Plex Sans Condensed', sans-serif;
 }
-.c3d-anchor {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
-  color: var(--mint);
-  white-space: nowrap;
-  background: rgba(5, 8, 10, 0.7);
-  padding: 1px 5px;
-  border-radius: 2px;
-}
 .c3d-threat {
   position: fixed;
   left: 18px;
@@ -1332,201 +1170,9 @@
 .c3d-threat .threat-card {
   background: rgba(7, 11, 12, 0.96);
 }
-.c3d-tag {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
-  white-space: nowrap;
-}
-.mesh-section {
-  margin-top: 14px;
-  border: 1px solid var(--line);
-  background: rgba(8, 13, 12, 0.6);
-  animation: floatin 0.4s ease-out both;
-}
-.mesh-head {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
-}
-.mesh-kicker {
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--mint);
-  font-family: 'IBM Plex Mono', monospace;
-}
-.mesh-note {
-  font-size: 11px;
-  color: var(--fog);
-  flex: 1;
-  min-width: 240px;
-}
-.mesh-svg {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-.mesh-edge {
-  stroke: rgba(124, 143, 138, 0.28);
-}
-.mesh-edge.hot {
-  stroke: var(--mint);
-  opacity: 0.8;
-}
-.mesh-pulse {
-  fill: var(--mint);
-  filter: drop-shadow(0 0 5px var(--mint));
-}
-.mesh-role {
-  font-size: 12px;
-  fill: var(--fog);
-  font-family: 'IBM Plex Mono', monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.mesh-node circle {
-  transition: stroke-width 0.2s ease;
-}
-.mesh-ip {
-  font-size: 11px;
-  fill: var(--text);
-  font-family: 'IBM Plex Mono', monospace;
-}
-.mesh-profile {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--line);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-  color: var(--text);
-  flex-wrap: wrap;
-}
-.mesh-profile strong {
-  font-size: 14px;
-}
-.mp-role {
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 11px;
-}
-.mp-ports {
-  color: var(--fog);
-}
 
 /* DeepSeek constellation — high-end subnet model */
-.const-section {
-  margin-top: 14px;
-  border: 1px solid var(--line);
-  background: radial-gradient(120% 120% at 50% 30%, rgba(15, 26, 24, 0.6), rgba(8, 13, 12, 0.85));
-  animation: floatin 0.45s ease-out both;
-  overflow: hidden;
-}
-.const-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.const-kicker {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--mint);
-  font-family: 'IBM Plex Mono', monospace;
-}
-.const-loading {
-  padding: 60px;
-  display: grid;
-  place-items: center;
-}
-.const-svg {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-.cl-halo {
-  opacity: 0;
-  animation: fadein 0.7s ease-out forwards;
-  animation-delay: var(--d);
-}
-.cl-name {
-  font-size: 12px;
-  fill: var(--fog);
-  font-family: 'IBM Plex Mono', monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.cl-link { transition: opacity 0.3s ease; }
-.cl-link.dim { opacity: 0.12; }
-.cl-edge {
-  fill: none;
-  stroke: rgba(124, 143, 138, 0.4);
-}
-.cl-edge.lit {
-  stroke: var(--mint);
-  stroke-dasharray: 6 5;
-  animation: march 0.7s linear infinite;
-  opacity: 0.9;
-}
-.cl-particle {
-  fill: var(--mint);
-  filter: drop-shadow(0 0 5px var(--mint));
-}
-.cl-node {
-  opacity: 0;
-  animation: nodein 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  animation-delay: var(--d);
-  transition: opacity 0.3s ease;
-}
-.cl-node.dim { opacity: 0.22 !important; }
-@keyframes nodein {
-  from { opacity: 0; transform: scale(0.1); }
-  to { opacity: 1; transform: scale(1); }
-}
-.cl-aura {
-  opacity: 0.16;
-  animation: aura 3.4s ease-in-out infinite;
-}
-@keyframes aura {
-  0%, 100% { opacity: 0.1; }
-  50% { opacity: 0.26; }
-}
-.cl-core {
-  stroke-width: 1.6;
-  transform-box: fill-box;
-  transform-origin: center;
-  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.cl-node:hover .cl-core,
-.cl-node.sel .cl-core { transform: scale(1.32); stroke-width: 2.4; }
-.cl-node.high .cl-aura { animation-duration: 1.8s; }
-.cl-ip {
-  font-size: 10px;
-  fill: var(--text);
-  font-family: 'IBM Plex Mono', monospace;
-  opacity: 0.85;
-}
-.const-profile {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 11px 16px;
-  border-top: 1px solid var(--line);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-  color: var(--text);
-  flex-wrap: wrap;
-  min-height: 42px;
-}
-.const-profile.hint { color: var(--fog); }
-.const-profile strong { font-size: 14px; }
-.cp-label { text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+
 .cp-meta { color: var(--fog); }
 .posture-counts {
   display: flex;
@@ -1599,75 +1245,17 @@
 }
 .m-attack { fill: rgba(255, 107, 94, 0.18); stroke: var(--coral); stroke-width: 1; }
 .m-host { fill: rgba(255, 192, 77, 0.16); stroke: var(--amber); stroke-width: 1; }
-.m-port { fill: rgba(255, 192, 77, 0.1); stroke: var(--amber); stroke-width: 1; }
-.m-flow { fill: rgba(95, 228, 209, 0.16); stroke: var(--mint); stroke-width: 1; }
-.m-cons { fill: rgba(95, 228, 209, 0.2); stroke: var(--mint); stroke-width: 1.5; }
 .m-intf { fill: rgba(95, 228, 209, 0.05); stroke: rgba(95, 228, 209, 0.45); stroke-width: 1.25; }
 .n-intf { font-size: 11.5px; text-anchor: middle; fill: var(--text); letter-spacing: 0.08em; text-transform: uppercase; }
 .n-v.amber { fill: var(--amber); }
-.zone-tag { font-size: 9.5px; fill: var(--fog); letter-spacing: 0.2em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
 
 /* deck — verdict + metrics, hairline separated, no overlap */
-.deck {
-  display: grid;
-  grid-template-columns: 1.25fr 2fr 1.15fr;
-  margin-top: 22px;
-  border-top: 1px solid var(--line);
-}
-.deck > * {
-  padding: 20px 24px 8px;
-  border-right: 1px solid var(--line);
-}
-.deck > *:last-child {
-  border-right: none;
-}
 .verdict {
   display: flex;
   align-items: center;
   gap: 18px;
 }
 .ring { flex: 0 0 auto; }
-.ring-track { fill: none; stroke: var(--line); stroke-width: 6; }
-.ring-arc {
-  fill: none;
-  stroke: var(--mint);
-  stroke-width: 6;
-  stroke-linecap: round;
-  filter: drop-shadow(0 0 6px rgba(95, 228, 209, 0.6));
-  transition: stroke-dashoffset 1.2s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.ring-num {
-  fill: var(--text);
-  font-size: 19px;
-  text-anchor: middle;
-  dominant-baseline: middle;
-  font-family: 'IBM Plex Mono', monospace;
-}
-.vk {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--mint);
-}
-.verdict-text h1 {
-  font-family: 'IBM Plex Sans Condensed', sans-serif;
-  font-weight: 600;
-  font-size: clamp(22px, 3.4vw, 38px);
-  line-height: 1.04;
-  margin: 8px 0 10px;
-  letter-spacing: 0.01em;
-}
-.ev-ids {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.ev-ids code {
-  font-size: 11px;
-  color: var(--fog);
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 2px;
-}
 
 .metric {
   display: flex;
@@ -1691,23 +1279,6 @@
   flex-direction: column;
   gap: 10px;
 }
-.bar-row {
-  display: grid;
-  grid-template-columns: 64px 1fr auto;
-  align-items: center;
-  gap: 12px;
-}
-.bar-num {
-  font-size: 26px;
-  font-variant-numeric: tabular-nums;
-}
-.bar-num i {
-  font-size: 13px;
-  font-style: normal;
-  color: var(--fog);
-}
-.bar-num.good { color: var(--mint); }
-.bar-num.bad { color: var(--coral); }
 .bar {
   height: 4px;
   background: var(--line);
@@ -1723,95 +1294,10 @@
 }
 .bar b.good { background: var(--mint); box-shadow: 0 0 10px rgba(95, 228, 209, 0.5); }
 .bar b.bad { background: var(--coral); }
-.bar-lab {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--fog);
-}
 
 /* eval trace trajectory */
-.trace-traj {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.tt-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-}
-.tt-kicker {
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--mint);
-  font-family: 'IBM Plex Mono', monospace;
-}
-.tt-meta {
-  font-size: 10px;
-  color: var(--fog);
-  font-family: 'IBM Plex Mono', monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.tt-svg {
-  width: 100%;
-  height: auto;
-  display: block;
-}
-.tt-rail {
-  fill: none;
-  stroke: var(--line);
-  stroke-width: 2;
-}
-.tt-rail-lit {
-  fill: none;
-  stroke: var(--mint);
-  stroke-width: 2;
-  opacity: 0.5;
-  stroke-dasharray: 700;
-  animation: traildraw 2.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-@keyframes traildraw {
-  from { stroke-dashoffset: 700; }
-  to { stroke-dashoffset: 0; }
-}
-.tt-head-dot {
-  fill: var(--mint);
-  filter: drop-shadow(0 0 6px var(--mint));
-}
-.tt-node {
-  opacity: 0;
-  animation: fadein 0.4s ease-out forwards;
-  animation-delay: var(--d);
-}
-.tt-dot {
-  fill: rgba(95, 228, 209, 0.18);
-  stroke: var(--mint);
-  stroke-width: 1.5;
-}
-.tt-dot.ok { stroke: var(--good); fill: rgba(52, 224, 168, 0.2); }
-.tt-dot.bad { stroke: var(--coral); }
-.tt-dot.fin {
-  fill: rgba(95, 228, 209, 0.28);
-  filter: drop-shadow(0 0 6px var(--mint));
-}
-.tt-lab {
-  font-size: 10px;
-  fill: var(--text);
-  font-family: 'IBM Plex Mono', monospace;
-}
-.tt-det {
-  font-size: 9px;
-  fill: var(--fog);
-  font-family: 'IBM Plex Mono', monospace;
-}
 
 @media (max-width: 860px) {
-  .ribbon { grid-template-columns: 1fr; }
   .metric { border-right: none; border-bottom: 1px solid var(--line); }
   .verdict { position: static; max-width: 100%; margin-top: 16px; }
 }
@@ -1832,7 +1318,6 @@
 .scen button.on { background: var(--ink); color: var(--acid); font-weight: 600; }
 .scen button:hover:not(.on) { color: var(--ink); }
 
-
 /* ═══ FUTURIST-UI POSTER · light-paper re-skin tokens ═══════════════════
    Scoped to the trajectory plate + shell-in-poster-mode. Page 1 (console)
    keeps the dark :root untouched. ONE accent. No glow, no shadow, no red. */
@@ -1841,34 +1326,26 @@
   /* ── surfaces · warm print paper ── */
   --paper:   #e7e7e3;  /* page ground            (was --ink   #0a0f0e) */
   --paper-2: #efeee9;  /* raised module card     (was --ink-2 #0e1413) */
-  --paper-3: #dddcd5;  /* recessed wells · masked idle steps            */
-
+  --paper-3: #dddcd5;
   /* ── ink · type, frames, solid blocks, collapse ── */
   --ink:      #0d0d0d; /* all type + 2px frames + black rects + danger  */
-  --ink-soft: #2a2a27; /* long-form small text                          */
-
+  --ink-soft: #2a2a27;
   /* ── neutrals ── */
-  --gray: #605f5a;     /* labels, ruler numerals, ©®№     (was --fog)   */
-                       /* #8c8c88 was 2.72:1 on --paper — the whole
+  --gray: #605f5a;                       /* #8c8c88 was 2.72:1 on --paper — the whole
                           secondary tier failed AA. 5.16:1 on --paper,
                           5.51:1 on --paper-2, 4.65:1 on --paper-3: it
                           clears 4.5:1 on every ground it can land on,
                           and still reads two clear steps below
                           --ink-soft (2.25:1 apart).                    */
-  --rule: #cfcfca;     /* hairlines, modular grid, dots    (was --line) */
-                       /* NON-TEXT. Never darken to satisfy a contrast
-                          checker — WCAG 1.4.3 does not apply to it.    */
-
+  --rule: #cfcfca;
   /* ── THE single accent · fills only, never text-on-paper ── */
   --acid:     #ccff00; /* (was --mint #5fe4d1) rects, highlight blocks,
                           live station, supported bars, arrow, sweeps   */
-  --acid-ink: #0d0d0d; /* the only color permitted on top of --acid     */
-
+  --acid-ink: #0d0d0d;
   /* ── data-pattern paints (must sit under real values) ── */
   --hatch-ink:  repeating-linear-gradient(45deg,  var(--ink)  0 3px, transparent 3px 9px);
   --hatch-acid: repeating-linear-gradient(-45deg, var(--acid) 0 5px, transparent 5px 11px);
-  --dots:       radial-gradient(var(--rule) 1.2px, transparent 1.2px); /* 12px cell */
-
+  --dots:       radial-gradient(var(--rule) 1.2px, transparent 1.2px);
   /* ── legacy aliases → old rules resolve light automatically ── */
   --sig:    var(--acid);
   --danger: var(--ink);   /* coral is dead: collapse = black/hatch      */
@@ -1923,263 +1400,6 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .tp-grid { position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background-image: linear-gradient(var(--rule) 1px, transparent 1px), linear-gradient(90deg, var(--rule) 1px, transparent 1px);
   background-size: var(--grid-cell) var(--grid-cell); opacity: 0.85; }
-.tp-band-lab { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gray); }
-.tp-bc rect { fill: var(--ink); }
-
-/* ── masthead ── */
-.tp-top { display: flex; justify-content: space-between; align-items: flex-end; padding: 9px 0 9px; border-bottom: 2px solid var(--ink); }
-.tp-kicker { display: block; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gray); }
-.tp-title { margin: 13px 0 0 -2px; font-family: var(--font-display); font-weight: 600; text-transform: uppercase; font-size: clamp(38px, 5vw, 70px); line-height: 0.86; letter-spacing: -0.03em; color: var(--ink); }
-.tp-title mark { background: var(--acid); color: var(--acid-ink); padding: 0 0.04em; box-decoration-break: clone; }
-.tp-title em { font-style: normal; font-size: 0.2em; letter-spacing: 0.2em; color: var(--gray); margin-left: 12px; vertical-align: 0.5em; }
-.tp-top-r { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-.tp-top-lab { font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray); }
-.tp-cases { display: flex; gap: 4px; }
-.tp-chk { width: 20px; height: 20px; border: 1.5px solid var(--ink); background: var(--paper); cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; }
-.tp-chk.pass { background: var(--acid); }
-.tp-chk.on { outline: 2px solid var(--ink); outline-offset: 1px; }
-.tp-chk b { font-family: var(--font-mono); font-size: 9px; color: var(--acid-ink); }
-
-/* ── ① incident → ② verdict ── */
-.tp-story { display: grid; grid-template-columns: 1fr auto 1.18fr; align-items: stretch; gap: 22px; padding: 10px 2px 11px; border-bottom: 2px solid var(--ink); }
-.tp-story-in, .tp-story-out { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.tp-story-q { margin: 2px 0 0; font-family: var(--font-display); font-size: clamp(16px, 1.5vw, 21px); line-height: 1.32; color: var(--ink); }
-.tp-story-assets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
-.tp-story-assets span { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink); border: 1.5px solid var(--ink); padding: 2px 8px; }
-.tp-story-arrow { align-self: center; font-family: var(--font-display); font-weight: 600; font-size: 46px; color: var(--ink); }
-.tp-verdict { margin: 2px 0 0; font-family: var(--font-display); font-weight: 600; text-transform: uppercase; font-size: clamp(24px, 2.6vw, 38px); line-height: 1.03; letter-spacing: -0.01em; color: var(--ink); }
-.tp-verdict mark { background: var(--acid); color: var(--acid-ink); padding: 0 0.06em; box-decoration-break: clone; }
-.tp-verdict-facts { display: flex; gap: 22px; margin-top: 4px; }
-.tp-verdict-facts span { display: flex; flex-direction: column; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gray); }
-.tp-verdict-facts b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 22px; color: var(--ink); }
-.tp-verdict-cites { display: flex; flex-wrap: wrap; gap: 10px; margin-top: auto; }
-.tp-cite { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--ink); padding: 2px 8px 2px 6px; }
-.tp-cite .tp-bc { width: 34px; height: 10px; }
-.tp-cite code { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink); }
-
-/* ── ③ trajectory chain + detail ── */
-.tp-flow { position: relative; padding: 8px 2px 0; border-bottom: 2px solid var(--ink); display: flex; flex-direction: column; }
-.tp-flow-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-.tp-flow-ctl { display: flex; align-items: center; gap: 6px; }
-.tp-flow-ctl button { width: 26px; height: 22px; border: 1.5px solid var(--ink); background: var(--paper); color: var(--ink); cursor: pointer; font-size: 9px; }
-.tp-flow-ctl button:hover:not(:disabled) { background: var(--acid); }
-.tp-flow-ctl button:disabled { color: var(--rule); border-color: var(--rule); cursor: default; }
-.tp-flow-ctl em { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; color: var(--gray); font-style: normal; margin-left: 4px; }
-.tp-chain { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1.5px; margin: 7px 0 0; background: var(--ink); border: 1.5px solid var(--ink); }
-.tp-node { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 11px 9px; background: var(--paper); border: none; cursor: pointer; text-align: left; transition: background 0.3s var(--ease-guide); position: relative; }
-.tp-node:disabled { cursor: default; }
-.tp-node.pending { background: var(--paper-3); }
-.tp-node.active { background: var(--acid); }
-.tp-node-no { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; color: var(--gray); }
-.tp-node-name { font-family: var(--font-display); font-weight: 600; font-size: clamp(13px, 1vw, 16px); text-transform: uppercase; letter-spacing: 0.01em; color: var(--ink); line-height: 1; }
-.tp-node.pending .tp-node-name, .tp-node.pending .tp-node-no { color: var(--gray); }
-.tp-node-res { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; color: var(--ink); }
-.tp-node.pending .tp-node-res { color: var(--rule); }
-.tp-node.active .tp-node-no, .tp-node.active .tp-node-name, .tp-node.active .tp-node-res { color: var(--acid-ink); }
-/* the load-bearing step is marked so the proof band can point back to it */
-.tp-node[data-sk] { box-shadow: inset 0 -4px 0 var(--acid); }
-.tp-node[data-sk].active { box-shadow: inset 0 -4px 0 var(--ink); }
-.tp-node.fin .tp-node-name { letter-spacing: 0.02em; }
-
-.tp-detail { position: relative; flex: 1; min-height: 0; border: 2px solid var(--ink); border-top: none; padding: 8px 18px 6px; overflow: hidden; display: flex; flex-direction: column; }
-.tp-detail-head { display: flex; align-items: baseline; gap: 14px; border-bottom: 1.5px solid var(--ink); padding-bottom: 7px; }
-.tp-detail-tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--gray); border: 1.5px solid var(--rule); padding: 1px 6px; white-space: nowrap; }
-.tp-detail-hl { margin: 0; font-family: var(--font-display); font-weight: 600; text-transform: uppercase; font-size: clamp(20px, 2vw, 30px); line-height: 1.05; letter-spacing: -0.01em; color: var(--ink); }
-.tp-detail-hl mark { background: var(--acid); color: var(--acid-ink); padding: 0 0.06em; box-decoration-break: clone; }
-.tp-detail-fig { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 2px 0; }
-.tp-dia { display: block; width: 100%; max-width: 780px; height: auto; max-height: 264px; }
-
-/* ── ④ proof · ablation ── */
-.tp-proof { padding: 10px 2px 4px; }
-.tp-proof-head { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
-.tp-proof-claim { margin: 0; font-family: var(--font-display); font-size: clamp(15px, 1.5vw, 20px); line-height: 1.3; color: var(--ink); }
-.tp-proof-claim b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); }
-.tp-proof-claim mark { background: var(--ink); color: var(--acid); padding: 0 0.12em; font-family: var(--font-mono); }
-.tp-proof-plot { position: relative; }
-.tp-proof-legend { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em; color: var(--gray); margin-bottom: 8px; }
-.tp-abl { display: grid; grid-template-columns: 150px 48px 1fr 60px 52px; align-items: center; gap: 10px; padding: 3px 0; }
-.tp-abl-lab { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tp-abl.unsup .tp-abl-lab { font-weight: 500; padding-left: 6px; box-shadow: inset 3px 0 0 var(--ink); }
-.tp-abl-mat { display: flex; gap: 3px; }
-.tp-abl-mat i { width: 9px; height: 9px; border: 1.5px solid var(--ink); }
-.tp-abl-mat i.on { background: var(--ink); }
-.tp-abl-track { position: relative; height: 15px; border: 1.5px solid var(--ink); background: var(--paper); overflow: hidden; }
-.tp-abl-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--acid); transition: width 0.9s var(--ease-guide); }
-.tp-abl.unsup .tp-abl-fill { background: var(--hatch-ink); }
-.tp-abl.base .tp-abl-track { border-width: 2px; }
-.tp-abl-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 20px; color: var(--ink); text-align: right; }
-.tp-abl-num i { font-size: 0.5em; font-style: normal; color: var(--gray); }
-.tp-abl-delta { font-family: var(--font-mono); font-size: 10px; color: var(--gray); text-align: right; }
-.tp-abl.unsup .tp-abl-delta { color: var(--ink); font-weight: 500; }
-.tp-proof-foot { margin-top: 8px; padding-top: 7px; border-top: 1.5px solid var(--rule); font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gray); }
-
-@media (prefers-reduced-motion: reduce) {
-  .tp-node, .tp-abl-fill { transition: none; }
-}
-@media (max-width: 1080px) {
-  .tp-story { grid-template-columns: 1fr; }
-  .tp-story-arrow { transform: rotate(90deg); }
-  .tp-chain { grid-template-columns: repeat(4, 1fr); }
-  .tp-title { font-size: 40px; }
-}
-
-/* ═══ shared stage-diagram vocabulary (tp-dia-*) ═══════════════════════════
-   one clean figure per step; ink lines, paper nodes, ONE acid fill. */
-.tp-dia-node { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
-.tp-dia-node.acid { fill: var(--acid); stroke: var(--ink); }
-.tp-dia-lab { font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.02em; fill: var(--ink); }
-.tp-dia-lab.ink { fill: var(--acid-ink); }
-.tp-dia-sub { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--gray); }
-.tp-dia-cap { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--ink); }
-.tp-dia-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 19px; fill: var(--ink); }
-.tp-dia-num.zero { fill: var(--rule); }
-.tp-dia-big { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 40px; fill: var(--ink); }
-.tp-dia-x { font-size: 0.5em; fill: var(--gray); }
-.tp-dia-line { stroke: var(--ink); stroke-width: 1.5; fill: none; }
-.tp-dia-axis { stroke: var(--ink); stroke-width: 1.5; }
-.tp-dia-tick { stroke: var(--ink); stroke-width: 1.5; }
-.tp-dia-pin { fill: var(--acid); stroke: var(--ink); stroke-width: 1.5; }
-.tp-dia-ptr { fill: var(--ink); }
-.tp-dia-track { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; }
-.tp-dia-fill { fill: var(--acid); }
-.tp-dia-drop { fill: url(#tp-hatch); opacity: 0.18; }
-.tp-dia-pip { fill: var(--acid); stroke: var(--ink); stroke-width: 1; }
-.tp-dia-seg { fill: var(--paper); stroke: var(--ink); stroke-width: 1; }
-.tp-dia-seg.on { fill: var(--acid); }
-.tp-dia-hatchbox { fill: url(#tp-hatch); opacity: 0.22; stroke: var(--ink); stroke-width: 1.5; }
-.tp-dia-gate { stroke: var(--ink); stroke-width: 6; fill: none; stroke-linejoin: round; stroke-linecap: round; }
-.tp-dia-funnel { fill: rgba(204, 255, 0, 0.10); stroke: var(--ink); stroke-width: 1.5; }
-.tp-dia-seal.pass .tp-dia-node { fill: var(--acid); }
-.tp-dia-seal.reject .tp-dia-node { fill: url(#tp-hatch); }
-.tp-dia-seal-t { font-family: var(--font-display); font-weight: 600; font-size: 26px; letter-spacing: 0.04em; fill: var(--acid-ink); }
-.tp-dia-seal.reject .tp-dia-seal-t { fill: var(--ink); }
-
-/* graphic draw-in — grouped, subtle, plays once on mount (no jitter) */
-.tp-dia-in { opacity: 0; animation: tp-in 0.42s var(--ease-guide) both; }
-.tp-dia-line.draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: tp-draw 0.5s var(--ease-guide) 0.15s both; }
-.tp-dia-fill.grow, .tp-dia-pip.grow, .tp-dia-seg.grow { transform-box: fill-box; transform-origin: left center; animation: tp-grow 0.5s var(--ease-guide) both; }
-.tp-dia-pip.grow, .tp-dia-seg.grow { transform-origin: center; }
-@keyframes tp-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes tp-draw { to { stroke-dashoffset: 0; } }
-@keyframes tp-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@media (prefers-reduced-motion: reduce) {
-  .tp-dia-in, .tp-dia-line.draw, .tp-dia-fill.grow, .tp-dia-pip.grow, .tp-dia-seg.grow { animation: none; opacity: 1; stroke-dashoffset: 0; transform: none; }
-}
-
-/* ═══ causal bloodstream · React Flow flow-graph (page 2 · band ③) ═══════════ */
-.fn-wrap { height: 500px; width: 100%; border: 2px solid var(--ink); border-top: none; background: var(--paper); }
-.react-flow { background: transparent; }
-.react-flow__attribution { display: none; }
-.react-flow__handle { opacity: 0; pointer-events: none; min-width: 0; min-height: 0; width: 1px; height: 1px; border: none; background: transparent; }
-.react-flow__node { font-family: var(--font-mono); }
-.react-flow__edge-path { display: none; } /* custom capillary paths only */
-
-.fn-step { position: relative; display: flex; flex-direction: column; gap: 5px; width: 190px; height: 106px; padding: 11px 13px 11px; border: 2px solid var(--ink); background: var(--paper); cursor: pointer; transition: background 0.35s var(--ease-guide), border-color 0.35s; }
-.fn-step.pending { background: var(--paper-3); border-color: var(--rule); }
-.fn-step.active { background: var(--acid); }
-.fn-step:hover:not(.pending) { box-shadow: inset 0 0 0 2px var(--ink); }
-.fn-step-top { display: flex; align-items: baseline; gap: 8px; }
-.fn-step-no { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--gray); }
-.fn-step-name { font-family: var(--font-display); font-weight: 600; font-size: 23px; text-transform: uppercase; color: var(--ink); line-height: 1; }
-.fn-step-desc { font-family: 'IBM Plex Sans Condensed', system-ui, sans-serif; font-size: 11px; line-height: 1.24; color: var(--ink-soft); }
-.fn-step-res { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink); border-top: 1.5px solid var(--rule); padding-top: 5px; margin-top: auto; }
-.fn-step-open { position: absolute; top: 10px; right: 12px; font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.12em; color: var(--gray); opacity: 0; transition: opacity 0.2s; }
-.fn-step:hover .fn-step-open { opacity: 1; }
-.fn-step.pending .fn-step-name, .fn-step.pending .fn-step-no, .fn-step.pending .fn-step-desc, .fn-step.pending .fn-step-res { color: var(--gray); }
-.fn-step.active .fn-step-no, .fn-step.active .fn-step-name, .fn-step.active .fn-step-desc, .fn-step.active .fn-step-res, .fn-step.active .fn-step-open { color: var(--acid-ink); }
-.fn-step.active .fn-step-res { border-top-color: rgba(13,13,13,0.3); }
-/* load-bearing badge — names the ablation consequence on the node itself; the
-   ink+acid here is the live counterpart to the ablation's hatch collapse bar */
-.fn-step.load { box-shadow: inset 0 0 0 2px var(--ink); }
-.fn-step-load { position: absolute; left: -2px; right: -2px; bottom: -20px; height: 18px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 500; font-size: 8.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--acid); background: var(--ink); white-space: nowrap; }
-.fn-step.pending.load { box-shadow: none; }
-.fn-step.pending .fn-step-load { opacity: 0.4; }
-
-.fn-evi { display: flex; align-items: center; gap: 7px; width: 202px; padding: 6px 10px; border: 1.5px solid var(--ink); background: var(--paper); }
-.fn-evi.pending { border-style: dashed; border-color: var(--rule); opacity: 0.45; }
-.fn-evi.live { box-shadow: inset 0 0 0 2px var(--acid); }
-.fn-evi-dot { width: 8px; height: 8px; background: var(--acid); border: 1.5px solid var(--ink); flex: 0 0 auto; }
-.fn-evi-id { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink); white-space: nowrap; }
-.fn-evi-sum { font-family: var(--font-mono); font-size: 8.5px; color: var(--gray); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fn-mem { display: flex; align-items: baseline; gap: 6px; width: 84px; padding: 4px 8px; border: 1.5px solid var(--ink); background: var(--paper); }
-.fn-mem.pending { border-style: dashed; border-color: var(--rule); opacity: 0.45; }
-.fn-mem-code { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink); }
-.fn-mem-ct { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; color: var(--ink); margin-left: auto; }
-
-/* capillary vessels + flowing blood cells */
-.cap-vessel { stroke: var(--rule); stroke-width: 2; }
-.cap.on .cap-vessel { stroke: var(--ink); }
-.cap-flow { stroke: var(--acid); stroke-width: 5; opacity: 0.38; stroke-linecap: round; }
-.cap.evi .cap-flow { opacity: 0.55; stroke-width: 6; }
-.cap-cell { fill: var(--acid); stroke: var(--ink); stroke-width: 0.75; }
-/* edge semantics — a paper halo lets the label ride legibly on the vessel */
-.cap-label { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--gray); paint-order: stroke; stroke: var(--paper); stroke-width: 3.5px; stroke-linejoin: round; }
-.cap-label.on { fill: var(--ink); font-weight: 500; }
-
-/* ── node → detail drawer (motion.dev) ── */
-.tp-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 46%; z-index: 6; background: var(--paper); border-left: 2px solid var(--ink); display: flex; flex-direction: column; padding: 10px 18px 12px; box-shadow: -18px 0 30px -24px rgba(13,13,13,0.4); }
-.tp-drawer-head { display: flex; align-items: baseline; gap: 14px; border-bottom: 1.5px solid var(--ink); padding-bottom: 7px; }
-.tp-drawer-tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink); border: 1.5px solid var(--ink); padding: 1px 6px; white-space: nowrap; }
-.tp-drawer-desc { font-family: var(--font-display); font-weight: 600; font-size: 17px; text-transform: uppercase; color: var(--ink); }
-.tp-drawer-x { margin-left: auto; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; color: var(--acid-ink); background: var(--acid); border: 1.5px solid var(--ink); padding: 3px 10px; cursor: pointer; }
-.tp-drawer-fig { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 4px 0; }
-.tp-drawer-fig .tp-dia { max-width: 100%; max-height: 100%; }
-
-/* ═══ ① evolution hero (real cold-vs-warm) ═══ */
-.tp-evo { position: relative; z-index: 1; padding: 12px 2px 15px; border-bottom: 2px solid var(--ink); }
-.tp-evo-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
-.tp-evo-real { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--acid-ink); background: var(--acid); padding: 3px 9px; white-space: nowrap; }
-.tp-evo-body { display: grid; grid-template-columns: 292px 1fr; gap: 30px; align-items: center; }
-.tp-evo-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
-.tp-evo-stat { display: flex; flex-direction: column; gap: 3px; }
-.tp-evo-stat b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; font-size: 32px; line-height: 1; color: var(--ink); }
-.tp-evo-stat b i { font-size: 0.45em; font-style: normal; color: var(--gray); }
-.tp-evo-stat span { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--gray); }
-.tp-evo-stat.hero b { font-size: 54px; color: var(--acid-ink); background: var(--acid); padding: 1px 8px; align-self: flex-start; }
-.tp-evo-chart { width: 100%; height: auto; max-height: 240px; }
-.tp-evo-axis { stroke: var(--ink); stroke-width: 1.5; }
-.tp-evo-yl, .tp-evo-xl { font-family: var(--font-mono); font-size: 10px; fill: var(--gray); }
-.tp-evo-axl { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; fill: var(--gray); text-transform: uppercase; }
-.tp-evo-save { fill: var(--acid); opacity: 0.16; }
-.tp-evo-cold { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 5 4; }
-.tp-evo-warm { stroke: var(--acid); stroke-width: 4; }
-.tp-evo-mem { stroke: var(--gray); stroke-width: 1.2; stroke-dasharray: 2 3; }
-.tp-evo-dot { fill: var(--acid); stroke: var(--ink); stroke-width: 1.5; }
-.tp-evo-mdot { fill: var(--paper); stroke: var(--gray); stroke-width: 1.2; }
-.tp-evo-mv { font-family: var(--font-mono); font-size: 8px; fill: var(--gray); }
-.tp-evo-recall { font-family: var(--font-mono); font-size: 10px; font-weight: 500; fill: var(--ink); }
-.tp-evo-tag { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; }
-.tp-evo-tag.cold { fill: var(--gray); }
-.tp-evo-tag.warm { fill: var(--ink); font-weight: 600; }
-.tp-evo-note { font-family: var(--font-mono); font-size: 9px; fill: var(--gray); }
-.tp-evo-node { opacity: 0; animation: tp-in 0.4s var(--ease-guide) both; }
-/* Phase B — memory-management mechanism strip (Mem0 / A-MEM / reflect / Ebbinghaus) */
-.tp-evo-ops { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px 20px; margin-top: 14px; padding-top: 11px; border-top: 1.5px solid var(--rule); }
-.tp-evo-ops-lead { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gray); }
-.tp-evo-op { display: inline-flex; align-items: baseline; gap: 6px; }
-.tp-evo-op b { font-family: var(--font-mono); font-weight: 600; font-size: 11px; color: var(--ink); }
-.tp-evo-op i { font-family: var(--font-mono); font-style: normal; font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--gray); }
-.tp-evo-op em { font-family: var(--font-mono); font-style: normal; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 11px; color: var(--acid-ink); background: var(--acid); padding: 0 5px; }
-
-/* ② merged verdict strip above the flow */
-.tp-flow-lead { padding: 11px 2px 3px; display: flex; flex-direction: column; gap: 8px; }
-.tp-flow-verdict { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.tp-fv-q { font-family: 'IBM Plex Sans Condensed', system-ui, sans-serif; font-size: 14px; color: var(--ink-soft); max-width: 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tp-fv-arrow { font-family: var(--font-display); font-weight: 600; font-size: 19px; color: var(--ink); }
-.tp-fv-root { background: var(--acid); color: var(--acid-ink); font-family: var(--font-display); font-weight: 600; font-size: 20px; text-transform: uppercase; padding: 1px 9px; box-decoration-break: clone; }
-.tp-fv-facts { font-family: var(--font-mono); font-size: 11px; color: var(--gray); margin-left: auto; }
-.tp-fv-facts b { font-variant-numeric: tabular-nums; color: var(--ink); }
-
-/* bridge: connects the stream hero to the one expanded trajectory below it */
-.tp-bridge { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; width: 100%; padding: 10px 0 0; background: none; border: none; cursor: pointer; }
-.tp-bridge-txt { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.02em; color: var(--gray); text-align: center; transition: color 0.2s; }
-.tp-bridge-txt b { color: var(--ink); font-weight: 600; }
-.tp-bridge:hover .tp-bridge-txt { color: var(--ink); }
-.tp-bridge-tick { width: 1.5px; height: 16px; margin-top: 5px; background: var(--rule); transition: background 0.2s, height 0.2s; }
-.tp-bridge:hover .tp-bridge-tick { background: var(--ink); height: 22px; }
-
-@media (max-width: 1080px) { .tp-evo-body { grid-template-columns: 1fr; } }
-
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CONSOLE (page 1) · FUTURIST-UI light-paper re-skin
@@ -2222,8 +1442,7 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
      ------------------------------------------------------------------------ */
   --coral:   var(--ink);    /* high / attacker → heaviest ink (was #b3243c) */
   --amber:   var(--gray);   /* watch           → mid gray     (was #8a560e) */
-  --mint:    var(--gray);   /* ok / contained  → mid gray     (was #276b61) */
-  /* non-text quiet mark (hollow strokes on the map); never carries type */
+  --mint:    var(--gray);  /* non-text quiet mark (hollow strokes on the map); never carries type */
   --quiet:   #8c8c88;
   /* hierarchy tiers — structural identity, not threat. Collapsed onto the same
      neutral ramp: the teal --tier-edge was the last surviving accent family and
@@ -2367,8 +1586,7 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .m-attack.sib { fill: var(--paper-2); stroke: var(--ink); stroke-width: 1.5; }
 .stage[data-view='console'] .m-intf  { fill: var(--paper-2); stroke: var(--tier-edge); stroke-width: 2; }    /* edge / interface */
 .stage[data-view='console'] .m-host  { fill: var(--paper-2); stroke: var(--tier-subnet); stroke-width: 2; }  /* subnet */
-.stage[data-view='console'] .n-leaf  { fill: var(--tier-leaf); }                                             /* leaf / port */
-
+.stage[data-view='console'] .n-leaf  { fill: var(--tier-leaf); }
 /* ── the red-box → page 3 escalation CTA (inside the WAN panel) ── */
 .stage[data-view='console'] .wan-pentest-cta {
   display: flex;
@@ -2434,8 +1652,6 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 @keyframes ws-march { to { stroke-dashoffset: -14; } }
 
 .stage[data-view='console'] .ws-lock-bracket { fill: none; stroke: var(--wan); stroke-width: 1.8; }
-.stage[data-view='console'] .ws-lock-ring { fill: none; stroke: var(--wan); stroke-width: 1.4; opacity: 0.6; }
-.stage[data-view='console'] .ws-lock-cross { stroke: var(--wan); stroke-width: 1; opacity: 0.7; }
 .stage[data-view='console'] .ws-lock-dot { fill: var(--wan); }
 .stage[data-view='console'] .ws-lock-label { fill: var(--wan-ink); font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 500; }
 .stage[data-view='console'] .ws-contain { fill: var(--net-ink); font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; }
@@ -2498,8 +1714,6 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 /* ── the thesis: what this page is, in the resting state ── */
 .stage[data-view='console'] .th-rule { stroke: var(--ink); stroke-width: 2; }
 .stage[data-view='console'] .th-kicker { fill: var(--ink); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 500; }
-.stage[data-view='console'] .th-lede { fill: var(--ink); font-family: var(--font-display); font-size: 27px; letter-spacing: 0.01em; }
-.stage[data-view='console'] .th-body { fill: var(--ink-soft); font-family: var(--font-display); font-size: 15px; }
 .stage[data-view='console'] .th-meta { fill: var(--gray); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; }
 .stage[data-view='console'] .th-meta .th-k { fill: var(--ink); letter-spacing: 0.12em; }
 .stage[data-view='console'] .th-read { fill: var(--gray); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; }
@@ -2534,7 +1748,6 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .m-dev.watch { fill: var(--paper-2); stroke: var(--ink); stroke-width: 1.8; stroke-dasharray: 2.5 2; }
 .stage[data-view='console'] .m-dev.ok    { fill: var(--paper-2); stroke: var(--quiet); stroke-width: 1.4; }
 .stage[data-view='console'] .m-dev.alert { fill: var(--ink); stroke: var(--acid); stroke-width: 3.5; paint-order: stroke; animation: none; }
-@keyframes devpulse-flat { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 /* the same vocabulary for the branch links + subnet threat pip */
 .stage[data-view='console'] .branch.high  { stroke: var(--ink); opacity: 0.75; }
@@ -2583,18 +1796,6 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .stage[data-view='console'] .eng.on { color: var(--ink); font-weight: 500; }
 .stage[data-view='console'] .gem { background: #b7b7b1; box-shadow: none; }
 .stage[data-view='console'] .gem.live { background: var(--tier-edge); box-shadow: none; }
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   SEGMENT DEVICE GRAPH (page 1, subnet expanded)
-   Every host on the /24 — not just the noisy handful. Hosts the firewall only
-   ever saw take a DHCP lease are drawn hollow (silent); hosts that actually
-   route are filled. Edges carry their evidence class: OBSERVED relations
-   (session clash, shared broadcast domain, shared destination) are solid and
-   carry moving traffic drips; INFERRED ones (vendor OUI, hostname family, DHCP
-   lockstep, port fingerprint) are dashed — the map never pretends an inference
-   is a measurement.
-   ═══════════════════════════════════════════════════════════════════════════ */
-.sg-trunk { fill: none; stroke: var(--tier-edge); stroke-width: 2; opacity: 0.5; stroke-dasharray: 5 5; }
 
 /* Segment screen = the teal (--net) family: the internal mesh is the environment,
    so its structure (territories, capillaries, healthy hosts) carries teal, and the
