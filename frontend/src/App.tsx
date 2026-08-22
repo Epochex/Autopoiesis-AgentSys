@@ -6,6 +6,7 @@ import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
 import { TrajectoryPage } from './components/TrajectoryPage'
 import { CostPage } from './components/CostPage'
+import { SentinelTimeline } from './components/SentinelTimeline'
 import { DiagnosePage } from './components/DiagnosePage'
 import { RetrievalPage } from './components/RetrievalPage'
 import { BenchConsole } from './components/BenchConsole'
@@ -21,7 +22,7 @@ type MeshModel = {
 }
 import type { DataStats, Device, GraphAnalysis, SubnetGraph, TheaterEvent, Topology } from './types'
 
-type View = 'console' | 'trajectory' | 'diagnose' | 'retrieval' | 'cost'
+type View = 'console' | 'trajectory' | 'diagnose' | 'retrieval' | 'cost' | 'sentinel'
 type Scenario = 'live' | 'bench'
 
 type State =
@@ -330,6 +331,7 @@ function App() {
               <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
               <button className={view === 'diagnose' ? 'on' : ''} onClick={() => setView('diagnose')}>{lang === 'zh' ? '诊断处置' : 'DIAGNOSE'}</button>
               <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '检索' : 'RETRIEVAL'}</button>
+              <button className={view === 'sentinel' ? 'on' : ''} onClick={() => setView('sentinel')}>{lang === 'zh' ? '哨兵' : 'SENTINEL'}</button>
               <button className={view === 'cost' ? 'on' : ''} onClick={() => setView('cost')}>{lang === 'zh' ? '成本' : 'COST'}</button>
             </div>
 
@@ -371,7 +373,9 @@ function App() {
         </div>
       </header>
 
-      {view === 'cost' ? (
+      {view === 'sentinel' ? (
+        <SentinelTimeline lang={lang} />
+      ) : view === 'cost' ? (
         <CostPage lang={lang} />
       ) : view === 'retrieval' ? (
         <RetrievalPage lang={lang} scenario={scenario} />

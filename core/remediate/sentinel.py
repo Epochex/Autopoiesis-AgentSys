@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -32,9 +33,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TIMELINE_PATH = Path(
-    os.getenv("AUTOPOIESIS_SENTINEL_TIMELINE", "/data/autopoiesis-runtime/sentinel-timeline.jsonl")
-)
+def _default_timeline() -> Path:
+    """Where the sentinel writes what it saw and did.
+
+    Under pytest this moves to a temp path. A test run writing fabricated
+    detections into the live timeline puts `demo.service` and a deliberately
+    broken detector next to real incidents — and the timeline is the audit
+    trail, so polluting it is worse than not having one.
+    """
+    configured = os.getenv("AUTOPOIESIS_SENTINEL_TIMELINE")
+    if configured:
+        return Path(configured)
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return Path(tempfile.gettempdir()) / "autopoiesis-sentinel-test.jsonl"
+    return Path("/data/autopoiesis-runtime/sentinel-timeline.jsonl")
+
+
+TIMELINE_PATH = _default_timeline()
 
 # How long a target stays untouchable after the sentinel acted on it. Long
 # enough that a flapping service is escalated rather than restarted in a loop.
@@ -82,9 +97,10 @@ def _now() -> str:
 def record(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Append one entry to the timeline the console replays."""
     entry = {"at": _now(), "kind": kind, **payload}
+    path = _default_timeline()
     try:
-        TIMELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with TIMELINE_PATH.open("a", encoding="utf-8") as handle:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
     except OSError:
         pass
@@ -93,10 +109,11 @@ def record(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 def timeline(limit: int = 200) -> list[dict[str, Any]]:
     """The chain of what was seen, decided, done and verified — newest last."""
-    if not TIMELINE_PATH.exists():
+    path = _default_timeline()
+    if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
-    with TIMELINE_PATH.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:

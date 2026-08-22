@@ -1,0 +1,103 @@
+/* ── 哨兵时间线 ──────────────────────────────────────────────────────────────
+   Same instrument palette as the diagnose page. The colour carries meaning
+   here: teal is a step that concluded well, amber a step that waited, crimson
+   a step that refused or needs a person. */
+.sx {
+  --paper:#e7e7e3; --raised:#efeee9; --sunk:#dddcd5; --ink:#0d0d0d;
+  --ink-soft:#2a2a27; --muted:#605f5a; --rule:#cfcfca;
+  --safe:#12615c; --warn:#80500e; --risk:#9e2937; --acid:#ccff00;
+  --display:'IBM Plex Sans Condensed','Noto Sans SC',sans-serif;
+  --body:'IBM Plex Sans','Noto Sans SC',system-ui,sans-serif;
+  --mono:'IBM Plex Mono','Noto Sans SC',ui-monospace,monospace;
+  background:var(--paper); color:var(--ink); font-family:var(--body);
+  padding:0 0 48px;
+}
+.sx *,.sx *::before,.sx *::after { box-sizing:border-box; }
+.stage[data-view='sentinel'] { max-width:none; padding:24px 28px 60px; }
+
+.sx-head { display:flex; justify-content:space-between; align-items:flex-start; gap:24px;
+  flex-wrap:wrap; padding:22px 0 16px; border-bottom:2px solid var(--ink); margin-bottom:18px; }
+.sx-eyebrow { font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+.sx-lede { margin:0; max-width:70ch; font-size:14.5px; line-height:1.6; color:var(--ink-soft); }
+
+.sx-controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.sx-btn { border:1.5px solid var(--ink); background:var(--paper); color:var(--ink);
+  font:inherit; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  padding:6px 14px; cursor:pointer; }
+.sx-btn:hover:not(:disabled) { background:var(--sunk); }
+.sx-btn.is-primary { background:var(--acid); border-color:var(--ink); font-weight:600; }
+.sx-btn:disabled { background:var(--sunk); color:var(--muted); cursor:default; }
+.sx-btn:focus-visible,.sx-live input:focus-visible { outline:2px solid var(--safe); outline-offset:2px; }
+.sx-live { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono);
+  font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); cursor:pointer; }
+.sx-updated { font-family:var(--mono); font-size:10px; color:var(--muted); }
+
+.sx-state { padding:48px 0; text-align:center; font-size:13px; color:var(--ink-soft); }
+.sx-state.is-err { color:var(--risk); }
+.sx-quiet { margin:0 0 12px; font-family:var(--mono); font-size:10.5px; color:var(--muted); }
+
+.sx-incidents { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+.sx-incident { border:1.5px solid var(--ink); background:var(--raised); }
+.sx-incident.out-resolved { border-left:5px solid var(--safe); }
+.sx-incident.out-needs_human { border-left:5px solid var(--risk); }
+.sx-incident.out-declined,.sx-incident.out-reported { border-left:5px solid var(--warn); }
+.sx-incident.out-watching { border-left:5px solid var(--muted); }
+
+.sx-inc-head { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  padding:10px 14px; border-bottom:1px solid var(--rule); background:var(--sunk); }
+.sx-inc-subject { font-family:var(--display); font-size:16px; font-weight:700; }
+.sx-inc-outcome { font-family:var(--mono); font-size:9.5px; font-weight:600; letter-spacing:.1em;
+  text-transform:uppercase; padding:2px 8px; border:1px solid currentColor; }
+.out-resolved .sx-inc-outcome { color:var(--safe); }
+.out-needs_human .sx-inc-outcome { color:var(--risk); }
+.out-declined .sx-inc-outcome,.out-reported .sx-inc-outcome { color:var(--warn); }
+.out-watching .sx-inc-outcome { color:var(--muted); }
+.sx-inc-span { margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--muted);
+  font-variant-numeric:tabular-nums; }
+
+.sx-steps { list-style:none; margin:0; padding:6px 0; }
+.sx-step { display:grid; grid-template-columns:66px 108px 1fr; gap:4px 12px;
+  padding:8px 14px; border-bottom:1px solid var(--rule); align-items:baseline; }
+.sx-steps > li:last-child { border-bottom:none; }
+.sx-time { font-family:var(--mono); font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.sx-step-k { font-family:var(--mono); font-size:9.5px; font-weight:600; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--muted); }
+.sx-step.k-resolved .sx-step-k,.sx-step.k-remediated .sx-step-k { color:var(--safe); }
+.sx-step.k-declined .sx-step-k,.sx-step.k-detector_failed .sx-step-k { color:var(--risk); }
+.sx-step.k-awaiting_confirmation .sx-step-k,.sx-step.k-cooldown .sx-step-k,
+.sx-step.k-no_safe_action .sx-step-k { color:var(--warn); }
+.sx-step.k-detected .sx-step-k { color:var(--ink); }
+
+.sx-detail { grid-column:3; display:flex; flex-direction:column; gap:5px; min-width:0; }
+.sx-summary { margin:0; font-size:13.5px; line-height:1.55; color:var(--ink); }
+.sx-note { margin:0; font-size:12.5px; line-height:1.5; color:var(--ink-soft); }
+.sx-kv { margin:0; font-family:var(--mono); font-size:11px; color:var(--ink-soft); }
+.sx-kv span,.sx-kv-k { display:inline-block; min-width:78px; font-size:9px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--muted); }
+
+.sx-radius { display:flex; flex-direction:column; gap:3px; padding:6px 10px;
+  border:1px solid var(--rule); border-left:3px solid var(--muted); background:var(--paper); }
+.sx-radius.scope-single-nic,.sx-radius.scope-single-service { border-left-color:var(--safe); }
+.sx-radius.scope-blocked,.sx-radius.scope-none { border-left-color:var(--warn); }
+.sx-radius.scope-refused,.sx-radius.scope-service-wide { border-left-color:var(--risk); }
+.sx-radius-k { font-family:var(--mono); font-size:9px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--muted); }
+.sx-radius span:last-child { font-size:12.5px; line-height:1.5; color:var(--ink-soft); }
+
+.sx-baseline { display:flex; flex-wrap:wrap; gap:5px 8px; align-items:baseline; }
+.sx-baseline em { font-style:normal; font-family:var(--mono); font-size:10px; padding:1px 7px;
+  border:1px solid var(--rule); color:var(--ink-soft); }
+.sx-baseline em.is-up { border-color:var(--safe); color:var(--safe); }
+.sx-baseline em.is-down { border-color:var(--warn); color:var(--warn); }
+
+.sx-err { margin:0; padding:6px 9px; background:#1a1a17; color:#e9e9e2; overflow-x:auto;
+  font-family:var(--mono); font-size:11px; }
+.sx-raw-toggle { margin-top:16px; }
+.sx-raw { margin:10px 0 0; padding:12px 14px; background:#1a1a17; color:#e9e9e2;
+  font-family:var(--mono); font-size:11px; line-height:1.6; overflow-x:auto; max-height:320px; }
+
+@media (max-width:760px) {
+  .sx-step { grid-template-columns:66px 1fr; }
+  .sx-detail { grid-column:1/-1; }
+}
