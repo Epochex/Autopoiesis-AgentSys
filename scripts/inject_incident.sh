@@ -57,14 +57,25 @@ service-down)
     STATE=$(systemctl is-active "$UNIT" || true)
     echo "注入完成：$UNIT 现在是 $STATE"
     echo
-    echo "接下来会发生什么："
-    echo "  1. 哨兵下一轮轮询看到它 failed（需要连续 2 轮确认）"
-    echo "  2. preflight 检查：是不是真 failed、重启次数够不够、是不是依赖挂了"
-    echo "  3. 通过后重启，回读确认起来了"
-    echo "  4. 进观察期，期间同时盯这个单元和网关健康"
-    echo "  5. 没有回归就判定 resolved"
+    # `systemctl show -p Environment` only lists Environment= lines, not what
+    # came from an EnvironmentFile, so ask the running process instead.
+    GW_PID=$(systemctl show netops-ops-console-backend -p MainPID --value)
+    if [[ -n "$GW_PID" && "$GW_PID" != 0 ]] \
+       && tr '\0' '\n' < "/proc/$GW_PID/environ" 2>/dev/null | grep -q '^AUTOPOIESIS_SENTINEL=1$'; then
+        echo "哨兵在自动巡检，不用手动做任何事。"
+        echo
+        echo "现在切到浏览器 → 诊断处置 页 → 往下滚到「系统自己做过什么」"
+        echo "页面每 5 秒自己刷新，大约 2 分钟内会依次出现："
+    else
+        echo "哨兵没开（AUTOPOIESIS_SENTINEL=1 可开启自动巡检）。"
+        echo "手动推进：curl -X POST localhost:8026/api/rca/sentinel/poll   （跑两次）"
+        echo
+        echo "会依次出现："
+    fi
+    echo "  发现 → 等确认 → 发现 → 前置校验 → 已执行 → 判定恢复"
     echo
-    echo "看过程：curl -s localhost:8026/api/rca/sentinel/timeline | python3 -m json.tool"
+    echo "整条链大约 2 分钟走完，其中 90 秒是观察期——改完之后要盯着"
+    echo "确认没有回退才算修好，这段等待本身就是要演示的东西。"
     ;;
 
 bruteforce)
@@ -75,9 +86,11 @@ bruteforce)
     done
     echo "注入完成：12 条失败登录"
     echo
-    echo "这一条会被检测到，但不会自动处置——封禁是可撤销的，"
-    echo "但封错来源就等于堵住自己的管理通道，所以设计上只报不动。"
-    echo "时间线里会看到 detected 后面跟着 no_safe_action，这是对的。"
+    echo "同样切到 诊断处置 页看。这一条会被检测到，但不会自动处置——"
+    echo "封禁是可撤销的，但封错来源就等于堵住自己的管理通道，所以只报不动。"
+    echo "页面上它是琥珀色的「只报不动」，链条停在「无安全动作」。"
+    echo
+    echo "演示时这一条比自愈那一条更值钱：它证明分级不是摆设。"
     ;;
 
 status)

@@ -235,6 +235,13 @@ def _start_prewarm() -> None:
 async def _lifespan(app: FastAPI):
     global _diagnosis_cases, _evolving_service, _runtime_error
     _start_prewarm()
+
+    # The autonomous loop. Off unless AUTOPOIESIS_SENTINEL=1, because something
+    # that acts on the live system on its own must be switched on deliberately
+    # rather than arriving with a deploy.
+    from .sentinel_wiring import start_background
+
+    start_background()
     try:
         from domains.network_rca.factory import build_network_rca_service
         from domains.network_rca.real_dataset import (
@@ -1308,5 +1315,12 @@ def serve_frontend(full_path: str = ""):
     dist_root = settings.frontend_dist.resolve()
     requested = (settings.frontend_dist / full_path).resolve()
     if full_path and requested.is_relative_to(dist_root) and requested.is_file():
-        return FileResponse(requested)
-    return FileResponse(dist_root / "index.html")
+        # Asset filenames carry a content hash, so they are safe to cache hard.
+        return FileResponse(requested, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    # index.html must never be cached: it is the only file whose name does not
+    # change between builds, so a cached copy keeps pointing at a bundle that
+    # was replaced — which shows up as a deploy that silently did nothing.
+    return FileResponse(
+        dist_root / "index.html",
+        headers={"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"},
+    )
