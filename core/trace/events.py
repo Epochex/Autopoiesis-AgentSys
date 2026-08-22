@@ -37,6 +37,15 @@ TraceKind = Literal[
     "human_approval_granted",
     "human_approval_rejected",
     "step_rolled_back",
+    # Post-remediation follow-up. A write that read back correctly is not yet a
+    # fix: the change has to survive a watch window before the case can close.
+    "remediation_committed",
+    "bakein_opened",
+    "bakein_sampled",
+    "bakein_passed",
+    "bakein_regressed",
+    "remediation_reverted",
+    "revert_unverified",
 ]
 
 

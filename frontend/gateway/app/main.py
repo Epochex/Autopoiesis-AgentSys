@@ -1075,6 +1075,67 @@ async def rca_bench_live_situation(lang: str = "zh") -> dict[str, Any]:
     return await asyncio.to_thread(load_runtime_snapshot, settings, lang, replay_dir)
 
 
+class RemediationRequest(BaseModel):
+    """Name one allowlisted action and the single target it applies to.
+
+    ``action`` is matched against a closed set defined server-side; ``target``
+    is validated by that action's own preconditions before anything runs. The
+    caller cannot express a verb the platform did not already choose to offer.
+    """
+
+    action: str = Field(min_length=1, max_length=64)
+    target: str = Field(min_length=1, max_length=128)
+
+
+@app.get("/api/rca/remediation/actions")
+async def remediation_actions() -> dict[str, Any]:
+    """The closed set of actions the system may run unattended."""
+    from .remediation import describe_actions
+
+    return {"ok": True, "actions": describe_actions()}
+
+
+@app.post("/api/rca/remediation/preflight")
+async def remediation_preflight(request: RemediationRequest) -> dict[str, Any]:
+    """Report whether an action would run, and why, without touching anything.
+
+    A refusal is the expected answer most of the time — a healthy interface, a
+    running unit, a spent restart budget — and is returned with its reason at
+    200 rather than as an error, because "not eligible" is information, not a
+    fault.
+    """
+    from .remediation import preflight
+
+    result = await asyncio.to_thread(preflight, request.action, request.target)
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/remediation/execute")
+async def remediation_execute(request: RemediationRequest) -> dict[str, Any]:
+    """Commit an action, hold its watch window open, then pass or revert.
+
+    Returns the whole verdict: the baseline taken before the change, every
+    reading taken during the window, and what was decided. A run whose revert
+    could not be proven comes back with ``needs_human`` set — that case is
+    reported, never quietly closed.
+    """
+    from .remediation import execute
+
+    result = await asyncio.to_thread(execute, request.action, request.target)
+    if result.get("refused"):
+        raise HTTPException(status_code=400, detail=result.get("reason", "refused"))
+    return {"ok": True, **result}
+
+
+@app.get("/api/rca/remediation/runs")
+async def remediation_runs(limit: int = Query(default=50, ge=1, le=500)) -> dict[str, Any]:
+    """Past runs, newest first — what the system did while nobody was watching."""
+    from .remediation import history
+
+    rows = await asyncio.to_thread(history, limit)
+    return {"ok": True, "runs": rows, "count": len(rows)}
+
+
 @app.get("/", include_in_schema=False)
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_frontend(full_path: str = ""):

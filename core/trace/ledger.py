@@ -31,6 +31,12 @@ class JSONLTraceLedger:
         "step_verified",
         "skill_promoted",
         "step_rolled_back",
+        # A committed write and its revert are the two points where the ledger
+        # is the only record that the live system was touched; neither may be
+        # lost to a crash between the action and the next group commit.
+        "remediation_committed",
+        "remediation_reverted",
+        "revert_unverified",
     }
 
     def __init__(self, path: str | Path, *, durable: bool = True):
