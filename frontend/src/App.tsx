@@ -6,6 +6,7 @@ import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
 import { TrajectoryPage } from './components/TrajectoryPage'
 import { CostPage } from './components/CostPage'
+import { LiveAlerts } from './components/LiveAlerts'
 import { DiagnosePage } from './components/DiagnosePage'
 import { RetrievalPage } from './components/RetrievalPage'
 import { BenchConsole } from './components/BenchConsole'
@@ -393,9 +394,16 @@ function App() {
           onPick={setActive}
           onTheater={openTheater}
           onTrace={(subject) => { setTraceSubject(subject); setView('diagnose') }}
+          focusSubject={traceSubject ?? undefined}
         />
       ) : d.datasetReady && s && c ? (
         <>
+          {scenario === 'live' ? (
+            <LiveAlerts
+              lang={lang}
+              onOpen={(subject) => { setTraceSubject(subject); setView('trajectory') }}
+            />
+          ) : null}
           <section className={`canvas-wrap ${show3D ? 'full3d' : threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>
             {scenario === 'live' && !show3D ? <TopoSearch lang={lang} onPick={onSearchPick} /> : null}
             {topo && !show3D ? (

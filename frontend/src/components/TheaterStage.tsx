@@ -20,7 +20,7 @@
 import { useMemo, useState } from 'react'
 import type { DataStats, SubnetGraph, TheaterEvent, Topology } from '../types'
 import type { Lang } from '../i18n'
-import { PIPELINE } from './netops-pipeline'
+import { railFor } from './netops-pipeline'
 import './theater.css'
 import { RemediationProgress } from './RemediationProgress'
 
@@ -233,7 +233,8 @@ export function TheaterStage({
 
   const impact = useMemo(() => new Set(impactNodes ?? []), [impactNodes])
   const rows = Math.ceil(stats.distinctSrc / TALLY.cols)
-  const railStages = PIPELINE.map((p, i) => ({ ...p, p: { x: RAIL_X0 + i * RAIL_DX, y: RAIL_Y } as Pt }))
+  const isSentinel = theater.scope === 'sentinel'
+  const railStages = railFor(theater.scope).map((p, i) => ({ ...p, p: { x: RAIL_X0 + i * RAIL_DX, y: RAIL_Y } as Pt }))
   const hotStageSet = new Set(theater.stageIds)
   const firstHot = railStages.find((s) => hotStageSet.has(s.id)) ?? railStages[0]
   const atk = stats.topAttackerSrc.slice(0, 3)
@@ -245,7 +246,9 @@ export function TheaterStage({
       {/* ── NetOps pipeline rail: the chain the landed event actually lit ── */}
       <g className="th-rail">
         <text x={RAIL_X0 - 12} y={RAIL_Y - 26} className="th-rail-kick" textAnchor="start">
-          {zh ? 'NetOps 流处理链 · 运行于 R230' : 'NETOPS STREAM CHAIN · ON R230'}
+          {isSentinel
+            ? (zh ? '哨兵自愈循环 · 运行于 R450 网关进程' : 'SENTINEL SELF-HEAL LOOP · IN THE R450 GATEWAY')
+            : (zh ? 'NetOps 流处理链 · 运行于 R230' : 'NETOPS STREAM CHAIN · ON R230')}
         </text>
         {railStages.map((s, i) => {
           const hot = hotStageSet.has(s.id)
@@ -482,7 +485,7 @@ export function TheaterStage({
             <span key={role} className={`th-legend-chip role-${role}`}><i />{zh ? ROLE_ZH[role] : role}</span>
           ))}
           <span className="th-legend-k">{zh ? '· 环节分色' : '· STAGES'}</span>
-          {PIPELINE.map((p) => (
+          {railFor(theater.scope).map((p) => (
             <span key={p.id} className={`th-legend-chip st-${p.id}`}><i />{zh ? p.zh : p.en}</span>
           ))}
         </div>

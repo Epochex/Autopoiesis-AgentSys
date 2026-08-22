@@ -12,7 +12,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TheaterEvent } from '../types'
-import { PIPELINE } from './netops-pipeline'
+import { railFor, sentinelStageIds } from './netops-pipeline'
 import './live-situation.css'
 
 interface Stage { stageId: string; label: string; provider: string; ts: string; detail: string }
@@ -60,9 +60,12 @@ const ymd = (iso: string): string => {
 const sevRank = (s: string | undefined): number =>
   s === 'critical' ? 3 : s === 'major' || s === 'high' ? 2 : s === 'warning' || s === 'minor' ? 1 : 0
 
-/** Which pipeline stages a suggestion's own scope implies are "hot" right now. */
+/** Which stages the selected incident actually lit, on whichever rail it ran. */
 const hotStages = (s: Suggestion | null): Set<string> => {
   if (!s) return new Set()
+  // A sentinel chain reports its own steps, so read them off the record rather
+  // than inferring from scope the way the NetOps cards have to.
+  if (s.scope === 'sentinel') return new Set(sentinelStageIds(s.timeline))
   return s.scope === 'cluster'
     ? new Set(['cluster-window', 'aiops-agent', 'suggestions-topic', 'remediation'])
     : new Set(['aiops-agent', 'suggestions-topic', 'remediation'])
@@ -78,15 +81,19 @@ const suggestionEvent = (s: Suggestion): TheaterEvent => ({
   kind: 'suggestion', id: s.id, ts: s.ts, device: s.deviceKey || s.device, deviceLabel: s.device,
   severity: s.severity,
   priority: s.priority, summary: s.summary, scope: s.scope,
-  stageIds: s.scope === 'cluster'
-    ? ['correlator', 'alerts-topic', 'cluster-window', 'aiops-agent', 'suggestions-topic', 'remediation']
-    : ['aiops-agent', 'suggestions-topic', 'remediation'],
+  stageIds: s.scope === 'sentinel'
+    ? sentinelStageIds(s.timeline)
+    : s.scope === 'cluster'
+      ? ['correlator', 'alerts-topic', 'cluster-window', 'aiops-agent', 'suggestions-topic', 'remediation']
+      : ['aiops-agent', 'suggestions-topic', 'remediation'],
 })
 
-export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live' }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; onTrace?: (subject: string) => void; scenario?: 'live' | 'bench' }) {
+export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live', focusSubject }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; onTrace?: (subject: string) => void; scenario?: 'live' | 'bench'; focusSubject?: string }) {
   const [snap, setSnap] = useState<LiveSnapshot | null>(null)
   const [state, setState] = useState<'load' | 'ok' | 'empty' | 'err'>('load')
-  const [selId, setSelId] = useState<string | null>(null)
+  // A manual pick remembers which focus request it was made under, so arriving
+  // from a new alert supersedes it while a click made after arriving stays put.
+  const [pick, setPick] = useState<{ id: string; under: string | null } | null>(null)
   const timer = useRef<number | undefined>(undefined)
 
   /* Poll: the panel is a live tail, so it re-reads on an interval. A restarting
@@ -104,17 +111,34 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live' }: { z
         .catch(() => { if (!gone) setState((s) => (s === 'load' ? 'err' : s)) })
     }
     load()
-    timer.current = window.setInterval(load, 20000)
+    // 8s, not 20s: a sentinel chain moves through six steps in about two
+    // minutes, and a list that lags the incident by a third of it reads as broken.
+    timer.current = window.setInterval(load, 8000)
     return () => { gone = true; if (timer.current) window.clearInterval(timer.current) }
   }, [zh, scenario])
 
   const suggestions = useMemo(() => snap?.suggestions ?? [], [snap])
   const feed = useMemo(() => snap?.feed ?? [], [snap])
-  const selected = useMemo(
-    () => suggestions.find((s) => s.id === (selId ?? snap?.defaultSuggestionId)) ?? suggestions[0] ?? null,
-    [suggestions, selId, snap],
-  )
+  const selected = useMemo(() => {
+    if (pick && pick.under === (focusSubject ?? null)) {
+      const picked = suggestions.find((s) => s.id === pick.id)
+      if (picked) return picked
+    }
+    if (focusSubject) {
+      const focus = suggestions.find((s) => s.deviceKey === focusSubject || s.device === focusSubject)
+      if (focus) return focus
+    }
+    return suggestions.find((s) => s.id === snap?.defaultSuggestionId) ?? suggestions[0] ?? null
+  }, [suggestions, pick, focusSubject, snap])
   const hot = useMemo(() => hotStages(selected), [selected])
+  const rail = useMemo(() => railFor(selected?.scope), [selected])
+
+  /* Arriving from the situational page's alert strip: bring the panel into view.
+   * Which card is selected is derived above, not set here. */
+  useEffect(() => {
+    if (!focusSubject) return
+    document.querySelector('.ls')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [focusSubject])
 
   if (state === 'load') return <section className="ls ls-msg">{zh ? '接入 NetOps 实时流…' : 'CONNECTING TO NETOPS STREAM…'}</section>
   if (state === 'err') return <section className="ls ls-msg err">{zh ? '实时子系统不可达' : 'LIVE SUBSYSTEM UNREACHABLE'}</section>
@@ -138,13 +162,19 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live' }: { z
         </div>
       </header>
 
-      {/* the fixed pipeline — the stages the selected incident lit up read as ink */}
-      <div className="ls-pipe" role="list" aria-label={zh ? '流处理管线' : 'Stream pipeline'}>
-        {PIPELINE.map((p, i) => (
+      {/* the rail the selected incident ran on — its own stages read as ink.
+          Two subsystems, two rails: a sentinel chain never enters the correlator. */}
+      <div className="ls-pipe" role="list" aria-label={zh ? '处理链路' : 'Processing chain'}>
+        <span className="ls-pipe-k">
+          {selected?.scope === 'sentinel'
+            ? (zh ? '哨兵自愈循环' : 'SENTINEL LOOP')
+            : (zh ? 'NetOps 流处理' : 'NETOPS STREAM')}
+        </span>
+        {rail.map((p, i) => (
           <div key={p.id} className={`ls-stage ${hot.has(p.id) ? 'hot' : ''}`} role="listitem">
             <span className="ls-stage-n">{String(i + 1).padStart(2, '0')}</span>
             <span className="ls-stage-l">{zh ? p.zh : p.en}</span>
-            {i < PIPELINE.length - 1 && <span className="ls-stage-arm" aria-hidden="true" />}
+            {i < rail.length - 1 && <span className="ls-stage-arm" aria-hidden="true" />}
           </div>
         ))}
       </div>
@@ -163,7 +193,9 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live' }: { z
                   className={`ls-fi ${f.kind} ${on ? 'on' : ''} ${!isSug && onTheater ? 'linkable' : ''}`}
                   disabled={!isSug && !onTheater}
                   title={!isSug && onTheater ? (zh ? '在全链路拓扑剧场中展开' : 'Open in the topology theater') : undefined}
-                  onClick={() => (isSug ? setSelId(`${f.id}`.replace('feed-suggestion-', '')) : onTheater?.(alertEvent(f)))}
+                  onClick={() => (isSug
+                    ? setPick({ id: `${f.id}`.replace('feed-suggestion-', ''), under: focusSubject ?? null })
+                    : onTheater?.(alertEvent(f)))}
                 >
                   <span className="ls-fi-top">
                     <span className={`ls-tag sev${sevRank(f.severity)}`}>{isSug ? f.priority || 'P?' : (zh ? '告警' : 'ALERT')}</span>

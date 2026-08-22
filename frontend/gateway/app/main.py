@@ -1084,7 +1084,13 @@ async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
     # the two subsystems meet only at this disk boundary. Returns empty collections
     # when the runtime dir is absent, so the panel degrades to "no live data".
     from .runtime_reader import load_runtime_snapshot
-    return await asyncio.to_thread(load_runtime_snapshot, settings, lang)
+    from .sentinel_projection import merge_into_snapshot
+
+    snapshot = await asyncio.to_thread(load_runtime_snapshot, settings, lang)
+    # The sentinel is a separate subsystem writing a separate file. Folding its
+    # chains in here is what makes a fault it just found show up on the page the
+    # operator is actually looking at, instead of only in the audit trail.
+    return await asyncio.to_thread(merge_into_snapshot, snapshot, lang)
 
 
 @app.get("/api/rca/bench-live-situation")

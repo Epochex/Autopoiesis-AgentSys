@@ -14,6 +14,14 @@
   --st-aiops-agent: #7a3fa0;
   --st-suggestions-topic: #1c8f88;
   --st-remediation: #2f7d33;
+  /* sentinel loop — deliberately a different run of hues from the NetOps rail,
+     so the two chains never read as the same pipeline */
+  --st-detector: #4954c9;
+  --st-confirm: #a86a12;
+  --st-preflight: #7a3fa0;
+  --st-act: #b3243c;
+  --st-watch: #1c8f88;
+  --st-verify: #2f7d33;
   --role-workstation: #4954c9;
   --role-camera: #a86a12;
   --role-mobile: #7a3fa0;
@@ -32,6 +40,12 @@
 .th-pulse.st-aiops-agent { fill: var(--st-aiops-agent); }
 .th-pulse.st-suggestions-topic { fill: var(--st-suggestions-topic); }
 .th-pulse.st-remediation { fill: var(--st-remediation); }
+.th-pulse.st-detector { fill: var(--st-detector); }
+.th-pulse.st-confirm { fill: var(--st-confirm); }
+.th-pulse.st-preflight { fill: var(--st-preflight); }
+.th-pulse.st-act { fill: var(--st-act); }
+.th-pulse.st-watch { fill: var(--st-watch); }
+.th-pulse.st-verify { fill: var(--st-verify); }
 
 /* pipeline rail */
 .th-rail-kick { font: 600 11px 'IBM Plex Mono', monospace; letter-spacing: 0.18em; fill: var(--gray); text-transform: uppercase; }
@@ -48,6 +62,12 @@
 .st-cluster-window { --sc: var(--st-cluster-window); }
 .st-aiops-agent { --sc: var(--st-aiops-agent); }
 .st-suggestions-topic { --sc: var(--st-suggestions-topic); }
+.st-detector { --sc: var(--st-detector); }
+.st-confirm { --sc: var(--st-confirm); }
+.st-preflight { --sc: var(--st-preflight); }
+.st-act { --sc: var(--st-act); }
+.st-watch { --sc: var(--st-watch); }
+.st-verify { --sc: var(--st-verify); }
 .st-remediation { --sc: var(--st-remediation); }
 .th-stage.hot .th-stage-box { stroke: var(--sc, var(--ink)); }
 .th-stage.hot .th-stage-n { fill: var(--sc, var(--ink)); }
@@ -137,7 +157,9 @@
 .th-legend-chip { display: inline-flex; align-items: center; gap: 4px; }
 .th-legend-chip i { width: 8px; height: 8px; border: 1.6px solid var(--rc, var(--sc, var(--gray))); background: transparent; display: inline-block; }
 .th-legend-chip.st-correlator i, .th-legend-chip.st-alerts-topic i, .th-legend-chip.st-cluster-window i,
-.th-legend-chip.st-aiops-agent i, .th-legend-chip.st-suggestions-topic i, .th-legend-chip.st-remediation i { border-radius: 50%; }
+.th-legend-chip.st-aiops-agent i, .th-legend-chip.st-suggestions-topic i, .th-legend-chip.st-remediation i,
+.th-legend-chip.st-detector i, .th-legend-chip.st-confirm i, .th-legend-chip.st-preflight i,
+.th-legend-chip.st-act i, .th-legend-chip.st-watch i, .th-legend-chip.st-verify i { border-radius: 50%; }
 
 /* console door into the theater */
 .theater-door-t { font: 600 11px 'IBM Plex Mono', monospace; letter-spacing: 0.12em; fill: var(--gray); text-transform: uppercase; }

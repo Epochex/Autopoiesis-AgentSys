@@ -37,7 +37,12 @@
 .ls-counts b { color: var(--ink); font-variant-numeric: tabular-nums; }
 
 /* ── pipeline band ──────────────────────────────────────────────────────── */
-.ls-pipe { display: flex; border: 1px solid var(--rule); background: var(--paper-2); }
+.ls-pipe { display: flex; align-items: stretch; border: 1px solid var(--rule); background: var(--paper-2); }
+/* names which of the two chains this rail is, so the stage labels are never
+   read as belonging to the other subsystem */
+.ls-pipe-k { display: flex; align-items: center; padding: 0 10px; border-right: 1px solid var(--rule);
+  font: 600 8.5px 'IBM Plex Mono', monospace; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--gray); white-space: nowrap; }
 .ls-stage { position: relative; flex: 1 1 0; display: flex; align-items: center; gap: 6px; padding: 6px 10px; min-width: 0; border-right: 1px solid var(--rule); }
 .ls-stage:last-child { border-right: none; }
 .ls-stage-n { font-family: var(--font-mono); font-size: 8px; color: var(--gray); font-variant-numeric: tabular-nums; }
