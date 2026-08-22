@@ -1261,6 +1261,20 @@ async def rca_cost(hours: int = Query(default=24, ge=1, le=720)) -> dict[str, An
     return {"ok": True, **await asyncio.to_thread(summary, hours)}
 
 
+@app.get("/api/rca/cost/cache")
+async def rca_cost_cache() -> dict[str, Any]:
+    """What is cached on disk — i.e. what the next deploy will not have to re-buy."""
+    from .model_access import cache_stats, calls_enabled
+
+    stats = await asyncio.to_thread(cache_stats)
+    return {
+        "ok": True,
+        "calls_enabled": calls_enabled(),
+        "prewarm_enabled": os.getenv("AUTOPOIESIS_PREWARM", "0") == "1",
+        **stats,
+    }
+
+
 @app.get("/", include_in_schema=False)
 @app.get("/{full_path:path}", include_in_schema=False)
 def serve_frontend(full_path: str = ""):

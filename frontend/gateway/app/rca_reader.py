@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+from contextlib import contextmanager
 import re
 import sys
 import threading
@@ -117,13 +118,36 @@ def _run_case(case, stats_path: Path, reasoner_mode: str) -> dict[str, Any]:
     }
 
 
+@contextmanager
+def _llm_env(overrides: dict[str, str] | None):
+    """Apply provider credentials for one call, then put the environment back.
+
+    ``os.environ.update`` here used to be permanent: one request with
+    ``?provider=deepseek-v4`` left AUTOPOIESIS_LLM_* set for the life of the
+    process, which silently flipped unrelated endpoints from "no model
+    configured" to live paid calls. Nothing announced that, and it survived
+    until the next restart.
+    """
+    if not overrides:
+        yield
+        return
+    previous = {key: os.environ.get(key) for key in overrides}
+    os.environ.update(overrides)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rule") -> dict[str, Any]:
     from . import providers
 
     manifest = Path(manifest_path) if manifest_path else _MANIFEST
     reasoner_mode, llm_env = providers.resolve_reasoner(provider_id)
-    if llm_env:
-        os.environ.update(llm_env)
     readiness = probe_r230_readiness(manifest_path=manifest)
     validation = validate_real_dataset_manifest(manifest)
 
@@ -163,7 +187,10 @@ def load_rca_snapshot(manifest_path: Path | None = None, provider_id: str = "rul
             # Parallelize the per-case LLM diagnoses so the live request stays responsive.
             from concurrent.futures import ThreadPoolExecutor
 
-            with ThreadPoolExecutor(max_workers=min(6, len(cases) or 1)) as pool:
+            # The env override has to outlive the pool: worker threads read the
+            # same process environment, so restoring it before they finish would
+            # leave them unconfigured mid-flight.
+            with _llm_env(llm_env), ThreadPoolExecutor(max_workers=min(6, len(cases) or 1)) as pool:
                 payload["cases"] = list(pool.map(lambda c: _run_case(c, stats_path, "llm"), cases))
         else:
             payload["cases"] = [_run_case(case, stats_path, "rule") for case in cases]

@@ -8,6 +8,9 @@ import subprocess
 import time
 from typing import Any
 
+from .model_access import cache_get, cache_put, client_for, model_name, unavailable
+
+
 from .evidence_gate import (
     evidence_fact,
     relationship_evidence,
@@ -64,15 +67,10 @@ def _probe_rate() -> dict[str, Any]:
 
 # ---- on-demand DeepSeek threat analysis for one device ----
 def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh", peers: list | None = None) -> dict[str, Any]:
-    from . import providers
-    from core.llm.provider import OpenAICompatibleClient
 
-    cfg = providers._deepseek_cfg()
-    if not cfg["api_key"]:
-        return {"ok": False, "text": "DeepSeek key not configured."}
-    client = OpenAICompatibleClient(
-        base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=45
-    )
+    client = client_for("device", timeout_sec=45)
+    if client is None:
+        return unavailable("device")
     want_lang = "Chinese" if lang == "zh" else "English"
     candidates = [
         {"ip": p["ip"], "ports": p.get("top_ports") or p.get("topPorts"), "deny": p.get("deny"), "threat": p.get("threat"), "role": p.get("role")}
@@ -163,7 +161,7 @@ def assess_device(ip: str, cidr: str, device: dict, lang: str = "zh", peers: lis
         "unverified": {"impactPeers": rejected},
         "verificationErrors": errors,
         "verificationStatus": "verified" if not errors else "partial",
-        "model": cfg["model"],
+        "model": model_name(),
     }
 
 
@@ -195,20 +193,23 @@ _mesh_cache: dict[str, Any] = {}
 
 def assess_mesh(cidr: str, lang: str = "zh") -> dict[str, Any]:
     """DeepSeek models the whole subnet: enriched device profiles + relationship links + clusters."""
-    from . import providers
     from .rca_reader import _load_meshes
-    from core.llm.provider import OpenAICompatibleClient
 
     ck = f"{cidr}:{lang}"
     if ck in _mesh_cache:
         return _mesh_cache[ck]
+    # Disk first: a deploy restarts this process, and the previous answer was
+    # already paid for.
+    on_disk = cache_get("mesh", ck)
+    if on_disk is not None:
+        _mesh_cache[ck] = on_disk
+        return on_disk
     nodes_in = (_load_meshes() or {}).get(cidr, [])
     if not nodes_in:
         return {"ok": False, "text": "no mesh for subnet"}
-    cfg = providers._deepseek_cfg()
-    if not cfg["api_key"]:
-        return {"ok": False, "text": "DeepSeek key not configured."}
-    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=60)
+    client = client_for("mesh", timeout_sec=60)
+    if client is None:
+        return unavailable("mesh")
     want = "Chinese" if lang == "zh" else "English"
     devs = [{"ip": n["ip"], "role": n["role"], "ports": n["ports"], "deny": n["deny"], "out": n["out"], "threat": n["threat"]} for n in nodes_in]
     relation_evidence = [
@@ -277,9 +278,10 @@ def assess_mesh(cidr: str, lang: str = "zh") -> dict[str, Any]:
         "unverified": {"links": rejected_links},
         "verificationErrors": errors,
         "verificationStatus": "verified" if not errors else "partial",
-        "model": cfg["model"],
+        "model": model_name(),
     }
     _mesh_cache[ck] = result
+    cache_put("mesh", ck, result)
     return result
 
 
@@ -305,18 +307,19 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
     """The agent reads the whole segment: names the communities, then hunts for the
     patterns nobody asked about — shadow IoT fleets, netmask leaks, duplicate IPs,
     lateral-movement corridors — grounded ONLY in the mined evidence."""
-    from . import providers
-    from core.llm.provider import OpenAICompatibleClient
 
     ck = f"graph:{cidr}:{lang}"
     if ck in _graph_cache:
         return _graph_cache[ck]
+    on_disk = cache_get("graph", ck)
+    if on_disk is not None:
+        _graph_cache[ck] = on_disk
+        return on_disk
     g = subnet_graph(cidr)
     if not g.get("ok"):
         return g
-    cfg = providers._deepseek_cfg()
-    if not cfg["api_key"]:
-        return {"ok": False, "text": "DeepSeek key not configured."}
+    if client_for("graph") is None:
+        return unavailable("graph")
 
     devs = {d["ip"]: d for d in g["devices"]}
     deg: dict[str, int] = {}
@@ -457,9 +460,9 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
         f'"actions": [<concrete action>, <concrete action>, <concrete action>]}}. '
         f"Give 3-6 patterns, ranked by severity."
     )
-    client = OpenAICompatibleClient(
-        base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=90
-    )
+    client = client_for("graph", timeout_sec=90)
+    if client is None:
+        return unavailable("graph")
     try:
         out = client.complete_json(
             [{"role": "user", "content": instr + "\n" + json.dumps(payload, ensure_ascii=False)}],
@@ -495,9 +498,10 @@ def analyze_graph(cidr: str, lang: str = "zh") -> dict[str, Any]:
         "unverified": rejected,
         "verificationErrors": errors,
         "verificationStatus": "verified" if not errors else "partial",
-        "model": cfg["model"],
+        "model": model_name(),
     }
     _graph_cache[ck] = result
+    cache_put("graph", ck, result)
     return result
 
 
@@ -654,10 +658,10 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
     siblings_ev = [[i, n] for i, n in block["ips"] if i != ip]
     internal = ev["internalDenySrc"][:6]
 
-    cfg = providers._deepseek_cfg()
-    if not cfg["api_key"]:
-        return {"ok": False, "text": "DeepSeek key not configured."}
-    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=120)
+
+    client = client_for("wan", timeout_sec=120)
+    if client is None:
+        return unavailable("wan")
     want = "Chinese" if lang == "zh" else "English"
     instr = (
         f"You are a SOC threat analyst. Assess this external WAN source that is hammering the "
@@ -744,7 +748,7 @@ def assess_wan(ip: str, lang: str = "zh") -> dict[str, Any]:
         "confidence": out.get("confidence"),
         "lockouts": ev["lockouts"],
         "distinctSrc": ev["distinctSrc"],
-        "model": cfg["model"],
+        "model": model_name(),
     }
     _wan_cache[ck] = result
     return result
@@ -755,12 +759,9 @@ def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str, dev_h
     full expansion) as a possible compromised pivot: the attack it received, its
     weakness, and a role playbook. `dev_hint` carries the mined graph profile when the
     host is not in the exposed set (silent / DHCP-only devices)."""
-    from . import providers
-    from core.llm.provider import OpenAICompatibleClient
 
-    cfg = providers._deepseek_cfg()
-    if not cfg["api_key"]:
-        return {"ok": False, "text": "DeepSeek key not configured."}
+    if client_for("wan") is None:
+        return unavailable("wan")
     dev = None
     for s in _asset_exposure()["subnets"]:
         for d in s["exposed"]:
@@ -774,7 +775,9 @@ def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str, dev_h
         dev = {k: dev_hint.get(k) for k in _F if k in dev_hint}
         dev["cidr"] = ".".join(ip.split(".")[:3]) + ".0/24"
     want = "Chinese" if lang == "zh" else "English"
-    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=120)
+    client = client_for("wan", timeout_sec=120)
+    if client is None:
+        return unavailable("wan")
     instr = (
         f"You are a SOC analyst. This is an INTERNAL host on the R230 network with heavy denied traffic. "
         f"Assess whether it is a COMPROMISED PIVOT tied to the external brute-force campaign, using ONLY "
@@ -815,18 +818,15 @@ def _assess_internal_host(ip: str, lateral, ev: dict[str, Any], lang: str, dev_h
         ][:6],
         "impactNodes": [x for x in (out.get("impact_nodes") or []) if x][:12],
         "confidence": out.get("confidence"), "lockouts": ev["lockouts"], "distinctSrc": ev["distinctSrc"],
-        "model": cfg["model"],
+        "model": model_name(),
     }
 
 
 def _synthesize_posture(cidr: str, results: list[dict], lang: str) -> str:
-    from . import providers
-    from core.llm.provider import OpenAICompatibleClient
 
-    cfg = providers._deepseek_cfg()
-    if not cfg["api_key"] or not results:
+    client = client_for("subnet", timeout_sec=40) if results else None
+    if client is None:
         return ""
-    client = OpenAICompatibleClient(base_url=cfg["base_url"], api_key=cfg["api_key"], model=cfg["model"], timeout_sec=40)
     want = "Chinese" if lang == "zh" else "English"
     brief = [{"ip": r["ip"], "severity": r["severity"], "verdict": r["verdict"]} for r in results]
     instr = (
