@@ -219,3 +219,41 @@
   .rp.is-running .rp-phase.is-now .rp-dot { animation:rp-pulse 1.4s ease-in-out infinite; }
 }
 @keyframes rp-pulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }
+
+/* ── incident marker: the fault, drawn on the map rather than beside it ───── */
+.th-inc-halo { fill: none; stroke: #b3243c; stroke-width: 1.2; opacity: .35; }
+.th-inc-halo-box { fill: none; stroke: #b3243c; stroke-width: 1.4; opacity: .45; }
+.th-self.is-hit .th-self-box { stroke: #b3243c; stroke-width: 2.4; }
+.th-self.is-hit .th-self-n { fill: #b3243c; }
+.th-inc-note { font-size: 8.5px; line-height: 1.4; color: var(--gray, #605f5a);
+  margin: 0 0 4px; letter-spacing: .02em; }
+.th-inc-ring { fill: none; stroke: #b3243c; stroke-width: 2.2; }
+.th-inc-core { fill: #b3243c; }
+.th-inc-leader { stroke: #b3243c; stroke-width: 1.2; stroke-dasharray: 4 3; opacity: .8; }
+@media (prefers-reduced-motion: no-preference) {
+  .th-inc-halo { animation: th-inc-pulse 1.8s ease-out infinite; transform-origin: center; }
+  .th-inc-halo-box { animation: th-inc-fade 1.8s ease-in-out infinite; }
+}
+@keyframes th-inc-fade { 0%, 100% { opacity: .55 } 50% { opacity: .12 } }
+@keyframes th-inc-pulse { 0% { r: 11; opacity: .55 } 100% { r: 24; opacity: 0 } }
+
+.th-inc-card { border: 1.6px solid #b3243c; background: var(--paper, #e7e7e3);
+  padding: 6px 9px 7px; font-family: 'IBM Plex Mono', monospace; }
+.th-inc-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+.th-inc-k { font-size: 8px; font-weight: 700; letter-spacing: .14em; color: #b3243c; }
+.th-inc-ip { font-size: 9.5px; color: var(--gray, #605f5a); margin-left: auto; }
+.th-inc-subj-k { display: inline-block; margin-right: 6px; font-size: 8px; font-weight: 700;
+  letter-spacing: .1em; color: var(--gray, #605f5a); vertical-align: 1px; }
+.th-inc-subj { font-size: 12px; font-weight: 600; color: var(--ink, #0d0d0d);
+  line-height: 1.3; word-break: break-all; margin-bottom: 3px; }
+.th-inc-row { display: flex; gap: 7px; font-size: 9.5px; line-height: 1.45;
+  color: var(--ink-soft, #2a2a27); }
+.th-inc-row > span { flex: none; min-width: 40px; font-size: 8px; font-weight: 700;
+  letter-spacing: .1em; color: var(--gray, #605f5a); padding-top: 2px; }
+
+/* the host running this system: a real device the mined graph cannot see */
+.th-self-box { fill: var(--paper, #e7e7e3); stroke: var(--ink, #0d0d0d); stroke-width: 1.6; }
+.th-self-n { font: 600 11px 'IBM Plex Mono', monospace; fill: var(--ink, #0d0d0d); letter-spacing: .06em; }
+.th-self-ip { font: 500 9px 'IBM Plex Mono', monospace; fill: var(--gray, #605f5a); }
+.th-self-cap { font: 500 8px 'IBM Plex Mono', monospace; fill: var(--gray, #605f5a); letter-spacing: .07em; }
+.th-self-link { stroke: var(--rule, #cfcfca); stroke-width: 1.2; stroke-dasharray: 3 4; }

@@ -33,6 +33,7 @@ const CORE: Pt = { x: 400, y: 470 }
 const RAIL_Y = 64
 const RAIL_X0 = 600
 const RAIL_DX = 244
+const INCIDENT_W = 330
 /* WAN tally block (1 mark = 1 real distinct source, a reading order not a map) */
 const TALLY = { x: 58, y: 330, cols: 18, cell: 6.4 }
 
@@ -135,6 +136,16 @@ function Flow({ d, n = 3, dur = 2.6, cls = '' }: { d: string; n?: number; dur?: 
 
 /* cluster placement presets, biggest device-count first — a reading order that
  * fills the right field of the 1920x1000 plate and stays clear of the WAN column */
+/** Plain /n containment, enough for the private segments this map draws. */
+function cidrHolds(cidr: string, ip: string): boolean {
+  const [net, bitsRaw] = cidr.split('/')
+  const bits = Number(bitsRaw)
+  if (!net || !Number.isFinite(bits)) return false
+  const num = (a: string) => a.split('.').reduce((acc, o) => (acc << 8) + (Number(o) & 255), 0) >>> 0
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
+  return (num(net) & mask) === (num(ip) & mask)
+}
+
 const REGIONS: { c: Pt; rx: number; ry: number }[] = [
   { c: { x: 1300, y: 650 }, rx: 420, ry: 245 },
   { c: { x: 1030, y: 250 }, rx: 300, ry: 162 },
@@ -163,11 +174,21 @@ export function TheaterStage({
   const [hover, setHover] = useState<{ ip: string; p: Pt; role: string; vendor: string; threat: string; deny: number } | null>(null)
   const [sel, setSel] = useState<string | null>(null)
 
-  /* map the event's NetOps device key onto a real topology anchor — or admit it */
+  /* map the event onto a real topology anchor — or admit it.
+   *
+   * A measured anchorIp wins: the sentinel's subjects are unit and interface
+   * names, which match no anchor name, so name-matching alone left the incident
+   * floating with the topology drawn as if nothing were wrong. */
   const anchor = useMemo(() => {
+    if (theater.anchorIp) {
+      const byIp = topo.anchors.find((a) => a.ip === theater.anchorIp)
+      if (byIp) return byIp
+      // Known address, no named anchor: still a real position on the canvas.
+      return { ip: theater.anchorIp, name: theater.anchorIp, role: 'server', intf: '' }
+    }
     if (!theater.device) return null
     return topo.anchors.find((a) => theater.device.includes(a.name)) ?? null
-  }, [theater.device, topo.anchors])
+  }, [theater.anchorIp, theater.device, topo.anchors])
 
   /* ── full expansion: every subnet gets a region, every mined device a node ── */
   const scene = useMemo(() => {
@@ -193,6 +214,22 @@ export function TheaterStage({
     const posOf: Record<string, Pt> = {}
     for (const r of regions) Object.assign(posOf, r.pos)
 
+    /* The host this system runs on is a real device on a real segment, but the
+     * device graph is mined from FortiGate syslog and it does not appear there —
+     * so an incident on it had nowhere to be drawn and the map stayed silent.
+     * Place it against its own subnet, and mark it as what it is rather than
+     * passing it off as a mined node. */
+    let selfNode: { ip: string; name: string; p: Pt; cidr: string | null } | null = null
+    if (theater.anchorIp && !posOf[theater.anchorIp]) {
+      const home = regions.find((r) => cidrHolds(r.sub.cidr, theater.anchorIp as string))
+      const named = topo.anchors.find((a) => a.ip === theater.anchorIp)
+      const p = home
+        ? { x: home.c.x - home.rx - 70, y: Math.max(RAIL_Y + 96, home.c.y - home.ry - 24) }
+        : { x: CORE.x + 40, y: CORE.y - 150 }
+      selfNode = { ip: theater.anchorIp, name: named?.name ?? theater.anchorIp, p, cidr: home?.sub.cidr ?? null }
+      posOf[theater.anchorIp] = p
+    }
+
     /* interfaces: those serving subnets sit on the core→cluster path; the rest
      * (real ports with real flows, no mined subnet) hang as short spokes */
     const lan = topo.interfaces.filter((it) => it.kind === 'lan')
@@ -206,8 +243,8 @@ export function TheaterStage({
       const p: Pt = { x: CORE.x + (centroid.x - CORE.x) * t, y: CORE.y + (centroid.y - CORE.y) * t }
       return { it, p, served }
     })
-    return { regions, stubNodes, ifNodes, posOf }
-  }, [topo, graphs])
+    return { regions, stubNodes, ifNodes, posOf, selfNode }
+  }, [topo, graphs, theater.anchorIp])
 
   const anchorP = anchor ? scene.posOf[anchor.ip] : undefined
 
@@ -276,10 +313,87 @@ export function TheaterStage({
           <path d={bez(anchorP, { x: firstHot.p.x, y: firstHot.p.y + 15 })} className="th-chain-line" />
           <Flow d={bez(anchorP, { x: firstHot.p.x, y: firstHot.p.y + 15 })} n={4} dur={3.2} cls={`st-${firstHot.id}`} />
           <text x={(anchorP.x + firstHot.p.x) / 2} y={(anchorP.y + firstHot.p.y) / 2 - 8} className="th-chain-lab" textAnchor="middle">
-            {theater.scenario || (zh ? '事件流入' : 'event ingest')} ↗
+            {isSentinel
+              ? (zh ? '在这台机器上处置' : 'handled on this host')
+              : (theater.scenario || (zh ? '事件流入' : 'event ingest'))} ↗
           </text>
         </g>
       ) : null}
+
+      {/* ── incident marker: put the fault ON the topology ──────────────────
+           A rail across the top and a panel in the corner leave the map itself
+           silent — the operator still cannot see which dot is in trouble. This
+           rings the node, names the fault, and states the measured extent, so
+           "影响范围" is answered where the devices are drawn. */}
+      {anchorP && theater.kind !== 'browse' ? (() => {
+        // The host box is drawn in clear space to the left of its cluster, so the
+        // card hangs straight below it. A mined dot sits inside a cluster, so
+        // there the card goes to whichever side has room.
+        const onHostBox = scene.selfNode?.ip === anchor?.ip
+        const tx = onHostBox
+          ? anchorP.x - INCIDENT_W / 2
+          : anchorP.x < 1200 ? anchorP.x + 26 : anchorP.x - 26 - INCIDENT_W
+        const ty = Math.min(Math.max(anchorP.y + (onHostBox ? 34 : 18), RAIL_Y + 60), 880)
+        const phase = [...railStages].reverse().find((r) => hotStageSet.has(r.id))
+        return (
+          <g className="th-incident" pointerEvents="none">
+            {onHostBox ? (
+              <rect x={anchorP.x - 68} y={anchorP.y - 21} width={136} height={42} className="th-inc-halo-box" />
+            ) : (
+              <>
+                <circle cx={anchorP.x} cy={anchorP.y} r={17} className="th-inc-halo" />
+                <circle cx={anchorP.x} cy={anchorP.y} r={10} className="th-inc-ring" />
+                <circle cx={anchorP.x} cy={anchorP.y} r={4} className="th-inc-core" />
+              </>
+            )}
+            <line x1={anchorP.x} y1={anchorP.y + (onHostBox ? 16 : 0)}
+              x2={onHostBox ? anchorP.x : (tx < anchorP.x ? tx + INCIDENT_W : tx)} y2={ty}
+              className="th-inc-leader" />
+            <foreignObject x={tx} y={ty} width={INCIDENT_W} height={104}>
+              <div className="th-inc-card">
+                <div className="th-inc-h">
+                  <span className="th-inc-k">
+                    {theater.originIp
+                      ? (zh ? '被攻击的是这台' : 'THIS HOST IS THE TARGET')
+                      : (zh ? '故障就在这台' : 'FAULT IS HERE')}
+                  </span>
+                  <span className="th-inc-ip">{anchor?.name && anchor.name !== anchor.ip ? `${anchor.name} · ` : ''}{anchor?.ip}</span>
+                </div>
+                <div className="th-inc-subj">
+                  <span className="th-inc-subj-k">
+                    {theater.originIp === theater.device ? (zh ? '来源' : 'FROM') : (zh ? '对象' : 'SUBJECT')}
+                  </span>
+                  {theater.device}
+                </div>
+                {onHostBox ? (
+                  <div className="th-inc-note">
+                    {zh ? '本机 · 系统就跑在这台上，不在 FortiGate 日志语料内'
+                        : 'this host — the system runs here; absent from the syslog corpus'}
+                  </div>
+                ) : null}
+                {phase ? (
+                  <div className="th-inc-row">
+                    <span>{zh ? '当前' : 'NOW'}</span>{zh ? phase.zh : phase.en}
+                  </div>
+                ) : null}
+                {theater.blastSummary ? (
+                  <div className="th-inc-row">
+                    <span>{zh ? '影响面' : 'EXTENT'}</span>{theater.blastSummary}
+                  </div>
+                ) : null}
+                {theater.originIp ? (
+                  <div className="th-inc-row">
+                    <span>{zh ? '来源' : 'SOURCE'}</span>
+                    {theater.originIp === theater.device
+                      ? (zh ? '外网地址，不在本图内' : 'an off-map address')
+                      : `${theater.originIp}${zh ? '（外网，不在本图内）' : ' (off-map)'}`}
+                  </div>
+                ) : null}
+              </div>
+            </foreignObject>
+          </g>
+        )
+      })() : null}
 
       {/* ── WAN field: the real source tally + named attackers, kept on stage ── */}
       <g className="th-wan">
@@ -420,6 +534,21 @@ export function TheaterStage({
           </g>
         )
       })}
+
+      {/* the host this system runs on — drawn explicitly, and said to be so */}
+      {scene.selfNode ? (() => {
+        const n = scene.selfNode
+        const home = scene.regions.find((r) => r.sub.cidr === n.cidr)
+        const hit = anchor?.ip === n.ip && theater.kind !== 'browse'
+        return (
+          <g className={`th-self${hit ? ' is-hit' : ''}`}>
+            {home ? <line x1={n.p.x} y1={n.p.y} x2={home.c.x - home.rx * 0.72} y2={home.c.y - home.ry * 0.5} className="th-self-link" /> : null}
+            <rect x={n.p.x - 62} y={n.p.y - 15} width={124} height={30} className="th-self-box" />
+            <text x={n.p.x} y={n.p.y - 2} className="th-self-n" textAnchor="middle">{n.name}</text>
+            <text x={n.p.x} y={n.p.y + 9} className="th-self-ip" textAnchor="middle">{n.ip}</text>
+          </g>
+        )
+      })() : null}
 
       {/* single-host subnets: stated as stubs, not padded into fake clusters */}
       {scene.stubNodes.map((s) => (

@@ -22,6 +22,7 @@ interface Suggestion {
   id: string; ts: string; scope: string; severity: string; priority: string; summary: string
   service: string; device: string; deviceKey: string; clusterSize: number; adaptiveMode: string
   triggerReasons: string[]; impactLevel: string
+  anchorIp?: string | null; originIp?: string | null
   timeline: TPt[]; stageTelemetry: Stage[]
   hypothesisSet: { setId: string; primaryHypothesisId: string; items: Hypo[]; summary: Record<string, number> }
   runbookDraft: {
@@ -81,6 +82,10 @@ const suggestionEvent = (s: Suggestion): TheaterEvent => ({
   kind: 'suggestion', id: s.id, ts: s.ts, device: s.deviceKey || s.device, deviceLabel: s.device,
   severity: s.severity,
   priority: s.priority, summary: s.summary, scope: s.scope,
+  anchorIp: s.anchorIp ?? undefined,
+  originIp: s.originIp ?? undefined,
+  blastScope: s.impactLevel,
+  blastSummary: s.stageTelemetry.find((t) => t.stageId === 'preflight')?.detail,
   stageIds: s.scope === 'sentinel'
     ? sentinelStageIds(s.timeline)
     : s.scope === 'cluster'

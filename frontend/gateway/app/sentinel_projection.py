@@ -61,6 +61,48 @@ _ACTION_LABEL: dict[str, tuple[str, str]] = {
 }
 
 
+_HOST_ADDRESS: list[str | None] = []
+
+
+def host_address() -> str | None:
+    """This host's own LAN address, measured once per process.
+
+    Every detector currently in the sentinel watches *this* machine — its units,
+    its links, its SSH. So the topology node an incident concerns is this host,
+    and the theater needs its address to put a ring around the right dot instead
+    of drawing the chain into nothing.
+    """
+    if _HOST_ADDRESS:
+        return _HOST_ADDRESS[0]
+
+    from core.investigate.safe_exec import run as safe_run
+    from core.net.addr import is_private
+
+    found: str | None = None
+    result = safe_run("ip -br addr show")
+    for line in (result.output or "").splitlines():
+        fields = line.split()
+        # "eth2  UP  192.168.1.27/24" — only a carrier-bearing link speaks for the host
+        if len(fields) < 3 or fields[1].upper() != "UP":
+            continue
+        for token in fields[2:]:
+            address = token.split("/")[0]
+            if ":" in address or address.startswith("127."):
+                continue
+            if is_private(address):
+                found = address
+                break
+        if found:
+            break
+    _HOST_ADDRESS.append(found)
+    return found
+
+
+def _is_ipv4(value: str) -> bool:
+    parts = value.split(".")
+    return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
 def _stable_id(*parts: str) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
@@ -203,6 +245,12 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         # must be the sentinel's own subject string verbatim.
         "device": subject,
         "deviceKey": subject,
+        # Where this sits in the topology. Every detector watches this host, so the
+        # node to ring is this host — even for a bruteforce, where the *source* is
+        # elsewhere but the thing under attack is here. originIp keeps that source
+        # rather than silently dropping it.
+        "anchorIp": host_address(),
+        "originIp": subject if _is_ipv4(subject) else None,
         "clusterSize": 1,
         "adaptiveMode": "自动巡检（无人值守）" if not en else "unattended sweep",
         "triggerReasons": [r for r in reasons if r],

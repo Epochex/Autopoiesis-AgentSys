@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from frontend.gateway.app import sentinel_projection
 from frontend.gateway.app.sentinel_projection import merge_into_snapshot, sentinel_cards
 
 NOW = 1_800_000_000.0
@@ -145,3 +146,53 @@ def test_both_languages_render_every_step(tmp_path, monkeypatch, lang):
     card = sentinel_cards(lang, now=NOW + 200)[0]
     assert all(step["label"] for step in card["timeline"])
     assert all(stage["label"] for stage in card["stageTelemetry"])
+
+
+def test_the_card_says_which_topology_node_it_concerns(tmp_path, monkeypatch):
+    """Without this the theater drew the chain into nothing and the map stayed silent."""
+    _write(tmp_path, HEALED, monkeypatch)
+    monkeypatch.setattr(sentinel_projection, "_HOST_ADDRESS", ["192.168.1.27"])
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    assert card["anchorIp"] == "192.168.1.27"
+    # a unit name is not an address, so there is no separate origin to name
+    assert card["originIp"] is None
+
+
+def test_an_address_subject_keeps_its_origin_separate_from_the_target(tmp_path, monkeypatch):
+    """The source is off-network; the host under attack is still ours."""
+    _write(tmp_path, REPORTED, monkeypatch)
+    monkeypatch.setattr(sentinel_projection, "_HOST_ADDRESS", ["192.168.1.27"])
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    assert card["anchorIp"] == "192.168.1.27"
+    assert card["originIp"] == "203.0.113.77"
+
+
+def test_an_unreadable_host_address_does_not_break_the_card(tmp_path, monkeypatch):
+    _write(tmp_path, HEALED, monkeypatch)
+    monkeypatch.setattr(sentinel_projection, "_HOST_ADDRESS", [None])
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    assert card["anchorIp"] is None, "no anchor is honest; a guessed one is not"
+    assert card["deviceKey"] == "demo.service"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("203.0.113.77", True), ("192.168.1.27", True), ("demo.service", False),
+     ("eth0", False), ("999.1.1.1", False), ("1.2.3", False)],
+)
+def test_only_a_real_address_is_treated_as_an_origin(value, expected):
+    assert sentinel_projection._is_ipv4(value) is expected
+
+
+def test_the_host_address_is_the_carrier_bearing_private_one(monkeypatch):
+    """`lo` and down links must never be mistaken for the host's place on the network."""
+    monkeypatch.setattr(sentinel_projection, "_HOST_ADDRESS", [])
+    monkeypatch.setattr(
+        "core.investigate.safe_exec.run",
+        lambda _cmd: type("R", (), {"output": (
+            "lo    UNKNOWN  127.0.0.1/8 ::1/128\n"
+            "eth0  DOWN\n"
+            "eth2  UP       192.168.1.27/24\n"
+        )})(),
+    )
+    assert sentinel_projection.host_address() == "192.168.1.27"

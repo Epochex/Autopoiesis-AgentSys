@@ -312,6 +312,16 @@ export interface TheaterEvent {
   scope?: string
   /** pipeline stages this event actually lit (from the NetOps stage vocabulary) */
   stageIds: string[]
+  /** Topology node this concerns, when the backend measured it. Preferred over
+   *  matching `device` against anchor names, which only works for NetOps keys. */
+  anchorIp?: string
+  /** Where it came from, when that differs from where it landed (e.g. the source
+   *  of failed logins against this host). */
+  originIp?: string
+  /** Measured extent, stated on the canvas so the topology is not silent about
+   *  how far this reaches. */
+  blastSummary?: string
+  blastScope?: string
 }
 
 export interface Anchor {
