@@ -13,6 +13,8 @@ import pytest
 
 from frontend.gateway.app import live, model_access
 
+from hostgate import requires_real_dataset
+
 
 @pytest.fixture(autouse=True)
 def no_paid_calls(monkeypatch, tmp_path):
@@ -20,6 +22,7 @@ def no_paid_calls(monkeypatch, tmp_path):
     monkeypatch.setattr(model_access, "CACHE_DIR", tmp_path / "cache")
 
 
+@requires_real_dataset
 def test_every_model_entry_point_is_importable_and_declines_cleanly():
     """A stub answer, not a NameError dressed up as one."""
     for call in (
@@ -34,6 +37,7 @@ def test_every_model_entry_point_is_importable_and_declines_cleanly():
         assert "text" in result
 
 
+@requires_real_dataset
 def test_the_switch_is_what_declines_them(monkeypatch):
     monkeypatch.setenv("AUTOPOIESIS_LLM_ENABLED", "0")
     assert live.assess_mesh("192.168.1.0/24").get("disabled") is True

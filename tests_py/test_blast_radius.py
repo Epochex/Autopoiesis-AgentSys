@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from frontend.gateway.app.blast_radius import estimate
 
+from hostgate import requires_active_unit, requires_host_interfaces
+
 
 def test_the_protected_path_is_refused_before_anything_is_measured():
     result = estimate("bounce_interface", "tailscale0")
@@ -18,6 +20,7 @@ def test_the_protected_path_is_refused_before_anything_is_measured():
     assert "唯一通道" in result["summary"]
 
 
+@requires_host_interfaces("eth2")
 def test_a_carrying_interface_reports_what_rides_on_it():
     """eth2 holds this host's address and default route."""
     result = estimate("bounce_interface", "eth2")
@@ -27,6 +30,7 @@ def test_a_carrying_interface_reports_what_rides_on_it():
     assert result["measured"]["routes"] >= 1
 
 
+@requires_host_interfaces("eth0")
 def test_an_idle_interface_reports_a_measured_zero():
     result = estimate("bounce_interface", "eth0")
     assert result["scope"] == "single-nic"
@@ -42,6 +46,7 @@ def test_a_missing_interface_is_not_reported_as_harmless():
     assert result["measured"]["exists"] is False
 
 
+@requires_active_unit("netops-ops-console-backend")
 def test_a_running_unit_is_reported_as_blocked():
     result = estimate("restart_unit", "netops-ops-console-backend")
     assert result["scope"] == "blocked"

@@ -13,6 +13,8 @@ import pytest
 
 from core.investigate.eval import load_cases, run, run_case
 
+from hostgate import requires_host_interfaces
+
 
 def test_the_fixture_set_loads():
     cases = load_cases()
@@ -20,6 +22,7 @@ def test_the_fixture_set_loads():
     assert all(case.question for case in cases)
 
 
+@requires_host_interfaces("eth1", "eth2")
 def test_opening_probes_surface_what_each_question_turns_on():
     """A question whose answer is not in the evidence cannot be answered right."""
     report = run()

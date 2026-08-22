@@ -28,7 +28,9 @@ jobs:
           # numpy powers the latency-percentile helper exercised by the vector
           # benchmark unit test; faiss/torch/postgres stay out (those tests
           # importorskip their heavy extras and skip cleanly on the runner).
-          python -m pip install -e ".[dev]" numpy
+          # the ingestor extra carries fastapi: the gateway is a shipped part of
+          # this system, so its tests should run here rather than import-skip.
+          python -m pip install -e ".[dev,ingestor]" numpy
 
       - name: Run deterministic test suite
         run: python -m pytest -p no:cacheprovider -q tests_py
