@@ -55,6 +55,14 @@ class HealthProbe:
     name: str
     read: Callable[[], dict[str, Any]]
     healthy: Callable[[dict[str, Any]], bool]
+    # A target must become healthy for the action to count as effective. A
+    # guard protects collateral state and is judged against its pre-change
+    # baseline. Keeping guard as the default preserves the generic probe
+    # contract for callers that only want regression detection.
+    role: Literal["target", "guard"] = "guard"
+    # Critical guards such as the management plane can fail on the first bad
+    # read instead of waiting for the window-wide bad-sample threshold.
+    failure_threshold: int | None = None
 
     def sample(self) -> tuple[dict[str, Any], bool]:
         reading = dict(self.read())
@@ -67,6 +75,8 @@ class Sample(BaseModel):
     reading: dict[str, Any]
     healthy: bool
     regressed: bool = False
+    available: bool = True
+    phase: Literal["baseline", "fast", "stability", "revert"] = "fast"
 
 
 class FollowUpVerdict(BaseModel):
@@ -79,6 +89,10 @@ class FollowUpVerdict(BaseModel):
     samples: list[Sample] = Field(default_factory=list)
     regressed_probes: list[str] = Field(default_factory=list)
     window_seconds: float = 0.0
+    stability_window_seconds: float = 0.0
+    fast_samples: int = 0
+    stability_samples: int = 0
+    target_recovered: bool = False
     detail: str = ""
 
     @property
@@ -104,12 +118,22 @@ class BakeIn:
     # a scrape landing mid-restart; two in a row is the system telling you
     # something.
     consecutive_bad: int = 2
+    # The fast window catches immediate damage. The stability window is held
+    # for its full duration so a brief recovery cannot close the incident.
+    stability_window_seconds: float = 0.0
+    success_consecutive: int = 2
 
     def __post_init__(self) -> None:
         if self.interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
         if self.consecutive_bad < 1:
             raise ValueError("consecutive_bad must be at least 1")
+        if self.window_seconds < 0 or self.stability_window_seconds < 0:
+            raise ValueError("watch window seconds cannot be negative")
+        if self.grace_seconds < 0:
+            raise ValueError("grace_seconds cannot be negative")
+        if self.success_consecutive < 1:
+            raise ValueError("success_consecutive must be at least 1")
 
 
 @dataclass
@@ -129,6 +153,17 @@ class FollowUp:
     def _record(self, kind: str, payload: dict[str, Any]) -> None:
         if self.emit is not None:
             self.emit(kind, payload)
+
+    def _sample(self, probe: HealthProbe) -> tuple[dict[str, Any], bool, bool]:
+        """Read one live probe and turn telemetry loss into an explicit state."""
+        try:
+            reading, healthy = probe.sample()
+            return reading, healthy, True
+        except Exception as error:  # noqa: BLE001 - the audit row carries the failure
+            return {
+                "error": type(error).__name__,
+                "detail": str(error),
+            }, False, False
 
     def run(
         self,
@@ -151,9 +186,23 @@ class FollowUp:
 
         # Baseline first: what was already broken before we touched anything.
         baseline: dict[str, bool] = {}
+        unavailable_baseline: list[str] = []
         for probe in probes:
-            _, healthy = probe.sample()
+            reading, healthy, available = self._sample(probe)
             baseline[probe.name] = healthy
+            self._record(
+                "bakein_sampled",
+                Sample(
+                    probe=probe.name,
+                    at=self.now(),
+                    reading=reading,
+                    healthy=healthy,
+                    available=available,
+                    phase="baseline",
+                ).model_dump(mode="json"),
+            )
+            if not available:
+                unavailable_baseline.append(probe.name)
 
         verdict = FollowUpVerdict(
             action=action,
@@ -161,7 +210,19 @@ class FollowUp:
             committed=False,
             baseline=baseline,
             window_seconds=self.bake_in.window_seconds,
+            stability_window_seconds=self.bake_in.stability_window_seconds,
         )
+
+        if unavailable_baseline:
+            verdict.detail = (
+                "live telemetry unavailable before commit: "
+                + ", ".join(unavailable_baseline)
+            )
+            self._record(
+                "bakein_opened",
+                {"action": action, "committed": False, "reason": verdict.detail},
+            )
+            return verdict
 
         if not commit():
             verdict.detail = "commit reported the change did not land; nothing to watch"
@@ -178,6 +239,7 @@ class FollowUp:
             {
                 "action": action,
                 "window_seconds": self.bake_in.window_seconds,
+                "stability_window_seconds": self.bake_in.stability_window_seconds,
                 "interval_seconds": self.bake_in.interval_seconds,
                 "probes": [probe.name for probe in probes],
             },
@@ -187,27 +249,37 @@ class FollowUp:
             self.sleep(self.bake_in.grace_seconds)
 
         bad_streak: dict[str, int] = {probe.name: 0 for probe in probes}
+        good_streak: dict[str, int] = {probe.name: 0 for probe in probes}
         regressed: list[str] = []
         elapsed = 0.0
 
         while elapsed < self.bake_in.window_seconds and not regressed:
             for probe in probes:
-                reading, healthy = probe.sample()
-                # Only a probe that was healthy before and is unhealthy now is
-                # attributable to this change.
-                is_regression = baseline.get(probe.name, False) and not healthy
+                reading, healthy, available = self._sample(probe)
+                # Targets prove effectiveness; guards prove that the action did
+                # not damage previously healthy collateral state. Missing live
+                # telemetry is unsafe in either role.
+                is_regression = (not available) or (
+                    not healthy
+                    and (probe.role == "target" or baseline.get(probe.name, False))
+                )
                 sample = Sample(
                     probe=probe.name,
                     at=self.now(),
                     reading=reading,
                     healthy=healthy,
                     regressed=is_regression,
+                    available=available,
+                    phase="fast",
                 )
                 verdict.samples.append(sample)
+                verdict.fast_samples += 1
                 self._record("bakein_sampled", sample.model_dump(mode="json"))
 
                 bad_streak[probe.name] = bad_streak[probe.name] + 1 if is_regression else 0
-                if bad_streak[probe.name] >= self.bake_in.consecutive_bad:
+                good_streak[probe.name] = good_streak[probe.name] + 1 if healthy else 0
+                threshold = probe.failure_threshold or self.bake_in.consecutive_bad
+                if bad_streak[probe.name] >= threshold:
                     regressed.append(probe.name)
 
             if regressed:
@@ -215,12 +287,87 @@ class FollowUp:
             self.sleep(self.bake_in.interval_seconds)
             elapsed += self.bake_in.interval_seconds
 
+        # A target that never reached the healthy state is an ineffective
+        # action even when no individual bad streak crossed the threshold.
+        if not regressed:
+            unrecovered = [
+                probe.name
+                for probe in probes
+                if probe.role == "target" and good_streak[probe.name] < 1
+            ]
+            regressed.extend(unrecovered)
+
+        # Hold a separate, longer stability window. Successful samples do not
+        # shorten it; this catches a component that briefly returns and dies
+        # again after the fast rollback window.
+        stability_elapsed = 0.0
+        if not regressed and self.bake_in.stability_window_seconds > 0:
+            self._record(
+                "stability_opened",
+                {
+                    "action": action,
+                    "window_seconds": self.bake_in.stability_window_seconds,
+                    "success_consecutive": self.bake_in.success_consecutive,
+                },
+            )
+            while stability_elapsed < self.bake_in.stability_window_seconds and not regressed:
+                for probe in probes:
+                    reading, healthy, available = self._sample(probe)
+                    is_regression = (not available) or (
+                        not healthy
+                        and (probe.role == "target" or baseline.get(probe.name, False))
+                    )
+                    sample = Sample(
+                        probe=probe.name,
+                        at=self.now(),
+                        reading=reading,
+                        healthy=healthy,
+                        regressed=is_regression,
+                        available=available,
+                        phase="stability",
+                    )
+                    verdict.samples.append(sample)
+                    verdict.stability_samples += 1
+                    self._record("bakein_sampled", sample.model_dump(mode="json"))
+                    bad_streak[probe.name] = bad_streak[probe.name] + 1 if is_regression else 0
+                    good_streak[probe.name] = good_streak[probe.name] + 1 if healthy else 0
+                    threshold = probe.failure_threshold or self.bake_in.consecutive_bad
+                    if bad_streak[probe.name] >= threshold:
+                        regressed.append(probe.name)
+                if regressed:
+                    break
+                self.sleep(self.bake_in.interval_seconds)
+                stability_elapsed += self.bake_in.interval_seconds
+
+            if not regressed:
+                unstable = [
+                    probe.name
+                    for probe in probes
+                    if (
+                        probe.role == "target"
+                        or baseline.get(probe.name, False)
+                    )
+                    and good_streak[probe.name] < self.bake_in.success_consecutive
+                ]
+                regressed.extend(unstable)
+
         if not regressed:
             verdict.outcome = "passed"
-            verdict.detail = f"no probe regressed across {len(verdict.samples)} readings"
+            targets = [probe.name for probe in probes if probe.role == "target"]
+            verdict.target_recovered = all(good_streak[name] >= 1 for name in targets)
+            verdict.detail = (
+                f"targets recovered and guards held across {len(verdict.samples)} live readings"
+                if targets
+                else f"no probe regressed across {len(verdict.samples)} live readings"
+            )
             self._record(
                 "bakein_passed",
-                {"action": action, "samples": len(verdict.samples), "elapsed_seconds": elapsed},
+                {
+                    "action": action,
+                    "samples": len(verdict.samples),
+                    "fast_elapsed_seconds": elapsed,
+                    "stability_elapsed_seconds": stability_elapsed,
+                },
             )
             return verdict
 
@@ -253,11 +400,18 @@ class FollowUp:
         # A revert that returned without raising is still unproven. Read back.
         still_wrong: list[str] = []
         for probe in probes:
-            reading, healthy = probe.sample()
-            sample = Sample(probe=probe.name, at=self.now(), reading=reading, healthy=healthy)
+            reading, healthy, available = self._sample(probe)
+            sample = Sample(
+                probe=probe.name,
+                at=self.now(),
+                reading=reading,
+                healthy=healthy,
+                available=available,
+                phase="revert",
+            )
             verdict.samples.append(sample)
             self._record("bakein_sampled", sample.model_dump(mode="json"))
-            if baseline.get(probe.name, False) and not healthy:
+            if not available or (baseline.get(probe.name, False) and not healthy):
                 still_wrong.append(probe.name)
 
         if still_wrong:

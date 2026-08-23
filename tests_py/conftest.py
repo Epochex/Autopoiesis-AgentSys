@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import shutil
 import sys
@@ -30,6 +31,8 @@ _PATH_ENV = {
     "AUTOPOIESIS_LLM_CACHE_DIR": _TEST_ROOT / "llm-cache",
     "AUTOPOIESIS_ARP_SNAPSHOT_PATH": _TEST_ROOT / "arp-snapshot.txt",
     "AUTOPOIESIS_L2_LEDGER_PATH": _TEST_ROOT / "l2-identity-history.jsonl",
+    "AUTOPOIESIS_REMEDIATION_STOP": _TEST_ROOT / "remediation-emergency-stop.json",
+    "AUTOPOIESIS_REMEDIATION_BUDGET": _TEST_ROOT / "remediation-budget.json",
 }
 
 
@@ -38,6 +41,31 @@ def _redirect_paths() -> None:
     os.environ["AUTOPOIESIS_MEMORY_DSN"] = ""
     for name, path in _PATH_ENV.items():
         os.environ[name] = str(path)
+    # Production intentionally fails closed when the independent control file
+    # is missing. Tests opt in explicitly and use high budgets so independent
+    # cases do not consume each other's rolling window.
+    os.environ["AUTOPOIESIS_REMEDIATION_MAX_PER_INCIDENT"] = "10000"
+    os.environ["AUTOPOIESIS_REMEDIATION_MAX_PER_ASSET"] = "10000"
+    os.environ["AUTOPOIESIS_REMEDIATION_MAX_PER_DOMAIN"] = "10000"
+    os.environ["AUTOPOIESIS_REMEDIATION_MAX_CONCURRENCY"] = "10000"
+    os.environ["AUTOPOIESIS_REMEDIATION_COOLDOWN"] = "0"
+    os.environ["AUTOPOIESIS_REMEDIATION_BACKOFF_BASE"] = "0"
+    os.environ["AUTOPOIESIS_REMEDIATION_BACKOFF_MAX"] = "0"
+    control = _PATH_ENV["AUTOPOIESIS_REMEDIATION_STOP"]
+    control.parent.mkdir(parents=True, exist_ok=True)
+    control.write_text(
+        json.dumps(
+            {
+                "paused": False,
+                "reason": "pytest explicitly enabled remediation",
+                "actor": "pytest",
+                "timestamp": "2026-08-23T00:00:00Z",
+                "fail_closed": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 _redirect_paths()

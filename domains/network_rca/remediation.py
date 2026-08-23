@@ -157,6 +157,7 @@ def interface_probe(command: Command, nic: str) -> HealthProbe:
         name=f"carrier:{nic}",
         read=lambda: read_interface(command, nic),
         healthy=lambda reading: bool(reading.get("carrier")),
+        role="target",
     )
 
 
@@ -221,6 +222,7 @@ def unit_probe(command: Command, unit: str) -> HealthProbe:
         name=f"unit:{unit}",
         read=lambda: read_unit(command, unit),
         healthy=lambda reading: bool(reading.get("running")),
+        role="target",
     )
 
 
@@ -242,4 +244,10 @@ def gateway_probe(command: Command, url: str = "http://127.0.0.1:8026/api/health
         code = (result.stdout or "").strip()
         return {"url": url, "http_code": code, "reachable": code == "200"}
 
-    return HealthProbe(name="gateway", read=read, healthy=lambda r: bool(r.get("reachable")))
+    return HealthProbe(
+        name="gateway",
+        read=read,
+        healthy=lambda r: bool(r.get("reachable")),
+        role="guard",
+        failure_threshold=1,
+    )

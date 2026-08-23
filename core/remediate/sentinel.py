@@ -464,7 +464,15 @@ class Sentinel:
             "needs_human": result.get("needs_human"),
             "detail": result.get("detail") or result.get("reason"),
             "samples": len(verdict.get("samples") or []),
+            "fast_samples": verdict.get("fast_samples"),
+            "stability_samples": verdict.get("stability_samples"),
+            "target_recovered": verdict.get("target_recovered"),
             "baseline": verdict.get("baseline"),
+            "execution_id": result.get("execution_id"),
+            "incident_id": result.get("incident_id"),
+            "failure_domain": result.get("failure_domain"),
+            "budget_decision": result.get("budget_decision"),
+            "recovery_run": result.get("recovery_run"),
         })
         # The streak clears — the fault is gone, so a return has to re-confirm
         # from scratch. The cooldown does NOT clear, and that is the change: it
@@ -480,6 +488,11 @@ class Sentinel:
                                 "detector": detection.detector,
                                 "outcome": verdict.get("outcome"),
                                 "samples": len(verdict.get("samples") or []),
+                                "fast_window_seconds": verdict.get("window_seconds"),
+                                "stability_window_seconds": verdict.get("stability_window_seconds"),
+                                "target_recovered": verdict.get("target_recovered"),
+                                "execution_id": result.get("execution_id"),
+                                "recovery_state": (result.get("recovery_run") or {}).get("state"),
                                 "note": "改完回读通过，观察期内没有回归"})
         return {"subject": target, "action": action,
                 "outcome": verdict.get("outcome"), "needs_human": result.get("needs_human")}

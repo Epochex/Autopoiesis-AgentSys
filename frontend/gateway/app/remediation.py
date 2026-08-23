@@ -21,11 +21,21 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from core.remediate import BakeIn, FollowUp, HealthProbe
+from core.remediate.recovery_graph import ActionNode, RecoveryGraph
+from core.remediate.safety import (
+    ActionLevel,
+    ActionPolicy,
+    DomainLock,
+    EmergencyStop,
+    RemediationBudget,
+)
 from domains.network_rca.remediation import (
     Command,
     CommandLog,
@@ -40,6 +50,10 @@ from domains.network_rca.remediation import (
 )
 
 RUNS_PATH: Path | None = None
+_SAFETY_LOCK = threading.RLock()
+_DOMAIN_LOCKS = DomainLock()
+_BUDGET: RemediationBudget | None = None
+_BUDGET_LOAD_ERROR: str | None = None
 
 
 def _runs_path() -> Path:
@@ -59,10 +73,123 @@ def _runs_path() -> Path:
         return Path(tempfile.gettempdir()) / "autopoiesis-remediation-test.jsonl"
     return Path("/data/autopoiesis-runtime/remediation-runs.jsonl")
 
+
+def _control_path() -> Path:
+    configured = os.getenv("AUTOPOIESIS_REMEDIATION_STOP")
+    if configured:
+        return Path(configured)
+    test_root = os.getenv("AUTOPOIESIS_TEST_TMP")
+    if test_root:
+        return Path(test_root) / "remediation-emergency-stop.json"
+    return Path("/data/autopoiesis-runtime/remediation-emergency-stop.json")
+
+
+def _budget_path() -> Path:
+    configured = os.getenv("AUTOPOIESIS_REMEDIATION_BUDGET")
+    if configured:
+        return Path(configured)
+    test_root = os.getenv("AUTOPOIESIS_TEST_TMP")
+    if test_root:
+        return Path(test_root) / "remediation-budget.json"
+    return Path("/data/autopoiesis-runtime/remediation-budget.json")
+
+
+def emergency_stop() -> EmergencyStop:
+    """Return the durable process-independent write pause switch."""
+    return EmergencyStop(_control_path())
+
+
+def _new_budget() -> RemediationBudget:
+    return RemediationBudget(
+        max_per_incident=int(os.getenv("AUTOPOIESIS_REMEDIATION_MAX_PER_INCIDENT", "2")),
+        max_per_asset=int(os.getenv("AUTOPOIESIS_REMEDIATION_MAX_PER_ASSET", "2")),
+        max_per_failure_domain=int(
+            os.getenv("AUTOPOIESIS_REMEDIATION_MAX_PER_DOMAIN", "2")
+        ),
+        window_seconds=float(os.getenv("AUTOPOIESIS_REMEDIATION_BUDGET_WINDOW", "3600")),
+        max_concurrency=int(os.getenv("AUTOPOIESIS_REMEDIATION_MAX_CONCURRENCY", "1")),
+        cooldown_seconds=float(os.getenv("AUTOPOIESIS_REMEDIATION_COOLDOWN", "600")),
+        backoff_base_seconds=float(os.getenv("AUTOPOIESIS_REMEDIATION_BACKOFF_BASE", "60")),
+        backoff_max_seconds=float(os.getenv("AUTOPOIESIS_REMEDIATION_BACKOFF_MAX", "3600")),
+    )
+
+
+def _load_budget() -> RemediationBudget:
+    global _BUDGET, _BUDGET_LOAD_ERROR
+    with _SAFETY_LOCK:
+        if _BUDGET is not None:
+            return _BUDGET
+        path = _budget_path()
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                _BUDGET = RemediationBudget.from_dict(raw)
+                # A prior gateway can die while a dual-window observation is
+                # open. Reconcile its durable reservation as failed, which
+                # applies cooldown/backoff and frees global concurrency. Leave
+                # it in-flight forever and every later safe action is blocked;
+                # drop it silently and a crash becomes a budget bypass.
+                interrupted = _BUDGET.in_flight_execution_ids()
+                for execution_id in interrupted:
+                    _BUDGET.complete(execution_id, success=False)
+                if interrupted:
+                    _write_budget_snapshot(_BUDGET)
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+                _BUDGET_LOAD_ERROR = f"{type(error).__name__}: {error}"
+                _BUDGET = _new_budget()
+        else:
+            _BUDGET = _new_budget()
+        return _BUDGET
+
+
+def _write_budget_snapshot(budget: RemediationBudget) -> None:
+    path = _budget_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(budget.to_dict(), sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _persist_budget() -> None:
+    with _SAFETY_LOCK:
+        _write_budget_snapshot(_load_budget())
+
+
+def safety_status() -> dict[str, Any]:
+    stop = emergency_stop().status()
+    budget = _load_budget()
+    return {
+        "emergency_stop": stop.to_dict(),
+        "budget": budget.to_dict(),
+        "budget_load_error": _BUDGET_LOAD_ERROR,
+        "domain_locks": _DOMAIN_LOCKS.to_dict(),
+        "limits": {
+            "max_actions_per_incident": 2,
+            "fast_window_seconds": DEFAULT_BAKE_IN.window_seconds,
+            "stability_window_seconds": DEFAULT_BAKE_IN.stability_window_seconds,
+        },
+    }
+
 # Windows are short here because both actions settle in seconds, not minutes.
 # A firewall change would want minutes; these do not, and a window longer than
 # the failure mode it is watching for only delays the verdict.
-DEFAULT_BAKE_IN = BakeIn(window_seconds=90.0, interval_seconds=15.0, grace_seconds=5.0)
+DEFAULT_BAKE_IN = BakeIn(
+    window_seconds=60.0,
+    stability_window_seconds=180.0,
+    interval_seconds=15.0,
+    grace_seconds=5.0,
+    consecutive_bad=2,
+    success_consecutive=3,
+)
 
 
 class Action:
@@ -77,6 +204,8 @@ class Action:
         commit: Callable[[Command, str], bool],
         probes: Callable[[Command, str], list[HealthProbe]],
         revert: Callable[[Command, str], None] | None = None,
+        policy: ActionPolicy | None = None,
+        mechanism: str = "host_recovery",
     ) -> None:
         self.name = name
         self.summary = summary
@@ -85,6 +214,33 @@ class Action:
         self.commit = commit
         self.probes = probes
         self.revert = revert
+        self.policy = policy or ActionPolicy.for_level(ActionLevel.L1)
+        self.mechanism = mechanism
+
+    def recovery_node(self) -> ActionNode:
+        return ActionNode(
+            action_id=self.name,
+            mechanism=self.mechanism,
+            impact=self.policy.max_impacted_assets,
+            required_metrics=("live_probe_count",),
+            # The graph records the required recovery contract even for a
+            # monotonic action whose baseline is already the failed state. If
+            # no inverse exists, a bad observation escalates at this gate.
+            rollback_id=(f"revert:{self.name}" if self.revert else "verified-baseline-return"),
+        )
+
+
+_HOST_L1_POLICY = ActionPolicy(
+    level=ActionLevel.L1,
+    auto_execute=True,
+    max_impacted_assets=1,
+    automatic_conditions=("verified_signal", "precheck_passed"),
+    requires_checkpoint=True,
+    # These actions start from a worst-state target. Their durable live
+    # baseline is the recovery point; collateral regression still stops and
+    # escalates because neither action has a constructive inverse.
+    requires_rollback=False,
+)
 
 
 def _interface_preflight(command: Command, target: str) -> dict[str, Any]:
@@ -124,6 +280,8 @@ ACTIONS: dict[str, Action] = {
         # Bouncing a NIC that was already down has no meaningful inverse: the
         # pre-state *is* down. A regression here escalates instead.
         revert=None,
+        policy=_HOST_L1_POLICY,
+        mechanism="interface_reinitialize",
     ),
     "restart_unit": Action(
         name="restart_unit",
@@ -133,13 +291,21 @@ ACTIONS: dict[str, Action] = {
         commit=lambda command, target: restart_unit(command, target),
         probes=lambda command, target: [unit_probe(command, target), gateway_probe(command)],
         revert=None,
+        policy=_HOST_L1_POLICY,
+        mechanism="service_restart",
     ),
 }
 
 
-def describe_actions() -> list[dict[str, str]]:
+def describe_actions() -> list[dict[str, Any]]:
     return [
-        {"name": action.name, "summary": action.summary, "family": action.family}
+        {
+            "name": action.name,
+            "summary": action.summary,
+            "family": action.family,
+            "mechanism": action.mechanism,
+            "policy": action.policy.to_dict(),
+        }
         for action in ACTIONS.values()
     ]
 
@@ -164,6 +330,26 @@ def preflight(
     it wants lives there — so the sink only applies to the one built here.
     """
     action = _resolve(action_name)
+    stop = emergency_stop().status()
+    if stop.paused:
+        return {
+            "action": action_name,
+            "target": target,
+            "eligible": False,
+            "refused": True,
+            "reason": f"global remediation pause is active: {stop.reason}",
+            "emergency_stop": stop.to_dict(),
+            "policy": action.policy.to_dict(),
+        }
+    if _BUDGET_LOAD_ERROR:
+        return {
+            "action": action_name,
+            "target": target,
+            "eligible": False,
+            "refused": True,
+            "reason": f"budget ledger is unreadable: {_BUDGET_LOAD_ERROR}",
+            "policy": action.policy.to_dict(),
+        }
     log = CommandLog(on_entry=on_command) if command is None else None
     command = command or Command.local(log)
     try:
@@ -184,16 +370,36 @@ def preflight(
         }
     from .blast_radius import estimate
 
+    policy_decision = action.policy.evaluate(
+        impacted_assets=1,
+        satisfied_conditions=("verified_signal", "precheck_passed")
+        if outcome.get("eligible")
+        else (),
+        checkpoint_available=bool(outcome.get("reading")),
+        rollback_available=action.revert is not None,
+        confirmed_commit_available=False,
+        human_approved=False,
+        automatic=bool(outcome.get("eligible")),
+    )
+    eligible = bool(outcome.get("eligible")) and policy_decision.allowed
+    reason = outcome.get("reason", "")
+    if outcome.get("eligible") and not policy_decision.allowed:
+        reason = ", ".join(policy_decision.reasons)
     return {
         "action": action_name,
         "target": target,
         "family": action.family,
         "refused": False,
         "reverts": action.revert is not None,
+        "policy": action.policy.to_dict(),
+        "policy_decision": policy_decision.to_dict(),
+        "commands": log.entries if log else [],
         # Measured now, on this box, rather than described in the abstract:
         # the operator needs a number they can check, not a reassurance.
         "blast_radius": estimate(action_name, target),
         **outcome,
+        "eligible": eligible,
+        "reason": reason,
     }
 
 
@@ -205,6 +411,10 @@ def execute(
     emit: Callable[[str, dict[str, Any]], None] | None = None,
     sleep: Callable[[float], None] | None = None,
     on_command: Callable[[dict[str, Any]], None] | None = None,
+    *,
+    incident_id: str | None = None,
+    failure_domain: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Run the action under a watch window and return the full verdict.
 
@@ -221,6 +431,59 @@ def execute(
     if not check.get("eligible"):
         return {"ran": False, "verdict": None, **check}
 
+    incident_id = incident_id or f"adhoc:{uuid.uuid4().hex}"
+    failure_domain = failure_domain or action.family
+    idempotency_key = idempotency_key or uuid.uuid4().hex
+    budget = _load_budget()
+    execution_id = budget.execution_id(
+        incident_id,
+        target,
+        failure_domain,
+        action_name,
+        idempotency_key,
+    )
+    lease = _DOMAIN_LOCKS.try_acquire(failure_domain, execution_id)
+    if lease is None:
+        return {
+            "ran": False,
+            "verdict": None,
+            **check,
+            "eligible": False,
+            "refused": True,
+            "reason": f"failure domain is busy: {failure_domain}",
+            "execution_id": execution_id,
+        }
+    budget_decision = budget.acquire(
+        incident_id,
+        target,
+        failure_domain,
+        action_name,
+        idempotency_key=idempotency_key,
+        execution_id=execution_id,
+    )
+    if not budget_decision.allowed:
+        lease.release()
+        return {
+            "ran": False,
+            "verdict": None,
+            **check,
+            "eligible": False,
+            "refused": True,
+            "reason": ", ".join(budget_decision.reasons),
+            "budget_decision": budget_decision.to_dict(),
+            "execution_id": execution_id,
+        }
+    _persist_budget()
+
+    graph = RecoveryGraph([action.recovery_node()], max_actions_per_incident=2)
+    graph.open_incident(incident_id, action_name, at=datetime.now(timezone.utc))
+    graph.precheck(
+        incident_id,
+        at=datetime.now(timezone.utc),
+        metrics={"live_probe_count": len(action.probes(command, target))},
+        management_reachable=True,
+    )
+
     events: list[dict[str, Any]] = []
 
     def record(kind: str, payload: dict[str, Any]) -> None:
@@ -231,21 +494,90 @@ def execute(
     follow_up = FollowUp(bake_in=bake_in or DEFAULT_BAKE_IN, emit=record)
     if sleep is not None:
         follow_up.sleep = sleep
+    budget_completed = False
     try:
-        verdict = follow_up.run(
-            action=f"{action_name}:{target}",
-            probes=action.probes(command, target),
-            commit=lambda: action.commit(command, target),
-            revert=(lambda: action.revert(command, target)) if action.revert else None,
-        )
-    except UnsafeTarget as refusal:
-        return {
-            "ran": False,
-            "action": action_name,
-            "target": target,
-            "refused": True,
-            "reason": str(refusal),
-        }
+        try:
+            verdict = follow_up.run(
+                action=f"{action_name}:{target}",
+                probes=action.probes(command, target),
+                commit=lambda: action.commit(command, target),
+                revert=(lambda: action.revert(command, target)) if action.revert else None,
+            )
+        except UnsafeTarget as refusal:
+            budget.complete(execution_id, success=False)
+            budget_completed = True
+            _persist_budget()
+            return {
+                "ran": False,
+                "action": action_name,
+                "target": target,
+                "refused": True,
+                "reason": str(refusal),
+                "execution_id": execution_id,
+            }
+
+        now = datetime.now(timezone.utc)
+        if verdict.committed:
+            graph.commit(
+                incident_id,
+                at=now,
+                management_reachable=True,
+                readback_passed=True,
+            )
+            graph.begin_fast_observation(
+                incident_id,
+                at=now,
+                metrics={"live_probe_count": max(1, verdict.fast_samples)},
+                management_reachable=True,
+            )
+            if verdict.outcome == "passed":
+                graph.begin_stability_observation(
+                    incident_id,
+                    at=now,
+                    metrics={"live_probe_count": max(1, verdict.fast_samples)},
+                    management_reachable=True,
+                    fast_window_passed=True,
+                )
+                graph.pass_stability(
+                    incident_id,
+                    at=now,
+                    metrics={
+                        "live_probe_count": max(
+                            1, verdict.stability_samples or verdict.fast_samples
+                        )
+                    },
+                    management_reachable=True,
+                    stability_window_passed=True,
+                )
+            elif verdict.outcome == "reverted":
+                graph.revert(
+                    incident_id,
+                    at=now,
+                    rollback_succeeded=True,
+                    rollback_metrics={"live_probe_count": 1},
+                    management_reachable=True,
+                )
+            else:
+                graph.revert(
+                    incident_id,
+                    at=now,
+                    rollback_succeeded=False,
+                    rollback_metrics=None,
+                    management_reachable=True,
+                )
+        else:
+            graph.escalate(incident_id, at=now, reason="commit_not_landed")
+
+        budget.complete(execution_id, success=verdict.outcome == "passed")
+        budget_completed = True
+        _persist_budget()
+    except Exception:
+        if not budget_completed:
+            budget.complete(execution_id, success=False)
+            _persist_budget()
+        raise
+    finally:
+        lease.release()
 
     record_payload = {
         "at": datetime.now(timezone.utc).isoformat(),
@@ -258,6 +590,11 @@ def execute(
         "verdict": verdict.model_dump(mode="json"),
         "events": events,
         "commands": log.entries,
+        "execution_id": execution_id,
+        "incident_id": incident_id,
+        "failure_domain": failure_domain,
+        "budget_decision": budget_decision.to_dict(),
+        "recovery_run": graph.get_run(incident_id).to_dict(),
     }
     _append_run(record_payload)
     return {"ran": True, **record_payload}

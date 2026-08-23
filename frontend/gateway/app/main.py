@@ -1649,6 +1649,13 @@ class RemediationRequest(BaseModel):
     action: str = Field(min_length=1, max_length=64)
     target: str = Field(min_length=1, max_length=128)
     dossier_id: str | None = Field(default=None, min_length=1, max_length=160)
+    failure_domain: str | None = Field(default=None, min_length=1, max_length=160)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=160)
+
+
+class RemediationControlRequest(BaseModel):
+    actor: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 @app.get("/api/rca/operational-memory")
@@ -1673,6 +1680,32 @@ async def remediation_actions() -> dict[str, Any]:
     from .remediation import describe_actions
 
     return {"ok": True, "actions": describe_actions()}
+
+
+@app.get("/api/rca/remediation/safety")
+async def remediation_safety() -> dict[str, Any]:
+    """Current pause switch, rolling budgets, locks and observation limits."""
+    from .remediation import safety_status
+
+    return {"ok": True, **await asyncio.to_thread(safety_status)}
+
+
+@app.post("/api/rca/remediation/pause")
+async def remediation_pause(request: RemediationControlRequest) -> dict[str, Any]:
+    """Stop all subsequent writes through a process-independent control file."""
+    from .remediation import emergency_stop
+
+    state = await asyncio.to_thread(emergency_stop().pause, request.reason, request.actor)
+    return {"ok": True, "emergency_stop": state.to_dict()}
+
+
+@app.post("/api/rca/remediation/resume")
+async def remediation_resume(request: RemediationControlRequest) -> dict[str, Any]:
+    """Resume writes with an auditable operator identity and reason."""
+    from .remediation import emergency_stop
+
+    state = await asyncio.to_thread(emergency_stop().resume, request.actor, request.reason)
+    return {"ok": True, "emergency_stop": state.to_dict()}
 
 
 @app.post("/api/rca/remediation/preflight")
@@ -1701,7 +1734,14 @@ async def remediation_execute(request: RemediationRequest) -> dict[str, Any]:
     """
     from .remediation import execute
 
-    result = await asyncio.to_thread(execute, request.action, request.target)
+    result = await asyncio.to_thread(
+        execute,
+        request.action,
+        request.target,
+        incident_id=request.dossier_id,
+        failure_domain=request.failure_domain,
+        idempotency_key=request.idempotency_key,
+    )
     if result.get("refused"):
         raise HTTPException(status_code=400, detail=result.get("reason", "refused"))
     dossier = None

@@ -8,6 +8,7 @@ is the one that causes the outage.
 
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
@@ -205,6 +206,9 @@ def test_end_to_end_recovery_passes_the_window():
     assert result["verdict"]["outcome"] == "passed"
     assert result["verdict"]["baseline"] == {"carrier:eth9": False, "gateway": True}
     assert result["needs_human"] is False
+    assert result["recovery_run"]["state"] == "passed"
+    assert result["recovery_run"]["action_budget"] == 2
+    assert result["budget_decision"]["allowed"] is True
 
 
 def test_end_to_end_collateral_damage_is_caught_even_though_the_target_recovered():
@@ -243,3 +247,77 @@ def test_unknown_action_is_refused():
 
     with pytest.raises(UnsafeTarget, match="closed list"):
         gateway.preflight("rm_rf", "/")
+
+
+def test_durable_emergency_stop_blocks_before_any_host_command():
+    from frontend.gateway.app import remediation as gateway
+
+    ran: list[list[str]] = []
+    control = gateway.emergency_stop()
+    control.pause("management plane maintenance", "operator-test")
+    try:
+        result = gateway.execute(
+            "bounce_interface",
+            "eth9",
+            command=_fake({}, ran),
+            bake_in=_bake(),
+            sleep=lambda _s: None,
+        )
+    finally:
+        control.resume("operator-test", "test cleanup")
+    assert result["ran"] is False
+    assert result["refused"] is True
+    assert "global remediation pause" in result["reason"]
+    assert ran == []
+
+
+def test_duplicate_execution_id_is_refused_without_a_second_write():
+    from frontend.gateway.app import remediation as gateway
+
+    first = gateway.execute(
+        "bounce_interface",
+        "eth9",
+        command=_host(),
+        bake_in=_bake(),
+        sleep=lambda _s: None,
+        incident_id="incident-idempotency",
+        failure_domain="redundancy-pair-a",
+        idempotency_key="request-1",
+    )
+    second = gateway.execute(
+        "bounce_interface",
+        "eth9",
+        command=_host(),
+        bake_in=_bake(),
+        sleep=lambda _s: None,
+        incident_id="incident-idempotency",
+        failure_domain="redundancy-pair-a",
+        idempotency_key="request-1",
+    )
+    assert first["ran"] is True
+    assert second["ran"] is False
+    assert second["budget_decision"]["idempotent"] is True
+    assert second["reason"] == "duplicate_execution"
+
+
+def test_startup_reconciles_an_interrupted_budget_reservation(tmp_path, monkeypatch):
+    from core.remediate.safety import RemediationBudget
+    from frontend.gateway.app import remediation as gateway
+
+    prior = RemediationBudget(cooldown_seconds=0, backoff_base_seconds=0, backoff_max_seconds=0)
+    acquired = prior.acquire("incident-crash", "asset-a", "domain-a", "restart_unit")
+    path = tmp_path / "budget.json"
+    path.write_text(json.dumps(prior.to_dict()), encoding="utf-8")
+    monkeypatch.setenv("AUTOPOIESIS_REMEDIATION_BUDGET", str(path))
+    monkeypatch.setattr(gateway, "_BUDGET", None)
+    monkeypatch.setattr(gateway, "_BUDGET_LOAD_ERROR", None)
+
+    loaded = gateway._load_budget()
+
+    assert loaded.in_flight_execution_ids() == ()
+    row = next(
+        row for row in loaded.to_dict()["records"]
+        if row["execution_id"] == acquired.execution_id
+    )
+    assert row["success"] is False
+    assert json.loads(path.read_text(encoding="utf-8"))["records"][0]["completed_at"] is not None

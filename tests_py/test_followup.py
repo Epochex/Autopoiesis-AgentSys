@@ -208,3 +208,64 @@ def test_window_with_no_probes_is_rejected():
 def test_zero_interval_is_rejected():
     with pytest.raises(ValueError, match="interval_seconds"):
         BakeIn(interval_seconds=0)
+
+
+def test_target_must_recover_even_when_it_was_broken_at_baseline():
+    target = _probe("failed-unit", [False] * 8)
+    target.role = "target"
+    verdict = _follow_up().run(
+        "restart_unit",
+        probes=[target],
+        commit=lambda: True,
+        revert=None,
+    )
+    assert verdict.outcome == "revert_unverified"
+    assert verdict.regressed_probes == ["failed-unit"]
+
+
+def test_dual_window_catches_a_late_failure_after_fast_recovery():
+    # Baseline, four fast samples, then the target fails in the longer window.
+    target = _probe("failed-unit", [False, True, True, True, True, False, False, False])
+    target.role = "target"
+    reverted: list[bool] = []
+    verdict = _follow_up(
+        window_seconds=60.0,
+        stability_window_seconds=60.0,
+        interval_seconds=15.0,
+    ).run(
+        "restart_unit",
+        probes=[target],
+        commit=lambda: True,
+        revert=lambda: reverted.append(True),
+    )
+    assert verdict.outcome == "reverted"
+    assert verdict.stability_samples > 0
+    assert reverted == [True]
+
+
+def test_missing_live_telemetry_before_commit_fails_closed():
+    calls = {"commit": 0}
+
+    def missing() -> dict:
+        raise TimeoutError("metrics endpoint unavailable")
+
+    verdict = _follow_up().run(
+        "restart_unit",
+        probes=[HealthProbe("metrics", missing, lambda _reading: True, role="target")],
+        commit=lambda: calls.__setitem__("commit", calls["commit"] + 1) or True,
+    )
+    assert verdict.outcome == "not_committed"
+    assert calls["commit"] == 0
+    assert "telemetry unavailable" in verdict.detail
+
+
+def test_critical_guard_uses_a_one_sample_failure_threshold():
+    guard = _probe("management-plane", [True, False, True, True])
+    guard.failure_threshold = 1
+    verdict = _follow_up().run(
+        "change_route",
+        probes=[guard],
+        commit=lambda: True,
+        revert=lambda: None,
+    )
+    assert verdict.outcome == "reverted"

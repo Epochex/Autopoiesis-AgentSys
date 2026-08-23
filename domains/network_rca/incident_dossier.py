@@ -621,7 +621,10 @@ def from_sentinel_chain(
             hold = (updated_at - observation_start).total_seconds()
             planned = observation_start
             if opened_row and isinstance(opened_row.get("window_seconds"), (int, float)):
-                planned = observation_start + timedelta(seconds=float(opened_row["window_seconds"]))
+                total_window = float(opened_row["window_seconds"])
+                if isinstance(opened_row.get("stability_window_seconds"), (int, float)):
+                    total_window += float(opened_row["stability_window_seconds"])
+                planned = observation_start + timedelta(seconds=total_window)
             observation = ObservationWindow(
                 started_at=observation_start,
                 planned_end_at=planned,

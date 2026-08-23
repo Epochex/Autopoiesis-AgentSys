@@ -7,6 +7,7 @@ knows which of the two are wired together on this box.
 
 from __future__ import annotations
 
+import inspect
 import os
 import threading
 from contextlib import nullcontext
@@ -90,12 +91,17 @@ def _build() -> Sentinel:
             enriched["action"] = action
             record(kind, enriched)
 
-        return execute(
-            action,
-            target,
-            emit=emit,
-            on_command=on_command,
-        )
+        context: dict[str, Any] = {"emit": emit, "on_command": on_command}
+        # Small test/deployment adapters may expose the older two-argument
+        # contract. The production executor declares these fields explicitly;
+        # inspect before adding them so compatibility does not rely on catching
+        # a TypeError raised from inside the action.
+        parameters = inspect.signature(execute).parameters
+        if "incident_id" in parameters:
+            context["incident_id"] = f"sentinel:{action}:{target}"
+        if "idempotency_key" in parameters:
+            context["idempotency_key"] = datetime.now(timezone.utc).isoformat()
+        return execute(action, target, **context)
 
     return _LearningSentinel(
         detectors=list(ALL_DETECTORS),

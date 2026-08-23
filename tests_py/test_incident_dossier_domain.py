@@ -343,3 +343,25 @@ def test_passed_sentinel_chain_keeps_receipt_readback_and_observation() -> None:
     assert attempt.observation.verdict == "passed"
     assert attempt.observation.hold_duration_seconds == 1
     assert built.root_causes[0].status == "hypothesis"
+
+
+def test_sentinel_dossier_plans_both_fast_and_stability_windows() -> None:
+    chain = sentinel_chain("resolved")
+    chain[-1]["outcome"] = "passed"
+    chain[-1]["at"] = (NOW + timedelta(seconds=241)).isoformat()
+    chain.insert(
+        1,
+        {
+            "at": (NOW + timedelta(seconds=1)).isoformat(),
+            "kind": "bakein_opened",
+            "subject": "api.service",
+            "action": "restart_unit",
+            "window_seconds": 60,
+            "stability_window_seconds": 180,
+        },
+    )
+
+    attempt = from_sentinel_chain(chain).remediation_attempts[0]
+
+    assert attempt.observation.planned_end_at == NOW + timedelta(seconds=241)
+    assert attempt.observation.hold_duration_seconds == 240
