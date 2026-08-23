@@ -1,6 +1,6 @@
-"""The two wired memory-management mechanisms are real, fire in the loop, and behave.
+"""The two memory-management mechanisms are real, fire in the benchmark, and behave.
 
-  eviction — utility_evict(): capacity-budgeted, worth-ranked (not age alone), wired into
+  eviction — utility_evict(): capacity-budgeted, worth-ranked (not age alone), called by
              run_evolving_stream; forgets the lowest-utility memories, protects priors.
   update   — route(resolve_conflicts=True) + supersede(): a memory that renames the root
              cause on the same entity retires the stale prior instead of merging it.
@@ -54,7 +54,9 @@ def test_utility_ranks_by_worth_not_age_alone():
 
 def test_utility_evict_binds_to_budget_and_protects_priors():
     mem = TieredMemoryStore()
-    seed = MemoryRecord(memory_id="seed-x", tier="semantic", text="prior", confidence=2.0)
+    seed = MemoryRecord(
+        memory_id="prior-x", tier="semantic", text="prior", tags=["seed"], confidence=2.0
+    )
     mem.add(seed)
     for i in range(6):
         r = _epi(f"e{i}", [f"t{i}"], [f"d{i}"], f"root{i}")
@@ -64,7 +66,7 @@ def test_utility_evict_binds_to_budget_and_protects_priors():
     forgotten = utility_evict(mem, budget=4)
     active_ids = {r.memory_id for r in mem.active()}
     assert len(mem.active()) == 4
-    assert "seed-x" in active_ids            # protected prior never evicted
+    assert "prior-x" in active_ids           # protected prior never evicted
     assert "e0" in forgotten and "e5" in active_ids   # lowest utility goes, highest stays
     # a store that already fits is a no-op
     assert utility_evict(mem, budget=10) == []
@@ -130,6 +132,11 @@ def test_conflict_resolving_update_fires_in_consolidation():
 def test_utility_eviction_fires_in_the_stream_loop():
     cases, gt = load_seed_cases(), load_ground_truth()
     out = run_evolving_stream(cases, gt, passes=3, evolve=True, capacity_budget=1)
+    # decay and eviction now have production call sites (the sentinel
+    # consolidation path and EvolvingRCAService both run retention), so
+    # `production_wired` is True. Whether eviction actually fires is a
+    # separate, instance-level fact: see `configured` in the structured
+    # capability status, which additionally requires a memory budget.
     assert CAPABILITIES["eviction_wired"] is True
     assert out["memory_health"]["forgotten"] > 0                  # eviction actually removed memories
     assert any(o["op"] == "EVICT" for o in out["observatory"]["events"])

@@ -9,13 +9,16 @@ throws the store away. This module *only serializes what already happened*:
   * where the kernel genuinely does not expose a value it emits ``None`` rather
     than inventing one.
 
-``CAPABILITIES`` describes implementation availability.  A stream response also
-reports whether each optional path was configured and whether it actually fired;
-those are different facts and must not be collapsed into one boolean.
+``CAPABILITIES`` describes production wiring. A stream response separately reports
+whether each mechanism exists, whether that benchmark run configured it, and whether
+it actually fired; those facts must not be collapsed into one boolean.
 """
 from __future__ import annotations
 
-from typing import Any
+import ast
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
 
 from core.memory.store import MemoryRecord, TieredMemoryStore
 from core.trace.events import TraceEvent
@@ -26,29 +29,209 @@ _QUARANTINE_PREFIX = "quarantine:"
 # provenance + a human-readable gist, so we trim fields (never invent them).
 _MAX_SUMMARY_CHARS = 240
 
-# A fact about the implementation, not a statement that a particular run fired it.
-#   decay_wired          — whether decay_and_forget() itself runs in the production loop.
-#                          It does not. The loop uses utility_evict(), whose score includes
-#                          recency but is not equivalent to time-decay forgetting.
-#   eviction_wired       — capacity-budgeted UTILITY eviction (utility_evict) is the wired
-#                          path — worth (importance+access+recency+centrality), not age
-#                          alone, decides what is forgotten.
-#   conflict_update_wired— route(resolve_conflicts=True) resolves contradictions: a memory
-#                          that renames the root cause on the same entity SUPERSEDEs the
-#                          stale prior instead of merging into it. Emits SUPERSEDE ops.
-#   retrieval_scores     — sparse, dense, asset, graph-hop and final scores are
-#                          emitted in memory_candidates_ranked.
-#   context_drop_reason  — ContextCompiler records section, reason, text fragment,
-#                          identity, and whether a drop was a partial truncation.
-#   update_text_mutation — apply_route()'s UPDATE merges tags/assets/confidence but
-#                          never rewrites target.text, so there is no text diff.
-CAPABILITIES: dict[str, bool] = {
-    "decay_wired": True,
-    "eviction_wired": True,
-    "conflict_update_wired": True,
-    "retrieval_scores": True,
-    "context_drop_reason": True,
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+@dataclass(frozen=True)
+class CapabilityEvidence:
+    """One statically checkable fact required for a production wiring claim."""
+
+    path: str
+    kind: Literal["call", "dict_key"]
+    name: str
+    marker: str | None = None
+    keyword: str | None = None
+    keyword_value: bool | None = None
+
+
+# Each inner tuple is one complete proof; alternatives are ORed. Every item inside
+# a proof must be present. These locators are maintained when a production entry
+# point moves. The acceptance criterion is executable: the named production file
+# must contain the specified call or emitted dictionary key. Tests, benchmarks and
+# evaluation drivers are deliberately absent.
+PRODUCTION_CALL_SITES: dict[str, tuple[tuple[CapabilityEvidence, ...], ...]] = {
+    "decay": ((CapabilityEvidence(
+        "core/orchestrator/evolving_service.py", "call", "decay_and_forget"
+    ),),),
+    "eviction": ((CapabilityEvidence(
+        "core/orchestrator/evolving_service.py", "call", "utility_evict"
+    ),),),
+    "contradiction_quarantine": (
+        (CapabilityEvidence(
+            "domains/network_rca/factory.py", "dict_key", "contradicts"
+        ),),
+        (CapabilityEvidence(
+            "frontend/gateway/app/sentinel_wiring.py", "dict_key", "contradicts"
+        ),),
+    ),
+    "conflict_update": (
+        (CapabilityEvidence(
+            "domains/network_rca/incident_memory.py",
+            "call",
+            "consolidate_run",
+            keyword="resolve_conflicts",
+            keyword_value=True,
+        ),),
+        (CapabilityEvidence(
+            "domains/network_rca/factory.py",
+            "call",
+            "build_network_rca_service",
+            keyword="resolve_conflicts",
+            keyword_value=True,
+        ),),
+        (CapabilityEvidence(
+            "frontend/gateway/app/sentinel_wiring.py",
+            "call",
+            "consolidate_incident_timeline",
+            keyword="resolve_conflicts",
+            keyword_value=True,
+        ),),
+        (CapabilityEvidence(
+            "core/orchestrator/evolving_service.py",
+            "call",
+            "consolidate_run",
+            keyword="resolve_conflicts",
+            keyword_value=True,
+        ),),
+    ),
+    "retrieval_scoring": ((CapabilityEvidence(
+        "core/orchestrator/orchestrator.py",
+        "call",
+        "_record",
+        marker="memory_candidates_ranked",
+    ),),),
+    "context_drop_provenance": ((
+        CapabilityEvidence(
+            "core/context/compiler.py", "call", "_provenance", keyword="reason"
+        ),
+        CapabilityEvidence(
+            "core/orchestrator/orchestrator.py",
+            "call",
+            "_record",
+            marker="context_compiled",
+        ),
+    ),),
+    "update_text_mutation": (),
+}
+
+
+def _call_name(call: ast.Call) -> str:
+    target = call.func
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return ""
+
+
+def _literal_strings(node: ast.AST) -> set[str]:
+    return {
+        item.value
+        for item in ast.walk(node)
+        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    }
+
+
+def _evidence_present(evidence: CapabilityEvidence) -> bool:
+    path = _REPOSITORY_ROOT / evidence.path
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError):
+        # Missing or temporarily invalid source cannot support a capability claim.
+        return False
+    if evidence.kind == "dict_key":
+        return any(
+            isinstance(node, ast.Dict)
+            and evidence.name in {
+                key.value
+                for key in node.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
+            for node in ast.walk(tree)
+        )
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _call_name(node) != evidence.name:
+            continue
+        if evidence.marker is not None and evidence.marker not in _literal_strings(node):
+            continue
+        if evidence.keyword is not None:
+            keyword = next(
+                (item for item in node.keywords if item.arg == evidence.keyword), None
+            )
+            if keyword is None:
+                continue
+            if evidence.keyword_value is not None and not (
+                isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is evidence.keyword_value
+            ):
+                continue
+        return True
+    return False
+
+
+def _production_wired(capability: str) -> bool:
+    return any(
+        all(_evidence_present(evidence) for evidence in proof)
+        for proof in PRODUCTION_CALL_SITES[capability]
+    )
+
+
+def _defines_function(path: str, name: str) -> bool:
+    try:
+        tree = ast.parse((_REPOSITORY_ROOT / path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return False
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
+        for node in ast.walk(tree)
+    )
+
+
+# Implementation availability is derived from concrete function definitions where
+# there is a named mechanism. The two observability capabilities use their complete
+# production evidence proofs because their implementation is the emitted payload.
+# ``update_text_mutation`` is the one manually maintained negative fact: it may turn
+# True only when apply_route() rewrites target.text and the lifecycle event exposes a
+# before/after text diff. Absence cannot be proved by the presence of a call site.
+_IMPLEMENTED_MECHANISMS: dict[str, bool] = {
+    "decay": _defines_function("core/evolve/memory_ops.py", "decay_and_forget"),
+    "eviction": _defines_function("core/evolve/memory_ops.py", "utility_evict"),
+    "contradiction_quarantine": _defines_function(
+        "core/evolve/consolidate.py", "_fresh_cited_contradictions"
+    ),
+    "conflict_update": (
+        _defines_function("core/evolve/memory_ops.py", "route")
+        and _defines_function("core/evolve/memory_ops.py", "supersede")
+    ),
+    "retrieval_scoring": _production_wired("retrieval_scoring"),
+    "context_drop_provenance": _production_wired("context_drop_provenance"),
     "update_text_mutation": False,
+}
+
+
+CAPABILITY_STATUS: dict[str, dict[str, bool]] = {
+    name: {
+        "implemented": implemented,
+        "production_wired": _production_wired(name),
+    }
+    for name, implemented in _IMPLEMENTED_MECHANISMS.items()
+}
+
+
+# Compatibility view for existing API consumers. No truth value lives here: every
+# entry is projected from the structured implementation/wiring status above.
+CAPABILITIES: dict[str, bool] = {
+    "decay_wired": CAPABILITY_STATUS["decay"]["production_wired"],
+    "eviction_wired": CAPABILITY_STATUS["eviction"]["production_wired"],
+    "contradiction_quarantine_wired": CAPABILITY_STATUS[
+        "contradiction_quarantine"
+    ]["production_wired"],
+    "conflict_update_wired": CAPABILITY_STATUS["conflict_update"]["production_wired"],
+    "retrieval_scores": CAPABILITY_STATUS["retrieval_scoring"]["production_wired"],
+    "context_drop_reason": CAPABILITY_STATUS[
+        "context_drop_provenance"
+    ]["production_wired"],
+    "update_text_mutation": CAPABILITY_STATUS["update_text_mutation"]["implemented"],
 }
 
 
@@ -61,39 +244,50 @@ def runtime_capability_status(
 ) -> dict[str, dict[str, bool]]:
     """Separate code availability, run configuration, and observed execution.
 
-    A feature can be implemented but dormant for a run.  ``fired`` is derived only
-    from emitted lifecycle/trace data, so clients do not have to infer it from a
-    static capability flag.
+    A feature can be implemented without a production caller and can be configured
+    only by this benchmark. ``fired`` is derived from emitted lifecycle data, so
+    clients do not have to infer it from a static wiring flag.
     """
     operation_kinds = {str(event.get("op", "")) for event in events}
+    contradiction_quarantine_fired = any(
+        event.get("op") == "QUARANTINE"
+        and "quarantine:repeated_explicit_contradiction"
+        in (event.get("after") or {}).get("tags", [])
+        for event in events
+    )
     return {
         "decay": {
-            "implemented": CAPABILITIES["decay_wired"],
+            "implemented": _IMPLEMENTED_MECHANISMS["decay"],
             "configured": True,
-            "fired": "FORGET" in operation_kinds,
+            "fired": bool({"DECAY", "FORGET"}.intersection(operation_kinds)),
         },
         "eviction": {
-            "implemented": CAPABILITIES["eviction_wired"],
+            "implemented": _IMPLEMENTED_MECHANISMS["eviction"],
             "configured": capacity_budget is not None,
             "fired": "EVICT" in operation_kinds,
         },
+        "contradiction_quarantine": {
+            "implemented": _IMPLEMENTED_MECHANISMS["contradiction_quarantine"],
+            "configured": CAPABILITIES["contradiction_quarantine_wired"],
+            "fired": contradiction_quarantine_fired,
+        },
         "conflict_update": {
-            "implemented": CAPABILITIES["conflict_update_wired"],
+            "implemented": _IMPLEMENTED_MECHANISMS["conflict_update"],
             "configured": resolve_conflicts,
             "fired": "SUPERSEDE" in operation_kinds,
         },
         "retrieval_scoring": {
-            "implemented": CAPABILITIES["retrieval_scores"],
+            "implemented": _IMPLEMENTED_MECHANISMS["retrieval_scoring"],
             "configured": True,
             "fired": any(row.get("retrieval_candidates") for row in recalls),
         },
         "context_drop_provenance": {
-            "implemented": CAPABILITIES["context_drop_reason"],
+            "implemented": _IMPLEMENTED_MECHANISMS["context_drop_provenance"],
             "configured": True,
             "fired": any(row.get("context_drops") for row in recalls),
         },
         "update_text_mutation": {
-            "implemented": CAPABILITIES["update_text_mutation"],
+            "implemented": _IMPLEMENTED_MECHANISMS["update_text_mutation"],
             "configured": False,
             "fired": False,
         },

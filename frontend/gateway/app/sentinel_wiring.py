@@ -9,21 +9,87 @@ from __future__ import annotations
 
 import os
 import threading
+from contextlib import nullcontext
+from datetime import datetime, timezone
 from typing import Any
 
-from core.remediate.sentinel import Sentinel
+from core.env import autopoiesis_env
+from core.remediate.sentinel import Sentinel, record, timeline
 from domains.network_rca.detectors import ALL_DETECTORS
+from domains.network_rca.incident_memory import consolidate_incident_timeline
 
 _sentinel: Sentinel | None = None
 _lock = threading.Lock()
 
 
+def _resolve_learning_service() -> Any | None:
+    """Find the shared store only after the gateway has finished building it."""
+    if not autopoiesis_env("MEMORY_DSN"):
+        return None
+    from . import main
+
+    service = getattr(main, "_evolving_service", None)
+    if service is None or service.memory.repository is None:
+        return None
+    return service
+
+
+def _remember_completed_incidents() -> None:
+    service = _resolve_learning_service()
+    if service is None:
+        return
+    request_lock = getattr(service, "_request_lock", None)
+    with request_lock if request_lock is not None else nullcontext():
+        consolidate_incident_timeline(timeline(2000), service.memory, service.skills)
+        apply_retention = getattr(service, "_apply_memory_retention", None)
+        if apply_retention is not None:
+            # Diagnose applies retention after consolidation, while sentinel
+            # writes bypass that path. Keep both mutations inside the request
+            # lock already held here so every production writer enforces the
+            # same decay and capacity policy without acquiring the lock twice.
+            apply_retention(now=datetime.now(timezone.utc))
+            service.memory.flush()
+
+
+class _LearningSentinel(Sentinel):
+    def poll_once(self) -> dict[str, Any]:
+        result = super().poll_once()
+        try:
+            _remember_completed_incidents()
+        except Exception:
+            # The disposition is already durable in the append-only timeline.
+            # A store outage must leave the autonomous safety loop available;
+            # the stable run id lets a later poll retry without double counting.
+            pass
+        return result
+
+
 def _build() -> Sentinel:
     from .remediation import execute, preflight
 
-    return Sentinel(
+    def execute_with_timeline(
+        action: str,
+        target: str,
+        on_command=None,
+    ) -> dict[str, Any]:
+        def emit(kind: str, payload: dict[str, Any]) -> None:
+            enriched = dict(payload)
+            if enriched.get("action") and enriched["action"] != action:
+                enriched["followup_action"] = enriched["action"]
+            enriched["subject"] = target
+            enriched["action"] = action
+            record(kind, enriched)
+
+        return execute(
+            action,
+            target,
+            emit=emit,
+            on_command=on_command,
+        )
+
+    return _LearningSentinel(
         detectors=list(ALL_DETECTORS),
-        execute=execute,
+        execute=execute_with_timeline,
         preflight=preflight,
         interval_sec=float(os.getenv("AUTOPOIESIS_SENTINEL_INTERVAL", "20")),
     )

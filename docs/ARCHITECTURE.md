@@ -65,10 +65,10 @@ cause / skill). This is not plain RAG — memory is a *lifecycle*:
 |---|---|---|---|
 | write routing ADD / UPDATE / NOOP | Mem0 | `evolve/memory_ops.py` | ✅ wired |
 | associative links plus bounded multi-hop expansion | A-MEM | `evolve/memory_ops.py`, `memory/store.py` | ✅ wired |
-| typed temporal/causal event-chain reconstruction | trace relations | `memory/evolution.py` | ✅ wired; causal edges require evidence |
+| typed event-chain reconstruction | trace relations | `memory/evolution.py` | production writes `precedes` / `follows`; causal relation types are readers only and currently have no producer or `evidence_ids` population |
 | importance-gated reflection → insight | Generative Agents | `evolve/memory_ops.py` | ✅ wired |
-| decay / forgetting below a floor | Ebbinghaus | `evolve/memory_ops.py` | ⚠️ baseline implemented and tested, not wired into the loop |
-| capacity-budgeted utility eviction | lifecycle signals | `evolve/memory_ops.py` | ✅ wired into the evolving stream |
+| decay / forgetting below a floor | Ebbinghaus | `evolve/memory_ops.py` | production diagnosis service calls it after verified consolidation, at most once per configured interval |
+| capacity-budgeted utility eviction | lifecycle signals | `evolve/memory_ops.py` | production call is wired after verified consolidation; factory default has no budget, so eviction is inactive until `AUTOPOIESIS_MEMORY_BUDGET` is set |
 | quarantine (kept for audit, excluded from retrieval) | — | `memory/store.py` | ✅ wired |
 
 Memory retrieval no longer constructs a complete BM25 index inside each request.
@@ -116,7 +116,15 @@ After a verified run, `consolidate_run` turns attributed trace facts into memory
 (routing + links + reflection + skill-stat updates). Merely retrieved memories receive no
 credit or blame. Only an explicitly attributed episodic hypothesis can accumulate a
 contradiction strike, and two independent runs with cited fresh counter-evidence are required
-before quarantine. `compare_cold_vs_warm` / `run_evolving_stream` remain evaluation drivers.
+before quarantine. Production evidence producers currently emit no `contradicts` field, so
+that isolation branch remains dormant there. `compare_cold_vs_warm` /
+`run_evolving_stream` remain evaluation drivers.
+
+The diagnosis service defers `consolidate_run`'s flush, applies retention, then flushes the
+combined memory snapshot once. Those memory changes cross the repository boundary in one
+transaction. The sentinel first persists its incident timeline and later consolidates learned
+memory; those are separate durable writes. A timeline replay also consolidates each completed
+incident chain with its own repository transaction.
 [`grpo.py`](../core/evolve/grpo.py) exports group-relative advantages and a
 confidence-update rule — **roadmap: not wired into the online loop, and not LLM/GPU policy
 training.**

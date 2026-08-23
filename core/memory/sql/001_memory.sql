@@ -16,8 +16,9 @@ CREATE TABLE IF NOT EXISTS memory_records (
             'memory_id', 'tier', 'text', 'tags', 'asset_ids', 'evidence_ids',
             'confidence', 'quarantined', 'source_trace_ids', 'evidence_snapshot',
             'links', 'importance', 'strength', 'access_count', 'superseded_by',
-            'first_observed_at', 'last_observed_at', 'event_type', 'relations',
-            'config_version', 'metric_window', 'baseline_delta'
+            'first_observed_at', 'last_observed_at', 'valid_from', 'valid_to',
+            'event_type', 'relations', 'config_version', 'metric_window',
+            'baseline_delta'
         ]),
     CONSTRAINT memory_records_tier_ck
         CHECK (record ->> 'tier' IN ('episodic', 'semantic', 'procedural', 'asset_profile')),
@@ -52,8 +53,9 @@ CREATE TABLE IF NOT EXISTS memory_events (
             'memory_id', 'tier', 'text', 'tags', 'asset_ids', 'evidence_ids',
             'confidence', 'quarantined', 'source_trace_ids', 'evidence_snapshot',
             'links', 'importance', 'strength', 'access_count', 'superseded_by',
-            'first_observed_at', 'last_observed_at', 'event_type', 'relations',
-            'config_version', 'metric_window', 'baseline_delta'
+            'first_observed_at', 'last_observed_at', 'valid_from', 'valid_to',
+            'event_type', 'relations', 'config_version', 'metric_window',
+            'baseline_delta'
         ]),
     CONSTRAINT memory_events_tier_ck
         CHECK (record ->> 'tier' IN ('episodic', 'semantic', 'procedural', 'asset_profile')),

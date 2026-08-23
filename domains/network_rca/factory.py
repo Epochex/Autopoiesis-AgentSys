@@ -44,7 +44,14 @@ def load_ground_truth(path: str | Path | None = None) -> dict[str, RCAGroundTrut
 def load_memory_records(path: str | Path | None = None) -> list[MemoryRecord]:
     memory_path = Path(path) if path else ROOT / "fixtures" / "memory_seed.json"
     raw = json.loads(memory_path.read_text(encoding="utf-8"))
-    return [MemoryRecord.model_validate(item) for item in raw]
+    records = [MemoryRecord.model_validate(item) for item in raw]
+    for record in records:
+        # This loader is the boundary between hand-written domain knowledge and
+        # learned records. Marking that provenance here keeps retention policy
+        # independent of whatever ids the fixture happens to use.
+        if "seed" not in record.tags:
+            record.tags.append("seed")
+    return records
 
 
 def build_network_rca_orchestrator(
@@ -102,7 +109,13 @@ def build_network_rca_orchestrator(
         repository = PostgresMemoryRepository(resolved_memory_dsn)
         repository.initialize_schema()
         memory = TieredMemoryStore.from_repository(repository, enabled=memory_enabled)
-        if seed_memory and not memory.records():
+        # active(), not records(): the latter counts quarantined rows, and a
+        # store whose only content is one retired record is still an empty store
+        # as far as seeding goes. Getting this wrong is silent and permanent —
+        # a single quarantined row (a verification probe, a forgotten memory, an
+        # evicted one) makes the guard false forever and the domain priors never
+        # load, with nothing anywhere reporting that they are missing.
+        if seed_memory and not memory.active():
             memory.seed(load_memory_records())
             memory.flush()
     else:

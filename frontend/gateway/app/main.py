@@ -34,6 +34,8 @@ _cache_loaded_at = 0.0
 _evolving_service = None
 _runtime_error: str | None = None
 _diagnosis_cases: dict[str, Any] = {}
+_PRODUCTION_MEMORY_BUDGET = 64
+_PRODUCTION_CONSOLIDATION_OPTIONS = {"resolve_conflicts": True}
 # The environment sweep reads the whole syslog corpus, so it is cached for
 # longer than the live snapshot; ?refresh=1 forces a re-sweep after a source or
 # ARP snapshot changes.
@@ -44,6 +46,17 @@ _environment_loaded_at = 0.0
 _incident_repository = IncidentRepository(
     ledger_path=settings.incident_disposition_ledger_path
 )
+
+
+def _configure_production_memory_budget() -> None:
+    # The store starts with five protected priors. A cap of 64 leaves room for
+    # 59 learned records at today's single-digit scale and still bounds growth.
+    # The service fallback is unbounded, so the gateway supplies this default
+    # before constructing the production service while preserving operator overrides.
+    os.environ.setdefault(
+        "AUTOPOIESIS_MEMORY_BUDGET",
+        str(_PRODUCTION_MEMORY_BUDGET),
+    )
 
 
 class RCADiagnosisRequest(BaseModel):
@@ -235,6 +248,7 @@ def _start_prewarm() -> None:
 async def _lifespan(app: FastAPI):
     global _diagnosis_cases, _evolving_service, _runtime_error
     _start_prewarm()
+    _configure_production_memory_budget()
 
     # The autonomous loop. Off unless AUTOPOIESIS_SENTINEL=1, because something
     # that acts on the live system on its own must be switched on deliberately
@@ -269,6 +283,10 @@ async def _lifespan(app: FastAPI):
                     "max_parallel_agents": 4,
                     "reject_on_insufficient_evidence": True,
                 },
+                # This is the diagnose production entry point. Passing the
+                # option here activates the existing supersession branch when
+                # a later diagnosis changes the root for the same subject.
+                consolidation_options=dict(_PRODUCTION_CONSOLIDATION_OPTIONS),
                 raise_on_evolution_error=False,
             )
             _runtime_error = None
@@ -553,10 +571,180 @@ def rca_observation_session(session_id: str) -> dict[str, Any]:
     return TraceAnalyzer(_evolving_service.observer.ledger).session(session_id)
 
 
+_MEMORY_TIERS = ("episodic", "semantic", "procedural", "asset_profile")
+_MEMORY_TEXT_LIMIT = 240
+_MEMORY_RETENTION_CHECKPOINT_TAG = "memory_retention_checkpoint"
+
+
+def _memory_records() -> tuple[bool, list[Any], int | None, str | None]:
+    """Read the durable snapshot when available, otherwise the local store."""
+    service = _evolving_service
+    memory = getattr(service, "memory", None) if service is not None else None
+    if memory is None:
+        return False, [], None, None
+
+    repository = getattr(memory, "repository", None)
+    load_records = getattr(repository, "load_records", None)
+    # PostgreSQL is the source of truth across replicas. Reading it here avoids
+    # presenting a process-local projection as the current durable memory state.
+    if callable(load_records):
+        records = load_records(include_quarantined=True)
+    else:
+        records = memory.records()
+
+    records = list(records)
+    retention_health: dict[str, Any] = {}
+    health = getattr(service, "health", None)
+    if callable(health):
+        health_payload = health()
+        if isinstance(health_payload, dict):
+            retention_health = dict(health_payload.get("memory_retention") or {})
+    budget = retention_health.get("budget")
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        budget = None
+
+    last_decay_at = retention_health.get("last_decay_at")
+    if hasattr(last_decay_at, "isoformat"):
+        last_decay_at = last_decay_at.isoformat()
+    visible_records = []
+    for record in records:
+        if _MEMORY_RETENTION_CHECKPOINT_TAG in record.tags:
+            if last_decay_at is None:
+                last_decay_at = _memory_time(record.last_observed_at)
+            # The checkpoint schedules retention; presenting it as remembered
+            # incident content would inflate both the record and quarantine counts.
+            continue
+        visible_records.append(record)
+    return repository is not None, visible_records, budget, last_decay_at
+
+
+def _memory_time(value: Any) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _memory_relation(relation: Any) -> dict[str, Any]:
+    if hasattr(relation, "model_dump"):
+        return relation.model_dump(mode="json")
+    return dict(relation)
+
+
+def _memory_quarantine_reason(record: Any) -> str | None:
+    for tag in reversed(record.tags):
+        if tag.startswith("quarantine:"):
+            return tag.removeprefix("quarantine:")
+    return None
+
+
+def _memory_list_record(record: Any) -> dict[str, Any]:
+    return {
+        "memory_id": record.memory_id,
+        "tier": record.tier,
+        "text": record.text[:_MEMORY_TEXT_LIMIT],
+        "tags": list(record.tags),
+        "asset_ids": list(record.asset_ids),
+        "confidence": record.confidence,
+        "importance": record.importance,
+        "strength": record.strength,
+        "access_count": record.access_count,
+        "first_observed_at": _memory_time(record.first_observed_at),
+        "last_observed_at": _memory_time(record.last_observed_at),
+        "valid_from": _memory_time(record.valid_from),
+        "valid_to": _memory_time(record.valid_to),
+        "quarantined": record.quarantined,
+        # A count proves provenance exists without exposing every trace id in a
+        # collection response. The detail endpoint is the deliberate audit path.
+        "source_trace_ids": len(record.source_trace_ids),
+    }
+
+
+def _memory_detail_record(record: Any) -> dict[str, Any]:
+    evidence = list(record.evidence_snapshot)
+    return {
+        **_memory_list_record(record),
+        "text": record.text,
+        "source_trace_ids": list(record.source_trace_ids),
+        "evidence_ids": list(record.evidence_ids),
+        "links": list(record.links),
+        "relations": [_memory_relation(relation) for relation in record.relations],
+        # Evidence bodies can contain raw observations. Identifiers and cardinality
+        # are sufficient to audit provenance without turning this into a data leak.
+        "evidence_snapshot": {
+            "count": len(evidence),
+            "evidence_ids": [
+                item["evidence_id"]
+                for item in evidence
+                if item.get("evidence_id") is not None
+            ],
+        },
+        "quarantine_reason": _memory_quarantine_reason(record),
+        "superseded_by": record.superseded_by,
+    }
+
+
+@app.get("/api/rca/memory")
+async def rca_memory(
+    tier: Literal["episodic", "semantic", "procedural", "asset_profile"] | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    include_quarantined: bool = False,
+) -> dict[str, Any]:
+    """Current online memory, separate from the deterministic benchmark replay."""
+    from core.evolve.observatory import CAPABILITIES
+
+    durable, records, configured_budget, last_decay_at = await asyncio.to_thread(
+        _memory_records
+    )
+    active = [record for record in records if not record.quarantined]
+    counts = {memory_tier: 0 for memory_tier in _MEMORY_TIERS}
+    for record in active:
+        counts[record.tier] += 1
+    counts["quarantined"] = sum(1 for record in records if record.quarantined)
+
+    selected = records if include_quarantined else active
+    if tier is not None:
+        selected = [record for record in selected if record.tier == tier]
+    selected.sort(key=lambda record: (-record.importance, record.memory_id))
+
+    return {
+        "ok": True,
+        "durable": durable,
+        "counts": counts,
+        "budget": {"configured": configured_budget, "active": len(active)},
+        "retention": {
+            "decay_wired": CAPABILITIES["decay_wired"],
+            "eviction_wired": CAPABILITIES["eviction_wired"],
+            "last_decay_at": last_decay_at,
+        },
+        "records": [_memory_list_record(record) for record in selected[:limit]],
+    }
+
+
+@app.get("/api/rca/memory/{memory_id}")
+async def rca_memory_detail(memory_id: str) -> dict[str, Any]:
+    """Full provenance for one online memory record, with evidence bodies withheld."""
+    durable, records, _configured_budget, _last_decay_at = await asyncio.to_thread(
+        _memory_records
+    )
+    record = next((item for item in records if item.memory_id == memory_id), None)
+    if record is None:
+        raise HTTPException(status_code=404, detail="memory record not found")
+    return {"ok": True, "durable": durable, "record": _memory_detail_record(record)}
+
+
 @app.get("/api/rca/evolution")
 async def rca_evolution(passes: int = Query(default=4, ge=1, le=64)) -> dict[str, Any]:
     from .rca_reader import load_evolution
-    return await asyncio.to_thread(load_evolution, None, passes)
+    payload = await asyncio.to_thread(load_evolution, None, passes)
+    # This route reruns a fixed held-out stream. Label it at the top level so a
+    # consumer cannot mistake its evolved benchmark store for production memory.
+    return {
+        **payload,
+        "dataMode": "offline_benchmark_replay",
+        "onlineMemory": False,
+        "benchmark": {
+            "caseCount": int(payload.get("nCases", len(payload.get("cases", [])))),
+            "passes": int(payload.get("passes", passes)),
+        },
+    }
 
 
 @app.get("/api/rca/memory-graph")
@@ -1286,6 +1474,48 @@ async def sentinel_timeline(limit: int = Query(default=200, ge=1, le=2000)) -> d
 
     rows = await asyncio.to_thread(timeline, limit)
     return {"ok": True, "events": rows, "count": len(rows)}
+
+
+@app.get("/api/rca/sentinel/recurrence")
+async def sentinel_recurrence() -> dict[str, Any]:
+    """Repairs that held, then failed again, grouped by detector, subject and action."""
+    from core.remediate import recurrence
+    from core.remediate.sentinel import COOLDOWN_SEC, _default_timeline
+
+    now = time.time()
+    # A fixed line tail silently shortens a busy 24-hour window, so this uses
+    # the ledger's time-bounded reader that backs the decision itself.
+    events = await asyncio.to_thread(
+        recurrence._events_since,
+        _default_timeline(),
+        now - recurrence.WINDOW_SEC,
+    )
+    histories = recurrence.project(events, now=now, window_sec=recurrence.WINDOW_SEC)
+
+    keys = []
+    for history in histories.values():
+        if not history.recurrences:
+            continue
+        detector, subject, action = history.key.split(":", 2)
+        keys.append({
+            "key": history.key,
+            "detector": detector,
+            "subject": subject,
+            "action": action,
+            "recurrences": history.recurrences,
+            "escalated": recurrence.should_escalate(history.recurrences),
+            "next_cooldown_sec": recurrence.cooldown_for(history.recurrences, COOLDOWN_SEC),
+            "cycles": [cycle.as_dict() for cycle in history.cycles],
+        })
+    keys.sort(key=lambda item: item["recurrences"], reverse=True)
+
+    return {
+        "ok": True,
+        "window_sec": recurrence.WINDOW_SEC,
+        "window_label": recurrence.window_label(),
+        "limit": recurrence.LIMIT,
+        "keys": keys,
+    }
 
 
 @app.post("/api/rca/sentinel/poll")

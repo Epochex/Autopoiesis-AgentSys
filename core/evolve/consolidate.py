@@ -100,9 +100,10 @@ def _attributed_memory_ids(events: list[TraceEvent]) -> list[str]:
 def _credited_memory_ids(events: list[TraceEvent]) -> list[str]:
     """Attributions that demonstrably affected a successful run.
 
-    An episodic hypothesis is eligible for contradiction feedback but earns
-    positive credit only after ``memory_resolved`` confirms it. A procedural
-    shortcut earns credit because it changed the executed probe set.
+    An episodic hypothesis earns positive credit only through
+    ``memory_resolved``, after fresh evidence confirms it. A procedural shortcut
+    earns credit through ``memory_attributed`` because it changed the executed
+    probe set.
     """
     credited: list[str] = []
     for event in events:
@@ -111,12 +112,8 @@ def _credited_memory_ids(events: list[TraceEvent]) -> list[str]:
             credited.extend(
                 item.get("memory_id")
                 for item in items
-                if item.get("role") in {"procedural_shortcut", "diagnosis_support"}
+                if item.get("role") == "procedural_shortcut"
             )
-            # Compatibility for an explicitly-attributed older/custom producer
-            # that emitted only memory_ids and no role-bearing items.
-            if not items:
-                credited.extend(event.payload.get("memory_ids", []))
         elif event.kind == "memory_resolved" and event.payload.get("memory_id"):
             credited.append(event.payload["memory_id"])
     return _unique_strings(credited)

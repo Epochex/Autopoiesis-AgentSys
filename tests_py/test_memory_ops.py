@@ -19,8 +19,10 @@ from core.evolve import (
     reflect,
     route,
     similarity,
+    utility_evict,
 )
 from core.memory.store import MemoryRecord, TieredMemoryStore
+from domains.network_rca.factory import load_memory_records
 
 
 def _epi(mid, terms, assets, root, conf=0.9):
@@ -144,7 +146,13 @@ def test_decay_forgets_stale_one_off_keeps_reused_and_protects_priors():
     mem = TieredMemoryStore()
     reused = _epi("epi-reused", ["carrier"], ["r230", "eno1"], "carrier_down")
     stale = _epi("epi-stale", ["vip"], ["fortigate", "wan1"], "vip_mismatch")
-    seed = MemoryRecord(memory_id="seed-x", tier="semantic", text="prior", confidence=2.0)
+    seed = MemoryRecord(
+        memory_id="arbitrary-prior-id",
+        tier="semantic",
+        text="prior",
+        tags=["seed"],
+        confidence=2.0,
+    )
     for r in (reused, stale, seed):
         mem.add(r)
     # tick 1: 'reused' is refreshed each tick (as consolidation would), 'stale' is not
@@ -153,7 +161,34 @@ def test_decay_forgets_stale_one_off_keeps_reused_and_protects_priors():
         decay_and_forget(mem)
     assert mem.get("epi-reused") in mem.active()        # survives — kept warm
     assert mem.get("epi-stale").quarantined             # faded out after ~2 idle ticks
-    assert mem.get("seed-x") in mem.active()            # protected prior never decays
+    assert mem.get("arbitrary-prior-id") in mem.active()  # protected prior never decays
+
+
+def test_all_domain_seed_priors_survive_decay_and_utility_eviction():
+    priors = load_memory_records()
+    prior_ids = {record.memory_id for record in priors}
+    assert prior_ids == {
+        "asset-r230-profile",
+        "semantic-local-topology",
+        "procedural-carrier-first",
+        "procedural-policy-before-vlan",
+        "procedural-vip-policy-pair",
+    }
+    assert all("seed" in record.tags for record in priors)
+
+    decay_store = TieredMemoryStore()
+    decay_store.seed([record.model_copy(deep=True) for record in priors])
+    decay_store.add(_epi("disposable-decay", ["temporary"], [], "temporary"))
+    forgotten = decay_and_forget(decay_store, retention=0.1, floor=0.9)
+    assert forgotten == ["disposable-decay"]
+    assert prior_ids.issubset(record.memory_id for record in decay_store.active())
+    assert all(decay_store.get(memory_id).strength == 1.0 for memory_id in prior_ids)
+
+    eviction_store = TieredMemoryStore()
+    eviction_store.seed([record.model_copy(deep=True) for record in priors])
+    eviction_store.add(_epi("disposable-eviction", ["temporary"], [], "temporary"))
+    assert utility_evict(eviction_store, budget=0) == ["disposable-eviction"]
+    assert {record.memory_id for record in eviction_store.active()} == prior_ids
 
 
 # ── generalization mechanism (SYNTHETIC, clearly labelled) ───────────────────

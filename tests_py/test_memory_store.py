@@ -2,12 +2,20 @@
 unique ids, tier-partitioned deterministic retrieval, quarantine isolation."""
 from __future__ import annotations
 
-import pytest
+from datetime import datetime, timedelta, timezone
+import os
 from types import SimpleNamespace
 from typing import Sequence
+from uuid import uuid4
+
+import pytest
 
 from core.evolve.memory_ops import decay_and_forget
-from core.memory.postgres_repository import MemoryVersionConflict, MemoryWrite
+from core.memory.postgres_repository import (
+    MemoryVersionConflict,
+    MemoryWrite,
+    PostgresMemoryRepository,
+)
 from core.memory.store import MemoryRecord, TieredMemoryStore
 
 
@@ -139,6 +147,44 @@ def test_retrieval_requires_overlap_and_breaks_score_ties_by_insertion_order():
     assert store.retrieve([], []) == {
         "episodic": [], "semantic": [], "procedural": [], "asset_profile": [],
     }
+
+
+def test_retrieval_applies_half_open_validity_window_at_requested_time():
+    now = datetime.now(timezone.utc)
+    observed = now - timedelta(days=3)
+    invalidated = now - timedelta(days=1)
+    legacy = _rec("legacy", tags=["carrier"])
+    bounded = MemoryRecord(
+        memory_id="bounded",
+        tier="episodic",
+        text="carrier changed state",
+        tags=["carrier"],
+        valid_from=observed,
+        valid_to=invalidated,
+    )
+    store = TieredMemoryStore()
+    store.seed([legacy, bounded])
+
+    before = store.retrieve(
+        ["carrier"], [], limit_per_tier=5, as_of=observed - timedelta(seconds=1)
+    )["episodic"]
+    assert before == [legacy]
+
+    during = store.retrieve(
+        ["carrier"], [], limit_per_tier=5, as_of=observed + timedelta(days=1)
+    )["episodic"]
+    assert {record.memory_id for record in during} == {"legacy", "bounded"}
+
+    # The upper bound is exclusive so two consecutive facts can meet at the
+    # same timestamp without both claiming to be true at that instant.
+    after = store.retrieve(
+        ["carrier"], [], limit_per_tier=5, as_of=invalidated
+    )["episodic"]
+    assert after == [legacy]
+
+    # Records written before the validity fields existed remain open-ended, so
+    # an ordinary retrieval keeps the previous behaviour for existing data.
+    assert store.retrieve(["carrier"], [], limit_per_tier=5)["episodic"] == [legacy]
 
 
 def test_quarantined_records_are_hidden_from_retrieval_but_kept_for_audit():
@@ -305,6 +351,38 @@ def test_online_dense_route_adds_semantic_candidate_and_tracks_mutations():
     assert store.retrieve(["authentication"], [], limit_per_tier=3)["semantic"] == []
 
 
+def test_expired_record_cannot_reenter_through_dense_or_graph_routes():
+    now = datetime.now(timezone.utc)
+    vector = _FakeVectorIndex()
+    store = TieredMemoryStore()
+    seed = MemoryRecord(
+        memory_id="current-seed",
+        tier="semantic",
+        text="gateway health signal",
+        links=["expired-neighbour"],
+    )
+    expired = MemoryRecord(
+        memory_id="expired-neighbour",
+        tier="episodic",
+        text="historical certificate observation",
+        valid_to=now - timedelta(seconds=1),
+    )
+    store.seed([seed, expired])
+    vector.documents = {
+        record.memory_id: store.vector_document(record) for record in (seed, expired)
+    }
+    store.attach_vector_index(vector)
+
+    result = store.retrieve(
+        ["gateway"], [], limit_per_tier=5, as_of=now, graph_depth=1
+    )
+    assert result["semantic"] == [seed]
+    assert result["episodic"] == []
+    assert "expired-neighbour" not in {
+        detail["memory_id"] for detail in store.retrieval_diagnostics()
+    }
+
+
 def test_dense_dependency_degradation_is_visible_and_sparse_route_stays_live():
     store = TieredMemoryStore()
     record = _rec("sparse", tags=["carrier"])
@@ -316,6 +394,55 @@ def test_dense_dependency_degradation_is_visible_and_sparse_route_stays_live():
     assert health["vector_enabled"] is False
     assert health["vector_degraded"] is True
     assert health["vector_degraded_reason"] == "faiss unavailable"
+
+
+_POSTGRES_DSN = os.environ.get("AUTOPOIESIS_TEST_POSTGRES_DSN")
+
+
+@pytest.mark.skipif(
+    not _POSTGRES_DSN,
+    reason="AUTOPOIESIS_TEST_POSTGRES_DSN is not configured",
+)
+def test_real_postgres_round_trip_preserves_validity_timestamps():
+    psycopg = pytest.importorskip("psycopg")
+    assert _POSTGRES_DSN is not None
+    schema_name = f"memory_validity_{uuid4().hex}"
+    with psycopg.connect(_POSTGRES_DSN, autocommit=True) as admin_connection:
+        admin_connection.execute(
+            psycopg.sql.SQL("CREATE SCHEMA {}").format(
+                psycopg.sql.Identifier(schema_name)
+            )
+        )
+    test_dsn = psycopg.conninfo.make_conninfo(
+        _POSTGRES_DSN, options=f"-csearch_path={schema_name}"
+    )
+
+    try:
+        repository = PostgresMemoryRepository(test_dsn)
+        repository.initialize_schema()
+        valid_from = datetime(2026, 2, 3, 4, 5, tzinfo=timezone.utc)
+        valid_to = valid_from + timedelta(hours=6)
+        record = MemoryRecord(
+            memory_id=f"pytest-validity-{uuid4()}",
+            tier="semantic",
+            text="带有效期的数据库验证记录",
+            valid_from=valid_from,
+            valid_to=valid_to,
+        )
+        repository.upsert(record, expected_version=0)
+
+        loaded, version = repository.get(record.memory_id) or (None, None)
+        assert version == 1
+        assert loaded is not None
+        assert loaded.valid_from == valid_from
+        assert loaded.valid_to == valid_to
+    finally:
+        with psycopg.connect(_POSTGRES_DSN, autocommit=True) as admin_connection:
+            admin_connection.execute(
+                psycopg.sql.SQL("DROP SCHEMA {} CASCADE").format(
+                    psycopg.sql.Identifier(schema_name)
+                )
+            )
 
 
 def test_decay_rejects_nonsensical_parameters():

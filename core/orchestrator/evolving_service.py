@@ -1,19 +1,115 @@
 """Production wrapper that closes the diagnosis, learning and maintenance loop."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+import math
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Iterator, Protocol, Sequence
 from uuid import uuid4
 
 from core.memory.index_maintenance import IndexMaintenanceWorker
 from core.memory.index_projector import MemoryIndexProjector
+from core.memory.store import MemoryRecord
 
 if TYPE_CHECKING:
     from core.evolve.consolidate import ConsolidationReport
+
+
+_MEMORY_BUDGET_ENV = "AUTOPOIESIS_MEMORY_BUDGET"
+_MEMORY_DECAY_INTERVAL_ENV = "AUTOPOIESIS_MEMORY_DECAY_INTERVAL"
+# A missing budget keeps the existing no-eviction behavior until production
+# measurements provide a defensible capacity.
+_DEFAULT_MEMORY_BUDGET: int | None = None
+# One day prevents request volume from turning decay into an accidental measure
+# of traffic while still retiring memories on an operationally useful cadence.
+_DEFAULT_MEMORY_DECAY_INTERVAL_SECONDS = 24.0 * 60.0 * 60.0
+_DECAY_CHECKPOINT_ID = "autopoiesis:memory-retention:decay-checkpoint"
+_DECAY_CHECKPOINT_TAG = "memory_retention_checkpoint"
+
+
+def memory_retention_wiring(
+    *, memory_budget: int | None = _DEFAULT_MEMORY_BUDGET
+) -> dict[str, dict[str, bool]]:
+    """Report retention implementation, production wiring and active configuration.
+
+    The implementation and wiring dimensions come from observatory's source-derived
+    capability registry. ``configured`` is instance-specific: the production call to
+    utility_evict exists, while the factory configuration leaves it unreachable until
+    an operator supplies a capacity budget.
+    """
+    # Import lazily because memory_ops imports observatory while core.evolve is being
+    # initialized. There is one capability source; this service only adds config state.
+    from core.evolve.observatory import CAPABILITY_STATUS
+
+    decay = dict(CAPABILITY_STATUS["decay"])
+    eviction = dict(CAPABILITY_STATUS["eviction"])
+    decay["configured"] = decay["production_wired"]
+    eviction["configured"] = (
+        eviction["production_wired"] and memory_budget is not None
+    )
+    return {"decay": decay, "eviction": eviction}
+
+
+def _configured_memory_budget() -> int | None:
+    raw = os.environ.get(_MEMORY_BUDGET_ENV)
+    if raw is None or not raw.strip():
+        return _DEFAULT_MEMORY_BUDGET
+    try:
+        budget = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{_MEMORY_BUDGET_ENV} must be a non-negative integer") from exc
+    if budget < 0:
+        raise ValueError(f"{_MEMORY_BUDGET_ENV} must be a non-negative integer")
+    return budget
+
+
+def _configured_decay_interval_seconds() -> float:
+    raw = os.environ.get(_MEMORY_DECAY_INTERVAL_ENV)
+    if raw is None or not raw.strip():
+        return _DEFAULT_MEMORY_DECAY_INTERVAL_SECONDS
+    try:
+        interval = float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_MEMORY_DECAY_INTERVAL_ENV} must be a positive number of seconds"
+        ) from exc
+    if not math.isfinite(interval) or interval <= 0.0:
+        raise ValueError(
+            f"{_MEMORY_DECAY_INTERVAL_ENV} must be a positive number of seconds"
+        )
+    return interval
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+@contextmanager
+def _defer_consolidation_flush(memory: Any) -> Iterator[None]:
+    """Hold consolidation's flush until retention has joined the same snapshot."""
+    instance_values = vars(memory)
+    had_instance_flush = "flush" in instance_values
+    previous_instance_flush = instance_values.get("flush")
+    memory.flush = lambda: []
+    try:
+        yield
+    finally:
+        if had_instance_flush:
+            memory.flush = previous_instance_flush
+        else:
+            del memory.flush
 
 
 class MaintenanceWorker(Protocol):
@@ -60,6 +156,8 @@ class EvolvingRCAService:
     ) -> None:
         if projection_max_batches <= 0:
             raise ValueError("projection_max_batches must be positive")
+        self._memory_budget = _configured_memory_budget()
+        self._memory_decay_interval_seconds = _configured_decay_interval_seconds()
         self.orchestrator = orchestrator
         self._temporary_observer_dir: TemporaryDirectory[str] | None = None
         self._observer = getattr(orchestrator, "observer", None)
@@ -248,14 +346,20 @@ class EvolvingRCAService:
                 },
                 attributes={"options": self.consolidation_options},
             ) as consolidation_span:
-                self.last_consolidation = consolidate_run(
-                    list(self.orchestrator._run_events),
-                    case,
-                    self.orchestrator.memory,
-                    self.orchestrator.skills,
-                    list(self.orchestrator._last_evidence),
-                    **self.consolidation_options,
-                )
+                # consolidate_run normally flushes before returning. Holding that
+                # flush lets retention join the same repository batch, so a failed
+                # write cannot leave only one side of the memory update durable.
+                with _defer_consolidation_flush(self.orchestrator.memory):
+                    self.last_consolidation = consolidate_run(
+                        list(self.orchestrator._run_events),
+                        case,
+                        self.orchestrator.memory,
+                        self.orchestrator.skills,
+                        list(self.orchestrator._last_evidence),
+                        **self.consolidation_options,
+                    )
+                retention = self._apply_memory_retention(now=_utc_now())
+                self.orchestrator.memory.flush()
                 report = self.last_consolidation
                 consolidation_span.set_result(
                     output={
@@ -266,6 +370,7 @@ class EvolvingRCAService:
                         "quarantined": report.quarantined,
                         "linked": report.linked,
                         "insights": report.insights,
+                        "retention": retention,
                     },
                     metrics={
                         "added": len(report.added),
@@ -275,6 +380,9 @@ class EvolvingRCAService:
                         "quarantined": len(report.quarantined),
                         "linked": len(report.linked),
                         "memory_records": len(self.memory.records()),
+                        "memory_decay_ran": retention["decay_ran"],
+                        "memory_forgotten": len(retention["forgotten"]),
+                        "memory_evicted": len(retention["evicted"]),
                     },
                     attributes={"index_health": self.memory.index_health()},
                 )
@@ -340,8 +448,78 @@ class EvolvingRCAService:
                 "projection": self.projector.stats() if self.projector is not None else None,
                 "maintenance": [worker.stats() for worker in self._maintenance_workers],
                 "memory_index": self.orchestrator.memory.index_health(),
+                "memory_retention": {
+                    "budget": self._memory_budget,
+                    "decay_interval_seconds": self._memory_decay_interval_seconds,
+                    "capabilities": memory_retention_wiring(
+                        memory_budget=self._memory_budget
+                    ),
+                },
                 "observability": self.observer.health(),
             }
+
+    def _apply_memory_retention(self, *, now: datetime) -> dict[str, Any]:
+        """Apply time and capacity retention before the consolidated snapshot flushes."""
+        # memory_ops imports observatory through the core.evolve package. Delaying
+        # this import preserves the domain factory's existing initialization order.
+        from core.evolve.memory_ops import decay_and_forget, utility_evict
+
+        memory = self.orchestrator.memory
+        checkpoint = memory.get(_DECAY_CHECKPOINT_ID)
+        if checkpoint is not None and (
+            checkpoint.event_type != _DECAY_CHECKPOINT_TAG
+            or _DECAY_CHECKPOINT_TAG not in checkpoint.tags
+        ):
+            raise RuntimeError(
+                f"memory id {_DECAY_CHECKPOINT_ID!r} is not a retention checkpoint"
+            )
+
+        instant = _as_utc(now)
+        last_decay = checkpoint.last_observed_at if checkpoint is not None else None
+        decay_due = last_decay is None or (
+            instant - _as_utc(last_decay)
+        ).total_seconds() >= self._memory_decay_interval_seconds
+        forgotten: list[str] = []
+        if decay_due:
+            forgotten = decay_and_forget(
+                memory,
+                recorder=self._retention_recorder(),
+            )
+            if checkpoint is None:
+                # The checkpoint is intentionally inactive: it persists with the
+                # memory transaction without entering retrieval or consuming budget.
+                checkpoint = MemoryRecord(
+                    memory_id=_DECAY_CHECKPOINT_ID,
+                    tier="semantic",
+                    text="Persistent timestamp for the memory decay schedule.",
+                    tags=["seed", _DECAY_CHECKPOINT_TAG],
+                    quarantined=True,
+                    last_observed_at=instant,
+                    event_type=_DECAY_CHECKPOINT_TAG,
+                )
+                memory.add(checkpoint)
+            else:
+                checkpoint.last_observed_at = instant
+
+        evicted: list[str] = []
+        if self._memory_budget is not None:
+            evicted = utility_evict(
+                memory,
+                budget=self._memory_budget,
+                recorder=self._retention_recorder(),
+            )
+        return {
+            "decay_ran": decay_due,
+            "last_decay_at": (
+                checkpoint.last_observed_at.isoformat() if checkpoint is not None else None
+            ),
+            "forgotten": forgotten,
+            "evicted": evicted,
+        }
+
+    def _retention_recorder(self) -> list[dict] | None:
+        recorder = self.consolidation_options.get("recorder")
+        return recorder if isinstance(recorder, list) else None
 
     def close(self, timeout: float = 5.0) -> bool:
         with self._request_lock:

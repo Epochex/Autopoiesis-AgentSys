@@ -59,12 +59,12 @@ def test_rrf_breaks_an_exact_score_tie_by_document_id():
     assert rrf_fuse([["z-doc"], ["a-doc"]], 2) == ["a-doc", "z-doc"]
 
 
-def test_utility_eviction_protects_every_prior_prefix_even_below_budget():
+def test_utility_eviction_protects_structured_priors_even_below_budget():
     store = TieredMemoryStore()
     protected = [
-        MemoryRecord(memory_id="seed-network", tier="semantic", text="seed"),
-        MemoryRecord(memory_id="asset-r230", tier="asset_profile", text="asset"),
-        MemoryRecord(memory_id="insight-r230", tier="semantic", text="insight"),
+        MemoryRecord(memory_id="manual-knowledge", tier="semantic", text="seed", tags=["seed"]),
+        MemoryRecord(memory_id="machine-profile", tier="asset_profile", text="asset"),
+        MemoryRecord(memory_id="family-summary", tier="semantic", text="insight", tags=["insight"]),
     ]
     disposable = [_record("episode-a"), _record("episode-b")]
     for record in [*protected, *disposable]:
@@ -75,9 +75,9 @@ def test_utility_eviction_protects_every_prior_prefix_even_below_budget():
     assert utility_scores(store).keys() == {"episode-a", "episode-b"}
     assert utility_evict(store, budget=1) == ["episode-a", "episode-b"]
     assert {record.memory_id for record in store.active()} == {
-        "seed-network",
-        "asset-r230",
-        "insight-r230",
+        "manual-knowledge",
+        "machine-profile",
+        "family-summary",
     }
     assert all(not record.quarantined for record in protected)
 
@@ -127,3 +127,77 @@ def test_bm25_core_returns_empty_for_empty_index_and_nonpositive_limit():
     index = BM25Index({"carrier": tokenize("carrier interface down")})
     assert index.rank("carrier", 0) == []
     assert index.rank_with_scores("carrier", -1) == []
+
+
+def test_exact_service_entity_recalls_chinese_text_and_is_visible_in_diagnostics():
+    store = TieredMemoryStore()
+    matching = MemoryRecord(
+        memory_id="matching-unit",
+        tier="episodic",
+        text="哨兵发现 demo-collector.service 连续启动失败",
+    )
+    near_miss = MemoryRecord(
+        memory_id="near-miss-unit",
+        tier="episodic",
+        text="哨兵发现 demo-collector.service-old 连续启动失败",
+    )
+    store.seed([matching, near_miss])
+
+    result = store.retrieve(["demo-collector.service"], [], limit_per_tier=5)
+    assert result["episodic"] == [matching]
+
+    diagnostics = store.retrieval_diagnostics()
+    assert len(diagnostics) == 1
+    detail = diagnostics[0]
+    assert detail["entity_hits"] == ["demo-collector.service"]
+    assert detail["entity_score"] > 0.0
+    assert {
+        "memory_id",
+        "tier",
+        "lexical_score",
+        "asset_hits",
+        "vector_score",
+        "graph_hop",
+        "graph_parent_id",
+        "structural_prior",
+        "final_score",
+    }.issubset(detail)
+
+
+@pytest.mark.parametrize(
+    ("entity", "record_field"),
+    [
+        ("192.168.1.27", "text"),
+        ("10.24.0.0/16", "tags"),
+        ("eno2", "asset_ids"),
+        ("r230", "text"),
+        ("NXDOMAIN", "text"),
+    ],
+)
+def test_exact_entity_shapes_match_text_tags_and_assets(entity, record_field):
+    kwargs = {"text": "没有相关内容", "tags": [], "asset_ids": []}
+    if record_field == "text":
+        kwargs["text"] = f"实体 {entity}. 已被观测"
+    else:
+        kwargs[record_field] = [entity]
+    record = MemoryRecord(memory_id=f"entity-{record_field}", tier="semantic", **kwargs)
+    store = TieredMemoryStore()
+    store.add(record)
+
+    assert store.retrieve([entity], [], limit_per_tier=2)["semantic"] == [record]
+
+
+def test_non_entity_query_keeps_existing_lexical_ranking():
+    store = TieredMemoryStore()
+    first = _record("first", tags=["carrier"])
+    second = _record("second", tags=["carrier"])
+    store.seed([first, second])
+
+    assert store.retrieve(["carrier"], [], limit_per_tier=5)["episodic"] == [
+        first,
+        second,
+    ]
+    assert all(
+        detail["entity_hits"] == [] and detail["entity_score"] == 0.0
+        for detail in store.retrieval_diagnostics()
+    )

@@ -132,6 +132,28 @@ def test_only_included_and_explicitly_attributed_memory_receives_positive_credit
     assert memory_b is not None and memory_b.access_count == 1 and memory_b.confidence == 1.0
 
 
+def test_episodic_attribution_requires_memory_resolved_for_positive_credit():
+    memory = _memory()
+    report = consolidate_run(
+        _events("run-unresolved", passed=True),
+        _Case(),
+        memory,
+        SkillRegistry(),
+        [
+            {
+                "evidence_id": "ev-run-unresolved",
+                "source": "fresh_probe",
+                "summary": "supports the new diagnosis",
+            }
+        ],
+    )
+
+    memory_a = memory.get("memory-a")
+    assert "memory-a" not in report.reinforced
+    assert memory_a is not None and memory_a.access_count == 1
+    assert memory_a.confidence == 1.0
+
+
 def test_uncited_or_failed_tool_evidence_never_punishes_retrieved_memories():
     for cited, blocked in ((False, False), (True, True)):
         memory = _memory()

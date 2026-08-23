@@ -26,14 +26,16 @@ at, which is what makes the check work at all.
 from __future__ import annotations
 
 import json
-import os
 import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from core.investigate.safe_exec import Refused, is_safe, run
+from core.investigate.safe_exec import is_safe, run
+from core.memory.bm25 import tokenize
+from core.memory.store import MemoryRecord, TieredMemoryStore
+from core.trace.events import TraceEvent
 
 # Opening probes per fault family. These run before the model sees anything, so
 # the first thing it reads is what the box actually said.
@@ -86,6 +88,57 @@ TRIAGE_PROBES = [
     "dmesg -T --level err,crit,alert -x",
 ]
 
+# Procedural memories name the read-only skill that paid off, while this endpoint
+# owns shell commands rather than domain adapters.  This explicit bridge keeps the
+# learned hint at the routing boundary: a memory can move the corresponding probes
+# to the front, but it cannot smuggle a new command into the allowlisted sweep.
+SKILL_TRIAGE_PROBES: dict[str, tuple[str, ...]] = {
+    "check_interface_status": ("ip -br link show",),
+    "check_link_carrier": ("ip -br link show",),
+    "check_lacp": ("ip -br link show",),
+    "route_between_segments": ("ip route show",),
+    "check_dhcp": ("ip neigh show",),
+    "check_dhcp_service": ("ip neigh show",),
+    "check_fw_policy": ("ip route show", "journalctl -p err -n 40 --no-pager --since -24h"),
+    "check_policy_deny_profile": ("journalctl -p err -n 40 --no-pager --since -24h",),
+    "check_traffic_baseline": ("ss -tulpn",),
+    "check_wan_health": (
+        "ip route show",
+        "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+    ),
+    "check_vip_mapping": ("ss -tulpn",),
+    "check_admin_auth_failures": ("journalctl -p err -n 40 --no-pager --since -24h",),
+    "check_admin_lockout": ("journalctl -p err -n 40 --no-pager --since -24h",),
+    "check_event_log": ("journalctl -p err -n 40 --no-pager --since -24h",),
+    "check_firewall_resource": ("free -m",),
+    # Tests and future writers may store the shell-level observation directly as
+    # ``probe:<command>``.  It is accepted only when it is already in TRIAGE_PROBES.
+    "disk_usage": ("df -h",),
+    "memory_usage": ("free -m",),
+    "failed_services": ("systemctl --failed --no-legend",),
+    "listening_sockets": ("ss -tulpn",),
+    "kernel_errors": ("dmesg -T --level err,crit,alert -x",),
+}
+
+# The sparse store tokenises ASCII operational vocabulary.  The console accepts
+# Chinese questions too, so a tiny deterministic bridge supplies the same tags a
+# domain case would carry.  It is retrieval only and costs no model call.
+_QUERY_BRIDGE: dict[str, tuple[str, ...]] = {
+    "网卡": ("interface", "carrier", "link"),
+    "链路": ("interface", "carrier", "link"),
+    "路由": ("route", "network"),
+    "邻居": ("neighbor", "arp"),
+    "地址": ("address", "dhcp"),
+    "服务": ("service", "failed"),
+    "磁盘": ("disk", "usage"),
+    "内存": ("memory", "resource"),
+    "端口": ("port", "socket"),
+    "日志": ("event", "log", "error"),
+    "健康": ("health", "resource"),
+}
+
+_EXPECTED_DOWN_INTERFACES = {"eth0", "eth1", "eth3", "eth4", "eth5", "idrac"}
+
 # Findings that are normal on this box and would otherwise be reported as
 # faults. Stated to the model rather than filtered out of the evidence: the
 # reading stays visible, but it is told not to raise an alarm about it.
@@ -132,6 +185,12 @@ class Session:
     evidence: list[dict[str, Any]] = field(default_factory=list)
     turns: list[dict[str, Any]] = field(default_factory=list)
     runbook: list[dict[str, Any]] = field(default_factory=list)
+    # Candidate probes include the unexecuted tail after an evidence-confirmed
+    # early stop.  Keeping that tail visible is what makes "reordered" auditable
+    # as a permutation instead of looking like memory silently deleted checks.
+    probe_candidates: list[str] = field(default_factory=list)
+    probe_prior: dict[str, Any] = field(default_factory=dict)
+    trace_events: list[dict[str, Any]] = field(default_factory=list)
     diagnosis: str = ""
     opened_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -161,12 +220,286 @@ class Session:
             "evidence": self.evidence,
             "turns": self.turns,
             "runbook": self.runbook,
+            "probe_candidates": self.probe_candidates,
+            "probe_prior": self.probe_prior,
+            "trace_events": self.trace_events,
             "diagnosis": self.diagnosis,
             "opened_at": self.opened_at,
         }
 
 
 _SESSIONS: dict[str, Session] = {}
+
+
+def _live_memory_store() -> TieredMemoryStore | None:
+    """Use the gateway service's long-lived store; offline imports degrade empty."""
+    try:
+        from . import main
+
+        service = getattr(main, "_evolving_service", None)
+        memory = getattr(service, "memory", None)
+        return memory if isinstance(memory, TieredMemoryStore) else None
+    except Exception:  # noqa: BLE001 - startup/degraded mode must retain old probing
+        return None
+
+
+def _query_terms(question: str, family: str | None, subject: str | None) -> list[str]:
+    terms = tokenize(" ".join(item for item in (question, family or "", subject or "") if item))
+    for marker, additions in _QUERY_BRIDGE.items():
+        if marker in question:
+            terms.extend(additions)
+    return list(dict.fromkeys(terms))
+
+
+def _root_keys(record: MemoryRecord) -> list[str]:
+    return [tag[len("root:"):] for tag in record.tags if tag.startswith("root:") and len(tag) > 5]
+
+
+def _record_probes(record: MemoryRecord) -> tuple[list[str], list[str]]:
+    """Resolve only known triage probes, preserving the memory's declared order."""
+    commands: list[str] = []
+    skills: list[str] = []
+    for tag in record.tags:
+        if tag.startswith("probe:"):
+            command = tag[len("probe:"):]
+            if command in TRIAGE_PROBES:
+                commands.append(command)
+            continue
+        if not tag.startswith("skill:"):
+            continue
+        skill = tag[len("skill:"):]
+        mapped = SKILL_TRIAGE_PROBES.get(skill, ())
+        if mapped:
+            skills.append(skill)
+            commands.extend(mapped)
+    return list(dict.fromkeys(commands)), list(dict.fromkeys(skills))
+
+
+def _probe_prior(
+    question: str,
+    family: str | None,
+    subject: str | None,
+    memory: TieredMemoryStore | None,
+) -> dict[str, Any]:
+    """Return a full triage permutation plus the memories that earned its prefix.
+
+    Retrieval may surface old records for inspection, but a fully stale record has
+    zero routing weight.  Partly stale records keep a proportionally smaller vote;
+    this uses the shared lifecycle contract rather than inventing a second clock.
+    """
+    empty = {
+        "ordered": list(TRIAGE_PROBES),
+        "preferred": [],
+        "skills": [],
+        "memory_ids": [],
+        "root_key": None,
+        "procedural_confidence": 0.0,
+        "considered": [],
+        "strictly_narrowed": False,
+    }
+    if memory is None:
+        return empty
+
+    terms = _query_terms(question, family, subject)
+    assets = [subject] if subject else []
+    recalled = memory.retrieve(terms, assets, limit_per_tier=8, graph_depth=1)
+    procedural = list(recalled.get("procedural", []))
+    semantic = list(recalled.get("semantic", []))
+    if not procedural and not semantic:
+        return empty
+
+    # Import at use time because the freshness contract is evolving independently;
+    # the hot path calls the shared function whenever it is present in the checkout.
+    from core.evolve.memory_ops import staleness
+
+    now = datetime.now(timezone.utc)
+    weighted: dict[str, tuple[MemoryRecord, float, float]] = {}
+    considered: list[dict[str, Any]] = []
+    for record in [*procedural, *semantic]:
+        stale = staleness(record, now=now)
+        effective = max(0.0, float(record.confidence) * (1.0 - stale))
+        weighted[record.memory_id] = (record, effective, stale)
+        considered.append({
+            "memory_id": record.memory_id,
+            "tier": record.tier,
+            "staleness": round(stale, 3),
+            "effective_confidence": round(effective, 3),
+            "influenced_order": False,
+        })
+
+    # A hypothesis must have a procedural record that names at least one actual
+    # candidate. Semantic hits strengthen and attribute the root, but prose alone
+    # never manufactures a command or establishes current state.
+    hypotheses: list[dict[str, Any]] = []
+    for procedure in procedural:
+        _record, proc_weight, proc_stale = weighted[procedure.memory_id]
+        if proc_weight <= 0.0 or proc_stale >= 1.0:
+            continue
+        probes, skills = _record_probes(procedure)
+        if not probes:
+            continue
+        for root_key in _root_keys(procedure):
+            related = [
+                record for record in semantic
+                if root_key in _root_keys(record) and weighted[record.memory_id][1] > 0.0
+            ]
+            hypotheses.append({
+                "root_key": root_key,
+                "probes": probes,
+                "skills": skills,
+                "procedures": [procedure],
+                "semantic": related,
+                "score": proc_weight + max(
+                    (weighted[record.memory_id][1] for record in related), default=0.0
+                ),
+                "procedural_confidence": proc_weight,
+            })
+    if not hypotheses:
+        return {**empty, "considered": considered}
+
+    hypotheses.sort(key=lambda item: (-item["score"], item["root_key"]))
+    best_root = hypotheses[0]["root_key"]
+    same_root = [item for item in hypotheses if item["root_key"] == best_root]
+    preferred = list(dict.fromkeys(
+        command for item in same_root for command in item["probes"]
+    ))
+    skills = list(dict.fromkeys(skill for item in same_root for skill in item["skills"]))
+    procedures = list(dict.fromkeys(
+        record.memory_id for item in same_root for record in item["procedures"]
+    ))
+    semantics = list(dict.fromkeys(
+        record.memory_id for item in same_root for record in item["semantic"]
+    ))
+
+    # Naming the whole sweep supplies no choice. Preserve the original order and
+    # emit no shortcut attribution in that case; claiming savings would be fiction.
+    strictly_narrowed = bool(preferred) and set(preferred) < set(TRIAGE_PROBES)
+    if not strictly_narrowed:
+        return {**empty, "considered": considered}
+    ordered = preferred + [command for command in TRIAGE_PROBES if command not in preferred]
+    attributed = [*procedures, *semantics]
+    for item in considered:
+        item["influenced_order"] = item["memory_id"] in attributed
+    return {
+        "ordered": ordered,
+        "preferred": preferred,
+        "skills": skills or list(preferred),
+        "memory_ids": attributed,
+        "root_key": best_root,
+        "procedural_confidence": round(max(
+            item["procedural_confidence"] for item in same_root
+        ), 3),
+        "considered": considered,
+        "strictly_narrowed": True,
+    }
+
+
+def _output_for(evidence: list[dict[str, Any]], command: str) -> str | None:
+    item = next(
+        (entry for entry in reversed(evidence) if entry.get("command") == command and entry.get("ok")),
+        None,
+    )
+    return str(item.get("output") or "") if item is not None else None
+
+
+def _confirmed_root_keys(evidence: list[dict[str, Any]], subject: str | None) -> set[str]:
+    """Mechanically derive only roots the fresh readings can establish alone."""
+    confirmed: set[str] = set()
+
+    link = _output_for(evidence, "ip -br link show")
+    if link is not None:
+        for line in link.splitlines():
+            interface = line.split(maxsplit=1)[0].split("@")[0] if line.split() else ""
+            down = "NO-CARRIER" in line.upper() or re.search(r"\bDOWN\b", line.upper())
+            physical = re.fullmatch(r"(?:eth|eno|enp|ens)\w+", interface) is not None
+            targeted = subject == interface if subject and not re.fullmatch(r"\d+(?:\.\d+){3}", subject) else True
+            if down and physical and targeted and interface not in _EXPECTED_DOWN_INTERFACES:
+                confirmed.add("carrier_down")
+
+    routes = _output_for(evidence, "ip route show")
+    if routes is not None and not any(line.lstrip().startswith("default ") for line in routes.splitlines()):
+        confirmed.update({"default_route_missing", "route_missing"})
+
+    neighbours = _output_for(evidence, "ip neigh show")
+    if subject and neighbours is not None and any(
+        subject in line and re.search(r"\bFAILED\b", line) for line in neighbours.splitlines()
+    ):
+        confirmed.add("neighbor_unreachable")
+
+    failed = _output_for(evidence, "systemctl --failed --no-legend")
+    if failed is not None and failed.strip():
+        confirmed.add("service_failed")
+
+    disk = _output_for(evidence, "df -h")
+    if disk is not None:
+        # Read-only images and memory filesystems legitimately report 100%; they
+        # do not establish pressure on a writable host volume.  `df` puts use%
+        # and mountpoint in the last two columns even when the device name wraps.
+        for line in disk.splitlines()[1:]:
+            columns = line.split()
+            if len(columns) < 2 or not re.fullmatch(r"\d{1,3}%", columns[-2]):
+                continue
+            filesystem, mountpoint = columns[0], columns[-1]
+            pseudo = (
+                filesystem.startswith("/dev/loop")
+                or filesystem in {"tmpfs", "devtmpfs", "squashfs"}
+                or mountpoint.startswith(("/snap/", "/proc/", "/sys/", "/run/"))
+            )
+            if not pseudo and int(columns[-2][:-1]) >= 90:
+                confirmed.add("disk_pressure")
+                break
+
+    memory = _output_for(evidence, "free -m")
+    if memory is not None:
+        mem_line = next((line for line in memory.splitlines() if line.lstrip().startswith("Mem:")), "")
+        numbers = [int(value) for value in re.findall(r"\d+", mem_line)]
+        if len(numbers) >= 2:
+            total = numbers[0]
+            available = numbers[-1]
+            if total > 0 and available / total <= 0.10:
+                confirmed.add("memory_pressure")
+
+    health = _output_for(
+        evidence,
+        "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+    )
+    if health is not None and re.fullmatch(r"\s*\d{3}\s*", health):
+        code = int(health.strip())
+        if not 200 <= code < 300:
+            confirmed.update({"healthcheck_failed", "service_unhealthy"})
+
+    journal = _output_for(evidence, "journalctl -p err -n 40 --no-pager --since -24h")
+    if journal is not None and journal.strip() and "-- No entries --" not in journal:
+        confirmed.add("system_errors")
+    kernel = _output_for(evidence, "dmesg -T --level err,crit,alert -x")
+    if kernel is not None and kernel.strip():
+        confirmed.add("kernel_errors")
+    return confirmed
+
+
+def _persist_shortcut_trace(session: Session, payload: dict[str, Any]) -> None:
+    """Keep an offline-visible trace and append to the service ledger when live."""
+    row = {
+        "kind": "memory_shortcut",
+        "at": datetime.now(timezone.utc).isoformat(),
+        "payload": payload,
+    }
+    session.trace_events.append(row)
+    try:
+        from . import main
+
+        service = getattr(main, "_evolving_service", None)
+        orchestrator = getattr(service, "orchestrator", None)
+        ledger = getattr(orchestrator, "ledger", None)
+        if ledger is not None:
+            ledger.append(TraceEvent(
+                run_id=session.session_id,
+                case_id=f"investigate:{session.session_id}",
+                kind="memory_shortcut",
+                payload=payload,
+            ))
+    except Exception as error:  # noqa: BLE001 - evidence collection must survive trace degradation
+        row["persistence_error"] = f"{type(error).__name__}: {error}"[:240]
 
 
 def start(question: str, family: str | None = None, subject: str | None = None) -> dict[str, Any]:
@@ -179,20 +512,73 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
     )
     _SESSIONS[session.session_id] = session
 
-    planned = list(BASELINE_PROBES)
     # A named family gets its targeted checks; an open question gets the full
     # triage sweep, because "what is wrong here" has no smaller honest answer.
     extra = FAMILY_PROBES.get(family or "") or TRIAGE_PROBES
-    for command in extra:
-        if command not in planned:
-            planned.append(command)
+    uses_triage = extra is TRIAGE_PROBES
+    prior = _probe_prior(question, family, subject, _live_memory_store()) if uses_triage else {
+        "ordered": list(extra), "preferred": [], "skills": [], "memory_ids": [],
+        "root_key": None, "procedural_confidence": 0.0, "considered": [],
+        "strictly_narrowed": False,
+    }
+    ordered_extra = list(prior["ordered"])
+    session.probe_prior = {key: value for key, value in prior.items() if key != "ordered"}
+
+    subject_probes: list[str] = []
     if subject and re.fullmatch(r"[\w.:-]{1,64}", subject):
         for template in (f"ping -c 2 -W 2 {subject}", f"ip neigh show {subject}"):
             if is_safe(template):
-                planned.append(template)
+                subject_probes.append(template)
 
-    for command in planned:
+    planned = list(BASELINE_PROBES)
+    for command in [*ordered_extra, *subject_probes]:
+        if command not in planned:
+            planned.append(command)
+    session.probe_candidates = planned
+
+    for command in BASELINE_PROBES:
         session.collect(command)
+
+    # Early stopping is checked only after every probe named by the chosen
+    # procedural prefix has produced a fresh reading. A memory miss therefore
+    # costs at most a changed order; the untouched tail still runs in full.
+    preferred = list(prior["preferred"])
+    early_stopped = False
+    skipped: list[str] = []
+    for index, command in enumerate(ordered_extra):
+        if command not in BASELINE_PROBES:
+            session.collect(command)
+        prefix_complete = bool(preferred) and index + 1 >= len(preferred)
+        if (
+            uses_triage
+            and prefix_complete
+            and prior["root_key"] in _confirmed_root_keys(session.evidence, subject)
+        ):
+            skipped = ordered_extra[index + 1:]
+            early_stopped = bool(skipped)
+            break
+
+    # Direct subject probes are outside the generic sweep. They still run after a
+    # triage early stop because a memory about a family cannot waive verification
+    # of the concrete host/address the operator explicitly named.
+    for command in subject_probes:
+        if command not in BASELINE_PROBES and command not in ordered_extra:
+            session.collect(command)
+
+    reordered = uses_triage and ordered_extra != TRIAGE_PROBES
+    if prior["strictly_narrowed"] and (reordered or early_stopped):
+        payload = {
+            "skills": list(prior["skills"]),
+            "memory_ids": list(prior["memory_ids"]),
+            "procedural_confidence": prior["procedural_confidence"],
+            "preferred_probes": preferred,
+            "candidate_probe_count": len(TRIAGE_PROBES),
+            "saved_probe_count": len(skipped) if early_stopped else 0,
+            "skipped_probes": skipped if early_stopped else [],
+            "effect": "probe_order_and_early_stop" if early_stopped else "probe_order",
+            "confirmed_root_key": prior["root_key"] if early_stopped else None,
+        }
+        _persist_shortcut_trace(session, payload)
 
     return {
         "session_id": session.session_id,
@@ -200,6 +586,9 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
         "family": family,
         "subject": subject,
         "evidence": session.evidence,
+        "probe_candidates": session.probe_candidates,
+        "probe_prior": session.probe_prior,
+        "trace_events": session.trace_events,
         "summary": _summarise(session),
     }
 

@@ -13,6 +13,23 @@ concurrency:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    # The memory store's durability guarantees — advisory-lock ordering, CAS on
+    # concurrent writes, and the append-only trigger on the event log — are the
+    # part most likely to be wrong and the part CI never touched: both Postgres
+    # tests are env-gated, so a green build proved nothing about any of them.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: autopoiesis_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
 
@@ -30,9 +47,12 @@ jobs:
           # importorskip their heavy extras and skip cleanly on the runner).
           # the ingestor extra carries fastapi: the gateway is a shipped part of
           # this system, so its tests should run here rather than import-skip.
-          python -m pip install -e ".[dev,ingestor]" numpy
+          python -m pip install -e ".[dev,ingestor,postgres]" numpy
 
       - name: Run deterministic test suite
+        env:
+          # Unskips the two integration tests that actually speak SQL.
+          AUTOPOIESIS_TEST_POSTGRES_DSN: postgresql://postgres:ci@127.0.0.1:5432/autopoiesis_test
         run: python -m pytest -p no:cacheprovider -q tests_py
 
       - name: Run mock-labeled Phase 1.5 report

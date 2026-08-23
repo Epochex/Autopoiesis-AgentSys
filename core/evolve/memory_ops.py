@@ -23,7 +23,9 @@ literature and each derived from real run signals — nothing here is synthesize
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterable, Literal
+from uuid import uuid4
 
 from core.evolve.observatory import emit as _emit
 from core.evolve.observatory import snapshot as _snap
@@ -34,6 +36,38 @@ _SKIP_PREFIX = ("skill:", "quarantine:", "root:")
 # similarity() blend: content tags carry more family identity than shared assets.
 _SIM_TAG_WEIGHT = 0.6
 _SIM_ASSET_WEIGHT = 0.4
+
+# How long a confirmation stays worth something, per tier.
+#
+# One number for everything was wrong, and wrong in the direction that quietly
+# disables the feature: 60 s was sized for an environment fact the sentinel
+# re-observes every 15 s, but it was applied to procedural memories whose last
+# confirmation is the timestamp of the previous incident. Any real method was
+# therefore fully stale within a minute of being learned, its routing weight
+# went to zero, and the probe prior could never fire on anything it had learned.
+#
+# These are half-lives of different kinds of claim, not one tunable:
+#   asset_profile — "eth2 carries the address". Observed every 15 s; five
+#                   minutes is twenty missed polls, which is a real outage of
+#                   observation rather than one flaky probe.
+#   procedural    — "for this fault, probe these first". A method. It does not
+#                   rot in minutes; it rots when the environment changes under
+#                   it, which supersession handles, not a clock.
+#   semantic      — a named pattern. Same reasoning.
+#   episodic      — a record that something happened. It never becomes untrue;
+#                   it becomes less relevant, slowly.
+_STALE_AFTER_SEC: dict[str, float] = {
+    "asset_profile": 300.0,
+    "procedural": 30.0 * 86400.0,
+    "semantic": 30.0 * 86400.0,
+    "episodic": 30.0 * 86400.0,
+}
+_DEFAULT_STALE_AFTER_SEC = 300.0
+
+
+def stale_horizon(tier: str) -> float:
+    """Seconds after which a confirmation of this kind counts for nothing."""
+    return _STALE_AFTER_SEC.get(tier, _DEFAULT_STALE_AFTER_SEC)
 
 RouteOp = Literal["ADD", "UPDATE", "NOOP", "SUPERSEDE"]
 
@@ -56,6 +90,154 @@ def _emit_change(
     if after == before:
         return
     _emit(recorder, op, record.memory_id, record.tier, before=before, after=after, **kw)
+
+
+def _utc_instant(value: datetime) -> datetime:
+    """Compare persisted aware values and legacy naive UTC as the same clock."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _fact_matches(record: MemoryRecord, subject: str, relation: str) -> bool:
+    """Match the logical fact key carried by a record, independently of its id."""
+    return (
+        record.event_type == "keyed_fact"
+        and f"subject:{subject}" in record.tags
+        and f"relation:{relation}" in record.tags
+    )
+
+
+def _valid_at(record: MemoryRecord, instant: datetime) -> bool:
+    starts_before = record.valid_from is None or _utc_instant(record.valid_from) <= instant
+    ends_after = record.valid_to is None or _utc_instant(record.valid_to) > instant
+    return starts_before and ends_after
+
+
+def _fact_snapshot(record: MemoryRecord) -> dict[str, object]:
+    """Include validity timestamps that the general lifecycle snapshot omits."""
+    snapshot = _snap(record)
+    snapshot["valid_from"] = record.valid_from.isoformat() if record.valid_from else None
+    snapshot["valid_to"] = record.valid_to.isoformat() if record.valid_to else None
+    snapshot["last_observed_at"] = (
+        record.last_observed_at.isoformat() if record.last_observed_at else None
+    )
+    return snapshot
+
+
+def observe_fact(
+    memory: TieredMemoryStore,
+    *,
+    subject: str,
+    relation: str,
+    value: str,
+    observed_at: datetime,
+    confidence: float = 1.0,
+    recorder: list[dict] | None = None,
+) -> str:
+    """Record one keyed world fact and retain every value it replaces.
+
+    Reconfirming the value only advances its confirmation time. A changed value
+    closes the old half-open validity interval and appends its successor, leaving
+    the old record addressable for historical retrieval and audit.
+    """
+    instant = _utc_instant(observed_at)
+    current = next(
+        (
+            record
+            for record in reversed(memory.active())
+            if _fact_matches(record, subject, relation) and _valid_at(record, instant)
+        ),
+        None,
+    )
+    value_tag = f"value:{value}"
+    if current is not None and value_tag in current.tags:
+        if (
+            current.last_observed_at is None
+            or _utc_instant(current.last_observed_at) < instant
+        ):
+            current.last_observed_at = observed_at
+        return current.memory_id
+
+    new_id = f"fact-{uuid4()}"
+    successor = MemoryRecord(
+        memory_id=new_id,
+        tier="semantic",
+        text=f"{subject} {relation} {value}",
+        tags=["keyed_fact", f"subject:{subject}", f"relation:{relation}", value_tag],
+        asset_ids=[subject],
+        confidence=confidence,
+        first_observed_at=observed_at,
+        last_observed_at=observed_at,
+        valid_from=observed_at,
+        event_type="keyed_fact",
+    )
+
+    if current is None:
+        memory.add(successor)
+        _emit(
+            recorder,
+            "ADD",
+            successor.memory_id,
+            successor.tier,
+            after=_fact_snapshot(successor),
+        )
+        return successor.memory_id
+
+    before = _fact_snapshot(current)
+    # Append the successor first so a failed write cannot leave the only known
+    # value revoked without the replacement that justified the revocation.
+    memory.add(successor)
+    current.valid_to = observed_at
+    _emit(
+        recorder,
+        "REVOKE",
+        current.memory_id,
+        current.tier,
+        target_id=successor.memory_id,
+        before=before,
+        after=_fact_snapshot(current),
+    )
+    return successor.memory_id
+
+
+def _last_confirmation(record: MemoryRecord) -> datetime | None:
+    return record.last_observed_at or record.first_observed_at or record.valid_from
+
+
+def staleness(
+    record: MemoryRecord, *, now: datetime, horizon_sec: float | None = None
+) -> float:
+    """Freshness loss in [0,1]. Down-weights; never hides.
+
+    The horizon comes from the record's tier unless a caller names one — see
+    ``_STALE_AFTER_SEC`` for why a single global number was actively harmful.
+    """
+    instant = _utc_instant(now)
+    if record.valid_to is not None and _utc_instant(record.valid_to) <= instant:
+        return 1.0
+    confirmed_at = _last_confirmation(record)
+    if confirmed_at is None:
+        return 1.0
+    age_sec = max(0.0, (instant - _utc_instant(confirmed_at)).total_seconds())
+    horizon = stale_horizon(record.tier) if horizon_sec is None else horizon_sec
+    if horizon <= 0.0:
+        return 1.0
+    return min(1.0, age_sec / horizon)
+
+
+def is_stale(record: MemoryRecord, *, now: datetime, ttl_sec: float) -> bool:
+    """Whether the last confirmation is at least ``ttl_sec`` old or was revoked."""
+    if ttl_sec < 0.0:
+        raise ValueError(f"ttl_sec must be >= 0, got {ttl_sec}")
+    instant = _utc_instant(now)
+    if record.valid_to is not None and _utc_instant(record.valid_to) <= instant:
+        return True
+    confirmed_at = _last_confirmation(record)
+    if confirmed_at is None:
+        return True
+    age_sec = max(0.0, (instant - _utc_instant(confirmed_at)).total_seconds())
+    return age_sec >= ttl_sec
 
 
 def _tagset(tags: Iterable[str]) -> set[str]:
@@ -448,7 +630,17 @@ def reflect(
     return created
 
 
-def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floor: float = 0.4, protect: tuple[str, ...] = ("seed", "asset", "insight"), recorder: list[dict] | None = None) -> list[str]:
+_PROTECTED_MEMORY_TAGS = ("seed", "insight")
+
+
+def _is_protected(record: MemoryRecord, protect: tuple[str, ...]) -> bool:
+    # Asset profiles have a structural identity of their own. Other durable
+    # priors are tagged at their creation boundary, so renaming a record cannot
+    # silently change its retention policy.
+    return record.tier == "asset_profile" or bool(set(record.tags).intersection(protect))
+
+
+def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floor: float = 0.4, protect: tuple[str, ...] = _PROTECTED_MEMORY_TAGS, recorder: list[dict] | None = None) -> list[str]:
     """Ebbinghaus tick: every non-protected active memory loses retrievability;
     those below the floor are forgotten (quarantined). Memories reused this tick were
     reset to strength 1.0 and survive; a memory unused for ~2 ticks fades out.
@@ -462,7 +654,7 @@ def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floo
         raise ValueError(f"floor must be >= 0, got {floor}")
     forgotten: list[str] = []
     for rec in memory.active():
-        if rec.memory_id.startswith(protect):
+        if _is_protected(rec, protect):
             continue
         before = _snap(rec)
         rec.strength *= retention
@@ -485,7 +677,7 @@ class UtilityWeights:
     centrality: float = 0.25   # A-MEM link degree — how many families it bridges
 
 
-_EVICT_PROTECT = ("seed", "asset", "insight")
+_EVICT_PROTECT = _PROTECTED_MEMORY_TAGS
 
 
 def utility_scores(
@@ -499,7 +691,7 @@ def utility_scores(
     function of four independent lifecycle signals — NOT a relabelled time-decay: two
     memories of equal age get different utility if one is more reused, more salient, or
     more central. Protected priors are omitted (never evicted, so never scored)."""
-    active = [r for r in memory.active() if not r.memory_id.startswith(protect)]
+    active = [r for r in memory.active() if not _is_protected(r, protect)]
     if not active:
         return {}
 
@@ -535,7 +727,7 @@ def utility_evict(
     priors (seeded / asset-profile / reflected insights) are never evicted and always
     count against the budget. Returns the ids evicted this call.
 
-    This is the wired, non-trivial counterpart to :func:`decay_and_forget`: eviction is
+    This is the capacity-based counterpart to :func:`decay_and_forget`: eviction is
     driven by *learned worth* (utility), not by age alone. Budget binds only when the
     store has grown past it — on a store that fits, this is a no-op."""
     if budget < 0:
@@ -543,8 +735,8 @@ def utility_evict(
     active = memory.active()
     if len(active) <= budget:
         return []
-    protected = [r for r in active if r.memory_id.startswith(protect)]
-    evictable = [r for r in active if not r.memory_id.startswith(protect)]
+    protected = [r for r in active if _is_protected(r, protect)]
+    evictable = [r for r in active if not _is_protected(r, protect)]
     keep = max(0, budget - len(protected))              # protected priors count vs budget
     scores = utility_scores(memory, weights=weights, protect=protect)
     # lowest utility first; ties broken by lower strength then insertion order (stable).

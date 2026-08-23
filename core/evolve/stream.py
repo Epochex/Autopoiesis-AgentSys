@@ -99,15 +99,15 @@ def run_evolving_stream(
                     resolve_conflicts=resolve_conflicts, recorder=ops,
                 )
                 if capacity_budget is not None:
-                    # capacity-budgeted utility eviction — the wired firing point. EVICT
-                    # ops flow into the same observability stream as every other op.
+                    # The benchmark's capacity-budgeted utility eviction point. EVICT ops
+                    # flow into the same observability stream as every other operation.
                     utility_evict(orch.memory, budget=capacity_budget, recorder=ops)
                 if (i + 1) % n == 0:
                     # Ebbinghaus tick at each pass boundary: memories reused this pass were
                     # reset to strength 1.0 and survive; the rest lose retrievability, and
                     # anything past ~2 idle ticks crosses the floor and is forgotten. Decay
-                    # by age is the wired counterpart to eviction by learned worth; FORGET
-                    # ops join the same observability stream.
+                    # This benchmark compares age-based decay with eviction by learned
+                    # worth; FORGET ops join the same observability stream.
                     decay_and_forget(orch.memory, recorder=ops)
                 obs_recall.append(recall_row(
                     events, seq=len(obs_recall), pass_no=i // n,

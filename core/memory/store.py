@@ -2,20 +2,23 @@
 
 Three learned tiers (episodic / semantic / procedural) plus seeded asset
 profiles overlay into one queryable store.  The always-available route is
-deterministic segmented BM25 plus exact asset identity.  An optional dense
-route adds semantic candidates from the immutable-base/Flat-delta index;
-the memory records in this store remain the source of truth.
+deterministic segmented BM25 plus exact asset and operational-entity identity.
+An optional dense route adds semantic candidates from the immutable-base/Flat-
+delta index; the memory records in this store remain the source of truth.
 
 Retrieval ranking (see :meth:`TieredMemoryStore.retrieve`) is a two-stage
-lexical-then-structural design:
+query-dependent-base-then-structural design:
 
-  1. **Lexical base** — Okapi BM25 (IDF-weighted term frequency, see
+  1. **Query-dependent base** — Okapi BM25 (IDF-weighted term frequency, see
      :mod:`core.memory.bm25`) over each record's full document (its text tokens
-     plus its tag labels), plus an exact-identity asset boost. BM25 replaces the
-     earlier raw tag-overlap count, which under-ranked the truly relevant record
-     whenever a common term matched many memories: on the LongMemEval-500 anchor,
-     scoring the whole session text this way lifts the store's own recall@5 from
-     0.906 to 0.970 — matching the BM25 lexical ceiling (0.970).
+     plus its tag labels), exact-identity asset matches, and exact operational
+     entity matches. The entity route keeps identifiers such as service units,
+     interfaces, and error codes intact instead of depending on a language's
+     word segmentation. BM25 replaces the earlier raw tag-overlap count, which
+     under-ranked the truly relevant record whenever a common term matched many
+     memories: on the LongMemEval-500 anchor, scoring the whole session text this
+     way lifts the store's own recall@5 from 0.906 to 0.970 — matching the BM25
+     lexical ceiling (0.970).
   2. **Structural rerank** — a bounded, deterministic prior built ONLY from the
      record's own lifecycle signals (tier, A-MEM link centrality, reflection
      importance, Ebbinghaus strength/recency, verified-reuse confidence). It is
@@ -26,7 +29,8 @@ lexical-then-structural design:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+import re
 import threading
 from typing import Any, Literal, Mapping, Protocol, Sequence
 
@@ -39,15 +43,66 @@ from core.memory.segmented_bm25 import SegmentedBM25Index
 MemoryTier = Literal["episodic", "semantic", "procedural", "asset_profile"]
 
 # --- lexical base weights ---------------------------------------------------
-# Shared assets are the strongest identity signal (exact match, not lexical);
+# Shared assets are a strong structured identity signal (exact, not lexical);
 # BM25 over the record's full text + tags carries the lexical relevance.
 _W_ASSET_HIT = 2.0
+# One exact operational entity gets the same 2.0 contribution as one exact asset.
+# Both identify a concrete object, while counting each distinct entity only once
+# prevents repetition across text, tags, and asset_ids from inflating its vote.
+_W_ENTITY_HIT = 2.0
 _GRAPH_HOP_DECAY = 0.35
 _DENSE_ROUTE_COEF = 0.35
 
+# These patterns deliberately cover identifiers that retain their meaning across
+# languages. IPv4 octets stop at 255 and CIDR prefixes stop at 32, service units
+# keep their punctuation, interface names follow the four Linux prefixes used by
+# the domain, and error codes remain uppercase so ordinary prose is not promoted.
+# Hostnames include dotted names and single labels with a digit or hyphen; the
+# extra shape requirement keeps plain English query words on the unchanged BM25
+# path. ASCII identifier boundaries prevent r230 from matching r2300 while still
+# allowing an identifier to sit directly beside Chinese punctuation or text.
+_IPV4_OCTET = r"(?:25[0-5]|2[0-4]\d|1?\d?\d)"
+_ENTITY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        rf"(?<![A-Za-z0-9_.@/-])(?:{_IPV4_OCTET}\.){{3}}{_IPV4_OCTET}/(?:[12]?\d|3[0-2])"
+        r"(?![A-Za-z0-9_.@/-])"
+    ),
+    re.compile(
+        rf"(?<![A-Za-z0-9_.@/-])(?:{_IPV4_OCTET}\.){{3}}{_IPV4_OCTET}"
+        r"(?![A-Za-z0-9_.@/-])"
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_.@/-])"
+        r"[A-Za-z0-9](?:[A-Za-z0-9_.@-]*[A-Za-z0-9@])?\.service"
+        r"(?![A-Za-z0-9_.@/-])",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_.@/-])(?:eno|enp|eth|ens)\d[A-Za-z0-9_.-]*"
+        r"(?![A-Za-z0-9_.@/-])",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]{2,}(?![A-Za-z0-9_])"),
+    re.compile(
+        r"(?<![A-Za-z0-9_.-])"
+        r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+        r"[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+        r"(?![A-Za-z0-9_.-])",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9_.-])"
+        r"(?=[A-Za-z0-9-]{2,63}(?![A-Za-z0-9_.-]))"
+        r"(?=[A-Za-z0-9-]*[A-Za-z])(?=[A-Za-z0-9-]*(?:\d|-))"
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+        r"(?![A-Za-z0-9_.-])",
+        re.IGNORECASE,
+    ),
+)
+
 # --- structural rerank weights (Phase B memory dynamics) --------------------
 # The structural prior is a convex blend (weights sum to 1) of five normalised
-# lifecycle signals, then scaled by ``_STRUCT_COEF`` * (top lexical score) so it
+# lifecycle signals, then scaled by ``_STRUCT_COEF`` * (top base score) so it
 # stays a bounded rerank. Chosen a priori (not fit to the eval): recency and
 # link centrality carry the most retrieval-relevant structure, confidence and
 # importance are verified-reuse priors, the tier prior is a mild identity nudge.
@@ -110,6 +165,11 @@ class MemoryRecord(BaseModel):
     # inspectable event history without pretending similarity is causality.
     first_observed_at: datetime | None = None
     last_observed_at: datetime | None = None
+    # World time is separate from observation time. The half-open interval lets
+    # a successor begin exactly when its predecessor stops being true while both
+    # records remain available for reconstructing past beliefs.
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
     event_type: str | None = None
     relations: list[MemoryRelation] = Field(default_factory=list)
     config_version: str | None = None
@@ -165,6 +225,58 @@ def _structural_prior(record: "MemoryRecord") -> float:
         + _S_CONF * confidence
         + _S_TIER * tier_prior
     )
+
+
+def _extract_query_entities(query_terms: Sequence[str]) -> list[str]:
+    """Return distinct operational identifiers without tokenising prose.
+
+    Matches retain the query's original spelling for diagnostics. Deduplication
+    uses case folding because Linux units, hostnames, and error-code mentions are
+    commonly cased differently by probes and operators but denote the same key.
+    """
+    entities: dict[str, str] = {}
+    for term in query_terms:
+        for pattern in _ENTITY_PATTERNS:
+            for match in pattern.finditer(term):
+                entity = match.group(0)
+                entities.setdefault(entity.casefold(), entity)
+    return list(entities.values())
+
+
+def _literal_entity_hits(record: "MemoryRecord", entities: Sequence[str]) -> list[str]:
+    """Find query entities as complete literals in text, tags, or asset ids."""
+    fields = (record.text, *record.tags, *record.asset_ids)
+    hits: list[str] = []
+    for entity in entities:
+        # Identifier boundaries are ASCII on purpose: Chinese text can touch an
+        # entity without whitespace, while a longer ASCII identifier is not an
+        # exact match. A final sentence period is allowed, while ``.suffix`` is
+        # treated as part of a longer identifier. IGNORECASE handles casing
+        # without changing the entity's punctuation.
+        literal = re.compile(
+            rf"(?<![A-Za-z0-9_@/-])(?<![A-Za-z0-9]\.){re.escape(entity)}"
+            r"(?![A-Za-z0-9_@/-]|\.[A-Za-z0-9])",
+            re.IGNORECASE,
+        )
+        if any(literal.search(field) for field in fields):
+            hits.append(entity)
+    return hits
+
+
+def _utc_instant(value: datetime) -> datetime:
+    """Normalise instants so persisted aware values and legacy naive UTC compare."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _valid_at(record: "MemoryRecord", instant: datetime) -> bool:
+    """Whether a fact is true at an instant under [valid_from, valid_to)."""
+    starts_before = (
+        record.valid_from is None or _utc_instant(record.valid_from) <= instant
+    )
+    ends_after = record.valid_to is None or _utc_instant(record.valid_to) > instant
+    return starts_before and ends_after
 
 
 class TieredMemoryStore:
@@ -560,18 +672,24 @@ class TieredMemoryStore:
         limit_per_tier: int = 3,
         *,
         use_structure: bool = True,
+        as_of: datetime | None = None,
         graph_depth: int = 0,
         graph_candidate_limit: int = 48,
     ) -> dict[str, list[MemoryRecord]]:
         """Top ``limit_per_tier`` active records per tier for these terms/assets.
 
         Without a vector projection, a record must overlap at least one BM25
-        term or exact asset. With it enabled, positive dense hits may introduce
-        semantic candidates. Candidates are ordered by bounded hybrid score and
-        structural prior; ties break on insertion order.
+        term, exact asset, or exact operational entity. With it enabled, positive
+        dense hits may introduce semantic candidates. Candidates are ordered by
+        bounded hybrid score and structural prior; ties break on insertion order.
 
-        ``use_structure=False`` returns the pure lexical ranking (the honest
-        BM25-only floor), used to isolate the structural rerank's contribution.
+        ``as_of`` reconstructs the facts valid at one world-time instant. Its
+        default is the current time; records created before validity tracking
+        have two open bounds and therefore retain their previous behaviour.
+
+        ``use_structure=False`` returns the query-dependent base ranking, used
+        to isolate the structural rerank's contribution. It is the BM25-only
+        floor when no asset or operational entity matches.
         """
         if not self.enabled or limit_per_tier <= 0:
             self._last_retrieval_details = []
@@ -581,7 +699,9 @@ class TieredMemoryStore:
         if graph_candidate_limit < 1:
             raise ValueError("graph_candidate_limit must be positive")
 
+        effective_at = _utc_instant(as_of or datetime.now(timezone.utc))
         query = [term.lower() for term in query_terms if term]
+        query_entities = _extract_query_entities(query_terms)
         assets = set(asset_ids)
         insertion_order = {record.memory_id: index for index, record in enumerate(self._records)}
         lexical_ids = {doc_id for doc_id, _ in self._lexical.rank_with_scores(query)}
@@ -590,7 +710,13 @@ class TieredMemoryStore:
             for asset_id in assets
             for memory_id in self._asset_to_ids.get(asset_id, ())
         }
-        seed_ids = lexical_ids | asset_candidate_ids
+        entity_hits_by_id = {
+            record.memory_id: hits
+            for record in self._records
+            if not record.quarantined and _valid_at(record, effective_at)
+            if (hits := _literal_entity_hits(record, query_entities))
+        }
+        seed_ids = lexical_ids | asset_candidate_ids | set(entity_hits_by_id)
         details: dict[str, dict[str, Any]] = {}
 
         dense_scores: dict[str, float] = {}
@@ -599,22 +725,29 @@ class TieredMemoryStore:
             dense_k = max(32, limit_per_tier * len(_EMPTY_TIERS) * 4)
             for hit in self._vector.search(query_text, k=dense_k):
                 memory_id = str(hit.memory_id)
-                if memory_id in self._by_id and float(hit.score) > 0.0:
+                if (
+                    memory_id in self._by_id
+                    and _valid_at(self._by_id[memory_id], effective_at)
+                    and float(hit.score) > 0.0
+                ):
                     dense_scores[memory_id] = max(dense_scores.get(memory_id, 0.0), float(hit.score))
             seed_ids.update(dense_scores)
 
-        # First-stage lexical and exact-asset scores seed a bounded graph walk.
+        # First-stage lexical, exact-asset, and exact-entity scores seed a bounded
+        # graph walk.
         # Links therefore retrieve related incidents instead of merely increasing
         # one record's centrality scalar. Each hop is discounted and the frontier
         # is capped, so a highly connected family cannot flood the context.
         candidate_scores: dict[str, float] = {}
         for memory_id in seed_ids:
             record = self._by_id[memory_id]
-            if record.quarantined:
+            if record.quarantined or not _valid_at(record, effective_at):
                 continue
             lexical = self._lexical.score(query, memory_id) if memory_id in lexical_ids else 0.0
             asset_hits = len(assets.intersection(record.asset_ids))
-            base = lexical + _W_ASSET_HIT * asset_hits
+            entity_hits = entity_hits_by_id.get(memory_id, [])
+            entity_score = _W_ENTITY_HIT * len(entity_hits)
+            base = lexical + _W_ASSET_HIT * asset_hits + entity_score
             if base > 0.0:
                 candidate_scores[memory_id] = base
                 details[memory_id] = {
@@ -622,18 +755,20 @@ class TieredMemoryStore:
                     "tier": record.tier,
                     "lexical_score": round(lexical, 6),
                     "asset_hits": asset_hits,
+                    "entity_hits": list(entity_hits),
+                    "entity_score": round(entity_score, 6),
                     "vector_score": round(dense_scores.get(memory_id, 0.0), 6),
                     "graph_hop": 0,
                     "graph_parent_id": None,
                 }
 
         # Dense similarity is deliberately bounded relative to the strongest
-        # exact/lexical signal. It can recall a semantic-only candidate, but it
-        # cannot swamp an exact asset or a clear identifier match.
+        # lexical or exact-identity signal. It can recall a semantic-only
+        # candidate, but it cannot swamp an exact asset or entity match.
         dense_scale = _DENSE_ROUTE_COEF * max(max(candidate_scores.values(), default=0.0), 1.0)
         for memory_id, dense_score in dense_scores.items():
             record = self._by_id[memory_id]
-            if not record.quarantined:
+            if not record.quarantined and _valid_at(record, effective_at):
                 candidate_scores[memory_id] = candidate_scores.get(memory_id, 0.0) + dense_scale * dense_score
                 details.setdefault(
                     memory_id,
@@ -642,6 +777,8 @@ class TieredMemoryStore:
                         "tier": record.tier,
                         "lexical_score": 0.0,
                         "asset_hits": 0,
+                        "entity_hits": [],
+                        "entity_score": 0.0,
                         "graph_hop": 0,
                         "graph_parent_id": None,
                     },
@@ -654,12 +791,20 @@ class TieredMemoryStore:
                 frontier.items(), key=lambda item: (-item[1], item[0])
             )[:graph_candidate_limit]:
                 source = self._by_id.get(source_id)
-                if source is None or source.quarantined:
+                if (
+                    source is None
+                    or source.quarantined
+                    or not _valid_at(source, effective_at)
+                ):
                     continue
                 propagated = source_score * _GRAPH_HOP_DECAY
                 for linked_id in source.links:
                     linked = self._by_id.get(linked_id)
-                    if linked is None or linked.quarantined:
+                    if (
+                        linked is None
+                        or linked.quarantined
+                        or not _valid_at(linked, effective_at)
+                    ):
                         continue
                     if propagated > candidate_scores.get(linked_id, 0.0):
                         candidate_scores[linked_id] = propagated
@@ -671,6 +816,8 @@ class TieredMemoryStore:
                                 "tier": linked.tier,
                                 "lexical_score": 0.0,
                                 "asset_hits": 0,
+                                "entity_hits": [],
+                                "entity_score": 0.0,
                                 "vector_score": 0.0,
                                 "graph_hop": hop_index + 1,
                                 "graph_parent_id": source_id,
@@ -687,14 +834,15 @@ class TieredMemoryStore:
         max_base = 0.0
         for memory_id, base in candidate_scores.items():
             record = self._by_id[memory_id]
-            if record.quarantined:
+            if record.quarantined or not _valid_at(record, effective_at):
                 continue
             index = insertion_order[memory_id]
             max_base = max(max_base, base)
             scored.append((base, index, _structural_prior(record) if use_structure else 0.0, record))
 
-        # Structural rerank — a bounded fraction of the top lexical score, so it
-        # reorders near-ties / applies priors but never overrides a clear winner.
+        # Structural rerank — a bounded fraction of the top query-dependent base,
+        # so it reorders near-ties / applies priors but never overrides a clear
+        # winner.
         scale = _STRUCT_COEF * max_base
         ranked: dict[str, list[tuple[float, int, MemoryRecord]]] = {tier: [] for tier in _EMPTY_TIERS}
         for base, index, prior, record in scored:

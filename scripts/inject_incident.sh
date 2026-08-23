@@ -394,13 +394,31 @@ recurring)
     echo
 
     CURSOR=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
+    EARLY_ESCALATION=0
     install_unit
 
     for (( round = 1; round <= ACT_ROUNDS; round++ )); do
         echo "── 第 $round/$((ACT_ROUNDS + 1)) 次故障（预期：修好）──────────────────────────"
         crash_unit
-        follow_until resolved 300 || die "这一轮没走到判定恢复。
+        # Either terminal ends the round. The ladder can reach its limit earlier
+        # than this loop expects — a cycle left in the window by an earlier run
+        # counts too, and the count is a property of the log, not of this script.
+        # Waiting only for `resolved` turns the mechanism working correctly into
+        # a five-minute timeout.
+        if follow_until escalated 5 >/dev/null 2>&1; then
+            echo "   这一轮直接升级了——窗口里本来就有前次留下的复发。跳到终局。"
+            EARLY_ESCALATION=1
+            break
+        fi
+        follow_until resolved 300 || {
+            if follow_until escalated 5 >/dev/null 2>&1; then
+                echo "   它在这一轮就拒绝了：复发已经到限。这就是要演的那一幕，提前到了。"
+                EARLY_ESCALATION=1
+                break
+            fi
+            die "这一轮既没走到判定恢复，也没有升级。
 先看 ./scripts/inject_incident.sh status，再看 journalctl -u $GATEWAY -n 50。"
+        }
         # The cooldown is set when the action starts, and the ladder doubles it
         # each round: 30s, 60s, then 120s against a 90s watch window. Only the
         # third one outlives its own repair, so a short pause here keeps the
@@ -410,6 +428,22 @@ recurring)
         echo
         sleep 30
     done
+
+    if [ "$EARLY_ESCALATION" = "1" ]; then
+        DEMO_COMPLETE=1
+        echo
+        echo "── 终局：它已经拒绝了 ────────────────────────────────────────────"
+        echo
+        echo "现在屏幕上："
+        echo "  · 态势页那一行变成红色「要人工」，并且排到了最前面"
+        echo "  · 环节条只亮到「已确认」，后面是暗的——它没执行，不是执行失败"
+        echo "  · 事故卡上有复发次数和引用链：前几次分别什么时候修好、什么时候又坏"
+        echo
+        echo "$UNIT 会一直是 failed，这是对的——「转人工」的意思就是它在等人。"
+        echo
+        echo "压缩窗口现在还在（不然重启网关会把你正要展示的这一屏冲掉）。"
+        echo "讲完一定要收： ./scripts/inject_incident.sh cleanup"
+    else
 
     echo "── 第 $((ACT_ROUNDS + 1))/$((ACT_ROUNDS + 1)) 次故障（预期：拒绝）──────────────────"
     echo "   前 $DEMO_LIMIT 次都是「修好了又坏」。这一次它应该不修了。"
@@ -439,6 +473,7 @@ recurring)
         echo "  2. 前几轮真的闭环了吗：   grep -c '\"kind\": \"resolved\"' $TIMELINE  应该 ≥ $DEMO_LIMIT" >&2
         echo "  3. 第四轮是不是被冷却拦了：时间线尾部找 cooldown；是的话把脚本里的 DEMO_COOLDOWN 调小重来" >&2
         exit 1
+    fi
     fi
     ;;
 
