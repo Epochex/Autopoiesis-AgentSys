@@ -307,14 +307,27 @@ export function TheaterStage({
     () => [...(chain?.steps ?? [])].reverse().find((s) => s.kind === 'escalated') ?? null,
     [chain],
   )
-  const railStages = railFor(theater.scope).map((p, i) => ({ ...p, p: { x: RAIL_X0 + i * RAIL_DX, y: RAIL_Y } as Pt }))
+  const terminal = useMemo(
+    () => [...(chain?.steps ?? [])].reverse().find((s) => [
+      'resolved', 'remediated', 'no_safe_action', 'declined', 'cooldown', 'escalated',
+    ].includes(s.kind)) ?? null,
+    [chain],
+  )
+  // The selected card already carries the closed report branch. Use it during
+  // the first timeline fetch so the stage never flashes the six-step write
+  // path for an incident whose safety gate has already closed.
+  const reportClosed = terminal?.kind === 'no_safe_action' || theater.stageIds.includes('handoff')
+  const railTimeline = chain?.steps.length
+    ? chain.steps
+    : reportClosed ? [{ kind: 'no_safe_action' }] : []
+  const railStages = railFor(theater.scope, railTimeline).map((p, i) => ({ ...p, p: { x: RAIL_X0 + i * RAIL_DX, y: RAIL_Y } as Pt }))
   const hotStageSet = new Set(
     isSentinel && chain?.steps.length ? sentinelStageIds(chain.steps) : theater.stageIds,
   )
   // The step the chain is on right now — the one that should read as moving,
   // on the rail and in the incident card's 当前 row. A refused chain has none:
   // it stopped, and naming the step it stopped on would say otherwise.
-  const nowStage = escalated
+  const nowStage = terminal || reportClosed
     ? null
     : [...railStages].reverse().find((r) => hotStageSet.has(r.id)) ?? null
   const firstHot = railStages.find((s) => hotStageSet.has(s.id)) ?? railStages[0]
@@ -328,7 +341,9 @@ export function TheaterStage({
       <g className="th-rail">
         <text x={RAIL_X0 - 12} y={RAIL_Y - 26} className="th-rail-kick" textAnchor="start">
           {isSentinel
-            ? (zh ? '哨兵自动处置流程 · 运行于 R450 网关进程' : 'SENTINEL AUTOMATED-ACTION FLOW · IN THE R450 GATEWAY')
+            ? reportClosed
+              ? (zh ? '哨兵安全拒绝流程 · 自动流程结束后转人工' : 'SENTINEL SAFETY-REFUSAL FLOW · HANDED OFF')
+              : (zh ? '哨兵自动处置流程 · 运行于 R450 网关进程' : 'SENTINEL AUTOMATED-ACTION FLOW · IN THE R450 GATEWAY')
             : (zh ? 'NetOps 流处理链 · 运行于 R230' : 'NETOPS STREAM CHAIN · ON R230')}
         </text>
         {railStages.map((s, i) => {
@@ -763,7 +778,7 @@ export function TheaterStage({
             <span key={role} className={`th-legend-chip role-${role}`}><i />{zh ? ROLE_ZH[role] : role}</span>
           ))}
           <span className="th-legend-k">{zh ? '· 环节分色' : '· STAGES'}</span>
-          {railFor(theater.scope).map((p) => (
+          {railFor(theater.scope, railTimeline).map((p) => (
             <span key={p.id} className={`th-legend-chip st-${p.id}`}><i />{zh ? p.zh : p.en}</span>
           ))}
         </div>
@@ -800,7 +815,7 @@ export function TheaterStage({
       {/* Live response for the device on stage. Anchored bottom-left so it sits
           clear of the banner, and only drawn once the sentinel has something to
           say about this subject. */}
-      <foreignObject x={20} y={556} width={620} height={126} className="th-rp-fo">
+      <foreignObject x={20} y={556} width={620} height={reportClosed ? 210 : 126} className="th-rp-fo">
         <RemediationProgress subject={theater.device} lang={lang} />
       </foreignObject>
 

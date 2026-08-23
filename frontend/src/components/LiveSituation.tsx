@@ -134,7 +134,8 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
     return suggestions.find((s) => s.id === snap?.defaultSuggestionId) ?? suggestions[0] ?? null
   }, [suggestions, pick, focusSubject, snap])
   const hot = useMemo(() => hotStages(selected), [selected])
-  const rail = useMemo(() => railFor(selected?.scope), [selected])
+  const rail = useMemo(() => railFor(selected?.scope, selected?.timeline), [selected])
+  const reportOnly = selected?.reviewVerdict.verdictStatus === 'reported'
 
   /* Arriving from the situational page's alert strip: bring the panel into view.
    * Which card is selected is derived above, not set here. */
@@ -170,7 +171,9 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
       <div className="ls-pipe" role="list" aria-label={zh ? '处理链路' : 'Processing chain'}>
         <span className="ls-pipe-k">
           {selected?.scope === 'sentinel'
-            ? (zh ? '哨兵自动处置流程' : 'SENTINEL AUTOMATED-ACTION FLOW')
+            ? reportOnly
+              ? (zh ? '哨兵安全拒绝流程' : 'SENTINEL SAFETY-REFUSAL FLOW')
+              : (zh ? '哨兵自动处置流程' : 'SENTINEL AUTOMATED-ACTION FLOW')
             : (zh ? 'NetOps 流处理' : 'NETOPS STREAM')}
         </span>
         {rail.map((p, i) => (
@@ -289,7 +292,11 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
 
             {/* runbook draft + the approval boundary it can never cross on its own */}
             <div className="ls-block ls-runbook">
-              <div className="ls-block-h">{zh ? '处置预案 · 草案' : 'RUNBOOK · DRAFT'}</div>
+              <div className="ls-block-h">
+                {reportOnly
+                  ? (zh ? '安全决策 · 自动流程终态' : 'SAFETY DECISION · AUTOMATION TERMINAL')
+                  : (zh ? '处置预案 · 草案' : 'RUNBOOK · DRAFT')}
+              </div>
               <div className="ls-rb-title">{selected.runbookDraft.title || '—'}</div>
               {selected.runbookDraft.actions.length > 0 && (
                 <ol className="ls-rb-actions">
@@ -299,10 +306,14 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
               <div className="ls-gate">
                 <span className="ls-gate-lock" aria-hidden="true" />
                 <span className="ls-gate-t">
-                  {zh ? '审批边界 · 预案永不自动执行' : 'APPROVAL BOUNDARY · NEVER AUTO-EXECUTED'}
+                  {reportOnly
+                    ? (zh ? '安全门已关闭写操作 · 事件已记录并转人工' : 'WRITES GATED · RECORDED AND HANDED OFF')
+                    : (zh ? '审批边界 · 预案永不自动执行' : 'APPROVAL BOUNDARY · NEVER AUTO-EXECUTED')}
                 </span>
                 <span className={`ls-gate-risk ${selected.reviewVerdict.checks.overreachRisk.status}`}>
-                  {zh ? '越权风险' : 'OVERREACH'} · {selected.reviewVerdict.checks.overreachRisk.status}
+                  {reportOnly
+                    ? (zh ? '自动流程已结束 · 待人工处置' : 'AUTOMATION CLOSED · HUMAN ACTION PENDING')
+                    : `${zh ? '越权风险' : 'OVERREACH'} · ${selected.reviewVerdict.checks.overreachRisk.status}`}
                 </span>
               </div>
             </div>

@@ -11,7 +11,7 @@ import threading
 
 import pytest
 
-from core.remediate.sentinel import Detection, Sentinel
+from core.remediate.sentinel import Detection, Sentinel, timeline
 
 
 @pytest.fixture(autouse=True)
@@ -87,11 +87,18 @@ def test_a_condition_that_clears_resets_its_streak():
 
 
 def test_a_detection_with_no_safe_action_is_reported_not_improvised_on():
-    sentinel, calls = _sentinel([_detection(action=None)])
+    finding = _detection(action=None)
+    finding.candidate_action = "temporary_firewall_block"
+    finding.safety_reason = "missing TTL and rollback"
+    sentinel, calls = _sentinel([finding])
     sentinel.poll_once()
     sentinel.poll_once()
     assert calls["execute"] == []
     assert calls["preflight"] == []
+    event = next(row for row in timeline() if row["kind"] == "no_safe_action")
+    assert event["candidate_action"] == "temporary_firewall_block"
+    assert event["decision"] == "retained_not_executed"
+    assert event["reason"] == "missing TTL and rollback"
 
 
 def test_a_refused_preflight_stops_the_action():

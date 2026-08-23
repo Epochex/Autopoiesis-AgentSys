@@ -112,7 +112,13 @@ def test_report_only_chain_is_not_dressed_up_as_a_fix(tmp_path, monkeypatch):
     # the gate held it, so the card must say a person is required
     assert card["runbookDraft"]["approvalBoundary"]["approvalRequired"] is True
     assert card["reviewVerdict"]["checks"]["overreachRisk"]["status"] == "gated"
-    assert any("没有可自动执行的动作" in a for a in card["runbookDraft"]["actions"])
+    assert any("无可自动执行的动作" in a for a in card["runbookDraft"]["actions"])
+    assert any("候选动作（已保留、未执行）：临时防火墙封禁" in a
+               for a in card["runbookDraft"]["actions"])
+    reason = next(stage for stage in card["stageTelemetry"] if stage["stageId"] == "gate")["detail"]
+    assert "RFC 5737" in reason
+    assert "没有可阻断的真实连接" in reason
+    assert "无效 ACL" in reason
 
 
 def test_escalation_outranks_the_successes_that_caused_it(tmp_path, monkeypatch):

@@ -14,6 +14,7 @@ acting cannot lower a baseline that is already on the floor.
 from __future__ import annotations
 
 import re
+from ipaddress import ip_address, ip_network
 
 from core.remediate.sentinel import Detection
 from core.safety.tailscale import is_tailscale_target
@@ -23,6 +24,26 @@ from domains.network_rca.remediation import Command, PHYSICAL_NIC
 # "anything that is failed", because a failed unit somebody is mid-way through
 # debugging should not be restarted underneath them.
 WATCHED_UNIT_PREFIXES = ("netops-", "autopoiesis-", "demo-")
+
+_DOCUMENTATION_NETWORKS = tuple(ip_network(cidr) for cidr in (
+    "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
+))
+
+
+def _bruteforce_safety_reason(address: str) -> str:
+    """Explain the exact firewall-write boundary for this source."""
+    parsed = ip_address(address)
+    if any(parsed in network for network in _DOCUMENTATION_NETWORKS):
+        return (
+            f"保留未执行临时防火墙封禁：{address} 属于 RFC 5737 演示保留地址，"
+            "本次只有注入的失败登录日志，没有可阻断的真实连接。写入真实防火墙会制造无效 ACL，"
+            "并引入管理通道误封风险；系统保留证据并转人工。"
+        )
+    return (
+        "保留未执行临时防火墙封禁：当前未注册同时具备封禁 TTL、管理地址豁免、"
+        "提交后回读和超时自动回滚的防火墙适配器。直接写 ACL 可能误封管理来源；"
+        "系统保留证据并转人工。"
+    )
 
 
 def failed_units(command: Command | None = None) -> list[Detection]:
@@ -44,6 +65,11 @@ def failed_units(command: Command | None = None) -> list[Detection]:
                 subject=unit, severity="high",
                 summary=f"{unit} 处于 failed，但不在本系统托管的单元范围内，只报不动。",
                 evidence={"line": line.strip()},
+                candidate_action="restart_unit",
+                safety_reason=(
+                    f"保留未执行单元重启：{unit} 不在受控单元白名单内；"
+                    "系统保留证据并转人工。"
+                ),
             ))
             continue
         found.append(Detection(
@@ -127,9 +153,11 @@ def admin_bruteforce(command: Command | None = None, threshold: int = 8,
             subject=address, severity="high",
             summary=(
                 f"{address} 在最近 {window.lstrip('-')} 内对 SSH 失败登录 {count} 次。"
-                "封禁是可撤销的，但封错就等于堵住自己的管理通道，所以这一条只报不动。"
+                "安全门已评估临时封禁，具体保留理由记录在处置链。"
             ),
             evidence={"failures": count, "window": window},
+            candidate_action="temporary_firewall_block",
+            safety_reason=_bruteforce_safety_reason(address),
         )
         for address, count in sources.items()
         if count >= threshold and not is_tailscale_target(address)

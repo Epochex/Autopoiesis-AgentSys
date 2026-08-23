@@ -15,8 +15,9 @@ import { type ChainStep as Step, useSentinelChain } from './use-sentinel-chain'
  * waits, and the bar says what it is waiting for. */
 
 /** The chain's shape, in the order the system walks it. */
-const PHASES = ['detected', 'confirmed', 'preflight', 'acting', 'watching', 'closed'] as const
-type Phase = (typeof PHASES)[number]
+const ACTION_PHASES = ['detected', 'confirmed', 'preflight', 'acting', 'watching', 'closed'] as const
+const REPORT_PHASES = ['detected', 'confirmed', 'gate', 'handoff'] as const
+type Phase = (typeof ACTION_PHASES)[number] | (typeof REPORT_PHASES)[number]
 
 const PHASE_LABEL: Record<Phase, [string, string]> = {
   detected: ['发现', 'DETECTED'],
@@ -25,6 +26,8 @@ const PHASE_LABEL: Record<Phase, [string, string]> = {
   acting: ['执行', 'ACTING'],
   watching: ['观察期', 'WATCHING'],
   closed: ['收尾', 'CLOSED'],
+  gate: ['安全门判定', 'SAFETY GATE'],
+  handoff: ['记录并转人工', 'RECORD & HAND OFF'],
 }
 
 function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal: string | null } {
@@ -52,7 +55,8 @@ function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal
         break
       case 'no_safe_action':
         reached.add('confirmed')
-        reached.add('closed')
+        reached.add('gate')
+        reached.add('handoff')
         terminal = 'no_safe_action'
         break
       case 'escalated':
@@ -78,7 +82,8 @@ function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal
     reached.add('acting')
     reached.add('watching')
   }
-  const current = [...PHASES].reverse().find((p) => reached.has(p)) ?? 'detected'
+  const order: readonly Phase[] = terminal === 'no_safe_action' ? REPORT_PHASES : ACTION_PHASES
+  const current = [...order].reverse().find((p) => reached.has(p)) ?? 'detected'
   return { reached, current, terminal }
 }
 
@@ -87,11 +92,32 @@ const TERMINAL_LABEL: Record<string, [string, string]> = {
   passed: ['已恢复', 'RESOLVED'],
   escalated: ['反复复发，已转人工', 'ESCALATED — NEEDS A PERSON'],
   needs_human: ['需人工介入', 'NEEDS A PERSON'],
-  no_safe_action: ['只报不动', 'REPORTED, NOT ACTED'],
+  no_safe_action: ['自动流程结束 · 待人工处置', 'AUTOMATION CLOSED · HUMAN ACTION PENDING'],
   declined: ['前置条件不通过', 'PRECONDITIONS FAILED'],
   cooldown: ['冷却中', 'COOLING DOWN'],
   reverted: ['已回滚', 'REVERTED'],
   revert_unverified: ['回滚未能验证', 'REVERT UNVERIFIED'],
+}
+
+function withheldWrite(steps: Step[], zh: boolean): { action: string; reason: string; result: string } | null {
+  const refusal = [...steps].reverse().find((step) => step.kind === 'no_safe_action')
+  if (!refusal) return null
+  const detection = [...steps].reverse().find((step) => step.kind === 'detected')
+  const subject = detection?.subject ?? refusal.subject ?? ''
+  const recorded = refusal.reason?.trim()
+  const documentationSource = /^(192\.0\.2|198\.51\.100|203\.0\.113)\./.test(subject)
+  const reason = recorded || (documentationSource
+    ? (zh
+        ? `${subject} 属于 RFC 5737 演示保留地址，本次只有注入的失败登录日志，没有可阻断的真实连接。写入真实防火墙会制造无效 ACL，并引入管理通道误封风险。`
+        : `${subject} is an RFC 5737 documentation address. This rehearsal injected log evidence and created no live connection to block; a real ACL write would add a meaningless rule and risk management access.`)
+    : (refusal.note || (zh
+        ? '当前没有同时具备封禁 TTL、管理地址豁免、提交后回读和超时自动回滚的已注册防火墙动作。'
+        : 'No registered firewall action currently combines a TTL, management-address exemptions, post-commit readback, and timed rollback.')))
+  return {
+    action: zh ? '候选动作：临时防火墙封禁（已保留、未执行）' : 'CANDIDATE: TEMPORARY FIREWALL BLOCK (WITHHELD)',
+    reason,
+    result: zh ? '结果：防火墙配置未变化，事件证据已记账并转人工。' : 'RESULT: FIREWALL UNCHANGED; EVIDENCE RECORDED AND HANDED OFF.',
+  }
 }
 
 export function RemediationProgress({ subject, lang }: { subject: string; lang: Lang }) {
@@ -106,12 +132,18 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
   if (!round || !round.length || !view) return null
 
   const samples = [...round].reverse().find((s) => typeof s.samples === 'number')?.samples
-  const running = !view.reached.has('closed')
+  const running = !view.terminal
+  const phases: readonly Phase[] = view.terminal === 'no_safe_action' ? REPORT_PHASES : ACTION_PHASES
+  const withheld = view.terminal === 'no_safe_action' ? withheldWrite(round, zh) : null
 
   return (
     <div className={`rp${running ? ' is-running' : ''}`}>
       <div className="rp-head">
-        <span className="rp-k">{zh ? '系统正在处置' : 'SYSTEM RESPONSE'}</span>
+        <span className="rp-k">
+          {running
+            ? (zh ? '系统正在处置' : 'SYSTEM RESPONSE')
+            : (zh ? '系统处置结果' : 'SYSTEM DISPOSITION')}
+        </span>
         <span className="rp-subject">{subject}</span>
         {view.terminal ? (
           <span className={`rp-terminal t-${view.terminal}`}>
@@ -123,7 +155,7 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
       </div>
 
       <ol className="rp-rail">
-        {PHASES.map((phase) => {
+        {phases.map((phase) => {
           const done = view.reached.has(phase)
           const now = phase === view.current && running
           return (
@@ -137,6 +169,14 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
           )
         })}
       </ol>
+
+      {withheld ? (
+        <div className="rp-decision">
+          <strong>{withheld.action}</strong>
+          <p>{withheld.reason}</p>
+          <span>{withheld.result}</span>
+        </div>
+      ) : null}
 
       {/* 影响面 and 当前 are on the incident marker out on the map, where the eye
           already is. Repeating them here only cost the transcript its room. */}

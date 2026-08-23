@@ -26,7 +26,20 @@ export const SENTINEL_LOOP: { id: string; zh: string; en: string }[] = [
   { id: 'verify', zh: '回读验证', en: 'VERIFY' },
 ]
 
-export const railFor = (scope?: string) => (scope === 'sentinel' ? SENTINEL_LOOP : PIPELINE)
+/** The honest terminal branch for a detection that has no registered write. */
+export const SENTINEL_REPORT_LOOP: { id: string; zh: string; en: string }[] = [
+  { id: 'detector', zh: '巡检发现', en: 'DETECT' },
+  { id: 'confirm', zh: '二次确认', en: 'CONFIRM' },
+  { id: 'gate', zh: '安全门判定', en: 'SAFETY GATE' },
+  { id: 'handoff', zh: '记录并转人工', en: 'RECORD & HAND OFF' },
+]
+
+export const railFor = (scope?: string, timeline: { kind: string }[] = []) => {
+  if (scope !== 'sentinel') return PIPELINE
+  return currentRound(timeline).some((step) => step.kind === 'no_safe_action')
+    ? SENTINEL_REPORT_LOOP
+    : SENTINEL_LOOP
+}
 
 /* Which rail steps a sentinel chain actually reached, read off its timeline. */
 const SENTINEL_REACHED: Record<string, string[]> = {
@@ -34,7 +47,7 @@ const SENTINEL_REACHED: Record<string, string[]> = {
   preflight: ['confirm', 'preflight'],
   remediated: ['act', 'watch'],
   resolved: ['verify'],
-  no_safe_action: ['confirm'],
+  no_safe_action: ['confirm', 'gate', 'handoff'],
   declined: ['confirm', 'preflight'],
   cooldown: ['confirm'],
   // The refusal happens on the confirmed detection, before anything is measured
@@ -81,5 +94,5 @@ export function sentinelStageIds(timeline: { kind: string }[]): string[] {
   // change has not happened during the exact stretch when it has.
   const closed = round.some((s) => SENTINEL_TERMINAL.has(s.kind))
   if (hit.has('preflight') && !closed) { hit.add('act'); hit.add('watch') }
-  return SENTINEL_LOOP.map((s) => s.id).filter((id) => hit.has(id))
+  return railFor('sentinel', round).map((s) => s.id).filter((id) => hit.has(id))
 }

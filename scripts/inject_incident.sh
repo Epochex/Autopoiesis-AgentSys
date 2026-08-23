@@ -378,15 +378,16 @@ bruteforce)
         die "30 秒内没有生成 detected。检查：journalctl -t sshd --since -10m；再看 $TIMELINE"
     fi
     if wait_for_security_event no_safe_action 30; then
-        echo "  · 安全门判定完成：只报不动"
+        echo "  · 安全门判定完成：防火墙写入已保留，自动流程结束并转人工"
     else
         die "事件已经出现，但 30 秒内没有形成 no_safe_action。检查网关日志和哨兵时间线。"
     fi
     echo "注入完成：12 条失败登录，前端链路已经可见。"
     echo
     echo "保持在 内网实时 页，点击顶部 $FAKE_SOURCE 提醒进入对应态势记录。"
-    echo "封禁是可撤销的，但封错来源就等于堵住自己的管理通道，所以只报不动。"
-    echo "页面上它是琥珀色的「只报不动」，链条停在「无安全动作」。"
+    echo "$FAKE_SOURCE 属于 RFC 5737 演示保留地址，本次只有注入日志，没有真实连接可阻断。"
+    echo "向真实防火墙写规则只会制造无效 ACL，并增加管理通道误封风险。"
+    echo "页面会显示：候选动作已保留、写操作未执行、证据已记账并转人工。"
     echo
     echo "演示时这一条比自愈那一条更值钱：它证明分级不是摆设。"
     ;;

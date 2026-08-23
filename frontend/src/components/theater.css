@@ -217,6 +217,10 @@
   letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
 .rp-hint { margin:6px 0 0; padding-top:6px; border-top:1px solid var(--rule);
   font-size:11px; line-height:1.5; color:var(--ink-soft); }
+.rp-decision { margin-top:8px; padding:7px 9px; border-left:3px solid #80500e; background:rgba(128,80,14,.06); }
+.rp-decision strong,.rp-decision span { display:block; font-family:var(--font-mono); font-size:8.5px;
+  line-height:1.45; letter-spacing:.04em; color:#80500e; }
+.rp-decision p { margin:4px 0; font-size:10.5px; line-height:1.45; color:var(--ink); }
 
 @media (prefers-reduced-motion:no-preference) {
   .rp.is-running .rp-phase.is-now .rp-dot { animation:rp-pulse 1.4s ease-in-out infinite; }

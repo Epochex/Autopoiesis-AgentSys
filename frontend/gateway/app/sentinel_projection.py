@@ -63,6 +63,11 @@ _ACTION_LABEL: dict[str, tuple[str, str]] = {
     "gateway_probe": ("探测网关连通性", "probe the gateway"),
 }
 
+_CANDIDATE_ACTION_LABEL: dict[str, tuple[str, str]] = {
+    "temporary_firewall_block": ("临时防火墙封禁", "temporary firewall block"),
+    "restart_unit": ("重启该 systemd 单元", "restart the systemd unit"),
+}
+
 
 _HOST_ADDRESS: list[str | None] = []
 
@@ -104,6 +109,42 @@ def host_address() -> str | None:
 def _is_ipv4(value: str) -> bool:
     parts = value.split(".")
     return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
+def _no_action_reason(
+    subject: str,
+    detection: dict[str, Any],
+    no_action: dict[str, Any],
+    *,
+    en: bool,
+) -> str:
+    """Project a complete reason, including older timeline entries."""
+    recorded = str(no_action.get("reason") or "").strip()
+    legacy_generic = "没有可自动执行的动作" in recorded or "只出告警" in recorded
+    if recorded and not legacy_generic:
+        return recorded
+    if str(detection.get("detector") or "") == "admin_bruteforce":
+        documentation_source = subject.startswith(("192.0.2.", "198.51.100.", "203.0.113."))
+        if documentation_source:
+            return (
+                f"Withheld temporary firewall block: {subject} is an RFC 5737 documentation address. "
+                "The rehearsal injected log evidence and created no live connection to block. A real ACL "
+                "write would add a meaningless rule and risk management access; evidence was retained and handed off."
+                if en else
+                f"保留未执行临时防火墙封禁：{subject} 属于 RFC 5737 演示保留地址，本次只有注入的失败登录日志，"
+                "没有可阻断的真实连接。写入真实防火墙会制造无效 ACL，并引入管理通道误封风险；系统保留证据并转人工。"
+            )
+        return (
+            "Withheld temporary firewall block: no registered adapter currently combines a TTL, management-address "
+            "exemptions, post-commit readback, and timed rollback. Evidence was retained and handed off."
+            if en else
+            "保留未执行临时防火墙封禁：当前未注册同时具备封禁 TTL、管理地址豁免、提交后回读和超时自动回滚的"
+            "防火墙适配器。直接写 ACL 可能误封管理来源；系统保留证据并转人工。"
+        )
+    return str(no_action.get("note") or (
+        "No registered action passed the safety gate; state was retained and handed off."
+        if en else "当前没有通过安全门的预注册动作；写操作保持不变，事件证据已记录并转人工。"
+    ))
 
 
 def _stable_id(*parts: str) -> str:
@@ -187,6 +228,15 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     declined = _last(chain, "declined")
     cooldown = _last(chain, "cooldown")
     escalated = _last(chain, "escalated")
+    no_action_reason = _no_action_reason(subject, detection, no_action, en=en) if no_action else ""
+    candidate_action = str(
+        (no_action or {}).get("candidate_action")
+        or detection.get("candidate_action")
+        or ("temporary_firewall_block" if detection.get("detector") == "admin_bruteforce" else "")
+    )
+    candidate_action_text = _CANDIDATE_ACTION_LABEL.get(
+        candidate_action, (candidate_action, candidate_action),
+    )[1 if en else 0]
     radius = (preflight or {}).get("blast_radius") or {}
     verdict_status, disposition, running = _outcome(chain)
     action = str(detection.get("action") or (preflight or {}).get("action") or "")
@@ -255,10 +305,13 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     if no_action:
         stages.append({
             "stageId": "gate",
-            "label": "自动化分级闸门" if not en else "automation gate",
-            "provider": "fault-catalog",
+            "label": "防火墙写入安全门" if candidate_action == "temporary_firewall_block" and not en else (
+                "firewall write safety gate" if candidate_action == "temporary_firewall_block" else
+                ("自动化分级闸门" if not en else "automation gate")
+            ),
+            "provider": "remediation-policy",
             "ts": str(no_action.get("at") or ""),
-            "detail": str(no_action.get("reason") or no_action.get("note") or ""),
+            "detail": no_action_reason,
         })
     if declined:
         stages.append({
@@ -303,10 +356,15 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     else:
         action_text = "无可自动执行的动作" if not en else "no action is auto-executable here"
     actions = [action_text]
+    if no_action and candidate_action_text:
+        actions.append(
+            f"候选动作（已保留、未执行）：{candidate_action_text}"
+            if not en else f"candidate action (withheld): {candidate_action_text}"
+        )
     if radius.get("summary"):
         actions.append(str(radius["summary"]))
     if no_action:
-        actions.append(str(no_action.get("reason") or ""))
+        actions.append(no_action_reason)
     if declined:
         actions.append(str(declined.get("reason") or ""))
     if cooldown:
@@ -378,7 +436,9 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         "runbookDraft": {
             "planId": _stable_id(subject, action),
             "title": (
-                f"{subject} · {action_text}" if not en
+                f"{subject} · 安全门保留写操作" if no_action and not en
+                else f"withheld write on {subject}" if no_action
+                else f"{subject} · {action_text}" if not en
                 else f"{action_text} on {subject}"
             ),
             # `escalated` is read before `remediated`, because the successful

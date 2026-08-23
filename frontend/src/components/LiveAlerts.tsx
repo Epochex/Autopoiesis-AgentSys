@@ -40,7 +40,7 @@ const PHASE_LABEL: Record<Row['phase'], [string, string]> = {
   // be verified, this one means the system decided to stop repairing.
   escalated: ['不再自动修', 'STOPPED REPAIRING'],
   needs_human: ['要人工', 'NEEDS A PERSON'],
-  reported: ['只报不动', 'REPORTED ONLY'],
+  reported: ['写操作已保留', 'WRITE WITHHELD'],
   declined: ['安全门拒绝', 'DECLINED BY GATE'],
   cooling: ['冷却中', 'COOLING DOWN'],
 }
@@ -48,7 +48,20 @@ const PHASE_LABEL: Record<Row['phase'], [string, string]> = {
 /** Anything older than this is history, not a live alert. */
 const RECENT_MS = 30 * 60 * 1000
 
-function summarise(events: Record<string, unknown>[]): Row[] {
+function reportSummary(subject: string, refusal: Record<string, unknown> | undefined, zh: boolean): string {
+  const recorded = String(refusal?.reason ?? '').trim()
+  if (recorded) return recorded
+  if (/^(192\.0\.2|198\.51\.100|203\.0\.113)\./.test(subject)) {
+    return zh
+      ? '候选封禁未执行：演示保留地址没有真实连接可阻断；写 ACL 会产生无效规则并引入管理通道误封风险。'
+      : 'Firewall block withheld: the documentation address has no live connection to block; an ACL write would add a meaningless rule and risk management access.'
+  }
+  return zh
+    ? '候选写操作未执行：当前动作缺少完整的安全门条件；证据已记录并转人工。'
+    : 'Candidate write withheld: the action does not satisfy the complete safety gate; evidence was recorded and handed off.'
+}
+
+function summarise(events: Record<string, unknown>[], zh: boolean): Row[] {
   const bySubject = new Map<string, Record<string, unknown>[]>()
   for (const event of events) {
     const kind = String(event.kind ?? '')
@@ -70,6 +83,7 @@ function summarise(events: Record<string, unknown>[]): Row[] {
 
     const kinds = chain.map((e) => String(e.kind))
     const remediated = [...chain].reverse().find((e) => e.kind === 'remediated')
+    const noAction = [...chain].reverse().find((e) => e.kind === 'no_safe_action')
     let phase: Row['phase'] = 'detected'
     // Escalation is read first: the chain of a subject that keeps coming back
     // still holds every fix that worked, and the newest of those would otherwise
@@ -86,7 +100,9 @@ function summarise(events: Record<string, unknown>[]): Row[] {
     rows.push({
       subject,
       severity: String(detection?.severity ?? 'high'),
-      summary: String(detection?.summary ?? ''),
+      summary: phase === 'reported'
+        ? reportSummary(subject, noAction, zh)
+        : String(detection?.summary ?? ''),
       at,
       phase,
       action: (detection?.action as string | null) ?? null,
@@ -114,13 +130,13 @@ export function LiveAlerts({ lang, onOpen }: { lang: Lang; onOpen: (subject: str
     try {
       const response = await fetch('/api/rca/sentinel/timeline?limit=400')
       const body = (await response.json()) as { events?: Record<string, unknown>[] }
-      setRows(summarise(body.events ?? []))
+      setRows(summarise(body.events ?? [], zh))
     } catch {
       // A dead endpoint must not blank the page underneath; keep the last view.
     } finally {
       inFlight.current = false
     }
-  }, [])
+  }, [zh])
 
   useEffect(() => {
     void load()

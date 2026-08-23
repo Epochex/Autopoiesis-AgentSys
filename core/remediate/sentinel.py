@@ -87,6 +87,11 @@ class Detection:
     evidence: dict[str, Any] = field(default_factory=dict)
     action: str | None = None
     target: str | None = None
+    # A write that could mitigate the symptom but has not earned automatic
+    # execution. Keeping it separate from ``action`` is the safety boundary:
+    # the sentinel may explain the withheld write, but cannot execute it.
+    candidate_action: str | None = None
+    safety_reason: str | None = None
 
     @property
     def key(self) -> str:
@@ -102,6 +107,8 @@ class Detection:
             "evidence": self.evidence,
             "action": self.action,
             "target": self.target,
+            "candidate_action": self.candidate_action,
+            "safety_reason": self.safety_reason,
         }
 
 
@@ -403,8 +410,15 @@ class Sentinel:
 
             if detection.action is None:
                 record("no_safe_action", {
-                    "subject": detection.subject, "family": detection.family,
-                    "note": "这一族没有可自动执行的动作，只出告警等人处理",
+                    "subject": detection.subject,
+                    "detector": detection.detector,
+                    "family": detection.family,
+                    "candidate_action": detection.candidate_action,
+                    "decision": "retained_not_executed",
+                    "reason": detection.safety_reason or (
+                        "当前没有通过安全门的预注册动作；写操作保持不变，"
+                        "事件证据已记录并转人工。"
+                    ),
                 })
                 continue
 
