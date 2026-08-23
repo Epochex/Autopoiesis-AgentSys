@@ -28,22 +28,22 @@ const prefersReduced = () => typeof window !== 'undefined' && window.matchMedia?
 const STEP_MS = 360
 
 const T = (zh: boolean) => ({
-  kicker: zh ? '长轨迹 · 网络 RCA 流式注故障 · 自愈/自演化基准' : 'TRAJECTORY · STREAMED FAULT-INJECTION · SELF-HEAL BENCHMARK',
-  loading: zh ? '运行真实自演化流…' : 'RUNNING REAL SELF-EVOLVING STREAM…',
+  kicker: zh ? '多轮故障回放 · 注入网络故障并检查自动处置结果' : 'MULTI-RUN FAULT REPLAY · INJECT FAULTS AND CHECK AUTOMATED ACTIONS',
+  loading: zh ? '正在运行多轮真实故障回放…' : 'RUNNING REAL MULTI-RUN FAULT REPLAY…',
   err: zh ? '回放端点不可达' : 'REPLAY ENDPOINT UNREACHABLE',
   inject: zh ? '注入故障 → Redpanda' : 'INJECT FAULT → REDPANDA', injecting: zh ? '注入中…' : 'INJECTING…',
   play: zh ? '回放' : 'PLAY', pause: zh ? '暂停' : 'PAUSE', replay: zh ? '重放' : 'REPLAY',
-  acc: zh ? '诊断准确率' : 'ACCURACY', mem: zh ? '记忆(实时)' : 'MEMORY (live)', ncase: zh ? '故障用例' : 'FAULT CASES', passes: zh ? '复发轮次' : 'PASSES',
-  saved: zh ? '探针节省' : 'PROBES SAVED', ins: zh ? '沉淀洞见' : 'INSIGHTS',
+  acc: zh ? '诊断准确率' : 'ACCURACY', mem: zh ? '已有记录（回放中）' : 'RECORDS (DURING REPLAY)', ncase: zh ? '故障用例' : 'FAULT CASES', passes: zh ? '重复轮次' : 'PASSES',
+  saved: zh ? '少做的检查' : 'CHECKS SAVED', ins: zh ? '归纳出的总结' : 'SUMMARIES',
   topic: zh ? '流 topic' : 'STREAM TOPIC', ev: zh ? '事件' : 'events',
-  offline: zh ? '离线 rule 推理 · 真实 orchestrator + verifier' : 'offline rule reasoner · real orchestrator + verifier',
+  offline: zh ? '离线规则判断 · 使用真实任务编排与结果核对代码' : 'offline rules · real task orchestration and result checker',
   ev_n: zh ? '事件' : 'event', round: zh ? '轮' : 'pass',
-  note0: zh ? '本 6 用例集探针节省=0(自演化在准确率与记忆沉淀上体现;效率增益需更大集)——如实展示' : 'probes-saved=0 on this 6-case set (evolution shows in accuracy + memory) — shown as-is',
-  gridk: zh ? '自演化轨迹 · 每列一轮复发 · ✓=诊断正确 · 数字=记忆条数(回放中逐格填充)' : 'SELF-EVOLUTION · each column a recurrence · ✓=correct · number=memory (fills as it replays)',
+  note0: zh ? '这 6 个案例没有减少检查次数；目前只看到诊断准确率和记录数量的变化，更大的案例集才能判断是否省时。' : 'These 6 cases saved no checks. The run only shows changes in accuracy and record count; a larger set is needed to judge time savings.',
+  gridk: zh ? '重复故障的处理结果 · 每列一轮 · ✓=诊断正确 · 数字=当时已有记录数' : 'REPEATED-FAULT RESULTS · one pass per column · ✓=correct · number=records at that point',
   streamed: zh ? '已注入' : 'streamed', degraded: zh ? '(网关无 rpk,轨迹仍真实离线)' : '(no rpk; trajectory still real offline)',
   cite: zh ? '用例与根因均来自真实数据集;评分用现有 verifier;流经真实 Redpanda(隔离 topic,不动生产 facts.raw)。' : 'Real dataset + verifier; streamed through real Redpanda (isolated topic; prod facts.raw untouched).',
-  seam: zh ? '↓ 机制与上下文更新 · 复用内网长轨迹同款观测(同一次真实自演化 run)' : '↓ MECHANISM & CONTEXT UPDATE · SAME OBSERVATORY AS THE LIVE TRAJECTORY (one real self-evolving run)',
-  liveh: zh ? '实时自愈 · 隔离旁路 running pod(correlator→alerts-sink→aiops-agent)消费注入故障并产出诊断' : 'LIVE SELF-HEAL · isolated side-car running pods (correlator→alerts-sink→aiops) consuming the injected faults',
+  seam: zh ? '↓ 本轮采用了哪些旧记录，又写入了什么新记录' : '↓ WHICH OLD RECORDS THIS RUN USED AND WHAT IT WROTE',
+  liveh: zh ? '自动处置回放 · 独立旁路进程接收注入故障并产出诊断，不影响生产数据' : 'AUTOMATED-ACTION REPLAY · isolated side processes consume injected faults and produce diagnoses without touching production data',
 })
 
 export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (e: TheaterEvent) => void }) {
@@ -105,7 +105,7 @@ export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (
     <div className="tb">
       <header className="tb-head">
         <div className="tb-code">{tx.kicker}</div>
-        <h1 className="tb-title">{zh ? <>长<mark>轨迹</mark></> : <>TRA<mark>JECTORY</mark></>}</h1>
+        <h1 className="tb-title">{zh ? <>多轮<mark>故障回放</mark></> : <>MULTI-RUN <mark>FAULT REPLAY</mark></>}</h1>
       </header>
 
       <div className="tb-metrics">

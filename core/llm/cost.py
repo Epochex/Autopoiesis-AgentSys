@@ -35,12 +35,25 @@ def _default_ledger() -> Path:
     configured = os.getenv("AUTOPOIESIS_COST_LEDGER")
     if configured:
         return Path(configured)
-    if "PYTEST_CURRENT_TEST" in os.environ or "pytest" in os.environ.get("_", ""):
+    test_root = os.getenv("AUTOPOIESIS_TEST_TMP")
+    if test_root:
+        return Path(test_root) / "llm-cost.jsonl"
+    # PYTEST_CURRENT_TEST is absent during collection, and `_` is the Python
+    # executable under `python -m pytest`. They cannot protect a path captured
+    # by an import. The conftest sets AUTOPOIESIS_TEST_TMP before collection;
+    # this fallback covers direct imports performed later in a test body.
+    if "PYTEST_CURRENT_TEST" in os.environ:
         return Path(tempfile.gettempdir()) / "autopoiesis-cost-test.jsonl"
     return Path("/data/autopoiesis-runtime/llm-cost.jsonl")
 
 
-LEDGER_PATH = _default_ledger()
+# Tests and embedders may inject a path explicitly. Leaving this unset avoids
+# binding one early import to a production sink for the rest of the process.
+LEDGER_PATH: Path | None = None
+
+
+def _ledger_path() -> Path:
+    return LEDGER_PATH if LEDGER_PATH is not None else _default_ledger()
 
 # CNY per million tokens. Adjust to match the contract in force; the comment
 # beside each entry says where the number came from so a stale rate is
@@ -115,10 +128,11 @@ def record(
     )
     row = entry.as_row()
     row["usage_reported"] = bool(usage)
+    path = _ledger_path()
     try:
         with _LOCK:
-            LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with LEDGER_PATH.open("a", encoding="utf-8") as handle:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(row, sort_keys=True) + "\n")
     except OSError:
         # Accounting must never take down the call it is accounting for.
@@ -127,10 +141,11 @@ def record(
 
 
 def _rows(since: datetime | None = None) -> list[dict[str, Any]]:
-    if not LEDGER_PATH.exists():
+    path = _ledger_path()
+    if not path.exists():
         return []
     out: list[dict[str, Any]] = []
-    with LEDGER_PATH.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:

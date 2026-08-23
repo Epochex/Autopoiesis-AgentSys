@@ -1,0 +1,28 @@
+[Unit]
+Description=Autopoiesis live FortiGate facts ingest
+Documentation=file:///data/Autopoiesis-AgentSys/docs/FACTS_INGEST_SERVICE.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/data/Autopoiesis-AgentSys
+EnvironmentFile=/etc/selfevo-console.env
+Environment=PYTHONUNBUFFERED=1
+RuntimeDirectory=netops-facts-ingest
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/python3 /data/Autopoiesis-AgentSys/frontend/gateway/ingest/facts_ingest.py live
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=15s
+KillMode=mixed
+MemoryHigh=384M
+MemoryMax=512M
+TasksMax=64
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

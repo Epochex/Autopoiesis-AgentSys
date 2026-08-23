@@ -49,6 +49,12 @@ const TALLY = { x: 58, y: 330, cols: 18, cell: 6.4 }
 const ROLE_ZH: Record<string, string> = {
   camera: '摄像头', intercom: '门禁', mobile: '移动端', workstation: '工作站', server: '服务器', unknown: '未识别',
 }
+const memoryType = (tier: string, zh: boolean) => ({
+  episodic: zh ? '遇到过的事' : 'SEEN BEFORE',
+  semantic: zh ? '归纳的规律' : 'PATTERN',
+  procedural: zh ? '处理办法' : 'HOW-TO',
+  asset_profile: zh ? '设备资料' : 'ASSET INFO',
+} as Record<string, string>)[tier] ?? tier
 /* stage-2 hue families: one per device ROLE (hulls + dots) and one per pipeline
  * 环节 (rail + chain). Values live in theater.css; these lists drive markup. */
 const HULL_ROLES = ['workstation', 'camera', 'mobile', 'intercom', 'server'] as const
@@ -322,7 +328,7 @@ export function TheaterStage({
       <g className="th-rail">
         <text x={RAIL_X0 - 12} y={RAIL_Y - 26} className="th-rail-kick" textAnchor="start">
           {isSentinel
-            ? (zh ? '哨兵自愈循环 · 运行于 R450 网关进程' : 'SENTINEL SELF-HEAL LOOP · IN THE R450 GATEWAY')
+            ? (zh ? '哨兵自动处置流程 · 运行于 R450 网关进程' : 'SENTINEL AUTOMATED-ACTION FLOW · IN THE R450 GATEWAY')
             : (zh ? 'NetOps 流处理链 · 运行于 R230' : 'NETOPS STREAM CHAIN · ON R230')}
         </text>
         {railStages.map((s, i) => {
@@ -485,8 +491,8 @@ export function TheaterStage({
                                         <code>{cycle.memory.memory_id}</code>
                                       </div>
                                       <div className="th-inc-memory-meta">
-                                        <span>{zh ? '层' : 'TIER'}</span>
-                                        <code>{cycle.memory.tier}</code>
+                                        <span>{zh ? '类型' : 'TYPE'}</span>
+                                        <code>{memoryType(cycle.memory.tier, zh)}</code>
                                       </div>
                                       <div className="th-inc-memory-text">
                                         <span>{zh ? '全文摘要' : 'FULL SUMMARY'}</span>

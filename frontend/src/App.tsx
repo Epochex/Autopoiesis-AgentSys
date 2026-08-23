@@ -331,9 +331,9 @@ function App() {
           </div>
             <div className="pager">
               <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '态势' : 'CONSOLE'}</button>
-              <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '长轨迹' : 'TRAJECTORY'}</button>
+              <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '多轮故障回放' : 'MULTI-RUN REPLAY'}</button>
               <button className={view === 'diagnose' ? 'on' : ''} onClick={() => setView('diagnose')}>{lang === 'zh' ? '诊断处置' : 'DIAGNOSE'}</button>
-              <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '检索' : 'RETRIEVAL'}</button>
+              <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '查资料' : 'FIND RECORDS'}</button>
               <button className={view === 'cost' ? 'on' : ''} onClick={() => setView('cost')}>{lang === 'zh' ? '成本' : 'COST'}</button>
             </div>
 

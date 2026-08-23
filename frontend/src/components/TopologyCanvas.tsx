@@ -29,6 +29,12 @@ const bw = (bps?: number | null) => {
 const clipS = (s: string, n: number) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s)
 const weight = (f: number) => Math.max(1, Math.min(5.5, 1 + Math.log10(f + 1) * 0.7))
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+const memoryType = (tier: string, zh: boolean) => ({
+  episodic: zh ? '遇到过的事' : 'SEEN BEFORE',
+  semantic: zh ? '归纳的规律' : 'PATTERN',
+  procedural: zh ? '处理办法' : 'HOW-TO',
+  asset_profile: zh ? '设备资料' : 'ASSET INFO',
+} as Record<string, string>)[tier] ?? tier
 
 function group(key: string): 'attack' | 'deny' | 'health' {
   if (key === 'admin_bruteforce_lockout') return 'attack'
@@ -194,7 +200,7 @@ function WanSiege({
             <g key={i} className="ws-node" style={{ cursor: 'pointer' }} onClick={() => setWanFocus({ kind: 'attacker', ip: a.ip })}>
               <rect x={a.p.x - 3} y={a.p.y - 3} width="6" height="6" className="ws-node-dot" />
               <text x={a.p.x + 14} y={a.p.y - 1} className="ws-node-ip" textAnchor="start">{a.ip}</text>
-              <text x={a.p.x + 14} y={a.p.y + 12} className="ws-node-v" textAnchor="start">{short(a.v)} {zh ? '次尝试' : 'attempts'}<tspan className="ws-node-hint"> ▸ {zh ? '画像' : 'PROFILE'}</tspan></text>
+              <text x={a.p.x + 14} y={a.p.y + 12} className="ws-node-v" textAnchor="start">{short(a.v)} {zh ? '次尝试' : 'attempts'}<tspan className="ws-node-hint"> ▸ {zh ? '详情' : 'DETAILS'}</tspan></text>
             </g>
           ))}
           {atk.map((a, i) => <line key={`v${i}`} x1={a.p.x + 6} y1={a.p.y} x2={T.x - 12} y2={T.y} className="ws-vector" pointerEvents="none" />)}
@@ -210,10 +216,10 @@ function WanSiege({
             {Array.from({ length: distinctSrc }).map((_, i) => (
               <rect key={i} x={556 + (i % 22) * 5} y={92 + Math.floor(i / 22) * 5} width={2.6} height={2.6} className="ws-src faint" />
             ))}
-            <text x={556} y={86} className="ws-field-lab">{zh ? `${distinctSrc} 个真实来源 · 6 个已具名` : `${distinctSrc} REAL SOURCES · 6 NAMED`}</text>
+            <text x={556} y={86} className="ws-field-lab">{zh ? `${distinctSrc} 个来源 · ${atk.length} 个首要来源已具名` : `${distinctSrc} SOURCES · ${atk.length} TOP SOURCES NAMED`}</text>
           </g>
           <text x={70} y={96} className="ws-back" style={{ cursor: 'pointer' }} onClick={() => setWanFocus(null)}>← {zh ? '收起 · 返回总览' : 'COLLAPSE'}</text>
-          <text x={70} y={124} className="ws-kicker">{zh ? '攻击者网段 · /24 聚类 · 点 IP 看画像' : 'ATTACKER NETBLOCKS · CLICK AN IP'}</text>
+          <text x={70} y={124} className="ws-kicker">{zh ? '攻击者网段 · 按 /24 分组 · 点 IP 看详情' : 'ATTACKER NETBLOCKS · CLICK AN IP'}</text>
           {/* two coordinated /24s hitting in identical lockstep → one botnet family */}
           {blockGeom.length >= 2 && blockGeom.every((b) => b.coordinated) && (() => {
             const c0 = blockGeom[0].ips[Math.floor(blockGeom[0].ips.length / 2)]?.p ?? blockGeom[0].ips[0].p
@@ -1349,7 +1355,7 @@ export function TopologyCanvas({
               <foreignObject x={VBW - 516} y={90} width={496} height={860} className="ego-fo">
                 <div className="dp-panel xl">
                   <div className="dp-h">
-                    <span className="dp-k">{lang === 'zh' ? '流量画像' : 'TRAFFIC PORTRAIT'} · {focusDev}</span>
+                    <span className="dp-k">{lang === 'zh' ? '流量情况' : 'TRAFFIC DETAILS'} · {focusDev}</span>
                   </div>
                   {p.loading ? (
                     <div className="dp-wait">{lang === 'zh' ? '正在聚合真实流量…' : 'aggregating real flows…'}</div>
@@ -1484,7 +1490,7 @@ export function TopologyCanvas({
                         return (
                           <>
                             <div className="dp-sec hist">
-                              {lang === 'zh' ? `历史画像 · ${history.days} 天` : `HISTORY · ${history.days}d`}
+                              {lang === 'zh' ? `历史记录 · ${history.days} 天` : `HISTORY · ${history.days}d`}
                               {history.widened ? (lang === 'zh' ? ' · 近7天无流量,已扩至全保留期' : ' · widened to full retention') : ''}
                               <span className="dp-hist-badge" title={lang === 'zh' ? 'ClickHouse 全量日志(R230)' : 'ClickHouse full log (R230)'}>ClickHouse</span>
                             </div>
@@ -1611,22 +1617,22 @@ export function TopologyCanvas({
               <foreignObject x={VBW - 396} y={90} width={376} height={720} className="ego-fo">
                 <div className="dp-panel mem">
                   <div className="dp-h">
-                    <span className="dp-k">{zh ? '记忆条目' : 'MEMORY RECORD'} · {mem.tier}</span>
+                    <span className="dp-k">{zh ? '记忆记录' : 'MEMORY RECORD'} · {memoryType(mem.tier, zh)}</span>
                     <button className="dp-mem-x" onClick={() => focusOn(null, devPos)} title={zh ? '关闭' : 'close'}>✕</button>
                   </div>
                   <div className="dp-b">
                     <div className="dp-mem-id">
                       {mem.memory_id}
-                      {mem.quarantined ? <span className="dp-mem-q">{zh ? '已隔离' : 'QUARANTINED'}</span> : null}
+                      {mem.quarantined ? <span className="dp-mem-q">{zh ? '已打入冷宫' : 'SHELVED'}</span> : null}
                     </div>
                     {mem.root ? (
                       <div className="dp-mem-root"><span>{zh ? '根因' : 'ROOT'}</span>{mem.root}</div>
                     ) : null}
                     <div className="dp-mem-text">{mem.text}</div>
                     <div className="dp-stats">
-                      <span><b>{num(mem.strength)}</b> {zh ? '强度' : 'strength'}</span>
+                      <span><b>{num(mem.strength)}</b> {zh ? '保留强度' : 'retention'}</span>
                       <span><b>{num(mem.importance)}</b> {zh ? '重要度' : 'importance'}</span>
-                      <span><b>{num(mem.confidence)}</b> {zh ? '置信' : 'confidence'}</span>
+                      <span><b>{num(mem.confidence)}</b> {zh ? '可信度' : 'confidence'}</span>
                     </div>
                     {mem.tags.length ? (
                       <>
@@ -1688,7 +1694,7 @@ export function TopologyCanvas({
                         </div>
                       </>
                     ) : null}
-                    <div className="dp-foot">{zh ? '自演化记忆 · 观测台真实记录' : 'evolved memory · observatory record (verbatim)'}</div>
+                    <div className="dp-foot">{zh ? '本机记忆 · 原始记录' : "this host's memory · original record"}</div>
                   </div>
                 </div>
               </foreignObject>

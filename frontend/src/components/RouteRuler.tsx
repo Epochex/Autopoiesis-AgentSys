@@ -17,16 +17,19 @@ const GATE_UPDATE = 0.62
 const GATE_NOOP = 0.97
 
 const L: Record<string, [string, string]> = {
-  kick: ['写入路由 · route()', 'WRITE ROUTER · route()'],
+  kick: ['如何决定新增、更新或不改', 'HOW IT CHOOSES ADD, UPDATE, OR NO CHANGE'],
   real: ['真实调用', 'REAL CALLS'],
   never: ['从未进入', 'NEVER ENTERED'],
   of: ['/', '/'],
-  short: ['离闸门还差', 'SHORT OF GATE'],
-  sum: ['本数据集路由结果', 'ROUTE RESULT ON THIS DATASET'],
+  short: ['距更新条件还差', 'SHORT OF UPDATE THRESHOLD'],
+  sum: ['本数据集写入结果', 'WRITE RESULTS ON THIS DATASET'],
   none: ['本数据集没有任何 route() 调用', 'No route() call was recorded on this dataset.'],
-  obs: ['实测区间', 'OBSERVED'],
+  obs: ['实际出现的范围', 'OBSERVED RANGE'],
 }
 const t = (k: string, zh: boolean) => L[k][zh ? 0 : 1]
+const decisionLabel = (op: string, zh: boolean) => ({
+  ADD: zh ? '新增' : 'ADD', UPDATE: zh ? '更新' : 'UPDATE', NOOP: zh ? '不改' : 'NO CHANGE',
+}[op] ?? op)
 
 const VW = 600, VH = 140
 const X0 = 44, X1 = 556, AX = 116          // axis
@@ -76,8 +79,8 @@ export function RouteRuler({ decisions, zh }: { decisions: MemEvent[]; zh: boole
     <section className="mi-ruler">
       <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid meet" role="img"
         aria-label={zh
-          ? `写入路由相似度标尺：${N} 次真实调用，${zones.map((z) => `${z.name} ${z.n}`).join('，')}`
-          : `Write-router similarity ruler: ${N} real calls, ${zones.map((z) => `${z.name} ${z.n}`).join(', ')}`}>
+          ? `按相近程度决定怎么写入：${N} 次真实调用，${zones.map((z) => `${decisionLabel(z.name, true)} ${z.n}`).join('，')}`
+          : `Choose how to write by similarity: ${N} real calls, ${zones.map((z) => `${decisionLabel(z.name, false)} ${z.n}`).join(', ')}`}>
         <defs>
           <pattern id="mi-hatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
             <line className="mi-hl" x1="0" y1="0" x2="0" y2="7" />
@@ -97,7 +100,7 @@ export function RouteRuler({ decisions, zh }: { decisions: MemEvent[]; zh: boole
               <rect x={x} y={BT} width={w} height={AX - BT} />
               {w > 70 && (
                 <text className="mi-r-zt" x={x + 5} y={BT + 11}>
-                  {z.name} {z.op} {z.gate} · {z.n}{t('of', zh)}{N}
+                  {decisionLabel(z.name, zh)} {z.op} {z.gate} · {z.n}{t('of', zh)}{N}
                 </text>
               )}
             </g>
@@ -109,7 +112,7 @@ export function RouteRuler({ decisions, zh }: { decisions: MemEvent[]; zh: boole
           <g className="mi-r-void">
             <path d={`M${px(voidFrom)} ${BT - 4} v-5 h${px(1) - px(voidFrom)} v5`} />
             <text className="mi-r-vt" x={(px(voidFrom) + px(1)) / 2} y={BT - 12} textAnchor="middle">
-              {voidNames.join(' + ')} · 0 {t('of', zh)} {N} · {t('never', zh)}
+              {voidNames.map((name) => decisionLabel(name, zh)).join(' + ')} · 0 {t('of', zh)} {N} · {t('never', zh)}
             </text>
           </g>
         )}
@@ -132,7 +135,7 @@ export function RouteRuler({ decisions, zh }: { decisions: MemEvent[]; zh: boole
               <text className="mi-r-lab" x={x + 6} y={y + 3.4}>
                 <tspan className="mi-r-val">{f4(s)}</tspan>
                 <tspan className="mi-r-ar"> → </tspan>
-                <tspan className="mi-r-op">{c.op}</tspan>
+                <tspan className="mi-r-op">{decisionLabel(c.op, zh)}</tspan>
                 <tspan className="mi-r-case">  {shortCase(c.case_id)}</tspan>
               </text>
             </g>

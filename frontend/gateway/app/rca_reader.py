@@ -93,7 +93,14 @@ def _run_case(case, stats_path: Path, reasoner_mode: str) -> dict[str, Any]:
     with TemporaryDirectory() as tmp:
         ledger = Path(tmp) / "trace.jsonl"
         orch = build_network_rca_orchestrator(
-            ledger, data_source="real", real_stats_path=stats_path, reasoner_mode=reasoner_mode
+            ledger,
+            data_source="real",
+            real_stats_path=stats_path,
+            reasoner_mode=reasoner_mode,
+            # Snapshot generation is read-only. Falling back to MEMORY_DSN here
+            # initializes the production schema and may seed fixtures when the
+            # active set has decayed to zero.
+            use_env_memory_dsn=False,
         )
         diagnosis, report = orch.diagnose(case)
         trace = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()]

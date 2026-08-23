@@ -71,6 +71,9 @@ def compare_baselines(
                 reasoner_mode=reasoner_mode,
                 data_source=data_source,
                 real_stats_path=real_stats_path,
+                # An evaluation must stay hermetic. Environment fallback would
+                # initialize and possibly seed the production memory database.
+                use_env_memory_dsn=False,
                 **kwargs,
             )
             metrics = run_and_evaluate_replay(orchestrator, cases, ground_truth)
@@ -111,6 +114,9 @@ def compare_context_strategies(
                 data_source=data_source,
                 real_stats_path=real_stats_path,
                 context_strategy=strategy,
+                # This comparison only reads fixtures and writes its temp
+                # ledger; connecting MEMORY_DSN would mutate production schema.
+                use_env_memory_dsn=False,
             )
             metrics = run_and_evaluate_replay(orchestrator, cases, ground_truth)
             packets = [

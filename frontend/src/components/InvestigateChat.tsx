@@ -153,7 +153,7 @@ const T = (zh: boolean) => ({
   askPh: zh ? '写一句话,说清要查哪台机器、什么现象' : 'One line: which machine, what you are seeing',
   start: zh ? '开始查' : 'START',
   starting: zh ? '正在查…' : 'COLLECTING…',
-  ctx: zh ? '背景上下文 · 系统已经跑过的命令' : 'BACKGROUND · COMMANDS ALREADY RUN',
+  ctx: zh ? '背景资料 · 系统已经跑过的命令' : 'BACKGROUND · COMMANDS ALREADY RUN',
   open: zh ? '展开' : 'OPEN',
   close: zh ? '收起' : 'CLOSE',
   count: (n: number) => (zh ? `本轮已收集 ${n} 条证据` : `${n} PIECES OF EVIDENCE SO FAR`),
@@ -172,8 +172,8 @@ const T = (zh: boolean) => ({
     ? '这一步会动到还在正常工作的东西,必须由人来执行。系统只把命令写出来,按不下去。'
     : 'This step touches something that is still working, so a person runs it. The system writes the command out and stops there.',
   autoTip: zh
-    ? '这一步是会改状态的自动修复,不在这里跑。它走处置接口,那条路径带前置校验、执行后回读和观察期。'
-    : 'This one changes state. It runs through the remediation endpoint instead, which carries preconditions, a read-back and a watch window.',
+    ? '自动修复步骤在本界面锁定。当前前端没有处置入口,请交由运维按审批流程处理。'
+    : 'Automatic remediation is locked in this interface. This frontend has no remediation entry point; use the approved operator process.',
   stopped: (n: number) => (zh ? `停在第 ${n} 步` : `STOPPED AT STEP ${n}`),
   refused: zh ? '没执行' : 'NOT RUN',
   exit: (code: number) => (zh ? `退出码 ${code}` : `EXIT ${code}`),
@@ -512,9 +512,8 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
             <ol className="dx-iv-steps">
               {verdict.runbook.map((step) => {
                 const out = stepOut[step.n]
-                // Locked unless the server said this step is runnable here. An
-                // `auto` step is not: it goes through the remediation endpoint,
-                // which carries preconditions and a watch window.
+                // Locked unless the server said this step is runnable here. The
+                // current frontend exposes no execution entry point for `auto` steps.
                 const locked = step.runnable === false || step.risk !== 'readonly'
                 const noteId = `${uid}-gate-${step.n}`
                 const lockTip = step.risk === 'auto' ? tx.autoTip : tx.gateTip

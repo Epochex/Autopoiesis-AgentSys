@@ -10,38 +10,75 @@ Two modes:
   backfill  — replay every rotated .gz (oldest→newest) + the current file once.
   live      — `tail -F` the current file, inserting new flows continuously.
 
-Realtime also mirrors each live fact onto Redpanda `netops.facts.raw.v1` when
---kafka is given, so the existing correlator sees real data (best-effort; a
-Kafka/TLS failure never blocks the ClickHouse path).
+The live path currently has one sink: ClickHouse. Redpanda publication is not
+implemented here, so the correlator requires a separate producer integration.
 
-Config via env (falls back to /etc/selfevo-console.env style vars):
+Config via env (falls back to `/etc/selfevo-console.env` values):
   R230_SSH, R230_PASS, R230_LOG            — SSH target + live log path
   CLICKHOUSE_URL  (default http://10.43.125.243:8123)
-  CLICKHOUSE_USER/PASSWORD/DB              — default netops/netops123/netops
+  CLICKHOUSE_USER/PASSWORD/DB              — default user/db: netops/netops
+  FACTS_LIVE_FLUSH_SECONDS                  — default 5
+  FACTS_STATUS_FILE                         — default /run/netops-facts-ingest/status.json
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
-CH_URL = os.getenv("CLICKHOUSE_URL", "http://10.43.125.243:8123")
-CH_USER = os.getenv("CLICKHOUSE_USER", "netops")
-CH_PASS = os.getenv("CLICKHOUSE_PASSWORD", "netops123")
-CH_DB = os.getenv("CLICKHOUSE_DB", "netops")
+
+def _read_env_file(path: str) -> dict[str, str]:
+    """Read simple systemd EnvironmentFile assignments without evaluating shell."""
+    values: dict[str, str] = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                if key:
+                    values[key] = value
+    except OSError:
+        pass
+    return values
+
+
+_ENV_FILE = os.getenv("FACTS_ENV_FILE", "/etc/selfevo-console.env")
+_FILE_ENV = _read_env_file(_ENV_FILE)
+
+
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(name, _FILE_ENV.get(name, default))
+
+
+CH_URL = _env("CLICKHOUSE_URL", "http://10.43.125.243:8123")
+CH_USER = _env("CLICKHOUSE_USER", "netops")
+CH_PASS = _env("CLICKHOUSE_PASSWORD")
+CH_DB = _env("CLICKHOUSE_DB", "netops")
 CH_TABLE = "facts"
 
-R230_SSH = os.getenv("R230_SSH", "root@192.168.1.23")
-R230_PASS = os.getenv("R230_PASS", "")
-R230_LOG = os.getenv("R230_LOG", "/data/fortigate-runtime/input/fortigate.log")
+R230_SSH = _env("R230_SSH", "root@192.168.1.23")
+R230_PASS = _env("R230_PASS")
+R230_LOG = _env("R230_LOG", "/data/fortigate-runtime/input/fortigate.log")
 R230_DIR = os.path.dirname(R230_LOG)
 
-BATCH = int(os.getenv("FACTS_BATCH", "5000"))
+BATCH = int(_env("FACTS_BATCH", "5000"))
+LIVE_FLUSH_SECONDS = float(_env("FACTS_LIVE_FLUSH_SECONDS", "5"))
+STATUS_FILE = Path(_env("FACTS_STATUS_FILE", "/run/netops-facts-ingest/status.json"))
 
 # FortiGate syslog is space-separated key=value; values may be "quoted".
 _KV = re.compile(r'(\w+)=(?:"([^"]*)"|(\S+))')
@@ -50,6 +87,10 @@ _COLS = [
     "service", "app", "type", "subtype", "srcintf", "dstintf", "dstcountry",
     "srcname", "sentbyte", "rcvdbyte",
 ]
+
+
+class RecoverableSSHError(RuntimeError):
+    """An SSH source interruption that live mode can reconnect after."""
 
 
 def _kv(line: str) -> dict[str, str]:
@@ -106,8 +147,13 @@ def ch_insert(rows: list[list]) -> None:
     if not rows:
         return
     q = f"INSERT INTO {CH_DB}.{CH_TABLE} ({','.join(_COLS)}) FORMAT TabSeparated"
-    url = f"{CH_URL}/?user={CH_USER}&password={CH_PASS}&query={urllib.request.quote(q)}"
-    req = urllib.request.Request(url, data=_tsv(rows), method="POST")
+    url = f"{CH_URL}/?query={urllib.parse.quote(q)}"
+    req = urllib.request.Request(
+        url,
+        data=_tsv(rows),
+        headers={"X-ClickHouse-User": CH_USER, "X-ClickHouse-Key": CH_PASS},
+        method="POST",
+    )
     for attempt in (1, 2, 3):
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
@@ -116,48 +162,179 @@ def ch_insert(rows: list[list]) -> None:
         except Exception as exc:
             if attempt == 3:
                 raise
+            print(
+                f"[clickhouse] insert attempt {attempt}/3 failed "
+                f"({type(exc).__name__}: {exc}); retrying",
+                file=sys.stderr,
+                flush=True,
+            )
             time.sleep(2 * attempt)
 
 
 def _ssh_cmd(remote_cmd: str) -> list[str]:
-    base = ["sshpass", "-p", R230_PASS] if R230_PASS else []
+    base = ["sshpass", "-e"] if R230_PASS else []
     return base + [
-        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+        "ssh", "-n", "-T", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
         "-o", "ServerAliveInterval=30", R230_SSH, remote_cmd,
     ]
 
 
-def _stream(remote_cmd: str, on_row, label: str) -> int:
-    """Run a remote command, parse its stdout line-by-line, batch-insert. Returns rows inserted."""
-    proc = subprocess.Popen(_ssh_cmd(remote_cmd), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=1 << 20)
+def _ssh_env() -> dict[str, str] | None:
+    if not R230_PASS:
+        return None
+    env = os.environ.copy()
+    env["SSHPASS"] = R230_PASS
+    return env
+
+
+def _write_status(**updates) -> None:
+    """Atomically update non-secret live health state; failure never stops ingest."""
+    state: dict = {}
+    try:
+        state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    state.update(updates)
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    tmp = STATUS_FILE.with_name(f".{STATUS_FILE.name}.{os.getpid()}.tmp")
+    try:
+        STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, STATUS_FILE)
+    except OSError as exc:
+        print(
+            f"[status] failed to update {STATUS_FILE} ({type(exc).__name__}: {exc})",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def _source_position() -> dict[str, str | int]:
+    """Return R230 log identity and current EOF byte offset through read-only stat."""
+    # Space-separated, not \t: inside the remote single-quoted stat format the
+    # backslash-t is passed literally to R230's shell, so it arrives as the two
+    # characters "\t", not a tab. Splitting on a real tab then never matched and
+    # every probe raised "invalid response" — which is what pinned the live
+    # tailer in a permanent reconnect loop, inserting nothing.
+    remote_cmd = f"stat -Lc '%d:%i %s %Y' -- {shlex.quote(R230_LOG)}"
+    try:
+        result = subprocess.run(
+            _ssh_cmd(remote_cmd),
+            env=_ssh_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RecoverableSSHError("SSH source probe timed out after 15s") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "no stderr output"
+        raise RecoverableSSHError(
+            f"SSH source probe exited with status {result.returncode}: {detail}"
+        )
+    parts = result.stdout.strip().split()
+    if len(parts) != 3:
+        raise RecoverableSSHError("SSH source probe returned an invalid response")
+    return {
+        "source_file_id": parts[0],
+        "source_offset_bytes": int(parts[1]),
+        "source_mtime_epoch": int(parts[2]),
+    }
+
+
+def _stream(
+    remote_cmd: str,
+    on_row,
+    label: str,
+    on_process=None,
+    *,
+    live_mode: bool = False,
+    clock=None,
+) -> int:
+    """Run a remote command and batch-insert parsed rows.
+
+    A finite backfill returns its inserted-row count. A live stream raises
+    RecoverableSSHError if SSH reaches EOF so its caller can reconnect.
+    """
+    if clock is None:
+        clock = time.monotonic
+    proc = subprocess.Popen(
+        _ssh_cmd(remote_cmd),
+        env=_ssh_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=None,
+        bufsize=1 << 20,
+    )
+    if on_process is not None:
+        on_process(proc)
     batch: list[list] = []
     n = 0
     t0 = time.time()
+    last_flush_at = clock() if live_mode else None
+
+    def flush(pulse_at=None) -> None:
+        nonlocal batch, n, last_flush_at
+        if not batch:
+            return
+        on_row(batch)
+        n += len(batch)
+        batch = []
+        if live_mode:
+            last_flush_at = pulse_at if pulse_at is not None else clock()
+
     try:
         for raw in proc.stdout:
             row = parse_line(raw.decode("utf-8", errors="ignore"))
-            if row is None:
+            if row is not None:
+                batch.append(row)
+            if not batch:
                 continue
-            batch.append(row)
-            if len(batch) >= BATCH:
-                on_row(batch)
-                n += len(batch)
-                batch = []
+            pulse_at = clock() if live_mode else None
+            size_due = len(batch) >= BATCH
+            time_due = live_mode and pulse_at - last_flush_at >= LIVE_FLUSH_SECONDS
+            if size_due or time_due:
+                flush(pulse_at)
                 if n % (BATCH * 20) == 0:
                     rate = n / max(1e-3, time.time() - t0)
                     print(f"[{label}] {n:,} facts inserted ({rate:,.0f}/s)", flush=True)
-        if batch:
-            on_row(batch)
-            n += len(batch)
+        flush()
+    except BaseException:
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        raise
     finally:
         proc.stdout.close()
-        proc.wait()
+    returncode = proc.wait()
+    if live_mode:
+        raise RecoverableSSHError(f"SSH live stream ended with status {returncode}")
+    if returncode != 0:
+        raise RuntimeError(f"SSH stream exited with status {returncode}")
     return n
 
 
 def backfill() -> None:
     """Replay every rotated .gz (oldest→newest) then the current file, into ClickHouse."""
-    ls = subprocess.run(_ssh_cmd(f"ls -1tr {R230_DIR}/"), capture_output=True, text=True, timeout=30)
+    ls = subprocess.run(
+        _ssh_cmd(f"ls -1tr {shlex.quote(R230_DIR)}/"),
+        env=_ssh_env(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     files = [f.strip() for f in ls.stdout.splitlines() if f.strip()]
     gz = [f for f in files if f.endswith(".gz")]
     plain = [f for f in files if f.endswith(".log")]
@@ -178,19 +355,164 @@ def backfill() -> None:
 def live() -> None:
     """tail -F the current log; insert new flows continuously."""
     print(f"[live] tailing {R230_LOG}", flush=True)
-    cmd = f"tail -n0 -F {R230_LOG} | grep --line-buffered -aE 'type=\"traffic\"|subtype=\"voip\"'"
+    cmd = (
+        f"tail -n0 -F -- {shlex.quote(R230_LOG)} | "
+        "grep --line-buffered -aE 'type=\"traffic\"|subtype=\"voip\"'"
+    )
+    started_at = datetime.now(timezone.utc).isoformat()
+    rows_since_start = 0
+    reconnect_count = 0
+    _write_status(
+        mode="live",
+        pid=os.getpid(),
+        started_at=started_at,
+        rows_inserted_since_start=0,
+        reconnect_count=0,
+        ssh_connection="connecting",
+        ssh_pid=None,
+        last_error_type=None,
+    )
+
+    def insert_live(rows: list[list]) -> None:
+        nonlocal rows_since_start
+        ch_insert(rows)
+        rows_since_start += len(rows)
+        _write_status(
+            rows_inserted_since_start=rows_since_start,
+            last_insert_at=datetime.now(timezone.utc).isoformat(),
+            last_batch_rows=len(rows),
+        )
+        print(
+            f"[live] inserted {len(rows):,} facts "
+            f"(total since start {rows_since_start:,})",
+            flush=True,
+        )
+
     while True:
         try:
-            _stream(cmd, ch_insert, "live")
+            position = _source_position()
+
+            def stream_started(proc: subprocess.Popen) -> None:
+                _write_status(
+                    ssh_connection="connected",
+                    ssh_pid=proc.pid,
+                    last_error_type=None,
+                    **position,
+                )
+
+            _stream(cmd, insert_live, "live", stream_started, live_mode=True)
+        except RecoverableSSHError as exc:
+            reconnect_count += 1
+            _write_status(
+                ssh_connection="reconnecting",
+                ssh_pid=None,
+                reconnect_count=reconnect_count,
+                last_error_type=type(exc).__name__,
+            )
+            print(
+                f"[live] SSH source interrupted ({exc}); reconnecting in 5s",
+                file=sys.stderr,
+                flush=True,
+            )
         except Exception as exc:
-            print(f"[live] stream error: {exc}; reconnecting in 5s", flush=True)
+            _write_status(
+                ssh_connection="error",
+                ssh_pid=None,
+                reconnect_count=reconnect_count,
+                last_error_type=type(exc).__name__,
+            )
+            print(
+                f"[live] fatal stream error ({type(exc).__name__}: {exc})",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
         time.sleep(5)
+
+
+def _clickhouse_status() -> dict[str, str | int | None]:
+    q = (
+        f"SELECT count() AS rows, toString(max(event_ts)) AS latest_event "
+        f"FROM {CH_DB}.{CH_TABLE} FORMAT JSONEachRow"
+    )
+    req = urllib.request.Request(
+        f"{CH_URL}/",
+        data=q.encode("utf-8"),
+        headers={"X-ClickHouse-User": CH_USER, "X-ClickHouse-Key": CH_PASS},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        row = json.loads(response.read().decode("utf-8"))
+    return {
+        "clickhouse_rows": int(row["rows"]),
+        "clickhouse_latest_event": row.get("latest_event") or None,
+    }
+
+
+def _pid_alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def status() -> int:
+    """Print collector, SSH source, and ClickHouse freshness without exposing secrets."""
+    try:
+        state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+
+    collector_running = _pid_alive(state.get("pid"))
+    ssh_pid_running = collector_running and _pid_alive(state.get("ssh_pid"))
+    collector_ssh = state.get("ssh_connection", "unknown")
+    if collector_ssh == "connected" and not ssh_pid_running:
+        collector_ssh = "stale"
+
+    print(f"collector: {'running' if collector_running else 'stopped'} (pid={state.get('pid', '-')})")
+    print(f"collector_ssh: {collector_ssh}")
+    print(f"last_insert_at: {state.get('last_insert_at', '-')}")
+    print(f"rows_inserted_since_start: {state.get('rows_inserted_since_start', 0)}")
+    print(f"reconnect_count: {state.get('reconnect_count', 0)}")
+
+    ssh_ok = False
+    try:
+        position = _source_position()
+        ssh_ok = True
+        print("ssh_probe: reachable")
+        print(
+            "source_offset: "
+            f"{position['source_file_id']}@{position['source_offset_bytes']} bytes "
+            f"(mtime={position['source_mtime_epoch']})"
+        )
+    except Exception as exc:
+        print(f"ssh_probe: failed ({type(exc).__name__})")
+        print("source_offset: unavailable")
+
+    ch_ok = False
+    try:
+        metrics = _clickhouse_status()
+        ch_ok = True
+        print(f"clickhouse_latest_event: {metrics['clickhouse_latest_event']}")
+        print(f"clickhouse_rows: {metrics['clickhouse_rows']}")
+    except Exception as exc:
+        print(f"clickhouse: failed ({type(exc).__name__})")
+
+    return 0 if collector_running and ssh_pid_running and ssh_ok and ch_ok else 1
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["backfill", "live"])
+    ap.add_argument("mode", nargs="?", choices=["backfill", "live"])
+    ap.add_argument("--status", action="store_true", help="report live ingest and ClickHouse freshness")
     args = ap.parse_args()
+    if args.status:
+        if args.mode is not None:
+            ap.error("--status cannot be combined with a mode")
+        sys.exit(status())
+    if args.mode is None:
+        ap.error("mode is required unless --status is used")
     if args.mode == "backfill":
         backfill()
     else:

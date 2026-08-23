@@ -1,22 +1,11 @@
-import { useEffect, useState } from 'react'
 import { Scramble } from './Motion'
 import type { Lang } from '../i18n'
 
-const STEPS: Record<Lang, string[]> = {
-  zh: ['建立 R230 遥测会话…', '拉取设备流量与端口特征…', 'DeepSeek V4 Flash 研判中…', '归纳威胁结论…'],
-  en: ['opening R230 telemetry…', 'pulling flow & port features…', 'DeepSeek V4 Flash reasoning…', 'composing verdict…'],
-}
-
 export function Analyzing({ lang }: { lang: Lang }) {
-  const [i, setI] = useState(0)
-  useEffect(() => {
-    const id = setInterval(() => setI((x) => Math.min(x + 1, STEPS[lang].length - 1)), 1400)
-    return () => clearInterval(id)
-  }, [lang])
   return (
     <div className="tc-loading">
       <span className="orbit" />
-      <Scramble text={STEPS[lang][i]} className="step-txt" />
+      <Scramble text={lang === 'zh' ? '研判请求处理中…' : 'ANALYSIS REQUEST IN PROGRESS…'} className="step-txt" />
     </div>
   )
 }

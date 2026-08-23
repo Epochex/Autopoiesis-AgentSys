@@ -5,9 +5,54 @@
 .traj-page .lm-root {
   margin: 18px 0 20px;
   min-width: 0;
+  scroll-margin-top: 10px;
   color: var(--ink);
   font-family: var(--font-mono);
 }
+
+.traj-page .lm-collapse-summary {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 10px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+}
+.traj-page .lm-collapse-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.traj-page .lm-collapse-summary button {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.traj-page .lm-collapse-summary button:hover,
+.traj-page .lm-collapse-summary button:focus-visible {
+  background: var(--ink);
+  color: var(--paper);
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.traj-page .lm-collapse-summary + #live-memory-content { margin-top: 10px; }
 
 .traj-page .lm-head {
   display: flex;

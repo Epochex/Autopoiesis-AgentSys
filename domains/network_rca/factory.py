@@ -69,9 +69,10 @@ def build_network_rca_orchestrator(
     seed_memory: bool = True,
     context_strategy: str = "structured",
     memory_dsn: str | None = None,
-    # An empty dsn cannot express "deliberately no repository" — `"" or env`
-    # falls straight back to the environment. Callers that must never touch the
-    # production store (the benchmark harness, most tests) say so here.
+    # An empty dsn cannot express "deliberately no repository" because
+    # `"" or env` falls straight back to the environment. Read-only callers
+    # must pass False: repository construction runs initialize_schema(), and an
+    # empty active set also triggers fixture seeding plus flush().
     use_env_memory_dsn: bool = True,
     vector_memory_enabled: bool | None = None,
     memory_embedder: Any | None = None,

@@ -1,4 +1,4 @@
-/* 记忆观测舱 / MEMORY OBSERVATORY — the container.
+/* 记忆机制回放 / MEMORY REPLAY — the container.
  *
  * Owns cursor + selection + playback and hands already-derived slices to the
  * three presentational panels. The records are serialized from the offline
@@ -189,14 +189,6 @@ export function MemoryObservatory({
     [obs.events],
   )
 
-  /* The thesis line. Both counts are the real array lengths — the sentence is
-   * built from the data it describes, so it cannot drift away from it. Every op
-   * it names actually fires on this run (ADD 18 · INSIGHT 1 · REINFORCE 235 ·
-   * INSIGHT_REFRESH 22 · LINK 8); the ones that never fire are not mentioned. */
-  const thesis = zh
-    ? `记忆从空开始，${obs.records.length} 条记录写入、加固并抽象为洞察，共 ${obs.events.length} 次生命周期事件`
-    : `From empty memory — ${obs.records.length} records written, reinforced and abstracted into insight across ${obs.events.length} lifecycle events`
-
   const offlineReplay = source?.dataMode === 'offline_benchmark_replay'
   const scope = [
     typeof source?.benchmark?.caseCount === 'number'
@@ -217,21 +209,23 @@ export function MemoryObservatory({
     offlineReplay ? (zh ? '记忆从空开始' : 'Memory starts empty') : null,
   ].filter((part): part is string => part !== null).join(' · ')
   const onlineText = source?.onlineMemory === false
-    ? (zh ? '这不是线上记忆' : 'This is not online memory')
+    ? (zh ? '这不是本机记忆' : "This is not this host's memory")
     : source?.onlineMemory === true
-      ? (zh ? '当前数据是线上记忆' : 'Current data is online memory')
-      : (zh ? '线上状态未标明' : 'Online status not specified')
+      ? (zh ? '当前数据是本机记忆' : "This is this host's memory")
+      : (zh ? '本机记忆状态未标明' : "This host's memory status is not specified")
 
   return (
-    <section className="mo" ref={rootRef} aria-label={zh ? '记忆观测舱' : 'Memory observatory'}>
+    <section className="mo" ref={rootRef} aria-label={zh ? '记忆机制回放' : 'Memory replay'}>
       <header className="mo-head">
-        <span className="mo-head-t">{zh ? '记忆观测舱' : 'MEMORY OBSERVATORY'}</span>
-        <p className="mo-head-s">{thesis}</p>
+        <span className="mo-head-t">{zh ? '记忆机制回放' : 'MEMORY REPLAY'}</span>
+        <p className="mo-head-s">{zh
+          ? '6 个留出集案例 × 4 轮，记忆从空开始。跑完即弃，与这台机器无关。'
+          : '6 held-out cases × 4 passes, memory starts empty. Discarded after the run and unrelated to this host.'}</p>
         <div className="mo-source" aria-label={zh ? '记忆数据源' : 'Memory data source'} aria-live="polite">
           <span className="mo-source-main">{sourceText}</span>
           <span className="mo-source-online">
             {onlineText} <span aria-hidden="true">→</span>{' '}
-            <a href="#live-memory">{zh ? '看线上记忆' : 'View live memory'}</a>
+            <a href="#live-memory">{zh ? '看本机记忆' : "View this host's memory"}</a>
           </span>
         </div>
       </header>

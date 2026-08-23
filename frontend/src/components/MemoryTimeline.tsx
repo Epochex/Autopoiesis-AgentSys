@@ -38,19 +38,19 @@ const markUnits = (s: { ev: MemEvent; u0: number; u1: number }) =>
   s.ev.op === 'INSIGHT' ? s.u0 + W_RARE / 2 : (s.u0 + s.u1) / 2
 
 const T: Record<string, [string, string]> = {
-  ledger: ['记忆事件账本', 'MEMORY LEDGER'],
+  ledger: ['记录变化时间线', 'RECORD CHANGE TIMELINE'],
   ev: ['事件', 'EV'],
   pass: ['轮次', 'PASS'],
   run: ['运行', 'RUN'],
   seq: ['序号', 'SEQ'],
   op: ['操作', 'OP'],
   mem: ['记忆', 'MEM'],
-  tier: ['层', 'TIER'],
+  tier: ['类型', 'TYPE'],
   case: ['案例', 'CASE'],
-  sim: ['路由相似度', 'ROUTE SIM'],
-  reflect: ['反思', 'REFLECT'],
-  perRun: ['每运行聚合', 'PER RUN'],
-  noClock: ['仅有序号 · 内核未记录时间', 'SEQ ORDER ONLY · NO CLOCK IN LEDGER'],
+  sim: ['相近程度', 'SIMILARITY'],
+  reflect: ['生成总结', 'MAKE SUMMARY'],
+  perRun: ['每轮合计', 'TOTAL PER RUN'],
+  noClock: ['只有先后顺序，原始记录没有时间', 'ORDER ONLY · SOURCE DATA HAS NO TIMESTAMP'],
   reset: ['回到开头', 'RESET'],
   back: ['上一步', 'STEP BACK'],
   play: ['播放', 'PLAY'],
@@ -63,14 +63,14 @@ const t = (k: string, zh: boolean) => T[k][zh ? 0 : 1]
 const OP_LABEL: Record<MemOp, [string, string]> = {
   ADD: ['新增', 'ADD'],
   UPDATE: ['更新', 'UPDATE'],
-  NOOP: ['空操作', 'NOOP'],
-  REINFORCE: ['强化', 'REINFORCE'],
-  QUARANTINE: ['隔离', 'QUARANTINE'],
-  INSIGHT: ['洞见', 'INSIGHT'],
-  INSIGHT_REFRESH: ['洞见重算', 'REFLECT+'],
+  NOOP: ['没有变化', 'NO CHANGE'],
+  REINFORCE: ['又见到一次', 'SEEN AGAIN'],
+  QUARANTINE: ['打入冷宫', 'SHELVED'],
+  INSIGHT: ['总结', 'SUMMARY'],
+  INSIGHT_REFRESH: ['更新总结', 'SUMMARY UPDATED'],
   LINK: ['连接', 'LINK'],
-  DECAY: ['衰减', 'DECAY'],
-  FORGET: ['遗忘', 'FORGET'],
+  DECAY: ['慢慢淡忘', 'FADING'],
+  FORGET: ['忘掉了', 'FORGOTTEN'],
 }
 const opLabel = (op: MemOp, zh: boolean) => OP_LABEL[op]?.[zh ? 0 : 1] ?? op
 /** css modifier per op — dense ops are never marked individually.
@@ -334,7 +334,12 @@ export function MemoryTimeline(props: {
         {cur ? (
           <dl className="mt-kv">
             <dt>{t('mem', zh)}</dt><dd className="id">{cur.ev.memory_id}</dd>
-            <dt>{t('tier', zh)}</dt><dd>{cur.ev.tier}</dd>
+            <dt>{t('tier', zh)}</dt><dd>{({
+              episodic: zh ? '遇到过的事' : 'SEEN BEFORE',
+              semantic: zh ? '归纳的规律' : 'PATTERN',
+              procedural: zh ? '处理办法' : 'HOW-TO',
+              asset_profile: zh ? '设备资料' : 'ASSET INFO',
+            } as Record<string, string>)[cur.ev.tier] ?? cur.ev.tier}</dd>
             <dt>{t('case', zh)}</dt><dd>{t('pass', zh)} {cur.ev.pass} · {shortCase(cur.ev.case_id)}</dd>
             {cur.ev.similarity !== null ? (<><dt>{t('sim', zh)}</dt><dd>{cur.ev.similarity.toFixed(2)}</dd></>) : null}
             {cur.ev.op === 'INSIGHT' && cur.ev.source_memory_ids?.length

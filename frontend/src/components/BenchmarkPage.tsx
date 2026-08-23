@@ -4,10 +4,9 @@ import type { Lang } from '../i18n'
 import type { BenchmarkResp, LmeSystem } from './benchmark-data'
 import { ABILITY_LABEL, BENCHMARK_FIXTURE } from './benchmark-data'
 import { BenchTopology } from './bench-topology'
-import { MemoryConstellation } from './MemoryConstellation'
 
 /* ── SCENARIO 2 · 基准 / BENCHMARK ─────────────────────────────────────────────
- * GET /api/rca/benchmark. LongMemEval-500 = REAL local results (this repo's
+ * GET /api/rca/benchmark. LongMemEval-500 = stored result files (this repo's
  * tiered store vs Mem0 / Reflexion / flat-vector / BM25). ITBench = published
  * reference catalog + baselines (local k8s run pending, labelled honestly).
  * Interactive: recall@k toggle, hover a system for its per-ability breakdown. */
@@ -18,20 +17,21 @@ type K = '1' | '3' | '5' | '10'
 const T = (zh: boolean) => ({
   kicker: zh ? '基准场景 · 覆盖全系统能力' : 'BENCHMARK · WHOLE-SYSTEM COVERAGE',
   loading: zh ? '拉取基准…' : 'FETCHING…',
-  fixture: zh ? '内置真实结果 · 网关离线' : 'BUILT-IN REAL RESULTS · GATEWAY OFFLINE',
-  cover: zh ? '覆盖图 · 能力 → 基准' : 'COVERAGE · CAPABILITY → BENCHMARK',
+  fixture: zh ? '内置 fixture · 网关离线' : 'BUILT-IN FIXTURE · GATEWAY OFFLINE',
+  gateway: zh ? '网关结果文件' : 'GATEWAY RESULT FILES',
+  cover: zh ? '哪些功能有测试结果' : 'FEATURES WITH TEST RESULTS',
   covered: zh ? '已覆盖' : 'COVERED', gap: zh ? '无公开基准' : 'NO PUBLIC BENCHMARK',
-  lme: zh ? 'LongMemEval-500 · 记忆检索' : 'LongMemEval-500 · MEMORY RETRIEVAL',
-  live: zh ? '真实运行' : 'LIVE', ref: zh ? '公开基线' : 'PUBLISHED REF',
-  atk: zh ? '召回@' : 'recall@', mine: zh ? '本仓库' : 'THIS REPO',
-  ability: zh ? '分能力 recall@5 · 悬停系统查看' : 'per-ability recall@5 · hover a system',
+  lme: zh ? 'LongMemEval-500 · 查找已有记录' : 'LongMemEval-500 · FIND SAVED RECORDS',
+  ref: zh ? '公开基线' : 'PUBLISHED REF',
+  atk: zh ? '前 k 条命中率 · k=' : 'HIT RATE IN TOP k · k=', mine: zh ? '本仓库' : 'THIS REPO',
+  ability: zh ? '各类任务前 5 条命中率 · 悬停系统查看' : 'TOP-5 HIT RATE BY TASK · hover a system',
   itb: zh ? 'ITBench · RCA + 安全运营' : 'ITBench · RCA + SECURITY OPS',
   scen: zh ? '场景' : 'scenarios', sota: zh ? 'SOTA 解决率' : 'SOTA solve', maps: zh ? '对应' : 'maps to',
   paper: 'arXiv', repo: 'GitHub', board: zh ? '榜单' : 'leaderboard',
-  hint: zh ? '记忆维度真跑真数 · 安全/RCA 维度接 ITBench(k3s 待跑)· 数字照实' : 'memory dim = real local run · RCA/security via ITBench (k3s pending) · numbers as-is',
+  hint: zh ? '查找记录的结果来自结果文件，网关失败时显示内置样例；安全和根因分析采用 ITBench 公开结果，本机 k3s 尚未运行。' : 'Record-lookup results come from result files, with a built-in sample on gateway failure. RCA and security use published ITBench results; the local k3s run is pending.',
 })
 
-export function BenchmarkPage({ lang, embed = false }: { lang: Lang; embed?: boolean }) {
+export function BenchmarkPage({ lang }: { lang: Lang }) {
   const zh = lang === 'zh'
   const tx = T(zh)
   const [st, setSt] = useState<St>({ s: 'load' })
@@ -46,7 +46,7 @@ export function BenchmarkPage({ lang, embed = false }: { lang: Lang; embed?: boo
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http'))))
       .then((d: BenchmarkResp) => { if (alive) setSt(d && d.ok ? { s: 'ok', d, fixture: false } : { s: 'ok', d: BENCHMARK_FIXTURE, fixture: true }) })
       .catch(() => { if (alive) setSt({ s: 'ok', d: BENCHMARK_FIXTURE, fixture: true }) })
-    // best-effort: real self-heal numbers for the topology (network-RCA replay)
+    // Best-effort numbers from the six-case offline network-RCA replay.
     fetch('/api/rca/replay?lang=' + lang + '&passes=4', { headers: { Accept: 'application/json' } })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => { if (alive && j && j.ok) setRep({ heal: j.self_heal?.heal_rate ?? j.summary?.accuracy_warm ?? 0, mem: j.summary?.memory_grown ?? 0 }) })
@@ -64,28 +64,15 @@ export function BenchmarkPage({ lang, embed = false }: { lang: Lang; embed?: boo
 
   return (
     <div className="bm">
-      {!embed ? (
-        <header className="bm-head">
-          <div className="bm-head-code">
-            {st.fixture ? <span className="bm-sample">{tx.fixture}</span> : null}<span>{tx.kicker}</span>
-          </div>
-          <h1 className="bm-title">{zh ? <>基<mark>准</mark></> : <>BENCH<mark>MARK</mark></>}</h1>
-        </header>
-      ) : null}
+      <div className="bm-head-code">
+        <span className="bm-sample">{st.fixture ? tx.fixture : tx.gateway}</span>
+        <span>{tx.kicker}</span>
+      </div>
 
-      {/* full expanded memory graph — shown standalone; under BenchConsole the live
-          TopologyCanvas already renders this constellation, so skip it when embedded */}
-      {!embed ? (
-        <section className="bm-sec">
-          <div className="bm-sec-k">{zh ? '基准态势 · 记忆星座图(自愈跑出的真实知识图,全展开)' : 'BENCHMARK POSTURE · MEMORY CONSTELLATION (real evolved graph)'}<span className="bm-badge live">{zh ? '真跑' : 'LIVE'}</span></div>
-          <MemoryConstellation lang={lang} />
-        </section>
-      ) : null}
-
-      {/* capability → benchmark → real metric map */}
+      {/* capability → benchmark → source-labelled metric map */}
       <section className="bm-sec">
-        <div className="bm-sec-k">{zh ? '能力 → 基准 → 真实指标 映射' : 'CAPABILITY → BENCHMARK → METRIC MAP'}</div>
-        <div className="bm-topowrap"><BenchTopology bench={d} replay={rep} zh={zh} /></div>
+        <div className="bm-sec-k">{zh ? '功能、测试集和结果来源' : 'FEATURE, TEST SET, AND RESULT SOURCE'}</div>
+        <div className="bm-topowrap"><BenchTopology bench={d} replay={rep} fixture={st.fixture} zh={zh} /></div>
       </section>
 
       {/* coverage map */}
@@ -103,9 +90,9 @@ export function BenchmarkPage({ lang, embed = false }: { lang: Lang; embed?: boo
         </div>
       </section>
 
-      {/* LongMemEval — real */}
+      {/* LongMemEval: gateway result files, or the explicitly disclosed fixture. */}
       <section className="bm-sec">
-        <div className="bm-sec-k">{tx.lme}<span className="bm-badge live">{tx.live} · n={lme.n}</span></div>
+        <div className="bm-sec-k">{tx.lme}<span className="bm-badge ref">{st.fixture ? tx.fixture : tx.gateway} · n={lme.n}</span></div>
         <div className="bm-ktabs">
           <span className="bm-ktabs-l">{tx.atk}</span>
           {lme.ks.map((kk) => <button key={kk} className={`bm-ktab${String(kk) === k ? ' on' : ''}`} onClick={() => setK(String(kk) as K)}>{kk}</button>)}

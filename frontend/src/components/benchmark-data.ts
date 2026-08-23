@@ -57,8 +57,8 @@ export const BENCHMARK_FIXTURE: BenchmarkResp = {
         by_ability5: { 'knowledge-update': 0.9872, 'multi-session': 0.9699, 'single-session-assistant': 1.0, 'single-session-preference': 0.8667, 'single-session-user': 0.9857, 'temporal-reasoning': 0.9624 } },
     ],
     note: {
-      zh: '诚实结论:在这个 LLM-free 的 recall 指标上,BM25 词法下界反而领先(tiered @1 落后约 15 点)。分层记忆的价值不在刷这个指标,而在结构化多层召回与可解释性——数字照实摆,不粉饰。',
-      en: 'Honest: on this LLM-free recall metric the BM25 lexical floor leads (tiered trails ~15pts @1). The tiered store’s value is structured multi-tier recall + interpretability, not topping this number — shown as-is.',
+      zh: '这个测试不调用 LLM，只比较前 k 条结果能否找到答案。BM25 的关键词查找排名第一，本仓库在前 1 条命中率上低约 15 个百分点。',
+      en: 'This test does not call an LLM; it checks whether the answer appears in the top k results. BM25 keyword search ranks first, and this repository trails by about 15 points on top-1 hit rate.',
     },
   },
   itbench: {
@@ -74,14 +74,14 @@ export const BENCHMARK_FIXTURE: BenchmarkResp = {
       { id: 'finops', label: { zh: 'FinOps · 成本运营', en: 'FinOps · cost ops' }, maps_to: { zh: '(加成场景)', en: '(bonus)' }, sota_pct: 25.8 },
     ],
     note: {
-      zh: 'ICML 2025 · IBM。SOTA agent 也只解 SRE 11.4% / CISO 25.2% / FinOps 25.8%,提升空间大。真跑需在 k8s 上部署微服务并注入故障——本机 r450 已有 k3s,可落地,但属重活,分步来。',
-      en: 'ICML 2025 · IBM. SOTA agents solve only SRE 11.4% / CISO 25.2% / FinOps 25.8% — lots of headroom. A real run deploys microservices on k8s and injects faults — feasible on r450’s k3s, but heavy; staged.',
+      zh: 'ICML 2025 · IBM。公开最佳结果为 SRE 11.4%、CISO 25.2%、FinOps 25.8%。本地复跑需要在 k8s 部署微服务并注入故障，R450 已有 k3s，当前尚未执行。',
+      en: 'ICML 2025 · IBM. Published best results are SRE 11.4%, CISO 25.2%, and FinOps 25.8%. A local run requires deploying microservices on k8s and injecting faults; R450 has k3s, but the run is pending.',
     },
   },
   coverage: [
     { cap: { zh: '内网根因分析', en: 'network RCA' }, benchmark: 'ITBench · SRE', covered: true },
     { cap: { zh: '自我渗透 / 安全', en: 'self-pentest / security' }, benchmark: 'ITBench · CISO', covered: true },
-    { cap: { zh: '长期记忆 / 检索', en: 'long-term memory / retrieval' }, benchmark: 'LongMemEval-500', covered: true },
-    { cap: { zh: '自演化 / 技能归纳', en: 'self-evolution / skill induction' }, benchmark: { zh: '无公开基准 · 原创贡献', en: 'no public benchmark · novel' }, covered: false },
+    { cap: { zh: '长期保留记录 / 查找记录', en: 'save records / find records' }, benchmark: 'LongMemEval-500', covered: true },
+    { cap: { zh: '复用旧记录 / 归纳处理办法', en: 'reuse records / build how-tos' }, benchmark: { zh: '暂无公开测试集', en: 'no public benchmark yet' }, covered: false },
   ],
 }

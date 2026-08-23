@@ -14,13 +14,24 @@ import { prefersReducedMotion } from '../reduced-motion'
 import './live-memory.css'
 
 const TICK_MS = 180
+const EXPANDED_STORAGE_KEY = 'live-memory-expanded'
 const TIER_ORDER: MemTier[] = ['semantic', 'procedural', 'episodic', 'asset_profile']
 
+const readInitialExpanded = (): boolean => {
+  if (typeof window === 'undefined') return false
+  if (window.location.hash === '#live-memory') return true
+  try {
+    return window.sessionStorage.getItem(EXPANDED_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
 const TIER_LABEL: Record<MemTier, [string, string]> = {
-  semantic: ['语义 SEMANTIC · 抽象认知', 'SEMANTIC · ABSTRACTION'],
-  procedural: ['程序 PROCEDURAL · 可复用模式', 'PROCEDURAL · REUSABLE PROBE'],
-  episodic: ['情景 EPISODIC · 具体经历', 'EPISODIC · CONCRETE EPISODE'],
-  asset_profile: ['资产 ASSET PROFILE · 实体画像', 'ASSET PROFILE · ENTITY'],
+  semantic: ['归纳的规律 · PATTERN', 'PATTERN'],
+  procedural: ['处理办法 · HOW-TO', 'HOW-TO'],
+  episodic: ['遇到过的事 · SEEN BEFORE', 'SEEN BEFORE'],
+  asset_profile: ['设备资料 · ASSET INFO', 'ASSET INFO'],
 }
 
 type StepKind = 'upsert' | 'quarantine' | 'mixed' | 'observed' | 'reobserved' | 'valid_from' | 'invalidated' | 'undated'
@@ -46,11 +57,11 @@ type EdgeSpec = {
 type DrawnEdge = EdgeSpec & { d: string; lx: number; ly: number }
 
 const STEP_LABEL: Record<StepKind, [string, string]> = {
-  upsert: ['版本写入', 'VERSION UPSERTED'],
-  quarantine: ['批量隔离', 'QUARANTINED'],
-  mixed: ['账本写入', 'LEDGER WRITE'],
-  observed: ['首次观测', 'FIRST OBSERVED'],
-  reobserved: ['最近观测', 'LAST OBSERVED'],
+  upsert: ['写入一个版本', 'VERSION WRITTEN'],
+  quarantine: ['打入冷宫', 'SHELVED'],
+  mixed: ['批量写入', 'BATCH WRITTEN'],
+  observed: ['第一次见到', 'FIRST SEEN'],
+  reobserved: ['最近一次见到', 'LAST SEEN'],
   valid_from: ['有效期开始', 'VALIDITY OPENED'],
   invalidated: ['有效期结束', 'VALIDITY CLOSED'],
   undated: ['无时间记录', 'TIME UNRECORDED'],
@@ -292,15 +303,15 @@ function MemoryCard({
     >
       <span className={changedFields.has('record') ? 'lm-card-id changed' : 'lm-card-id'} title={record.memory_id}>
         {record.memory_id}
-        {visible && record.access_count > 0 ? <b title={zh ? '召回或复用次数' : 'RECALL OR REUSE COUNT'}>×{record.access_count}</b> : null}
+        {visible && record.access_count > 0 ? <b title={zh ? '被找到或再次采用的次数' : 'TIMES FOUND OR REUSED'}>×{record.access_count}</b> : null}
       </span>
       {!visible ? <span className="lm-card-pending">{zh ? '未写入 · NOT YET WRITTEN' : 'NOT YET WRITTEN'}</span> : null}
       <span className="lm-card-content" aria-hidden={!visible}>
           <span className="lm-card-text">{record.text}</span>
           <span className="lm-card-metrics">
-            <Metric label={zh ? '置信' : 'CONF'} value={record.confidence} ceiling={3} />
+            <Metric label={zh ? '可信' : 'CONF'} value={record.confidence} ceiling={3} />
             <Metric label={zh ? '重要' : 'IMP'} value={record.importance} ceiling={52} />
-            <Metric label={zh ? '强度' : 'STR'} value={record.strength} ceiling={1} />
+            <Metric label={zh ? '保留' : 'KEEP'} value={record.strength} ceiling={1} />
           </span>
           <span className="lm-card-times">
             <i className={changedFields.has('first_observed_at') ? 'changed' : ''}>FIRST {record.first_observed_at ?? '∅'}</i>
@@ -309,8 +320,8 @@ function MemoryCard({
           </span>
           {record.quarantined ? (
             <span className="lm-card-quarantine">
-              <b>{zh ? '当前快照已隔离' : 'QUARANTINED IN CURRENT SNAPSHOT'}</b>
-              <i>{reason ?? (zh ? '未记录 quarantine: 原因标签' : 'NO quarantine: REASON TAG RECORDED')}</i>
+              <b>{zh ? '当前已打入冷宫' : 'SHELVED NOW'}</b>
+              <i>{reason ?? (zh ? '没有记录原因' : 'NO REASON RECORDED')}</i>
             </span>
           ) : null}
       </span>
@@ -334,10 +345,10 @@ function LiveMemoryInspector({
   if (!summary) {
     return (
       <aside className="lm-inspector empty">
-        <div className="lm-inspector-mast">{zh ? '线上记忆 · 逐字段审计' : 'LIVE MEMORY · FIELD AUDIT'}</div>
+        <div className="lm-inspector-mast">{zh ? '本机记忆 · 每一步改了什么' : "THIS HOST'S MEMORY · WHAT CHANGED"}</div>
         <div className="lm-inspector-empty">
           <b>{zh ? '未选中条目' : 'NO RECORD SELECTED'}</b>
-          <span>{zh ? '点击任一记忆卡片可锁定完整溯源。' : 'Select any memory card to pin its full provenance.'}</span>
+          <span>{zh ? '点击任一记录卡片可查看完整来源。' : 'Select any record card to view its full source.'}</span>
         </div>
       </aside>
     )
@@ -358,19 +369,19 @@ function LiveMemoryInspector({
   return (
     <aside className="lm-inspector" aria-live="polite">
       <header className="lm-inspector-mast">
-        <span>{zh ? '线上记忆 · 逐字段审计' : 'LIVE MEMORY · FIELD AUDIT'}</span>
+        <span>{zh ? '本机记忆 · 每一步改了什么' : "THIS HOST'S MEMORY · WHAT CHANGED"}</span>
         <span>{zh ? '只读' : 'READ ONLY'}</span>
       </header>
       <div className="lm-inspector-mode">
         <span>{zh ? '已锁定' : 'PINNED'}</span>
         <b title={summary.memory_id}>{summary.memory_id}</b>
       </div>
-      {loading ? <div className="lm-inspector-status">{zh ? '正在读取完整溯源…' : 'LOADING FULL PROVENANCE…'}</div> : null}
+      {loading ? <div className="lm-inspector-status">{zh ? '正在读取完整来源…' : 'LOADING FULL SOURCE…'}</div> : null}
       <div className="lm-inspector-scroll">
         <div className={changed.has('record') ? 'lm-detail-id changed' : 'lm-detail-id'}>
           <span>{TIER_LABEL[record.tier][zh ? 0 : 1]}</span>
           <b>{record.memory_id}</b>
-          {record.quarantined ? <i>{zh ? '已隔离' : 'QUARANTINED'}</i> : null}
+          {record.quarantined ? <i>{zh ? '已打入冷宫' : 'SHELVED'}</i> : null}
         </div>
 
         <section className="lm-audit-section">
@@ -392,11 +403,11 @@ function LiveMemoryInspector({
         </section>
 
         <section className="lm-audit-section">
-          <h4>{zh ? '当前快照字段' : 'CURRENT SNAPSHOT FIELDS'}</h4>
+          <h4>{zh ? '当前记录的值' : 'CURRENT VALUES'}</h4>
           <div className="lm-state-grid">
-            <div><b>{record.confidence.toFixed(2)}</b><span>{zh ? '置信' : 'CONFIDENCE'}</span></div>
+            <div><b>{record.confidence.toFixed(2)}</b><span>{zh ? '可信度' : 'CONFIDENCE'}</span></div>
             <div><b>{record.importance.toFixed(2)}</b><span>{zh ? '重要度' : 'IMPORTANCE'}</span></div>
-            <div><b>{record.strength.toFixed(2)}</b><span>{zh ? '强度' : 'STRENGTH'}</span></div>
+            <div><b>{record.strength.toFixed(2)}</b><span>{zh ? '保留强度' : 'RETENTION'}</span></div>
           </div>
           <AuditRow label={zh ? '访问次数' : 'ACCESS COUNT'}>{record.access_count}</AuditRow>
           <AuditRow label="FIRST_OBSERVED" changed={changed.has('first_observed_at')}>{record.first_observed_at ?? '∅'}</AuditRow>
@@ -406,7 +417,7 @@ function LiveMemoryInspector({
         </section>
 
         <section className="lm-audit-section">
-          <h4>{zh ? '来源与关系' : 'PROVENANCE AND RELATIONS'}</h4>
+          <h4>{zh ? '来源与关系' : 'SOURCE AND LINKS'}</h4>
           <AuditRow label="TAGS"><ChipList items={record.tags} /></AuditRow>
           <AuditRow label="ASSET_IDS"><ChipList items={record.asset_ids} /></AuditRow>
           <AuditRow label="SOURCE_TRACE_IDS">
@@ -432,7 +443,7 @@ function LiveMemoryInspector({
             </>
           ) : null}
           {record.quarantined ? (
-            <AuditRow label={zh ? '隔离原因原文' : 'RAW QUARANTINE REASON'}>
+            <AuditRow label={zh ? '打入冷宫的原因原文' : 'RAW REASON IT WAS SHELVED'}>
               <span className="lm-quarantine-reason">{reason ?? '∅'}</span>
             </AuditRow>
           ) : null}
@@ -473,10 +484,10 @@ function Timeline({
     : `${step.offset}-${step.offsetEnd}`
   const subject = (step: LiveStep) => step.memoryIds.length === 1
     ? step.memoryId
-    : (zh ? `${step.memoryIds.length} 条记忆` : `${step.memoryIds.length} MEMORIES`)
+    : (zh ? `${step.memoryIds.length} 条记录` : `${step.memoryIds.length} RECORDS`)
 
   return (
-    <section className="lm-timeline" aria-label={zh ? '线上记忆时间轴' : 'Live memory timeline'}>
+    <section className="lm-timeline" aria-label={zh ? '本机记忆变化时间线' : "This host's memory change timeline"}>
       <div className="lm-timeline-side">
         <div className="lm-transport">
           <button type="button" onClick={() => onCursor(0)} disabled={!steps.length || cursor === 0} aria-label={zh ? '回到开头' : 'Reset'}>|◀</button>
@@ -531,6 +542,35 @@ export function LiveMemory({ lang }: { lang: Lang }) {
   const [onScreen, setOnScreen] = useState(() => typeof IntersectionObserver !== 'function')
   const [pinnedId, setPinnedId] = useState<string | null>(null)
   const [drawnEdges, setDrawnEdges] = useState<DrawnEdge[]>([])
+  const [expanded, setExpanded] = useState(readInitialExpanded)
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(EXPANDED_STORAGE_KEY, String(expanded))
+    } catch {
+      // Storage can be unavailable in privacy-restricted browser contexts. The
+      // control remains usable for the current mount.
+    }
+  }, [expanded])
+
+  useEffect(() => {
+    const expandForHash = () => {
+      if (window.location.hash === '#live-memory') setExpanded(true)
+    }
+    const expandForLink = (event: MouseEvent) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const link = target.closest<HTMLAnchorElement>('a[href="#live-memory"]')
+      if (link) setExpanded(true)
+    }
+    expandForHash()
+    window.addEventListener('hashchange', expandForHash)
+    document.addEventListener('click', expandForLink)
+    return () => {
+      window.removeEventListener('hashchange', expandForHash)
+      document.removeEventListener('click', expandForLink)
+    }
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -620,7 +660,7 @@ export function LiveMemory({ lang }: { lang: Lang }) {
   )
   const last = Math.max(0, steps.length - 1)
   const atEnd = cursor >= last
-  const running = playing && onScreen && !atEnd && steps.length > 0
+  const running = expanded && playing && onScreen && !atEnd && steps.length > 0
 
   useEffect(() => {
     setCursor(prefersReducedMotion() ? Math.max(0, steps.length - 1) : 0)
@@ -736,7 +776,7 @@ export function LiveMemory({ lang }: { lang: Lang }) {
     const observer = new ResizeObserver(measureEdges)
     observer.observe(graph)
     return () => observer.disconnect()
-  }, [measureEdges, visibleKey])
+  }, [expanded, measureEdges, visibleKey])
 
   const scrub = (index: number) => {
     setPlaying(false)
@@ -756,43 +796,80 @@ export function LiveMemory({ lang }: { lang: Lang }) {
   const total = activeCount + quarantineCount
   const visibleActive = displayRecords.filter((record) => visibleIds.has(record.memory_id) && !record.quarantined).length
   const visibleQuarantined = displayRecords.filter((record) => visibleIds.has(record.memory_id) && record.quarantined).length
+  const latestWrite = useMemo(() => {
+    const eventTimes = ledgerEvents?.map((event) => event.occurred_at) ?? []
+    const snapshotTimes = (data?.records ?? []).flatMap((record) => [
+      record.last_observed_at,
+      record.first_observed_at,
+      record.valid_from,
+      record.valid_to,
+    ]).filter((value): value is string => value !== null)
+    const writeTimes = eventTimes.length ? eventTimes : snapshotTimes
+    const latest = writeTimes.reduce<string | null>((current, value) => {
+      const parsed = Date.parse(value)
+      if (Number.isNaN(parsed)) return current
+      if (current === null || parsed > Date.parse(current)) return value
+      return current
+    }, null)
+    if (!latest) return data ? '∅' : '…'
+    return new Intl.DateTimeFormat(zh ? 'zh-CN' : 'en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(latest))
+  }, [data, ledgerEvents, zh])
 
   return (
-    <section id="live-memory" className="lm-root" ref={rootRef} aria-label={zh ? '线上记忆' : 'Live memory'}>
+    <section id="live-memory" className="lm-root" ref={rootRef} aria-label={zh ? '本机记忆' : "This host's memory"}>
+      <div className="lm-collapse-summary">
+        <span>
+          {zh ? '本机记忆' : "THIS HOST'S MEMORY"}
+          {' · '}{zh ? '活跃' : 'ACTIVE'} {data ? activeCount : '…'}
+          {' · '}{zh ? '冷宫' : 'SHELVED'} {data ? quarantineCount : '…'}
+          {' · '}{zh ? '最近写入' : 'LAST WRITE'} {latestWrite}
+        </span>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls="live-memory-content"
+          onClick={() => setExpanded((value) => !value)}
+        >[{expanded ? (zh ? '收起' : 'COLLAPSE') : (zh ? '展开' : 'EXPAND')}]</button>
+      </div>
+      <div id="live-memory-content" hidden={!expanded}>
       <header className="lm-head">
         <div>
-          <h2>{zh ? '线上记忆观测舱 · 当前记忆如何形成' : 'LIVE MEMORY OBSERVATORY · HOW CURRENT MEMORY FORMED'}</h2>
-          <p>{zh ? '持久化记忆的观测时间、有效期、来源与关系' : 'OBSERVATION TIME, VALIDITY, PROVENANCE AND RELATIONS IN DURABLE MEMORY'}</p>
+          <h2>{zh ? '本机记忆 · 现在真的记得什么' : "THIS HOST'S MEMORY · WHAT IT ACTUALLY REMEMBERS"}</h2>
+          <p>{zh ? '哨兵在生产中处置留下的。存在 PostgreSQL 里，重启还在。' : 'Left by Sentinel while handling production incidents. Stored in PostgreSQL and retained across restarts.'}</p>
         </div>
         <div className="lm-stats" aria-live="polite">
           <span>{zh ? '游标可见' : 'VISIBLE'} <b>{visibleActive + visibleQuarantined}</b>/{total}</span>
           <span>{zh ? '活跃' : 'ACTIVE'} <b>{activeCount}</b></span>
-          <span>{zh ? '隔离' : 'QUARANTINED'} <b>{quarantineCount}</b></span>
+          <span>{zh ? '冷宫' : 'SHELVED'} <b>{quarantineCount}</b></span>
         </div>
       </header>
 
       {data?.durable ? (
         <div className="lm-source-note">
-          <b>{eventLedger ? (zh ? '逐事件账本回放' : 'EVENT LEDGER REPLAY') : (zh ? '降级时间视图' : 'DEGRADED TIME VIEW')}</b>
+          <b>{eventLedger ? (zh ? '按每次写入回放' : 'REPLAY EACH WRITE') : (zh ? '只看现有时间记录' : 'AVAILABLE TIMES ONLY')}</b>
           <span>{eventLedger
-            ? (zh ? '时间轴按事件 offset 推进，并按账本记录的真实发生时刻合并同一批次；可回放版本写入、隔离动作及接口暴露的文本与数值快照。关系、完整来源字段和未暴露字段的逐版本 diff 仍使用当前快照。' : 'The rail advances by event offset and groups one batch at its recorded occurrence time. Version upserts, quarantine actions, and exposed text/scalar snapshots are replayable. Relations, full provenance fields, and per-version diffs for unexposed fields still use the current snapshot.')
-            : (zh ? '当前接口未提供逐事件账本；时间轴只使用记录中的首次观测、最近观测、有效期起止。隔离状态与连接来自当前快照，隔离动作的准确时刻和逐版本字段差异尚不可回放。' : 'The current API does not expose the event ledger. This rail uses only first observation, last observation and validity bounds. Quarantine state and links come from the current snapshot; exact quarantine timing and per-version field diffs cannot yet be replayed.')}</span>
+            ? (zh ? '时间线按 offset 推进，同一时刻写入的内容合并显示。可以回放版本写入、打入冷宫，以及接口保存的文本和数值。关系、完整来源和接口没保存的版本差异只能显示当前值。' : 'The timeline advances by offset and groups writes made at the same time. It replays version writes, SHELVED actions, and saved text and values. Links, full source data, and version changes the API did not save use current values.')
+            : (zh ? '当前接口没有提供每次写入记录，时间线只能使用第一次见到、最近一次见到和有效期。打入冷宫状态与连接来自当前值，具体动作时间和各版本差异无法回放。' : 'The API does not provide every write. The timeline uses first seen, last seen, and validity times. SHELVED state and links come from current values; exact action time and per-version changes cannot be replayed.')}</span>
         </div>
       ) : null}
 
-      {!data && !error ? <div className="lm-message">{zh ? '正在读取线上记忆…' : 'READING LIVE MEMORY…'}</div> : null}
+      {!data && !error ? <div className="lm-message">{zh ? '正在读取本机记忆…' : "READING THIS HOST'S MEMORY…"}</div> : null}
       {error ? <div className="lm-message error">{error}</div> : null}
       {data && !data.durable ? (
         <div className="lm-message nondurable">
-          <b>{zh ? '当前没有持久化线上记忆' : 'NO DURABLE LIVE MEMORY IS AVAILABLE'}</b>
-          <span>{zh ? '接口返回 durable=false；当前进程没有连接持久化记忆库。' : 'The API returned durable=false; this process is not connected to the durable memory repository.'}</span>
+          <b>{zh ? '当前没有重启后仍保留的本机记忆' : 'NO MEMORY THAT SURVIVES A RESTART IS AVAILABLE'}</b>
+          <span>{zh ? '接口返回 durable=false，当前进程没有连接 PostgreSQL 记忆库。' : 'The API returned durable=false; this process is not connected to the PostgreSQL memory store.'}</span>
         </div>
       ) : null}
 
       {data?.durable ? (
         <>
           <div className="lm-ratio" aria-label={`${activeCount} active, ${quarantineCount} quarantined`}>
-            <div className="lm-ratio-label"><span>{zh ? '当前快照比例' : 'CURRENT SNAPSHOT RATIO'}</span><b>{activeCount}:{quarantineCount}</b></div>
+            <div className="lm-ratio-label"><span>{zh ? '当前数量比例' : 'CURRENT COUNT RATIO'}</span><b>{activeCount}:{quarantineCount}</b></div>
             <div className="lm-ratio-cells">
               {data.records.filter((record) => !record.quarantined).map((record) => <i className="active" key={record.memory_id} title={record.memory_id} />)}
               {data.records.filter((record) => record.quarantined).map((record) => <i className="quarantined" key={record.memory_id} title={`${record.memory_id} · ${quarantineTag(record) ?? ''}`} />)}
@@ -844,7 +921,7 @@ export function LiveMemory({ lang }: { lang: Lang }) {
                           />
                         )
                       })}
-                      {!records.length ? <div className="lm-tier-empty">{zh ? '该层当前 0 条' : '0 RECORDS IN THIS TIER'}</div> : null}
+                      {!records.length ? <div className="lm-tier-empty">{zh ? '这类记录当前为 0 条' : '0 RECORDS OF THIS TYPE'}</div> : null}
                     </div>
                   </section>
                 )
@@ -864,12 +941,13 @@ export function LiveMemory({ lang }: { lang: Lang }) {
             <span><i className="sample-card" />{zh ? '实线框 = 游标处已出现' : 'SOLID FRAME = PRESENT AT CURSOR'}</span>
             <span><i className="sample-pending" />{zh ? '虚线框 = 此刻尚未写入' : 'DASHED FRAME = NOT YET WRITTEN'}</span>
             <span><i className="sample-acid" />{zh ? '荧光格 = 本步真实时间字段变化' : 'ACID CELL = REAL TIME FIELD CHANGED THIS STEP'}</span>
-            <span><i className="sample-quarantine" />{zh ? '双线 = 当前快照已隔离，原因保留原文' : 'DOUBLE RULE = QUARANTINED IN CURRENT SNAPSHOT, RAW REASON SHOWN'}</span>
-            <span>×N {zh ? '= 召回或复用次数' : '= RECALL OR REUSE COUNT'}</span>
+            <span><i className="sample-quarantine" />{zh ? '双线 = 当前已打入冷宫，原因保留原文' : 'DOUBLE RULE = SHELVED NOW, RAW REASON SHOWN'}</span>
+            <span>×N {zh ? '= 被找到或再次采用的次数' : '= TIMES FOUND OR REUSED'}</span>
             <span>─ {zh ? '关联' : 'LINK'} · → {zh ? '有向关系或取代' : 'DIRECTED RELATION OR SUPERSESSION'}</span>
           </footer>
         </>
       ) : null}
+      </div>
     </section>
   )
 }

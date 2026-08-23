@@ -11,12 +11,12 @@ import type { MemCapabilities, MemEvent, MemRecall, MemRecord, MemSnapshot, MemT
 /* ── i18n · EN is uppercased by CSS on label classes, so EN labels stay short.
       Prose notes use .mi-note, which deliberately does NOT uppercase. ── */
 const L: Record<string, [string, string]> = {
-  kick: ['记忆条目 · 逐字段可审计', 'MEMORY RECORD · FIELD-LEVEL AUDIT'],
+  kick: ['记录详情 · 每一步改了什么', 'RECORD DETAILS · WHAT CHANGED AT EACH STEP'],
   real: ['R230 · 内网', 'R230 · LAN'],
   emptyT: ['未选中条目', 'NO RECORD SELECTED'],
   emptyB: [
-    '在左侧记忆图中选中一个节点，这里会显示它的全文、来源、每一步的字段级变更，以及内核未记录的部分。',
-    'Pick a node in the memory graph. Its full text, provenance, per-step field diff, and the parts the kernel never recorded will appear here.',
+    '在左侧选中一条记录，这里会显示全文、来源、每一步改了什么，以及原始数据没有提供什么。',
+    'Select a record on the left to see its full text, source, changes at each step, and anything missing from the source data.',
   ],
   text: ['全文', 'TEXT'],
   noteText: [
@@ -28,13 +28,13 @@ const L: Record<string, [string, string]> = {
   unbornB: ['该条目在游标位置尚未写入。首次出现于 seq', 'This record does not exist at the cursor yet. First written at seq'],
   state: ['游标处状态', 'STATE @ CURSOR'],
   from: ['取自 seq', 'FROM SEQ'],
-  conf: ['置信', 'CONFIDENCE'],
+  conf: ['可信度', 'CONFIDENCE'],
   imp: ['重要度', 'IMPORTANCE'],
-  str: ['强度', 'STRENGTH'],
-  inert: ['惰性 · 衰减未接线', 'INERT · DECAY NOT WIRED'],
+  str: ['保留强度', 'RETENTION'],
+  inert: ['当前不会慢慢淡忘', 'FADING IS OFF'],
   noteDecay: [
-    '强度在每一条记录上都恒为 1.00：衰减未接线（decay_wired=false）。这是一个惰性字段，不代表任何遗忘正在发生。',
-    'Strength is 1.00 on every record: decay is not wired (decay_wired=false). Inert field — no forgetting is happening.',
+    '每条记录的保留强度都是 1.00，当前没有启用慢慢淡忘（decay_wired=false）。',
+    'Retention is 1.00 on every record because fading is off (decay_wired=false).',
   ],
 
   chg: ['本步变更', 'CHANGE @ THIS STEP'],
@@ -43,61 +43,61 @@ const L: Record<string, [string, string]> = {
   created: ['创建', 'CREATED'],
   noPrior: ['首次写入 · 无前值可比', 'First write · no prior value'],
   initial: ['初始值', 'INITIAL'],
-  route: ['写入路由', 'WRITE ROUTER'],
+  route: ['为何这样写入', 'WHY IT WAS WRITTEN THIS WAY'],
   edge: ['新增连接', 'EDGE CREATED'],
-  noSnap: ['该 op 不携带前/后快照', 'This op carries no before/after snapshot.'],
-  absFrom: ['抽象自', 'ABSTRACTED FROM'],
-  absN: ['条具体情景记忆', 'CONCRETE EPISODES'],
+  noSnap: ['这个动作没有记录修改前后的值', 'This action has no before-and-after values.'],
+  absFrom: ['这条总结来自', 'SUMMED FROM'],
+  absN: ['件遇到过的事', 'SEEN-BEFORE RECORDS'],
   noteReinf: [
-    '该条目在一次通过校验的运行中被召回并被引用 —— 这就是加固的全部依据。内核不记录任何“原因”字符串。',
-    'The record was recalled and cited on a verified run — that is the whole basis. The kernel records no reason string.',
+    '这条记录在一次结果正确的排查中又被找到并采用，所以记作“又见到一次”。原始记录没有保存更具体的原因。',
+    'This record was found and used again in a successful check, so it is marked SEEN AGAIN. No more specific reason was recorded.',
   ],
   noteRefresh: [
-    '反思在每一轮对这个族重新求值：重要度不是累加，而是由家族显著度绝对重算得出，会覆盖掉召回带来的加固增量。这是与「强化」不同的代码路径，因此单独记录。',
-    'Reflection re-evaluates this family each pass: importance is not incremented, it is re-derived absolutely from family salience and overwrites the recall increment. A different code path from REINFORCE, so it is recorded as its own op.',
+    '系统每轮都会重新计算这组记录的总结和重要度，新值会覆盖“又见到一次”带来的增加，因此单独记作“更新总结”。',
+    'Each run recalculates this group summary and its importance. The new value replaces the SEEN AGAIN increase, so it is recorded as SUMMARY UPDATED.',
   ],
-  noteQuar: ['内核记录的隔离原因', 'Quarantine reason as recorded by the kernel'],
+  noteQuar: ['打入冷宫的原因原文', 'RAW REASON IT WAS SHELVED'],
   addedT: ['新增标签', 'TAGS ADDED'],
   addedA: ['新增资产', 'ASSETS ADDED'],
   addedL: ['新增连接', 'LINKS ADDED'],
 
-  ctx: ['上下文包', 'CONTEXT PACKET'],
-  inCtx: ['已进入上下文', 'IN CONTEXT'],
-  dropCtx: ['召回后被丢弃', 'RECALLED, THEN DROPPED'],
-  missCtx: ['本次未被召回', 'NOT RECALLED'],
-  noCtx: ['游标处无召回记录', 'NO RECALL AT CURSOR'],
+  ctx: ['本次排查用到的记录', 'RECORDS USED FOR THIS CHECK'],
+  inCtx: ['本次已采用', 'USED THIS TIME'],
+  dropCtx: ['找到但没采用', 'FOUND BUT NOT USED'],
+  missCtx: ['本次没找到', 'NOT FOUND THIS TIME'],
+  noCtx: ['当前位置没有查找记录', 'NO LOOKUP AT THIS POSITION'],
   ctxCase: ['案例', 'CASE'],
   ctxPass: ['轮次', 'PASS'],
   ctxInc: ['进包', 'INCLUDED'],
   ctxDrop: ['丢弃', 'DROPPED'],
-  ctxRet: ['召回', 'RETRIEVED'],
+  ctxRet: ['找到', 'FOUND'],
   ctxRes: ['直接命中', 'RESOLVED BY'],
   score: ['最终得分', 'FINAL SCORE'],
-  sparse: ['词法得分', 'LEXICAL SCORE'],
-  dense: ['向量得分', 'VECTOR SCORE'],
-  graphHop: ['关联跳数', 'GRAPH HOPS'],
+  sparse: ['文字匹配分', 'TEXT-MATCH SCORE'],
+  dense: ['意思相近分', 'MEANING-MATCH SCORE'],
+  graphHop: ['关系距离', 'LINK DISTANCE'],
   noteDrop: [
-    '内核不记录丢弃原因（context_drop_reason=false）——本条只知道“被丢弃”，不知道“为什么”。已知配置：ContextCompiler 上限 8 条记忆行 / 900 token 预算；这是配置常量，不是本次丢弃被记录下来的原因。',
-    'No drop reason is recorded (context_drop_reason=false) — that it was dropped is known, why is not. Known configuration: the ContextCompiler caps at 8 memory lines / a 900-token budget. That is a config constant, not a recorded reason for this drop.',
+    '原始记录只说明这条内容没有采用，没有保存具体原因（context_drop_reason=false）。当前上限是 8 条记录、900 token，这只是固定配置。',
+    'The source data says only that this record was not used; it does not save the reason (context_drop_reason=false). The fixed limit is 8 records and 900 tokens.',
   ],
   noteScores: [
-    '内核不记录检索得分（retrieval_scores=false）：只知命中与否，不知排名分数。',
-    'No retrieval scores are recorded (retrieval_scores=false): hit or miss is known, rank is not.',
+    '原始记录没有查找得分（retrieval_scores=false），只能看出是否找到，无法查看排名分数。',
+    'The source data has no lookup scores (retrieval_scores=false), so it shows whether a record was found but not its ranking score.',
   ],
 
-  prov: ['来源与关系', 'PROVENANCE'],
+  prov: ['来源与关系', 'SOURCE AND LINKS'],
   atCur: ['游标处', '@ CURSOR'],
   tags: ['标签', 'TAGS'],
   assets: ['资产', 'ASSETS'],
   links: ['连接', 'LINKS'],
-  recFields: ['条目字段 · 无逐事件快照', 'RECORD FIELDS · NOT SNAPSHOTTED PER-EVENT'],
+  recFields: ['记录字段 · 每个动作没有单独留底', 'RECORD FIELDS · NO COPY SAVED PER ACTION'],
   evid: ['证据 ID', 'EVIDENCE IDS'],
   trace: ['来源运行', 'SOURCE TRACES'],
-  snap: ['证据快照', 'EVIDENCE SNAPSHOT'],
+  snap: ['当时保存的证据', 'SAVED EVIDENCE'],
   none: ['无', 'NONE'],
 
-  ledger: ['该条目的全部事件', 'EVENT LEDGER FOR THIS RECORD'],
-  quar: ['已隔离', 'QUARANTINED'],
+  ledger: ['这条记录发生过的全部动作', 'ALL ACTIONS FOR THIS RECORD'],
+  quar: ['已打入冷宫', 'SHELVED'],
 
   /* ── which record this panel is showing, and why. The two modes were
         previously distinguishable only by "the panel stopped changing", which
@@ -111,16 +111,16 @@ const L: Record<string, [string, string]> = {
 const t = (k: string, zh: boolean) => L[k][zh ? 0 : 1]
 
 const TIER: Record<MemTier, [string, string]> = {
-  episodic: ['情景', 'EPISODIC'],
-  semantic: ['语义', 'SEMANTIC'],
-  procedural: ['程序', 'PROCEDURAL'],
-  asset_profile: ['资产画像', 'ASSET PROFILE'],
+  episodic: ['遇到过的事', 'SEEN BEFORE'],
+  semantic: ['归纳的规律', 'PATTERN'],
+  procedural: ['处理办法', 'HOW-TO'],
+  asset_profile: ['设备资料', 'ASSET INFO'],
 }
-/* zh gloss for the kernel's op vocabulary. The raw op name is always shown too —
-   it is the kernel's own word and belongs in an audit panel verbatim. */
-const OP_ZH: Record<string, string> = {
-  ADD: '写入', UPDATE: '改写', NOOP: '忽略', REINFORCE: '加固',
-  QUARANTINE: '隔离', INSIGHT: '洞察', LINK: '连接',
+const OP_LABEL: Record<string, [string, string]> = {
+  ADD: ['写入', 'ADD'], UPDATE: ['改写', 'UPDATE'], NOOP: ['没有变化', 'NO CHANGE'],
+  REINFORCE: ['又见到一次', 'SEEN AGAIN'], QUARANTINE: ['打入冷宫', 'SHELVED'],
+  INSIGHT: ['总结', 'SUMMARY'], INSIGHT_REFRESH: ['更新总结', 'SUMMARY UPDATED'],
+  LINK: ['连接', 'LINK'], DECAY: ['慢慢淡忘', 'FADING'], FORGET: ['忘掉了', 'FORGOTTEN'],
 }
 
 const f2 = (n: number) => n.toFixed(2)
@@ -173,7 +173,7 @@ function ChangePanel({
   return (
     <div className={live ? 'mi-chg live' : 'mi-chg'}>
       <div className="mi-chg-head">
-        <span className="mi-op">{ev.op}{zh && OP_ZH[ev.op] ? ` ${OP_ZH[ev.op]}` : ''}</span>
+        <span className="mi-op">{OP_LABEL[ev.op]?.[zh ? 0 : 1] ?? ev.op}</span>
         <span className="mi-chg-at">SEQ {ev.seq} · PASS {ev.pass}</span>
         <span className="mi-chg-case">{ev.case_id}</span>
       </div>
@@ -181,7 +181,7 @@ function ChangePanel({
       {/* ADD carries the router's real similarity — the same number RouteRuler plots. */}
       {ev.similarity !== null && (
         <Row k={t('route', zh)}>
-          <span className="mi-mono">similarity {f4(ev.similarity)} → {ev.op}</span>
+          <span className="mi-mono">{zh ? '相近程度' : 'similarity'} {f4(ev.similarity)} → {OP_LABEL[ev.op]?.[zh ? 0 : 1] ?? ev.op}</span>
         </Row>
       )}
 
@@ -446,7 +446,7 @@ export function MemoryInspector({
           <h4 className="mi-h">{t('ledger', zh)}</h4>
           <div className="mi-ops">
             {Object.entries(ops).map(([op, n]) => (
-              <span className="mi-op-c" key={op}><b>{op}</b>{n}</span>
+              <span className="mi-op-c" key={op}><b>{OP_LABEL[op]?.[zh ? 0 : 1] ?? op}</b>{n}</span>
             ))}
           </div>
           <svg className="mi-life" viewBox="0 0 560 24" preserveAspectRatio="xMidYMid meet" role="img"
@@ -455,7 +455,7 @@ export function MemoryInspector({
             {chrono.map((e) => (
               <line key={e.seq} className={`mi-life-t${e.seq === cursorSeq ? ' live' : e.seq <= cursorSeq ? ' past' : ''}`}
                 x1={lx(e.seq)} y1={6} x2={lx(e.seq)} y2={16}>
-                <title>{`seq ${e.seq} · ${e.op}`}</title>
+                <title>{`seq ${e.seq} · ${OP_LABEL[e.op]?.[zh ? 0 : 1] ?? e.op}`}</title>
               </line>
             ))}
             <path className="mi-life-cur" d={`M${lx(cursorSeq)} 2 v18`} />

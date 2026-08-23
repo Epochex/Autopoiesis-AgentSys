@@ -1,16 +1,14 @@
-/* ── 基准态势 · 拓扑图 — capability → benchmark → real metric, as a node graph ───
- * Not text: a node-link topology (like the live 态势) mapping the system's 4
- * capabilities to the benchmarks that cover them, each benchmark node carrying a
- * REAL headline number + honest status (真跑 / 公开参照 / 定义待跑). Hover a node
- * to light its subtree. Numbers come from the benchmark + replay payloads. */
+/* ── 基准态势 · 拓扑图 — capability → benchmark → metric source ───────────────
+ * Each benchmark node labels whether its number came from the offline replay,
+ * gateway result files, the built-in fixture, or a published reference. */
 import { useState } from 'react'
 import type { BenchmarkResp } from './benchmark-data'
 
-type Metric = { real: boolean; status: 'live' | 'ref' | 'defs'; big: string; sub: string }
+type Metric = { tone: 'ref' | 'defs'; status: string; big: string; sub: string }
 type BNode = { id: string; label: string; metric: Metric }
 type CNode = { id: string; label: string; covered: boolean; benches: string[] }
 
-export function BenchTopology({ bench, replay, zh }: { bench: BenchmarkResp; replay: { heal: number; mem: number } | null; zh: boolean }) {
+export function BenchTopology({ bench, replay, fixture, zh }: { bench: BenchmarkResp; replay: { heal: number; mem: number } | null; fixture: boolean; zh: boolean }) {
   const [sel, setSel] = useState<string | null>(null)
   const lme = bench.longmemeval
   const tiered = lme.systems.find((s) => s.self)
@@ -24,10 +22,12 @@ export function BenchTopology({ bench, replay, zh }: { bench: BenchmarkResp; rep
     root: 'AUTOPOIESIS',
     caps: {
       rca: zh ? '内网根因分析' : 'NETWORK RCA', sec: zh ? '自我渗透 / 安全' : 'SELF-PENTEST',
-      mem: zh ? '长期记忆 / 检索' : 'MEMORY', evo: zh ? '自演化 / 技能归纳' : 'SELF-EVOLUTION',
+      mem: zh ? '长期保留记录 / 查找记录' : 'SAVED RECORDS / LOOKUP', evo: zh ? '复用旧记录 / 归纳处理办法' : 'REUSE RECORDS / BUILD HOW-TOS',
     },
-    live: zh ? '真跑' : 'LIVE', ref: zh ? '公开参照' : 'PUBLISHED', defs: zh ? '定义 · 待跑' : 'DEFS · PENDING',
-    heal: zh ? '自愈' : 'heal', memL: zh ? '记忆' : 'mem', scen: zh ? '场景' : 'scen',
+    replay: zh ? '离线回放' : 'OFFLINE REPLAY', file: zh ? '结果文件' : 'RESULT FILES',
+    fixture: zh ? '内置 FIXTURE' : 'BUILT-IN FIXTURE', unavailable: zh ? '回放不可达' : 'REPLAY UNAVAILABLE',
+    ref: zh ? '公开参照' : 'PUBLISHED', defs: zh ? '定义 · 待跑' : 'DEFS · PENDING',
+    heal: zh ? '自动处置' : 'auto actions', memL: zh ? '记录' : 'records', scen: zh ? '场景' : 'scen',
   }
 
   const caps: CNode[] = [
@@ -37,10 +37,10 @@ export function BenchTopology({ bench, replay, zh }: { bench: BenchmarkResp; rep
     { id: 'evo', label: L.caps.evo, covered: false, benches: ['replay'] },
   ]
   const benches: BNode[] = [
-    { id: 'replay', label: zh ? '网络RCA 自愈回放' : 'NET-RCA SELF-HEAL', metric: { real: true, status: 'live', big: `${L.heal} ${healPct}`, sub: `${L.memL} ${memG} · Redpanda` } },
-    { id: 'sre', label: 'ITBench · SRE', metric: { real: false, status: 'ref', big: `SOTA ${sre?.sota_pct ?? '—'}%`, sub: zh ? '公开基线' : 'baseline' } },
-    { id: 'ciso', label: 'ITBench · CISO', metric: { real: false, status: 'defs', big: `SOTA ${ciso?.sota_pct ?? '—'}%`, sub: `4 ${L.scen} · ${zh ? '真实定义' : 'real defs'}` } },
-    { id: 'lme', label: 'LongMemEval-500', metric: { real: true, status: 'live', big: `${(best * 100).toFixed(0)}% · ${((tiered?.recall['5'] ?? 0) * 100).toFixed(1)}`, sub: `recall@5 · ${zh ? '本仓库' : 'ours'}/best` } },
+    { id: 'replay', label: zh ? '网络根因分析与自动处置回放' : 'NETWORK RCA AND AUTOMATED-ACTION REPLAY', metric: { tone: replay ? 'ref' : 'defs', status: replay ? L.replay : L.unavailable, big: `${L.heal} ${healPct}`, sub: `${L.memL} ${memG} · ${zh ? '6 案例临时目录计算' : '6-CASE TEMP-DIR RUN'}` } },
+    { id: 'sre', label: 'ITBench · SRE', metric: { tone: 'ref', status: L.ref, big: `SOTA ${sre?.sota_pct ?? '—'}%`, sub: zh ? '公开基线' : 'baseline' } },
+    { id: 'ciso', label: 'ITBench · CISO', metric: { tone: 'defs', status: L.defs, big: `SOTA ${ciso?.sota_pct ?? '—'}%`, sub: `4 ${L.scen} · ${zh ? '基准定义' : 'benchmark defs'}` } },
+    { id: 'lme', label: 'LongMemEval-500', metric: { tone: 'ref', status: fixture ? L.fixture : L.file, big: `${(best * 100).toFixed(0)}% · ${((tiered?.recall['5'] ?? 0) * 100).toFixed(1)}`, sub: `recall@5 · ${zh ? '本仓库' : 'ours'}/best` } },
   ]
 
   // geometry
@@ -79,7 +79,7 @@ export function BenchTopology({ bench, replay, zh }: { bench: BenchmarkResp; rep
       <g className="bt2-root">
         <rect x={rootX - 8} y={rootY - 26} width={128} height={52} rx={0} />
         <text x={rootX + 56} y={rootY - 4} textAnchor="middle" className="bt2-root-t">AUTOPOIESIS</text>
-        <text x={rootX + 56} y={rootY + 13} textAnchor="middle" className="bt2-root-s">{zh ? '自演化内核' : 'self-evolving kernel'}</text>
+        <text x={rootX + 56} y={rootY + 13} textAnchor="middle" className="bt2-root-s">{zh ? '故障排查系统' : 'fault-analysis system'}</text>
       </g>
 
       {/* capability nodes */}
@@ -98,10 +98,10 @@ export function BenchTopology({ bench, replay, zh }: { bench: BenchmarkResp; rep
       {benches.map((b) => {
         const y = by.get(b.id)!, on = lit('bench', b.id), m = b.metric
         return (
-          <g key={b.id} className={`bt2-bench s-${m.status}${sel === b.id ? ' sel' : ''}${on ? '' : ' dim'}`} onMouseEnter={() => setSel(b.id)} onMouseLeave={() => setSel(null)} style={{ cursor: 'pointer' }}>
+          <g key={b.id} className={`bt2-bench s-${m.tone}${sel === b.id ? ' sel' : ''}${on ? '' : ' dim'}`} onMouseEnter={() => setSel(b.id)} onMouseLeave={() => setSel(null)} style={{ cursor: 'pointer' }}>
             <rect x={benchX - 104} y={y - 20} width={208} height={40} />
             <text x={benchX} y={y - 3} textAnchor="middle" className="bt2-bench-t">{b.label}</text>
-            <text x={benchX} y={y + 12} textAnchor="middle" className="bt2-bench-st">{m.status === 'live' ? L.live : m.status === 'ref' ? L.ref : L.defs}</text>
+            <text x={benchX} y={y + 12} textAnchor="middle" className="bt2-bench-st">{m.status}</text>
             {/* metric leaf */}
             <g className="bt2-meta">
               <text x={metaX} y={y - 2} className="bt2-meta-big">{m.big}</text>

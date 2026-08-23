@@ -105,14 +105,14 @@ const fitChars = (px: number, size: number, lsEm = 0) =>
 const TIER_ORDER: MemTier[] = ['semantic', 'procedural', 'episodic', 'asset_profile']
 
 const BAND_LABEL: Record<MemTier, [string, string]> = {
-  semantic: ['语义 SEMANTIC · 抽象认知', 'SEMANTIC · ABSTRACTION'],
-  procedural: ['程序 PROCEDURAL · 可复用模式', 'PROCEDURAL · REUSABLE PROBE'],
-  episodic: ['情景 EPISODIC · 具体经历', 'EPISODIC · CONCRETE EPISODE'],
-  asset_profile: ['资产 ASSET PROFILE · 实体画像', 'ASSET PROFILE · ENTITY'],
+  semantic: ['归纳的规律 · PATTERN', 'PATTERN'],
+  procedural: ['处理办法 · HOW-TO', 'HOW-TO'],
+  episodic: ['遇到过的事 · SEEN BEFORE', 'SEEN BEFORE'],
+  asset_profile: ['设备资料 · ASSET INFO', 'ASSET INFO'],
 }
 const ROW_LABEL: Record<string, [string, string]> = {
-  family: ['族 FAMILY', 'FAMILY'],
-  pattern: ['模式 PATTERN', 'PATTERN'],
+  family: ['跨多类故障的共同点', 'SHARED ACROSS FAULTS'],
+  pattern: ['同类故障', 'SAME FAULT TYPE'],
 }
 
 /* ── text helpers ─────────────────────────────────────────────────────────── */
@@ -154,7 +154,13 @@ const isFamily = (r: MemRecord) => r.tier === 'semantic' && rootOf(r) === null
 
 /* Badge text = the raw op, except the one that cannot fit: INSIGHT_REFRESH is 15
  * chars against a badge sized for REINFORCE, and nodes go as narrow as 60px. */
-const opBadge = (op: MemOp) => (op === 'INSIGHT_REFRESH' ? 'REFLECT+' : op)
+const OP_BADGE: Record<MemOp, [string, string]> = {
+  ADD: ['写入', 'ADD'], UPDATE: ['改写', 'UPDATE'], NOOP: ['无变化', 'NO CHANGE'],
+  REINFORCE: ['又见一次', 'SEEN AGAIN'], QUARANTINE: ['冷宫', 'SHELVED'],
+  INSIGHT: ['总结', 'SUMMARY'], INSIGHT_REFRESH: ['更新总结', 'SUMMARY+'],
+  LINK: ['连接', 'LINK'], DECAY: ['淡忘中', 'FADING'], FORGET: ['已忘掉', 'FORGOTTEN'],
+}
+const opBadge = (op: MemOp, zh: boolean) => OP_BADGE[op]?.[zh ? 0 : 1] ?? op
 
 /* ── layout types ─────────────────────────────────────────────────────────── */
 interface RowGeom {
@@ -567,7 +573,7 @@ export function MemoryGraph(props: {
         className={`mg-canvas${pinnedId ? ' sel' : ''}`}
         viewBox={`0 0 ${VB_W} ${vbH}`}
         role="group"
-        aria-label={zh ? '三层记忆空间' : 'Three-tier memory space'}
+        aria-label={zh ? '按类型排列的已有记录' : 'Existing records grouped by type'}
       >
         <defs>
           <pattern id="mg-dots" width="12" height="12" patternUnits="userSpaceOnUse">
@@ -589,7 +595,7 @@ export function MemoryGraph(props: {
              real edges, and a decorative rule beside them would read as one. ── */}
         <g className="mg-heads">
           <text x={FRAME_X} y={10} className="mg-kick">
-            {zh ? '列 = 根因族 · 按首次写入顺序' : 'COLUMN = ROOT FAMILY · FIRST-WRITE ORDER'}
+            {zh ? '每列一种根因 · 按首次写入顺序' : 'ONE ROOT CAUSE PER COLUMN · FIRST-WRITE ORDER'}
           </text>
           {cols.map((k, i) => (
             <text key={k} x={colX(i) + 10} y={23} className="mg-colkey">
@@ -631,10 +637,10 @@ export function MemoryGraph(props: {
           </g>
         ))}
 
-        {/* ── provenance spine: 6 episodic members abstract UP into the insight ── */}
+        {/* ── source line: several seen-before records feed one summary ── */}
         {edges.some((e) => e.kind === 'prov') && (
           <text x={FRAME_R - 6} y={spineY - 5} className="mg-spine-lab">
-            {zh ? '反思溯源 ▲ 情景 → 洞察' : 'REFLECTION PROVENANCE ▲ EPISODIC → INSIGHT'}
+            {zh ? '这条总结来自哪几件事 ▲' : 'SUMMED FROM THESE RECORDS ▲'}
           </text>
         )}
 
@@ -693,7 +699,7 @@ export function MemoryGraph(props: {
                 className={cls}
                 tabIndex={0}
                 role="button"
-                aria-label={`${n.rec.tier} ${id}`}
+                aria-label={`${BAND_LABEL[n.rec.tier][zh ? 0 : 1]} ${id}`}
                 /* the click toggles the PIN, so that — not the cursor's own
                    selection — is what pressed state means here */
                 aria-pressed={isPin}
@@ -724,9 +730,9 @@ export function MemoryGraph(props: {
                   <>
                     {op && (
                       <g className="mg-op">
-                        <rect x={n.x} y={n.y - 13} width={opBadge(op).length * advOf(8.5, LS_OP) + 10} height={12} className="mg-op-bg" />
+                        <rect x={n.x} y={n.y - 13} width={opBadge(op, zh).length * advOf(8.5, LS_OP) + 10} height={12} className="mg-op-bg" />
                         <text x={n.x + 5} y={n.y - 3.5} className="mg-op-t">
-                          {opBadge(op)}
+                          {opBadge(op, zh)}
                         </text>
                       </g>
                     )}
@@ -778,7 +784,7 @@ export function MemoryGraph(props: {
           <rect x={RAIL_X} y={HEAD_H} width={RAIL_W} height={railBottom - HEAD_H} className="mg-rail-box" />
           <rect x={RAIL_X} y={HEAD_H} width={RAIL_W} height={24} className="mg-rail-cap" />
           <text x={RAIL_X + 7} y={HEAD_H + 16} className="mg-rail-t">
-            {zh ? '上下文 CONTEXT' : 'CONTEXT'}
+            {zh ? '本次采用' : 'USED THIS TIME'}
           </text>
           {rail && recall ? (
             <>
@@ -806,13 +812,13 @@ export function MemoryGraph(props: {
               })}
               {rail.dropped.length > 0 && (
                 <text x={RAIL_X + 7} y={railBottom - 8} className="mg-rail-drop">
-                  {zh ? `⊣ ${rail.dropped.length} 条未注入` : `⊣ ${rail.dropped.length} DROPPED`}
+                  {zh ? `⊣ ${rail.dropped.length} 条没采用` : `⊣ ${rail.dropped.length} NOT USED`}
                 </text>
               )}
             </>
           ) : (
             <text x={RAIL_X + 7} y={HEAD_H + 44} className="mg-rail-s">
-              {zh ? '本步无检索' : 'NO RECALL'}
+              {zh ? '本步没有查找记录' : 'NO RECORD LOOKUP'}
             </text>
           )}
         </g>
@@ -829,7 +835,7 @@ export function MemoryGraph(props: {
           <rect x={252} y={9} width={9} height={12} className="mg-lg-box" />
           <rect x={264} y={13} width={9} height={8} className="mg-lg-box" />
           <text x={280} y={20} className="mg-lg">
-            {zh ? '高度=重要度·库当前值（√刻度）' : 'HEIGHT = IMPORTANCE · STORE (√)'}
+            {zh ? '高度 = 当前重要度（√刻度）' : 'HEIGHT = CURRENT IMPORTANCE (√)'}
           </text>
 
           <rect x={640} y={13} width={8} height={7} className="mg-cell" />
@@ -838,7 +844,7 @@ export function MemoryGraph(props: {
           <rect x={650} y={13} width={4} height={7} className="mg-cell-f" />
           <rect x={660} y={13} width={8} height={7} className="mg-cell" />
           <text x={675} y={20} className="mg-lg">
-            {zh ? '三格=置信度·库当前值（上限 3.0）' : 'TICKS = CONFIDENCE · STORE (CAP 3)'}
+            {zh ? '三格 = 当前可信度（上限 3.0）' : 'TICKS = CURRENT CONFIDENCE (CAP 3)'}
           </text>
 
           {/* the interaction the whole panel to the right depends on */}
@@ -855,11 +861,11 @@ export function MemoryGraph(props: {
 
           <path d="M252 44 L252 36 L266 36" className="mg-edge prov" markerEnd="url(#mg-up)" />
           <text x={280} y={42} className="mg-lg">
-            {zh ? '情景 → 洞察（反思溯源）' : 'EPISODIC → INSIGHT (PROVENANCE)'}
+            {zh ? '遇到过的事 → 总结（总结来自这些事）' : 'SEEN BEFORE → SUMMARY (SUMMED FROM)'}
           </text>
 
           <text x={470} y={42} className="mg-lg">
-            {zh ? '×N = 到本步的强化次数' : '×N = REINFORCES BY THIS STEP'}
+            {zh ? '×N = 到本步又见到几次' : '×N = TIMES SEEN AGAIN BY THIS STEP'}
           </text>
 
           <path d="M640 40 L668 40" className="mg-edge assoc" />
@@ -869,13 +875,13 @@ export function MemoryGraph(props: {
 
           <path d="M905 40 L933 40" className="mg-conn-l" />
           <text x={940} y={42} className="mg-lg">
-            {zh ? '已注入上下文' : 'IN CONTEXT'}
+            {zh ? '本次已采用' : 'USED THIS TIME'}
           </text>
           <path d="M1064 40 L1082 40" className="mg-conn-l" />
           <line x1={1084} y1={35} x2={1084} y2={45} className="mg-break" />
           <line x1={1088} y1={35} x2={1088} y2={45} className="mg-break" />
           <text x={1096} y={42} className="mg-lg">
-            {zh ? '检索到但未注入' : 'RETRIEVED, DROPPED'}
+            {zh ? '找到但没采用' : 'FOUND, NOT USED'}
           </text>
           <text x={VB_W - 8} y={20} className="mg-lg-sig">
             {zh ? `${records.length} 条真实记录 · 无合成值` : `${records.length} REAL RECORDS · NO SYNTHETIC VALUES`}

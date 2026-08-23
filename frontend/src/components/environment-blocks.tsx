@@ -350,7 +350,7 @@ export function OwnershipSnapshot({ finding, zh }: { finding: EnvFinding; zh: bo
   return (
     <div className="dx-own is-snapshot">
       <div className="dx-own-h">
-        <b>{zh ? '地址争用 · 单次快照' : 'ADDRESS CONTENTION · SNAPSHOT'}</b>
+        <b>{zh ? '地址争用 · 单次采集结果' : 'ADDRESS CONTENTION · ONE CAPTURE'}</b>
         <span>{finding.subject}</span>
         <em>
           {zh ? '接口' : 'IF'} {measured.interface ?? '—'}

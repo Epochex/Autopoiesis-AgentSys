@@ -21,31 +21,31 @@ import { ContextFull } from './ContextFull'
 import './context-packet.css'
 
 const TIER: Record<MemTier, [string, string]> = {
-  episodic: ['情景', 'EPI'],
-  semantic: ['语义', 'SEM'],
-  procedural: ['程序', 'PROC'],
-  asset_profile: ['资产', 'ASSET'],
+  episodic: ['遇到过的事', 'SEEN BEFORE'],
+  semantic: ['归纳的规律', 'PATTERN'],
+  procedural: ['处理办法', 'HOW-TO'],
+  asset_profile: ['设备资料', 'ASSET INFO'],
 }
 
 const L = (zh: boolean) => ({
-  title: zh ? '上下文包 · 递交给推理器的记忆' : 'CONTEXT PACKET · WHAT THE REASONER RECEIVES',
-  sub: zh ? '跟随回放 · 逐次召回如何拼装、如何变、为何进包' : 'Follows the replay — how each run assembles context, how it changes, why each memory is in',
-  none: zh ? '游标处没有召回 —— 该步是一次纯写入事件,没有向推理器递交上下文。' : 'No recall at the cursor — this step is a pure write event; no context was handed to the reasoner.',
-  empty: zh ? '上下文为空 —— 记忆尚未积累出可召回的条目(回放早期)。' : 'Empty context — memory has not yet accrued anything recallable (early in the replay).',
+  title: zh ? '本次排查用到的记录' : 'RECORDS USED FOR THIS CHECK',
+  sub: zh ? '跟随回放，显示每轮找到了什么、采用了什么，以及和上轮有什么变化' : 'Follows the replay: what each run found, what it used, and what changed since the last run',
+  none: zh ? '当前位置只有写入动作，本次排查没有读取已有记录。' : 'This position only writes a record; no existing records were read for the check.',
+  empty: zh ? '当前没有可用的已有记录，回放刚开始时会出现这种情况。' : 'No existing records are available yet. This is expected at the start of the replay.',
   case: zh ? '案例' : 'CASE', pass: zh ? '轮次' : 'PASS',
-  packet: zh ? '包内记忆' : 'IN PACKET',
+  packet: zh ? '实际采用' : 'USED',
   grew: zh ? '较上次' : 'vs last',
   same: zh ? '与上次持平' : 'unchanged vs last',
-  first: zh ? '首次召回' : 'first recall',
+  first: zh ? '首次查找' : 'first lookup',
   newRow: zh ? '本次新进' : 'NEW',
-  dropped: zh ? '召回后被丢弃' : 'DROPPED AFTER RECALL',
+  dropped: zh ? '找到但没采用' : 'FOUND BUT NOT USED',
   score: zh ? '最终得分' : 'final',
-  asset: zh ? '资产命中' : 'asset', prior: zh ? '结构先验' : 'prior', hop: zh ? '关联跳' : 'hop',
-  lex: zh ? '词法' : 'lex', vec: zh ? '向量' : 'vec',
+  asset: zh ? '设备匹配' : 'asset match', prior: zh ? '固定加分' : 'fixed boost', hop: zh ? '关系距离' : 'link distance',
+  lex: zh ? '文字匹配' : 'text match', vec: zh ? '意思相近' : 'meaning match',
   shortcut: zh ? '直达命中' : 'SHORTCUT', probes: zh ? '探针' : 'probes',
   note: zh
-    ? '本留出集上,召回由资产命中与结构先验驱动(词法/向量多为 0)—— 这是该上下文真实的拼装方式,不是缺陷。'
-    : 'On this held-out set, recall is driven by asset hits and structural prior (lexical/vector are mostly 0) — that is how this context genuinely assembles, not a defect.',
+    ? '这组留出案例主要靠设备匹配和固定加分找到记录，文字匹配与意思相近分数大多为 0。'
+    : 'On these held-out cases, records are found mainly through asset matches and fixed boosts; text and meaning-match scores are mostly 0.',
 })
 
 export function ContextPacket({
@@ -83,7 +83,7 @@ export function ContextPacket({
   const delta = recall && prevRecall ? recall.included_memory_ids.length - prevRecall.included_memory_ids.length : null
 
   return (
-    <section className="cp" aria-label={zh ? '上下文包' : 'Context packet'}>
+    <section className="cp" aria-label={zh ? '本次排查用到的记录' : 'Records used for this check'}>
       <header className="cp-head">
         <div className="cp-head-l">
           <span className="cp-title">{l.title}</span>
@@ -99,7 +99,7 @@ export function ContextPacket({
             </span>
             {recall.shortcut && <span className="cp-badge">{l.shortcut}</span>}
             <span className="cp-badge dim">{l.probes} {recall.probes}</span>
-            <button className="cp-full" onClick={() => setFull(true)}>{zh ? '完整上下文 ▸' : 'FULL CONTEXT ▸'}</button>
+            <button className="cp-full" onClick={() => setFull(true)}>{zh ? '查看全部 ▸' : 'VIEW ALL ▸'}</button>
           </div>
         ) : null}
       </header>

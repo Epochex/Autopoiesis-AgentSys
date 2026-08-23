@@ -486,7 +486,18 @@ async def rca_graph_analyze(cidr: str, lang: str = "zh") -> dict[str, Any]:
 
 @app.get("/api/rca/snapshot")
 async def rca_snapshot(provider: str = "rule", refresh: bool = False) -> dict[str, Any]:
-    return await _get_snapshot(provider=provider, force=refresh)
+    payload = await _get_snapshot(provider=provider, force=refresh)
+    if not payload.get("datasetReady"):
+        return payload
+    return {
+        **payload,
+        "note": (
+            "FortiGate/R230 留出集，采集窗口 2026-06-16 至 2026-06-17"
+            f"（推理器：{payload.get('reasonerMode', 'unknown')}） / "
+            "Held-out FortiGate/R230 capture from 2026-06-16 through 2026-06-17"
+            f" (reasoner: {payload.get('reasonerMode', 'unknown')})."
+        ),
+    }
 
 
 @app.post("/api/rca/diagnose")
@@ -927,6 +938,11 @@ async def rca_memory(
             "decay_wired": CAPABILITIES["decay_wired"],
             "eviction_wired": CAPABILITIES["eviction_wired"],
             "last_decay_at": last_decay_at,
+            "wiringInspection": {
+                "source": "repository_source",
+                "method": "static_ast_scan",
+                "evaluatedAt": "module_import",
+            },
         },
         "records": [_memory_list_record(record) for record in selected[:limit]],
     }
@@ -1065,7 +1081,7 @@ async def rca_memory_graph(passes: int = Query(default=4, ge=1, le=64)) -> dict[
     # The REAL evolved memory graph from the self-evolving run (serialize_store):
     # nodes = memory records (episodic/semantic/procedural) + insight hubs, edges =
     # the real links/relations between them. A full node-link graph — the benchmark
-    # 态势 analogue of the live device-relation constellation. Reshape only; every
+    # 态势 analogue of the network device-relation constellation. Reshape only; every
     # node/edge comes verbatim from load_evolution's observatory.records.
     from .rca_reader import load_evolution
 
@@ -1125,8 +1141,8 @@ async def rca_memory_graph(passes: int = Query(default=4, ge=1, le=64)) -> dict[
 
 @app.get("/api/rca/bench-snapshot")
 async def rca_bench_snapshot(passes: int = Query(default=4, ge=1, le=64)) -> dict[str, Any]:
-    # Benchmark 态势 in the EXACT live topology shapes (Topology + SubnetGraph), built
-    # from the REAL evolved memory graph so the frontend reuses the live TopologyCanvas
+    # Benchmark 态势 in the same topology shapes (Topology + SubnetGraph), built
+    # from the offline replay's evolved memory graph so the frontend reuses TopologyCanvas
     # in its DRILLED state (drillSub === graph.cidr === "mem://autopoiesis"). Reshape
     # only: every node/edge/label comes verbatim from load_evolution()'s
     # observatory.records; flows/accept/threat/x/y are clearly derived render
@@ -1141,12 +1157,9 @@ async def rca_replay(
     passes: int = Query(default=4, ge=1, le=64),
     inject: int = Query(default=0, ge=0, le=1),
 ) -> dict[str, Any]:
-    # Streaming fault-injection self-heal benchmark. The trajectory is the REAL
-    # offline evolving run (rule reasoner, no LLM) over the six real held-out cases.
-    # inject=1 first PRODUCES the representative replay:true fault bursts to the
-    # ISOLATED topic netops.facts.replay.v1 (real streaming via kubectl/rpk), then
-    # includes that result as `streamed`. Production degrades gracefully in the
-    # sandbox/CI (streamed.degraded:true) while the offline trajectory still returns.
+    # Offline fault-injection self-heal benchmark over six held-out cases. inject=1
+    # additionally attempts to publish representative replay:true bursts to the
+    # isolated topic; `streamed` reports that attempt separately from the replay.
     from core.evolve.replay_stream import (
         REPLAY_TOPIC,
         produce_replay,
@@ -1159,7 +1172,9 @@ async def rca_replay(
     trajectory = await asyncio.to_thread(replay_trajectory, passes, lang)
     return {
         "ok": True,
-        "live": True,
+        "live": False,
+        "dataMode": "offline_benchmark_replay",
+        "onlineMemory": False,
         "topic": REPLAY_TOPIC,
         "topic_events": status.get("events"),
         "streamed": streamed,
@@ -1569,21 +1584,19 @@ async def rca_retrieval(
 
 @app.get("/api/rca/benchmark")
 async def rca_benchmark(lang: str = "zh") -> dict[str, Any]:
-    # Benchmark-scenario data: REAL LongMemEval-500 recall@k (read verbatim from
-    # eval_mem_compare/results_*.json, live:true) plus the ITBench published-baseline
-    # catalog (live:false, reference figures only). No numbers are recomputed or
-    # fabricated; the LongMemEval note honestly states the BM25 floor leads this
-    # LLM-free recall metric.
+    # Benchmark-scenario data: stored LongMemEval-500 result files plus the ITBench
+    # published-baseline catalog. The frontend labels these as result files and does
+    # not use the payload's legacy `live` field as a source badge.
     from core.eval.benchmark_report import build_benchmark_report
     return await asyncio.to_thread(build_benchmark_report, lang)
 
 
 @app.get("/api/rca/live-situation")
 async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
-    # Read-only tail of the NetOps real-time subsystem's landed sink files (alerts +
+    # Read-only snapshot of NetOps landed sink files (alerts +
     # AIOps suggestions + cluster-state). The gateway never joins the Redpanda topic;
     # the two subsystems meet only at this disk boundary. Returns empty collections
-    # when the runtime dir is absent, so the panel degrades to "no live data".
+    # when the runtime dir is absent, so the panel reports no landed records.
     from .runtime_reader import load_runtime_snapshot
     from .sentinel_projection import merge_into_snapshot
 
@@ -1596,7 +1609,7 @@ async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
 
 @app.get("/api/rca/bench-live-situation")
 async def rca_bench_live_situation(lang: str = "zh") -> dict[str, Any]:
-    # SAME reader as /api/rca/live-situation, pointed at the ISOLATED benchmark runtime
+    # Same reader as /api/rca/live-situation, pointed at the isolated benchmark directory
     # dir written by the replay side-car pipeline (correlator-replay -> alerts-sink-replay
     # -> aiops-agent-replay). Real running-pod output; the prod runtime dir is untouched.
     from .runtime_reader import load_runtime_snapshot

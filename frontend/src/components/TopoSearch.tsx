@@ -41,7 +41,7 @@ export function TopoSearch({ lang, onPick }: { lang: Lang; onPick: (ip: string, 
       </div>
       {open && hits.length ? (
         <div className="ts-results">
-          <div className="ts-count">{hits.length} {zh ? '个匹配 · 点击定位并打开画像' : 'matches · click to locate + open profile'}</div>
+          <div className="ts-count">{hits.length} {zh ? '个匹配 · 点击定位并打开详情' : 'matches · click to locate + open details'}</div>
           {hits.map((h) => (
             <button key={h.cidr + h.ip} className={`ts-hit t-${h.threat}`} onClick={() => { onPick(h.ip, h.cidr); setOpen(false) }}>
               <span className="ts-hit-ip">{h.ip}</span>

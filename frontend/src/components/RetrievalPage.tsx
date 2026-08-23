@@ -18,12 +18,12 @@ const prefersReduced = () => typeof window !== 'undefined' && window.matchMedia?
 const STEP_MS = 1500
 
 const T = (zh: boolean) => ({
-  kicker: zh ? '混合检索 · 真实案例实录' : 'RETRIEVAL · REAL CASE RECORD',
-  loading: zh ? '拉取检索实录…' : 'FETCHING RECORD…',
-  offline: zh ? '检索端点不可达' : 'ENDPOINT UNREACHABLE',
+  kicker: zh ? '查资料过程 · 真实案例实录' : 'HOW RECORDS WERE FOUND · REAL CASE',
+  loading: zh ? '正在读取查找记录…' : 'FETCHING LOOKUP RECORD…',
+  offline: zh ? '查找接口不可达' : 'LOOKUP ENDPOINT UNREACHABLE',
   sample: zh ? '样例数据 · 网关离线' : 'SAMPLE DATA · GATEWAY OFFLINE',
   refetch: zh ? '重取' : 'REFETCH', play: zh ? '播放' : 'PLAY', pause: zh ? '暂停' : 'PAUSE', replay: zh ? '重放' : 'REPLAY',
-  hint: zh ? '点任一文档展开真实全文与它的全流程轨迹 · 拖动/点阶段可跳步' : 'Click any doc for its full text + journey · click a stage to jump',
+  hint: zh ? '点击任一文档可查看全文和每一步处理记录，点击阶段名称可直接跳转' : 'Click any document for its full text and processing steps; click a stage to jump',
 })
 
 export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenario?: 'live' | 'bench' }) {
@@ -83,7 +83,7 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
             {st.s === 'ok' && st.fixture ? <span className="rt-sample">{tx.sample}</span> : null}
             <span>{tx.kicker}</span>
           </div>
-          <h1 className="rt-head-title">{zh ? <>混合<mark>检索</mark></> : <>HYBRID·<mark>RETRIEVAL</mark></>}</h1>
+          <h1 className="rt-head-title">{zh ? <>怎么<mark>找到资料</mark></> : <>HOW RECORDS WERE <mark>FOUND</mark></>}</h1>
         </div>
         <button className="rt-run" onClick={() => void load()} disabled={st.s === 'load'}><span className="rt-run-dot" />{tx.refetch}</button>
       </header>
@@ -96,7 +96,7 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
             <div className="rt-cases" role="tablist">
               {cases.map((cc, i) => (
                 <button key={cc.id} role="tab" aria-selected={i === ci} className={`rt-case${i === ci ? ' on' : ''}`} onClick={() => pickCase(i)}>
-                  <span className="rt-case-flow">{cc.flow === 'kb_hybrid' ? (zh ? '知识混合 · KB' : 'KB HYBRID') : (zh ? '记忆召回' : 'MEMORY RECALL')}</span>
+                  <span className="rt-case-flow">{cc.flow === 'kb_hybrid' ? (zh ? '查知识库' : 'SEARCH KB') : (zh ? '查已有记录' : 'SEARCH RECORDS')}</span>
                   <span className="rt-case-l">{zh ? cc.label.zh : cc.label.en}</span>
                   <span className={`rt-case-badge${cc.triggers.live ? ' live' : ''}`}>{cc.triggers.count}× {cc.triggers.live ? (zh ? '实跑' : 'LIVE') : 'EVAL'}</span>
                 </button>

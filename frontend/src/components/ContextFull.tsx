@@ -11,24 +11,24 @@ import type { MemRecall, MemRecord, MemTier } from '../types'
 import './context-full.css'
 
 const TIER: Record<MemTier, [string, string]> = {
-  episodic: ['情景', 'EPISODIC'], semantic: ['语义', 'SEMANTIC'],
-  procedural: ['程序', 'PROCEDURAL'], asset_profile: ['资产', 'ASSET'],
+  episodic: ['遇到过的事', 'SEEN BEFORE'], semantic: ['归纳的规律', 'PATTERN'],
+  procedural: ['处理办法', 'HOW-TO'], asset_profile: ['设备资料', 'ASSET INFO'],
 }
 
 const T = (zh: boolean) => ({
-  title: zh ? '完整上下文 · 此刻递交推理器的全部记忆' : 'FULL CONTEXT · everything handed to the reasoner at this step',
+  title: zh ? '本次排查采用的全部记录' : 'ALL RECORDS USED FOR THIS CHECK',
   close: zh ? '解除 ESC' : 'CLOSE ESC',
   caseL: zh ? '案例' : 'CASE', pass: zh ? '轮次' : 'PASS', root: zh ? '根因' : 'ROOT CAUSE',
-  inPk: zh ? '进包' : 'in packet', drop: zh ? '丢弃' : 'dropped', probe: zh ? '探针' : 'probes', sc: zh ? '直达命中' : 'SHORTCUT',
-  packet: zh ? '包内记忆 · 按最终得分' : 'PACKET · ranked by final score',
-  diff: zh ? '本步 DIFF · 较上一次召回' : 'DIFF · vs previous recall',
-  add: zh ? '本次新进' : 'ADDED', rm: zh ? '移出上下文' : 'REMOVED',
-  dropped: zh ? '召回后被丢弃(预算/去重)' : 'DROPPED AFTER RECALL (budget/dedup)',
-  rootSec: zh ? '根因与证据' : 'ROOT CAUSE & EVIDENCE', noEvid: zh ? '该轮无逐条证据快照' : 'no per-item evidence snapshot',
+  inPk: zh ? '实际采用' : 'used', drop: zh ? '未采用' : 'not used', probe: zh ? '检查项' : 'checks', sc: zh ? '直接找到答案' : 'DIRECT MATCH',
+  packet: zh ? '实际采用 · 按最终得分排序' : 'USED · ranked by final score',
+  diff: zh ? '和上一次查找相比' : 'CHANGES SINCE THE PREVIOUS LOOKUP',
+  add: zh ? '本次新增' : 'ADDED', rm: zh ? '本次移除' : 'REMOVED',
+  dropped: zh ? '找到但没采用（数量上限或重复）' : 'FOUND BUT NOT USED (limit or duplicate)',
+  rootSec: zh ? '根因与证据' : 'ROOT CAUSE & EVIDENCE', noEvid: zh ? '这一轮没有逐条保存证据' : 'no evidence saved per record in this run',
   none: zh ? '无变化' : 'no change', newB: zh ? '新' : 'NEW',
-  fAsset: zh ? '资产命中' : 'asset', fPrior: zh ? '结构先验' : 'prior', fHop: zh ? '关联跳' : 'hop',
-  fLex: zh ? '词法' : 'lex', fVec: zh ? '向量' : 'vec', fFinal: zh ? '最终' : 'final', fStr: zh ? '强度' : 'str', fConf: zh ? '置信' : 'conf',
-  note: zh ? '全部为真实召回/记忆数据(core/evolve/observatory.py);diff、排名与得分变化均按真实 final_score 计算。' : 'All real recall/record data; diff, rank and score deltas computed from real final_score.',
+  fAsset: zh ? '设备匹配' : 'asset match', fPrior: zh ? '固定加分' : 'fixed boost', fHop: zh ? '关系距离' : 'link distance',
+  fLex: zh ? '文字匹配' : 'text match', fVec: zh ? '意思相近' : 'meaning match', fFinal: zh ? '最终' : 'final', fStr: zh ? '保留强度' : 'retention', fConf: zh ? '可信度' : 'confidence',
+  note: zh ? '记录、排序和得分都来自这次真实回放；变化量按接口返回的 final_score 计算。' : 'Records, ranking, and scores come from this replay; changes are calculated from the returned final_score.',
 })
 
 export function ContextFull({ recall, prevRecall, records, caseRoot, zh, onClose }: {

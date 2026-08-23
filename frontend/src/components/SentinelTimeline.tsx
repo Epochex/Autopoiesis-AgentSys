@@ -67,7 +67,7 @@ interface Incident {
 const T = (zh: boolean) => ({
   title: zh ? '哨兵时间线' : 'SENTINEL TIMELINE',
   lede: zh
-    ? '系统自己发现、自己判断、自己动手、再自己验证的完整链条。它拒绝动手的那几步也在里面——只记成功的日志不叫审计。'
+    ? '系统从发现、判断、执行到验证的完整记录，也包括系统决定交给人工处理的步骤。'
     : 'What the system noticed, decided, did and then verified. The steps where it declined are here too; a log with only successes in it is not an audit trail.',
   live: zh ? '自动刷新' : 'AUTO REFRESH',
   refresh: zh ? '刷新' : 'REFRESH',

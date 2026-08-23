@@ -52,18 +52,18 @@ export function TrajectoryPage({
     <div className="traj-page">
       <div className="tp-grid" />
 
-      {/* 实时态势在最上 —— NetOps 流处理此刻正在诊断什么 */}
+      {/* NetOps disk-sink records appear above the separate offline replay. */}
       <LiveSituation zh={zh} onTheater={onTheater} onTrace={onTrace} focusSubject={focusSubject} />
 
-      {/* the seam: live diagnosis above, the same store's history below */}
+      {/* Explicit source boundary: disk-sink records above, temp-dir benchmark below. */}
       <div className="tp-seam" role="separator">
-        <span>{zh ? '↓ 长轨迹 · 同一记忆如何随时间演化' : '↓ LONG TRAJECTORY · HOW THE SAME MEMORY EVOLVED OVER TIME'}</span>
+        <span>{zh ? '↓ 离线基准回放 · 六案例临时目录计算' : '↓ OFFLINE BENCHMARK REPLAY · SIX-CASE TEMP-DIR RUN'}</span>
       </div>
 
       <header className="fx-mast">
         <div className="fx-mast-l">
-          <span className="fx-mast-kick">{zh ? '自我进化 AI · 内网排查' : 'SELF-EVOLVING AI · NETWORK TRIAGE'}</span>
-          <h1 className="fx-mast-title">{zh ? <>长<mark>轨迹</mark></> : <>LONG <mark>TRAJECTORY</mark></>}</h1>
+          <span className="fx-mast-kick">{zh ? '重复故障排查 · 复用之前留下的记录' : 'REPEATED-FAULT CHECKS · REUSE EARLIER RECORDS'}</span>
+          <h1 className="fx-mast-title">{zh ? <>多轮<mark>故障回放</mark></> : <>MULTI-RUN <mark>FAULT REPLAY</mark></>}</h1>
           <div className="fx-mast-mission">
             <span className="fx-mast-q" title={c.query}>{clip(c.query, 62)}</span>
             <mark className="fx-mast-root">{rc(c.diagnosis.rootCauseKey, lang)}</mark>
@@ -87,12 +87,12 @@ export function TrajectoryPage({
       <section className="fx-first">
         {evo?.ready && evo.observatory
           ? <MemoryObservatory obs={evo.observatory} zh={zh} caseRoots={Object.fromEntries(cases.map((x) => [x.id, x.diagnosis.rootCauseKey]))} />
-          : <div className="fx-first-wait">{zh ? '正在跑自我进化流…' : 'RUNNING SELF-EVOLUTION STREAM…'}</div>}
+          : <div className="fx-first-wait">{zh ? '正在计算离线基准回放…' : 'RUNNING OFFLINE BENCHMARK REPLAY…'}</div>}
       </section>
 
       <LiveMemory lang={lang} />
 
-      {/* the run itself, replayed node by node from the observability ledger */}
+      {/* Offline benchmark result returned by /api/rca/evolution. */}
     </div>
   )
 }

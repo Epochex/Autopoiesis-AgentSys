@@ -1,9 +1,10 @@
-"""Live signals: real-time event rate from R230, and on-demand DeepSeek threat analysis."""
+"""Freshness-checked R230 signals and on-demand DeepSeek threat analysis."""
 from __future__ import annotations
 
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from typing import Any
@@ -18,9 +19,10 @@ from .evidence_gate import (
     verify_pair_claims,
 )
 
-# ---- real-time event rate (poll R230 syslog tail) ----
+# ---- event rate from R230 syslog tail, valid only while the file is fresh ----
 _rate_cache: dict[str, Any] = {"at": 0.0, "val": None}
 _RATE_TTL = 4.0
+_RATE_FRESHNESS_SEC = 120
 
 
 def event_rate() -> dict[str, Any]:
@@ -38,10 +40,12 @@ def _probe_rate() -> dict[str, Any]:
     log = os.getenv("R230_LOG", "/data/fortigate-runtime/input/fortigate.log")
     if not ssh or not pw:
         return {"eventsPerSec": None, "lines": 0, "live": False}
-    # tail recent lines, read first+last timestamp, derive lines/sec
+    # Read mtime plus the first/last timestamp in the tail. A rate calculated from
+    # an old frozen file is historical throughput, so it must never set live=true.
     # match the HH:MM:SS value of " time=" (not "eventtime=" epoch); first+last of the tail
     pat = "[^a-zA-Z]time=([0-9]{1,2}:[0-9]{2}:[0-9]{2})"
-    remote = f"tail -n 6000 {log} | sed -nE '1s/.*{pat}.*/\\1/p; $s/.*{pat}.*/\\1/p'"
+    safe_log = shlex.quote(log)
+    remote = f"stat -c %Y {safe_log}; tail -n 6000 {safe_log} | sed -nE '1s/.*{pat}.*/\\1/p; $s/.*{pat}.*/\\1/p'"
     try:
         out = subprocess.run(
             ["sshpass", "-p", pw, "ssh", "-o", "StrictHostKeyChecking=accept-new",
@@ -50,7 +54,11 @@ def _probe_rate() -> dict[str, Any]:
         ).stdout.strip().splitlines()
     except Exception:
         return {"eventsPerSec": None, "lines": 0, "live": False}
-    times = [t for t in out if re.match(r"^\d+:\d+:\d+$", t)]
+    try:
+        modified_at = int(out[0])
+    except (IndexError, ValueError):
+        return {"eventsPerSec": None, "lines": 0, "live": False}
+    times = [t for t in out[1:] if re.match(r"^\d+:\d+:\d+$", t)]
     if len(times) < 2:
         return {"eventsPerSec": None, "lines": 0, "live": False}
 
@@ -62,7 +70,17 @@ def _probe_rate() -> dict[str, Any]:
     if span <= 0:
         span = 1
     rate = round(6000 / span, 1)
-    return {"eventsPerSec": rate, "lines": 6000, "spanSec": span, "live": True}
+    age_sec = max(0, int(time.time()) - modified_at)
+    fresh = age_sec <= _RATE_FRESHNESS_SEC
+    return {
+        "eventsPerSec": rate,
+        "lines": 6000,
+        "spanSec": span,
+        "sourceModifiedAt": modified_at,
+        "sourceAgeSec": age_sec,
+        "freshnessThresholdSec": _RATE_FRESHNESS_SEC,
+        "live": fresh,
+    }
 
 
 # ---- on-demand DeepSeek threat analysis for one device ----

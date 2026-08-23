@@ -30,7 +30,7 @@ const SUBJECT_KINDS = new Set([
 const PHASE_LABEL: Record<Row['phase'], [string, string]> = {
   detected: ['刚发现', 'DETECTED'],
   watching: ['处置中', 'IN FLIGHT'],
-  resolved: ['已自愈', 'SELF-HEALED'],
+  resolved: ['已自动处置', 'HANDLED AUTOMATICALLY'],
   // Both ask for a person, so both say so. They are not the same ask: needs_human
   // is one attempt that went wrong, escalated is the system declining to try at
   // all because it has already fixed this three times. The row's summary and the
@@ -137,7 +137,7 @@ export function LiveAlerts({ lang, onOpen }: { lang: Lang; onOpen: (subject: str
       <div className="la-head">
         <span className="la-k">{zh ? '系统自己发现的' : 'FOUND BY THE SYSTEM'}</span>
         <span className="la-count">
-          {counts.length ? counts.join(' · ') : (zh ? '都已自愈' : 'all healed')}
+          {counts.length ? counts.join(' · ') : (zh ? '都已自动处置' : 'all handled automatically')}
         </span>
         <span className="la-hint">{zh ? '点一条看完整处置链路 ▸' : 'click a row for its chain ▸'}</span>
       </div>

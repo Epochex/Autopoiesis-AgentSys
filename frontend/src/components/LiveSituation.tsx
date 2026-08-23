@@ -1,14 +1,12 @@
-/* 实时态势 / LIVE SITUATION — the NetOps real-time subsystem, read-only.
+/* 落地态势 / LANDED SITUATION — read-only records from NetOps disk sinks.
  *
- * Sits above the long-trajectory replay: the top band is the live incident
- * pipeline as it stands right now, the board below is the same store's history
- * learned over time. Real-time diagnosis vs. historical learning, one screen.
+ * Sits above the separate offline trajectory replay. These two panels have
+ * independent data sources and timestamps.
  *
  * Every value comes from GET /api/rca/live-situation, which tails the NetOps
  * disk sinks (alerts + AIOps suggestions + cluster-state). Nothing is synthesized
- * here, and the panel states the real timestamp of the data it is showing rather
- * than pretending the stream is live at this instant. The two subsystems never
- * share a process — they meet only at that read-only file boundary.
+ * here, and the panel states the timestamp of the newest landed record. The two
+ * subsystems meet only at that read-only file boundary.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TheaterEvent } from '../types'
@@ -40,7 +38,7 @@ interface FeedItem {
   priority?: string; device?: string; deviceKey?: string; summary?: string; ruleId?: string; scenario?: string
 }
 interface ClusterWatch { key: string; severity: string; ruleId: string; progress: number; target: number; lastEmitTs: string }
-export interface LiveSnapshot {
+export interface SituationSnapshot {
   ready: boolean; feed: FeedItem[]; clusterWatch: ClusterWatch[]; suggestions: Suggestion[]
   runtime: { latestAlertTs: string; latestSuggestionTs: string; windowSec: number }
   defaultSuggestionId: string
@@ -93,22 +91,22 @@ const suggestionEvent = (s: Suggestion): TheaterEvent => ({
       : ['aiops-agent', 'suggestions-topic', 'remediation'],
 })
 
-export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live', focusSubject }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; onTrace?: (subject: string) => void; scenario?: 'live' | 'bench'; focusSubject?: string }) {
-  const [snap, setSnap] = useState<LiveSnapshot | null>(null)
+export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focusSubject }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; onTrace?: (subject: string) => void; scenario?: 'disk' | 'bench'; focusSubject?: string }) {
+  const [snap, setSnap] = useState<SituationSnapshot | null>(null)
   const [state, setState] = useState<'load' | 'ok' | 'empty' | 'err'>('load')
   // A manual pick remembers which focus request it was made under, so arriving
   // from a new alert supersedes it while a click made after arriving stays put.
   const [pick, setPick] = useState<{ id: string; under: string | null } | null>(null)
   const timer = useRef<number | undefined>(undefined)
 
-  /* Poll: the panel is a live tail, so it re-reads on an interval. A restarting
+  /* Poll the landed files for additions. A restarting
    * backend is survived by simply keeping the last good snapshot on error. */
   useEffect(() => {
     let gone = false
     const load = () => {
       fetch(`/api/rca/${scenario === 'bench' ? 'bench-live-situation' : 'live-situation'}?lang=${zh ? 'zh' : 'en'}`)
         .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-        .then((d: LiveSnapshot) => {
+        .then((d: SituationSnapshot) => {
           if (gone) return
           setSnap(d)
           setState(d && d.ready ? 'ok' : 'empty')
@@ -145,22 +143,22 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live', focus
     document.querySelector('.ls')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [focusSubject])
 
-  if (state === 'load') return <section className="ls ls-msg">{zh ? '接入 NetOps 实时流…' : 'CONNECTING TO NETOPS STREAM…'}</section>
-  if (state === 'err') return <section className="ls ls-msg err">{zh ? '实时子系统不可达' : 'LIVE SUBSYSTEM UNREACHABLE'}</section>
-  if (state === 'empty' || !snap) return <section className="ls ls-msg">{zh ? '当前无落地的实时态势' : 'NO LANDED LIVE SITUATION'}</section>
+  if (state === 'load') return <section className="ls ls-msg">{zh ? '读取 NetOps 磁盘落地记录…' : 'READING NETOPS DISK SINKS…'}</section>
+  if (state === 'err') return <section className="ls ls-msg err">{zh ? '磁盘态势端点不可达' : 'DISK-SINK ENDPOINT UNREACHABLE'}</section>
+  if (state === 'empty' || !snap) return <section className="ls ls-msg">{zh ? '落地文件中无态势记录' : 'NO SITUATION RECORDS IN DISK SINKS'}</section>
 
   const latest = snap.runtime.latestSuggestionTs !== 'n/a' ? snap.runtime.latestSuggestionTs : snap.runtime.latestAlertTs
 
   return (
-    <section className="ls" aria-label={zh ? '实时态势' : 'Live situation'}>
+    <section className="ls" aria-label={zh ? '落地态势记录' : 'Landed situation records'}>
       <header className="ls-head">
         <div className="ls-head-l">
-          <span className="ls-kick">{zh ? '实时态势 · 内网流处理' : 'LIVE SITUATION · STREAM PROCESSING'}</span>
-          <h2 className="ls-title">{zh ? <>实时<mark>态势</mark></> : <>LIVE <mark>SITUATION</mark></>}</h2>
+          <span className="ls-kick">{zh ? '落地态势 · 磁盘记录' : 'LANDED SITUATION · DISK RECORDS'}</span>
+          <h2 className="ls-title">{zh ? <>态势<mark>记录</mark></> : <>LANDED <mark>RECORDS</mark></>}</h2>
         </div>
         <div className="ls-head-r">
-          <span className="ls-src">Redpanda · NetOps</span>
-          <span className="ls-stamp">{zh ? '最新落地' : 'LATEST'} · {ymd(latest)} {hms(latest)}</span>
+          <span className="ls-src">{zh ? '告警 + 建议 + 簇状态 · 磁盘 sink' : 'ALERTS + SUGGESTIONS + CLUSTER STATE · DISK SINKS'}</span>
+          <span className="ls-stamp">{zh ? '最新记录' : 'LATEST RECORD'} · {ymd(latest)} {hms(latest)}</span>
           <span className="ls-counts">
             <b>{feed.filter((f) => f.kind === 'alert').length}</b> {zh ? '告警' : 'alerts'} · <b>{suggestions.length}</b> {zh ? '建议' : 'suggestions'}
           </span>
@@ -172,7 +170,7 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live', focus
       <div className="ls-pipe" role="list" aria-label={zh ? '处理链路' : 'Processing chain'}>
         <span className="ls-pipe-k">
           {selected?.scope === 'sentinel'
-            ? (zh ? '哨兵自愈循环' : 'SENTINEL LOOP')
+            ? (zh ? '哨兵自动处置流程' : 'SENTINEL AUTOMATED-ACTION FLOW')
             : (zh ? 'NetOps 流处理' : 'NETOPS STREAM')}
         </span>
         {rail.map((p, i) => (
@@ -185,9 +183,9 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'live', focus
       </div>
 
       <div className="ls-body">
-        {/* left · the live feed, newest first */}
-        <aside className="ls-feed" aria-label={zh ? '实时事件流' : 'Live feed'}>
-          <div className="ls-col-h">{zh ? '事件流 · 新→旧' : 'FEED · NEW→OLD'}</div>
+        {/* left · landed records, newest first */}
+        <aside className="ls-feed" aria-label={zh ? '落地事件记录' : 'Landed event records'}>
+          <div className="ls-col-h">{zh ? '落地记录 · 新→旧' : 'LANDED RECORDS · NEW→OLD'}</div>
           <div className="ls-feed-list">
             {feed.map((f) => {
               const isSug = f.kind === 'suggestion'

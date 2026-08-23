@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -38,9 +39,25 @@ from domains.network_rca.remediation import (
     unit_probe,
 )
 
-RUNS_PATH = Path(
-    os.getenv("AUTOPOIESIS_REMEDIATION_LOG", "/data/autopoiesis-runtime/remediation-runs.jsonl")
-)
+RUNS_PATH: Path | None = None
+
+
+def _runs_path() -> Path:
+    """Resolve the history sink when it is used, with an injectable override."""
+    if RUNS_PATH is not None:
+        return RUNS_PATH
+    configured = os.getenv("AUTOPOIESIS_REMEDIATION_LOG")
+    if configured:
+        return Path(configured)
+    test_root = os.getenv("AUTOPOIESIS_TEST_TMP")
+    if test_root:
+        return Path(test_root) / "remediation-runs.jsonl"
+    # PYTEST_CURRENT_TEST appears only while a test body is running. Collection
+    # imports happen earlier, so using it as the sole guard can freeze a module
+    # constant to the production path for the entire session.
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return Path(tempfile.gettempdir()) / "autopoiesis-remediation-test.jsonl"
+    return Path("/data/autopoiesis-runtime/remediation-runs.jsonl")
 
 # Windows are short here because both actions settle in seconds, not minutes.
 # A firewall change would want minutes; these do not, and a window longer than
@@ -248,9 +265,10 @@ def execute(
 
 def _append_run(payload: dict[str, Any]) -> None:
     """Persist one run. A failure to log must not mask the run's own result."""
+    path = _runs_path()
     try:
-        RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with RUNS_PATH.open("a", encoding="utf-8") as handle:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
     except OSError:
         pass
@@ -258,10 +276,11 @@ def _append_run(payload: dict[str, Any]) -> None:
 
 def history(limit: int = 50) -> list[dict[str, Any]]:
     """Most recent runs first."""
-    if not RUNS_PATH.exists():
+    path = _runs_path()
+    if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
-    with RUNS_PATH.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:
