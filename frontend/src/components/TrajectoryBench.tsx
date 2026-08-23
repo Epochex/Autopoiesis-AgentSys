@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import type { Observatory, TheaterEvent } from '../types'
 import { MemoryObservatory } from './MemoryObservatory'
-import { TraceReplay } from './TraceReplay'
 import { LiveSituation } from './LiveSituation'
 
 /* ── SCENARIO 2 · 长轨迹-bench — 网络 RCA 流式注故障 · 自愈/自演化基准(可回放)──────
@@ -177,10 +176,9 @@ export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (
       <p className="tb-note">{tx.note0}</p>
       <p className="tb-cite">{tx.cite}</p>
 
-      {/* Reuse the LIVE 长轨迹's mechanism modules verbatim — the benchmark run IS the
-          same compare_cold_vs_warm self-evolution, so its observatory drives the exact
-          same MemoryObservatory (记忆图/上下文包/写路由) and TraceReplay (召回→上下文
-          编译→推理→核验→固化). Same components, benchmark data source. */}
+      {/* The benchmark observatory reuses the live trajectory's exact memory graph,
+          context packet, and write-routing views because both are driven by the same
+          compare_cold_vs_warm self-evolution data. */}
       {d.observatory ? (
         /* Wrap in .traj-page so the live trajectory's 148 scoped .tr/.tv styles apply
            verbatim — the reuse is now pixel-identical to the live 长轨迹, not a
@@ -188,7 +186,6 @@ export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (
         <div className="traj-page tb-reuse">
           <div className="tp-seam" role="separator"><span>{tx.seam}</span></div>
           <MemoryObservatory obs={d.observatory} zh={zh} caseRoots={Object.fromEntries(d.cases.map((x) => [x.id, x.root_cause_key]))} />
-          <TraceReplay zh={zh} />
         </div>
       ) : null}
     </div>

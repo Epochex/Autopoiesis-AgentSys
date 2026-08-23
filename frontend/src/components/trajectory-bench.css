@@ -68,7 +68,7 @@
 .tb-cell { transition:background .25s; }
 
 /* ── seam before the reused live-trajectory mechanism modules (MemoryObservatory +
-      TraceReplay). The live .tp-seam rule is scoped to .traj-page; the bench root is
+      the removed replay panel). The live .tp-seam rule is scoped to .traj-page; the bench root is
       .tb, so re-declare it here. Same look. ── */
 .tb .tp-seam { margin: 34px 0 10px; border-top: 1.5px solid var(--ink); display: flex; justify-content: center; }
 .tb .tp-seam span { transform: translateY(-50%); background: var(--paper); padding: 0 14px; font-family: ui-monospace, "IBM Plex Mono", Menlo, monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray); }

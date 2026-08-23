@@ -573,6 +573,7 @@ def rca_observation_session(session_id: str) -> dict[str, Any]:
 
 _MEMORY_TIERS = ("episodic", "semantic", "procedural", "asset_profile")
 _MEMORY_TEXT_LIMIT = 240
+_MEMORY_EVENT_TEXT_LIMIT = 120
 _MEMORY_RETENTION_CHECKPOINT_TAG = "memory_retention_checkpoint"
 
 
@@ -654,6 +655,23 @@ def _memory_list_record(record: Any) -> dict[str, Any]:
         # A count proves provenance exists without exposing every trace id in a
         # collection response. The detail endpoint is the deliberate audit path.
         "source_trace_ids": len(record.source_trace_ids),
+    }
+
+
+def _memory_event(event: Any) -> dict[str, Any]:
+    record = event.record
+    return {
+        "offset": event.event_offset,
+        "memory_id": event.memory_id,
+        "version": event.version,
+        "event_type": event.event_type,
+        "occurred_at": _memory_time(event.occurred_at),
+        "tier": record.tier,
+        "quarantine_reason": _memory_quarantine_reason(record),
+        "strength": float(record.strength),
+        "confidence": float(record.confidence),
+        "importance": float(record.importance),
+        "text_head": record.text[:_MEMORY_EVENT_TEXT_LIMIT],
     }
 
 
@@ -911,6 +929,41 @@ async def rca_memory(
             "last_decay_at": last_decay_at,
         },
         "records": [_memory_list_record(record) for record in selected[:limit]],
+    }
+
+
+@app.get("/api/rca/memory/events")
+async def rca_memory_events(
+    after: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=2000),
+) -> dict[str, Any]:
+    """Ordered durable memory events for read-only replay in the console."""
+    service = _evolving_service
+    memory = getattr(service, "memory", None) if service is not None else None
+    repository = getattr(memory, "repository", None)
+    read_events = getattr(repository, "read_events", None)
+    if not callable(read_events):
+        return {"ok": True, "durable": False, "events": [], "total": 0}
+
+    # The repository owns ordering and decoding. Keeping the blocking database
+    # call off the event loop lets this read-only view coexist with live requests.
+    events = await asyncio.to_thread(
+        read_events,
+        after_offset=after,
+        limit=limit,
+    )
+    raw_page = list(events)
+    # The public replay contract currently exposes state creation/update and
+    # quarantine only. Administrative deletion events belong to a separate
+    # audit surface and may be introduced by the repository independently.
+    page = [event for event in raw_page if event.event_type in {"UPSERT", "QUARANTINE"}]
+    next_offset = raw_page[-1].event_offset if len(raw_page) == limit else None
+    return {
+        "ok": True,
+        "durable": True,
+        "total": len(page),
+        "next_offset": next_offset,
+        "events": [_memory_event(event) for event in page],
     }
 
 

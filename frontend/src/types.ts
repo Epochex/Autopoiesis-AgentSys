@@ -441,6 +441,28 @@ export interface LiveMemoryListResponse {
   records: LiveMemoryListRecord[]
 }
 
+export interface LiveMemoryEvent {
+  offset: number
+  memory_id: string
+  version: number
+  event_type: 'UPSERT' | 'QUARANTINE'
+  occurred_at: string
+  tier: MemTier
+  quarantine_reason: string | null
+  strength: number
+  confidence: number
+  importance: number
+  text_head: string
+}
+
+export interface LiveMemoryEventsResponse {
+  ok: boolean
+  durable: boolean
+  total: number
+  next_offset?: number | null
+  events: LiveMemoryEvent[]
+}
+
 export interface LiveMemoryRelation {
   target_id: string
   relation_type: string

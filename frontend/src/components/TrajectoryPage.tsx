@@ -5,7 +5,6 @@ import { rc } from '../i18n'
 import { LiveSituation } from './LiveSituation'
 import { LiveMemory } from './LiveMemory'
 import { MemoryObservatory } from './MemoryObservatory'
-import { TraceReplay } from './TraceReplay'
 import './trajectory.css'
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
@@ -94,7 +93,6 @@ export function TrajectoryPage({
       <LiveMemory lang={lang} />
 
       {/* the run itself, replayed node by node from the observability ledger */}
-      <TraceReplay zh={zh} />
     </div>
   )
 }

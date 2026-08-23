@@ -2,9 +2,13 @@
 
 ``memory_records`` is the current snapshot used at process startup, while
 ``memory_events`` is an append-only stream consumed by incremental indexes.
-Every write updates both in one transaction.  The PostgreSQL driver is imported
-only when a connection is opened, so the deterministic in-process core keeps no
-mandatory database dependency.
+Quarantine keeps content but excludes it from retrieval. Redaction removes the
+content from the snapshot and every historical event while retaining a
+tombstone. Purge is a separately enabled administrative action that removes the
+identity and events and writes an immutable log entry. Every change is atomic.
+
+The PostgreSQL driver is imported only when a connection is opened, so the
+deterministic in-process core keeps no mandatory database dependency.
 """
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 from core.memory.store import MemoryRecord
 
 
-EventType = Literal["UPSERT", "QUARANTINE"]
+EventType = Literal["UPSERT", "QUARANTINE", "REDACT"]
 
 # Serialises event writers so an offset can never become visible before a lower
 # offset commits.  That property is required for safe consumer checkpoints;
@@ -53,6 +57,15 @@ class MemoryEvent:
     event_type: EventType
     record: MemoryRecord
     occurred_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryPurge:
+    purge_id: int
+    actor: str
+    reason: str
+    event_count: int
+    purged_at: datetime
 
 
 def _record_payload(record: MemoryRecord) -> dict[str, Any]:
@@ -303,6 +316,127 @@ class PostgresMemoryRepository:
                     requested_event_type="QUARANTINE",
                     skip_unchanged=True,
                 )
+
+    def redact(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        expected_version: int | None = None,
+    ) -> MemoryWrite:
+        """Erase content and append a tombstone while retaining identity and chain.
+
+        Quarantine keeps the original content for audit. Redaction removes it
+        from both the current snapshot and all historical event payloads. The
+        database function is the only event-rewrite path and cannot change event
+        offsets, ids, versions, types, or occurrence times.
+        """
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("redaction reason must not be empty")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._lock_event_writer(cursor)
+                current = self._select_for_update(cursor, memory_id)
+                if current is None:
+                    self._check_expected(memory_id, None, expected_version)
+                    raise KeyError(memory_id)
+                version = int(current[0])
+                self._check_expected(memory_id, version, expected_version)
+                cursor.execute(
+                    """
+                    SELECT new_version, new_event_offset
+                    FROM redact_memory(%s, %s, %s)
+                    """,
+                    (memory_id, version, reason),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise KeyError(memory_id)
+                return MemoryWrite(memory_id, int(row[0]), int(row[1]), "REDACT")
+
+    def delete(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        expected_version: int | None = None,
+    ) -> MemoryWrite:
+        """Default content-deletion protocol: redact and retain a tombstone.
+
+        Physical removal is available only through :meth:`purge`; callers
+        cannot select purge semantics through this method.
+        """
+        return self.redact(memory_id, reason, expected_version=expected_version)
+
+    def purge(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        actor: str,
+        allow_purge: bool = False,
+    ) -> MemoryPurge:
+        """Physically remove one identity and its events after explicit enablement.
+
+        Purge is an administrative erasure action. It is separate from both
+        quarantine and default redaction, and records actor, time, reason, and
+        deleted event count in the immutable purge log.
+        """
+        actor = actor.strip()
+        reason = reason.strip()
+        if not actor:
+            raise ValueError("purge actor must not be empty")
+        if not reason:
+            raise ValueError("purge reason must not be empty")
+        if not allow_purge:
+            raise PermissionError("memory purge requires allow_purge=True")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                self._lock_event_writer(cursor)
+                cursor.execute(
+                    """
+                    SELECT new_purge_id, deleted_event_count, purge_time
+                    FROM purge_memory(%s, %s, %s)
+                    """,
+                    (memory_id, actor, reason),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise KeyError(memory_id)
+                return MemoryPurge(
+                    purge_id=int(row[0]),
+                    actor=actor,
+                    reason=reason,
+                    event_count=int(row[1]),
+                    purged_at=row[2],
+                )
+
+    def read_purge_log(self, *, limit: int = 1_000) -> list[MemoryPurge]:
+        """Read newest immutable purge audit entries without erased identities."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT purge_id, actor, reason, event_count, purged_at
+                    FROM memory_purge_log
+                    ORDER BY purge_id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return [
+                    MemoryPurge(
+                        purge_id=int(row[0]),
+                        actor=row[1],
+                        reason=row[2],
+                        event_count=int(row[3]),
+                        purged_at=row[4],
+                    )
+                    for row in cursor.fetchall()
+                ]
 
     def load_records(self, *, include_quarantined: bool = True) -> list[MemoryRecord]:
         return [

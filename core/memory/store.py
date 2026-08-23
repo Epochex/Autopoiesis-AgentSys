@@ -1,5 +1,12 @@
 """Tiered long/short-term memory store.
 
+Quarantine, redaction, and purge have deliberately different meanings.
+Quarantine removes a record from retrieval while retaining its content for
+inspection. Redaction removes content from the current record and historical
+event payloads while retaining a tombstone. Purge is an explicitly enabled
+administrative action that removes the identity and events after an independent
+immutable log entry is written.
+
 Three learned tiers (episodic / semantic / procedural) plus seeded asset
 profiles overlay into one queryable store.  The always-available route is
 deterministic segmented BM25 plus exact asset and operational-entity identity.
@@ -175,6 +182,10 @@ class MemoryRecord(BaseModel):
     config_version: str | None = None
     metric_window: dict[str, Any] = Field(default_factory=dict)
     baseline_delta: dict[str, float] = Field(default_factory=dict)
+    # Set only on a tombstone. The reason is administrative erasure metadata,
+    # not remembered content, and makes the retained identity chain explainable.
+    redaction_reason: str | None = None
+    redacted_at: datetime | None = None
 
 
 class MemoryRepository(Protocol):
@@ -188,6 +199,31 @@ class MemoryRepository(Protocol):
         *,
         expected_versions: Mapping[str, int] | None = None,
     ) -> list[Any]: ...
+
+    def redact(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        expected_version: int | None = None,
+    ) -> Any: ...
+
+    def delete(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        expected_version: int | None = None,
+    ) -> Any: ...
+
+    def purge(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        actor: str,
+        allow_purge: bool = False,
+    ) -> Any: ...
 
 
 class VectorMemoryProjection(Protocol):
@@ -482,7 +518,7 @@ class TieredMemoryStore:
         self,
         record: MemoryRecord,
         *,
-        event_type: Literal["UPSERT", "QUARANTINE"],
+        event_type: Literal["UPSERT", "QUARANTINE", "REDACT"],
         event_offset: int,
         version: int,
     ) -> bool:
@@ -493,7 +529,7 @@ class TieredMemoryStore:
         newer PostgreSQL snapshot before resuming its consumer checkpoint.
         Retrying an already installed event is therefore a no-op.
         """
-        if event_type not in {"UPSERT", "QUARANTINE"}:
+        if event_type not in {"UPSERT", "QUARANTINE", "REDACT"}:
             raise ValueError(f"unknown memory event type: {event_type}")
         if isinstance(event_offset, bool) or not isinstance(event_offset, int):
             raise TypeError("event_offset must be an integer")
@@ -503,8 +539,8 @@ class TieredMemoryStore:
             raise TypeError("version must be an integer")
         if version <= 0:
             raise ValueError("version must be positive")
-        if event_type == "QUARANTINE" and not record.quarantined:
-            raise ValueError("QUARANTINE event must carry a quarantined snapshot")
+        if event_type in {"QUARANTINE", "REDACT"} and not record.quarantined:
+            raise ValueError(f"{event_type} event must carry a quarantined snapshot")
 
         with self._projection_lock:
             if event_offset <= self._projected_offset:
@@ -518,7 +554,7 @@ class TieredMemoryStore:
                 return False
 
             projected = record.model_copy(deep=True)
-            if event_type == "QUARANTINE":
+            if event_type in {"QUARANTINE", "REDACT"}:
                 projected.quarantined = True
 
             # Embedding is the fallible part, so finish it before replacing the
@@ -632,7 +668,7 @@ class TieredMemoryStore:
         return [r for r in self._records if not r.quarantined]
 
     def quarantine(self, memory_id: str, reason: str) -> None:
-        """Mark a record untrusted; it stays for audit with a ``quarantine:<reason>`` tag."""
+        """Exclude an untrusted record from retrieval while retaining its content."""
         record = self._by_id.get(memory_id)
         if record is not None:
             was_active = not record.quarantined
@@ -643,6 +679,111 @@ class TieredMemoryStore:
                 self._lexical.delete(memory_id)
                 if self._vector is not None:
                     self._vector.delete(memory_id)
+
+    @staticmethod
+    def _redacted_record(record: MemoryRecord, reason: str) -> MemoryRecord:
+        """Build a content-free tombstone while preserving identity and timestamps."""
+        tombstone = record.model_copy(deep=True)
+        tombstone.text = "[REDACTED]"
+        tombstone.tags = []
+        tombstone.asset_ids = []
+        tombstone.evidence_ids = []
+        tombstone.source_trace_ids = []
+        tombstone.evidence_snapshot = []
+        tombstone.links = []
+        tombstone.relations = []
+        tombstone.metric_window = {}
+        tombstone.baseline_delta = {}
+        tombstone.confidence = 0.0
+        tombstone.importance = 0.0
+        tombstone.strength = 0.0
+        tombstone.access_count = 0
+        tombstone.superseded_by = None
+        tombstone.event_type = "REDACT"
+        tombstone.config_version = None
+        tombstone.quarantined = True
+        tombstone.redaction_reason = reason
+        tombstone.redacted_at = datetime.now(timezone.utc)
+        return tombstone
+
+    def _replace_with_tombstone(self, memory_id: str, tombstone: MemoryRecord) -> None:
+        existing = self._by_id[memory_id]
+        self._unindex_assets(memory_id)
+        self._lexical.delete(memory_id)
+        if self._vector is not None:
+            self._vector.delete(memory_id)
+        position = self._records.index(existing)
+        self._records[position] = tombstone
+        self._by_id[memory_id] = tombstone
+
+    def redact(self, memory_id: str, reason: str) -> bool:
+        """Erase content, keep a tombstone, and remove all retrieval projections.
+
+        Redaction is stronger than quarantine because original content must no
+        longer exist, including in historical events. It is weaker than purge
+        because the id, tier, timestamps, and event chain remain.
+        """
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("redaction reason must not be empty")
+        record = self._by_id.get(memory_id)
+        if record is None:
+            return False
+
+        tombstone = self._redacted_record(record, reason)
+        if self._repository is not None:
+            redact = getattr(self._repository, "redact", None)
+            get_record = getattr(self._repository, "get", None)
+            if not callable(redact) or not callable(get_record):
+                raise RuntimeError("durable repository does not support redaction")
+            expected_version = self._repository_versions.get(memory_id)
+            write = redact(memory_id, reason, expected_version=expected_version)
+            loaded = get_record(memory_id)
+            if loaded is None:
+                raise RuntimeError("redaction committed without a tombstone")
+            tombstone, version = loaded
+            self._repository_versions[memory_id] = int(version)
+            self._repository_snapshots[memory_id] = self._snapshot(tombstone)
+            event_offset = getattr(write, "event_offset", None)
+            if event_offset is not None:
+                self._projected_versions[memory_id] = int(version)
+
+        self._replace_with_tombstone(memory_id, tombstone)
+        return True
+
+    def delete(self, memory_id: str, reason: str) -> bool:
+        """Default deletion protocol: redact content and retain a tombstone."""
+        return self.redact(memory_id, reason)
+
+    def purge(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        actor: str,
+        allow_purge: bool = False,
+    ) -> bool:
+        """Explicitly remove an identity after its durable purge log is written."""
+        record = self._by_id.get(memory_id)
+        if record is None:
+            return False
+        if self._repository is None:
+            raise RuntimeError("purge requires a durable repository and immutable log")
+        purge = getattr(self._repository, "purge", None)
+        if not callable(purge):
+            raise RuntimeError("durable repository does not support purge")
+        purge(memory_id, reason, actor=actor, allow_purge=allow_purge)
+
+        self._unindex_assets(memory_id)
+        self._lexical.delete(memory_id)
+        if self._vector is not None:
+            self._vector.delete(memory_id)
+        self._records.remove(record)
+        del self._by_id[memory_id]
+        self._repository_versions.pop(memory_id, None)
+        self._repository_snapshots.pop(memory_id, None)
+        self._projected_versions.pop(memory_id, None)
+        return True
 
     def index_health(self) -> dict[str, Any]:
         """Expose sparse and optional dense projection lifecycle state."""
