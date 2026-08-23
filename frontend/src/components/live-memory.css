@@ -1,0 +1,352 @@
+/* Current production memory. The layout reuses the observatory's paper, ink,
+ * hairline and audit-panel vocabulary. Quarantine is structure and text, not a
+ * warning colour; acid remains reserved for a field that actually changed
+ * between the list snapshot and the subsequent detail snapshot. */
+.traj-page .lm-root {
+  margin: 18px 0 20px;
+  min-width: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+}
+
+.traj-page .lm-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 0 8px;
+  border-bottom: 2px solid var(--ink);
+}
+.traj-page .lm-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2vw, 30px);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+.traj-page .lm-head p {
+  margin: 5px 0 0;
+  color: var(--gray);
+  font-size: 9.5px;
+  line-height: 1.4;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.traj-page .lm-stats {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 7px;
+  white-space: nowrap;
+  color: var(--gray);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.traj-page .lm-stats b {
+  margin-left: 3px;
+  color: var(--ink);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.traj-page .lm-stats i { color: var(--rule); font-style: normal; }
+
+.traj-page .lm-message {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ink);
+  background: var(--paper-2);
+  color: var(--gray);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.traj-page .lm-message.error { border-style: dashed; color: var(--ink); }
+.traj-page .lm-message.nondurable {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  min-height: 0;
+  padding: 24px 18px;
+  border-width: 2px;
+  border-style: solid;
+  background: var(--paper-3);
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+.traj-page .lm-message.nondurable b {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 18px;
+  text-transform: uppercase;
+}
+.traj-page .lm-message.nondurable span { font-size: 11px; line-height: 1.5; }
+
+.traj-page .lm-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(390px, 31vw, 560px);
+  gap: 10px;
+  align-items: start;
+  margin-top: 10px;
+  min-width: 0;
+}
+.traj-page .lm-collections {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.82fr) minmax(390px, 1.18fr);
+  gap: 10px;
+  min-width: 0;
+}
+.traj-page .lm-column {
+  min-width: 0;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+}
+.traj-page .lm-column-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--ink);
+  background: var(--paper-2);
+}
+.traj-page .lm-column-head span {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.traj-page .lm-column-head b { font-size: 19px; font-variant-numeric: tabular-nums; }
+
+.traj-page .lm-group {
+  margin: 8px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+}
+.traj-page .lm-group > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--ink);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.traj-page .lm-group > header span { overflow-wrap: anywhere; }
+.traj-page .lm-group > header b { flex: 0 0 auto; font-size: 14px; font-variant-numeric: tabular-nums; }
+.traj-page .lm-group.tier-semantic { border-top-width: 4px; }
+.traj-page .lm-group.tier-procedural > header {
+  border-left: 5px double var(--ink);
+}
+.traj-page .lm-group.tier-episodic { border-style: dotted solid solid; }
+
+.traj-page .lm-card-list { display: grid; gap: 6px; padding: 6px; }
+.traj-page .lm-card {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+}
+.traj-page .lm-card:hover,
+.traj-page .lm-card:focus-visible { border-width: 2px; outline: none; }
+.traj-page .lm-card.selected { border-width: 3px; }
+.traj-page .lm-card-id {
+  display: block;
+  min-width: 0;
+  padding: 5px 7px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--rule);
+  color: var(--gray);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.traj-page .lm-card-text {
+  display: -webkit-box;
+  min-height: 48px;
+  padding: 7px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 10.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.traj-page .lm-card-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  padding: 5px 7px;
+  border-top: 1px solid var(--rule);
+}
+.traj-page .lm-metric { display: inline-flex; align-items: baseline; gap: 3px; font-size: 8px; color: var(--gray); }
+.traj-page .lm-metric i { color: var(--ink); font-size: 9px; font-style: normal; letter-spacing: -0.1em; }
+.traj-page .lm-metric b { color: var(--ink); font-size: 9px; font-variant-numeric: tabular-nums; }
+.traj-page .lm-group-empty { padding: 12px 8px; color: var(--gray); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.traj-page .lm-quarantine-list { display: grid; padding: 5px; gap: 3px; }
+.traj-page .lm-q-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 5px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+}
+.traj-page .lm-q-row span { font-size: 9.5px; line-height: 1.35; overflow-wrap: anywhere; }
+.traj-page .lm-q-row i { color: var(--gray); font-size: 7.5px; font-style: normal; letter-spacing: 0.06em; text-transform: uppercase; }
+.traj-page .lm-q-row:hover,
+.traj-page .lm-q-row:focus-visible { border-color: var(--ink); outline: none; }
+.traj-page .lm-q-row.selected { border: 2px solid var(--ink); background: var(--paper-2); }
+.traj-page .lm-column.quarantined {
+  background: var(--paper-2);
+}
+.traj-page .lm-column.quarantined .lm-group { border-style: dashed; background: var(--paper); }
+.traj-page .lm-column.quarantined .lm-group > header { border-bottom-style: solid; }
+
+.traj-page .lm-inspector {
+  position: sticky;
+  top: 10px;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-height: calc(100vh - 20px);
+  flex-direction: column;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+}
+.traj-page .lm-inspector-mast {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 11px;
+  border-bottom: 2px solid var(--ink);
+  background: var(--paper-2);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.traj-page .lm-inspector-mode {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 11px;
+  border-bottom: 2px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+.traj-page .lm-inspector-mode span { flex: 0 0 auto; font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; }
+.traj-page .lm-inspector-mode b { min-width: 0; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.traj-page .lm-inspector-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.traj-page .lm-inspector-scroll::-webkit-scrollbar { width: 8px; }
+.traj-page .lm-inspector-scroll::-webkit-scrollbar-track { background: var(--paper-3); }
+.traj-page .lm-inspector-scroll::-webkit-scrollbar-thumb { background: var(--gray); border: 2px solid var(--paper-3); }
+.traj-page .lm-inspector-status { padding: 24px 12px; color: var(--gray); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
+.traj-page .lm-inspector-status.error { color: var(--ink); border-bottom: 1px dashed var(--ink); }
+.traj-page .lm-inspector-empty { display: flex; min-height: 220px; flex-direction: column; justify-content: center; gap: 8px; padding: 18px; background: var(--paper-3); }
+.traj-page .lm-inspector-empty b { font-family: var(--font-display); font-size: 18px; text-transform: uppercase; }
+.traj-page .lm-inspector-empty span { max-width: 44ch; color: var(--gray); font-size: 10px; line-height: 1.5; }
+
+.traj-page .lm-detail-id { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 8px 11px; border-bottom: 1px solid var(--rule); }
+.traj-page .lm-detail-id span,
+.traj-page .lm-detail-id i { flex: 0 0 auto; padding: 2px 6px; background: var(--ink); color: var(--paper); font-size: 8px; font-style: normal; letter-spacing: 0.07em; text-transform: uppercase; }
+.traj-page .lm-detail-id b { min-width: 0; font-size: 10px; overflow-wrap: anywhere; }
+.traj-page .lm-detail-id i { margin-left: auto; background: var(--paper); color: var(--ink); border: 1px solid var(--ink); }
+.traj-page .lm-audit-section { padding: 10px 11px; border-bottom: 1px solid var(--rule); }
+.traj-page .lm-audit-section:last-child { border-bottom: none; }
+.traj-page .lm-audit-section h4 { margin: 0 0 7px; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; }
+.traj-page .lm-full-text { margin: 0; color: var(--ink); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.traj-page .lm-state-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--ink); }
+.traj-page .lm-state-grid > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; padding: 7px; border-right: 1px solid var(--ink); }
+.traj-page .lm-state-grid > div:last-child { border-right: 0; }
+.traj-page .lm-state-grid b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.traj-page .lm-state-grid span { color: var(--gray); font-size: 7.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.traj-page .lm-state-grid .changed,
+.traj-page .lm-time-axis .changed { background: var(--acid); color: var(--acid-ink); }
+.traj-page .lm-time-axis { display: grid; grid-template-columns: 1fr 1fr; margin-top: 8px; border: 1px solid var(--ink); }
+.traj-page .lm-time-axis > span { position: relative; display: flex; min-width: 0; flex-direction: column; gap: 3px; padding: 7px; border-right: 1px solid var(--ink); }
+.traj-page .lm-time-axis > span:last-child { border-right: none; }
+.traj-page .lm-time-axis > span:first-child::after { content: ''; position: absolute; top: 10px; right: -4px; z-index: 1; width: 7px; height: 7px; border: 1px solid var(--ink); background: var(--paper); }
+.traj-page .lm-time-axis i { color: var(--gray); font-size: 7.5px; font-style: normal; letter-spacing: 0.09em; }
+.traj-page .lm-time-axis b { min-width: 0; font-size: 8.5px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.traj-page .lm-audit-row { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px dotted var(--rule); }
+.traj-page .lm-audit-key { color: var(--gray); font-size: 7.5px; letter-spacing: 0.07em; text-transform: uppercase; }
+.traj-page .lm-audit-value { min-width: 0; color: var(--ink); font-size: 9px; line-height: 1.45; overflow-wrap: anywhere; }
+.traj-page .lm-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.traj-page .lm-chips > i { padding: 1px 4px; border: 1px solid var(--rule); color: var(--ink); font-size: 8px; font-style: normal; overflow-wrap: anywhere; }
+.traj-page .lm-none { color: var(--gray); }
+.traj-page .lm-trace-count { display: block; margin-bottom: 4px; font-weight: 600; }
+.traj-page .lm-relations { display: flex; flex-direction: column; gap: 4px; }
+.traj-page .lm-relations > i { font-size: 8.5px; font-style: normal; overflow-wrap: anywhere; }
+.traj-page .lm-relations b { font-size: 8px; letter-spacing: 0.05em; text-transform: uppercase; }
+.traj-page .lm-quarantine-reason { font-weight: 600; overflow-wrap: anywhere; }
+.traj-page .lm-audit-note { margin: 0; color: var(--gray); font-size: 9px; line-height: 1.5; }
+.traj-page .lm-change-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.traj-page .lm-change-list span { padding: 2px 5px; border: 1px solid var(--ink); background: var(--acid); color: var(--acid-ink); font-size: 8px; }
+
+.traj-page .lm-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 8px 2px 0; border-top: 1px solid var(--ink); color: var(--gray); font-size: 8px; letter-spacing: 0.05em; text-transform: uppercase; }
+.traj-page .lm-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.traj-page .lm-legend i { display: inline-block; width: 12px; height: 9px; border: 1px solid var(--ink); font-style: normal; }
+.traj-page .lm-legend .sample-card { background: var(--paper-2); }
+.traj-page .lm-legend .sample-acid { background: var(--acid); }
+.traj-page .lm-legend .sample-quarantine { border-style: dashed; background: var(--paper-2); }
+
+@media (max-width: 1500px) {
+  .traj-page .lm-body { grid-template-columns: minmax(0, 1fr); }
+  .traj-page .lm-inspector { position: relative; top: auto; max-height: 760px; }
+}
+@media (max-width: 900px) {
+  .traj-page .lm-head { align-items: flex-start; flex-direction: column; }
+  .traj-page .lm-stats { flex-wrap: wrap; white-space: normal; }
+  .traj-page .lm-collections { grid-template-columns: minmax(0, 1fr); }
+  .traj-page .lm-q-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+@media (max-width: 560px) {
+  .traj-page .lm-stats { gap: 4px; }
+  .traj-page .lm-stats b { font-size: 16px; }
+  .traj-page .lm-state-grid,
+  .traj-page .lm-time-axis { grid-template-columns: minmax(0, 1fr); }
+  .traj-page .lm-state-grid > div,
+  .traj-page .lm-time-axis > span { border-right: 0; border-bottom: 1px solid var(--ink); }
+  .traj-page .lm-state-grid > div:last-child,
+  .traj-page .lm-time-axis > span:last-child { border-bottom: 0; }
+  .traj-page .lm-time-axis > span:first-child::after { display: none; }
+  .traj-page .lm-audit-row { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .traj-page .lm-card,
+  .traj-page .lm-q-row,
+  .traj-page .lm-inspector,
+  .traj-page .lm-audit-section { animation: none; transition: none; }
+}

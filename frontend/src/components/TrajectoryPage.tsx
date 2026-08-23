@@ -3,6 +3,7 @@ import type { EvoData, RcaCase, TheaterEvent } from '../types'
 import type { Lang } from '../i18n'
 import { rc } from '../i18n'
 import { LiveSituation } from './LiveSituation'
+import { LiveMemory } from './LiveMemory'
 import { MemoryObservatory } from './MemoryObservatory'
 import { TraceReplay } from './TraceReplay'
 import './trajectory.css'
@@ -89,6 +90,8 @@ export function TrajectoryPage({
           ? <MemoryObservatory obs={evo.observatory} zh={zh} caseRoots={Object.fromEntries(cases.map((x) => [x.id, x.diagnosis.rootCauseKey]))} />
           : <div className="fx-first-wait">{zh ? '正在跑自我进化流…' : 'RUNNING SELF-EVOLUTION STREAM…'}</div>}
       </section>
+
+      <LiveMemory lang={lang} />
 
       {/* the run itself, replayed node by node from the observability ledger */}
       <TraceReplay zh={zh} />

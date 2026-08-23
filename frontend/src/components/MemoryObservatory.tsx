@@ -1,8 +1,8 @@
 /* 记忆观测舱 / MEMORY OBSERVATORY — the container.
  *
  * Owns cursor + selection + playback and hands already-derived slices to the
- * three presentational panels. Every value shown downstream is serialized from
- * the real kernel run (core/evolve/observatory.py); nothing is synthesized here.
+ * three presentational panels. The records are serialized from the offline
+ * benchmark replay (core/evolve/observatory.py); nothing is synthesized here.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { prefersReducedMotion } from '../reduced-motion'
@@ -22,6 +22,12 @@ const TICK_MS = 60
  * changed mid-demo would be a bigger surprise than not reacting to it — which
  * is why this reads the plain function and not the subscribing hook. */
 const reducedMotion = prefersReducedMotion
+
+type MemorySource = {
+  dataMode?: string
+  onlineMemory?: boolean
+  benchmark?: { caseCount?: number; passes?: number }
+}
 
 export function MemoryObservatory({
   obs,
@@ -45,6 +51,19 @@ export function MemoryObservatory({
    * that can never start. */
   const [onScreen, setOnScreen] = useState(() => typeof IntersectionObserver !== 'function')
   const [pinned, setPinned] = useState<string | null>(null)
+  const [source, setSource] = useState<MemorySource | null>(null)
+
+  /* The parent receives only `observatory`, while provenance lives at the
+   * evolution response's top level. Read those fields here so this screen does
+   * not infer its source from record ids or from benchmark-looking content. */
+  useEffect(() => {
+    let alive = true
+    fetch('/api/rca/evolution?passes=4', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: MemorySource) => { if (alive) setSource(data) })
+      .catch(() => { if (alive) setSource(null) })
+    return () => { alive = false }
+  }, [])
 
   /* The replay is the argument this screen makes, and it only makes it if the
    * viewer watches memory fill from empty. Mounting is not watching: the
@@ -178,11 +197,43 @@ export function MemoryObservatory({
     ? `记忆从空开始，${obs.records.length} 条记录写入、加固并抽象为洞察，共 ${obs.events.length} 次生命周期事件`
     : `From empty memory — ${obs.records.length} records written, reinforced and abstracted into insight across ${obs.events.length} lifecycle events`
 
+  const offlineReplay = source?.dataMode === 'offline_benchmark_replay'
+  const scope = [
+    typeof source?.benchmark?.caseCount === 'number'
+      ? `${source.benchmark.caseCount} ${zh ? '案例' : 'cases'}`
+      : null,
+    typeof source?.benchmark?.passes === 'number'
+      ? `${source.benchmark.passes} ${zh ? '轮' : 'passes'}`
+      : null,
+  ].filter((part): part is string => part !== null).join(' × ')
+  const modeText = offlineReplay
+    ? (zh ? '离线基准重放' : 'Offline benchmark replay')
+    : source?.dataMode
+      ? (zh ? `记忆数据 · ${source.dataMode}` : `Memory data · ${source.dataMode}`)
+      : (zh ? '记忆数据 · 数据模式未标明' : 'Memory data · mode not specified')
+  const sourceText = [
+    modeText,
+    scope ? `${zh ? '留出集 ' : 'Held-out set '}${scope}` : null,
+    offlineReplay ? (zh ? '记忆从空开始' : 'Memory starts empty') : null,
+  ].filter((part): part is string => part !== null).join(' · ')
+  const onlineText = source?.onlineMemory === false
+    ? (zh ? '这不是线上记忆' : 'This is not online memory')
+    : source?.onlineMemory === true
+      ? (zh ? '当前数据是线上记忆' : 'Current data is online memory')
+      : (zh ? '线上状态未标明' : 'Online status not specified')
+
   return (
     <section className="mo" ref={rootRef} aria-label={zh ? '记忆观测舱' : 'Memory observatory'}>
       <header className="mo-head">
         <span className="mo-head-t">{zh ? '记忆观测舱' : 'MEMORY OBSERVATORY'}</span>
         <p className="mo-head-s">{thesis}</p>
+        <div className="mo-source" aria-label={zh ? '记忆数据源' : 'Memory data source'} aria-live="polite">
+          <span className="mo-source-main">{sourceText}</span>
+          <span className="mo-source-online">
+            {onlineText} <span aria-hidden="true">→</span>{' '}
+            <a href="#live-memory">{zh ? '看线上记忆' : 'View live memory'}</a>
+          </span>
+        </div>
       </header>
       <div className="mo-body">
         <div className="mo-space">

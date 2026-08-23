@@ -65,6 +65,39 @@
   color: var(--ink-soft);
 }
 
+/* Source provenance belongs directly under the title because it qualifies the
+   whole instrument. A hairline and type carry that meaning without introducing
+   a badge colour or competing with --acid's single "changed now" meaning. */
+.mo-source {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.35;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+}
+.mo-source-main { min-width: 0; }
+.mo-source-online {
+  margin-left: auto;
+  padding-left: 10px;
+  border-left: 1px solid var(--rule);
+  color: var(--gray);
+}
+.mo-source a {
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+.mo-source a:hover,
+.mo-source a:focus-visible { border-bottom-width: 2px; }
+
 /* The three-tier space takes the room; the inspector holds a fixed column. */
 .mo-body {
   display: grid;
@@ -116,5 +149,14 @@
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto;
     contain: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .mo-source-online {
+    flex-basis: 100%;
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
   }
 }

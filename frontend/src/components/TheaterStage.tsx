@@ -28,6 +28,12 @@ import { ExecutionLog } from './ExecutionLog'
 import { RemediationProgress } from './RemediationProgress'
 
 type Pt = { x: number; y: number }
+type CitationCycle = {
+  at: string
+  outcome: string
+  samples: number
+  memory?: { memory_id: string; tier: string; text: string }
+}
 const bez = (a: Pt, b: Pt) => `M${a.x} ${a.y} C ${(a.x + b.x) / 2} ${a.y}, ${(a.x + b.x) / 2} ${b.y}, ${b.x} ${b.y}`
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -179,6 +185,7 @@ export function TheaterStage({
   const zh = lang === 'zh'
   const [hover, setHover] = useState<{ ip: string; p: Pt; role: string; vendor: string; threat: string; deny: number } | null>(null)
   const [sel, setSel] = useState<string | null>(null)
+  const [openCitation, setOpenCitation] = useState<string | null>(null)
 
   /* map the event onto a real topology anchor — or admit it.
    *
@@ -380,13 +387,15 @@ export function TheaterStage({
         // round falls through to no extent line at all rather than to a figure
         // measured for the repair it was denied.
         const extent = liveRadius?.summary ?? (escalated ? null : theater.blastSummary)
-        const cycles = escalated?.prior_cycles ?? []
+        const cycles = (escalated?.prior_cycles ?? []) as CitationCycle[]
         const windowHours = escalated?.window_hours
         const times = escalated?.recurrences ?? cycles.length
+        const citationKey = (cycle: CitationCycle, index: number) => `${escalated?.at ?? ''}:${cycle.at}:${index}`
+        const hasOpenCitation = cycles.some((cycle, index) => citationKey(cycle, index) === openCitation)
         // A foreignObject clips whatever does not fit, and what would be clipped
         // off the bottom here is the citation chain — the part that answers the
         // question. So the box grows by a line per cycle.
-        const cardH = escalated ? 154 + 15 * cycles.length : 176
+        const cardH = escalated ? 154 + 22 * cycles.length + (hasOpenCitation ? 126 : 0) : 176
         // The ordinary card keeps the clamp it has always had; the taller one is
         // held clear of the bottom of the plate instead.
         const ty = Math.min(
@@ -394,7 +403,7 @@ export function TheaterStage({
           escalated ? 992 - cardH : 880,
         )
         return (
-          <g className={`th-incident${escalated ? ' is-escalated' : ''}`} pointerEvents="none">
+          <g className={`th-incident${escalated ? ' is-escalated' : ''}`}>
             {onHostBox ? (
               <rect x={anchorP.x - 68} y={anchorP.y - 21} width={136} height={42} className="th-inc-halo-box" />
             ) : (
@@ -447,13 +456,53 @@ export function TheaterStage({
                         <div className="th-inc-cite-k">
                           {zh ? '凭什么不修了' : 'WHY IT REFUSED'}
                         </div>
-                        {cycles.map((cycle, i) => (
-                          <div key={`${cycle.at}-${i}`} className="th-inc-cite-i">
-                            {zh
-                              ? `修好于 ${cycle.at.slice(11, 19)} → 又复发`
-                              : `fixed ${cycle.at.slice(11, 19)} → came back`}
-                          </div>
-                        ))}
+                        {cycles.map((cycle, i) => {
+                          const key = citationKey(cycle, i)
+                          const expanded = openCitation === key
+                          return (
+                            <div key={key} className={`th-inc-cite-entry${expanded ? ' is-open' : ''}`}>
+                              <button
+                                type="button"
+                                className="th-inc-cite-i"
+                                aria-expanded={expanded}
+                                onClick={() => setOpenCitation(expanded ? null : key)}
+                              >
+                                <span>
+                                  {zh
+                                    ? `修好于 ${cycle.at.slice(11, 19)} → 又复发`
+                                    : `fixed ${cycle.at.slice(11, 19)} → came back`}
+                                </span>
+                                <span className="th-inc-cite-open">
+                                  {expanded ? (zh ? '收起' : 'CLOSE') : (zh ? '查看记忆' : 'MEMORY')}
+                                </span>
+                              </button>
+                              {expanded ? (
+                                <div className="th-inc-memory">
+                                  {cycle.memory ? (
+                                    <>
+                                      <div className="th-inc-memory-meta">
+                                        <span>{zh ? '记忆' : 'MEMORY'}</span>
+                                        <code>{cycle.memory.memory_id}</code>
+                                      </div>
+                                      <div className="th-inc-memory-meta">
+                                        <span>{zh ? '层' : 'TIER'}</span>
+                                        <code>{cycle.memory.tier}</code>
+                                      </div>
+                                      <div className="th-inc-memory-text">
+                                        <span>{zh ? '全文摘要' : 'FULL SUMMARY'}</span>
+                                        <p>{cycle.memory.text}</p>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div className="th-inc-memory-empty">
+                                      {zh ? '该次处置尚未关联记忆记录' : 'NO MEMORY RECORD LINKED TO THIS ROUND'}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          )
+                        })}
                       </div>
                     ) : null}
                   </>

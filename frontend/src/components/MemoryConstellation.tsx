@@ -2,15 +2,16 @@ import './memory-constellation.css'
 import { useEffect, useMemo, useState } from 'react'
 import type { Lang } from '../i18n'
 
-/* ── 基准态势 · 记忆星座图 — the REAL evolved memory graph, fully expanded ────────
+/* ── 基准态势 · 记忆星座图 — offline benchmark replay, fully expanded ────────────
  * GET /api/rca/memory-graph → nodes (episodic / semantic / procedural records +
- * insight hubs) + real links/relations. Laid out as tier clusters with edges,
- * like the live device-relation constellation. Hover a node → its neighbourhood
- * lights + the real record text shows. Every node/edge is a real memory record. */
+ * insight hubs) + links/relations serialized from the fixed held-out replay.
+ * Laid out as tier clusters with edges. Hover a node → its neighbourhood lights
+ * and the replay record text shows. This graph is separate from online memory. */
 
 type GNode = { id: string; tier: string; label: string; text: string; strength: number; importance: number; tags: string[]; assets: string[] }
 type GEdge = { src: string; dst: string; type: string }
 type Graph = { ok: boolean; nodes: GNode[]; edges: GEdge[]; stats: { records: number; edges: number; insights: number; by_tier: Record<string, number> } }
+type MemorySource = { dataMode?: string; onlineMemory?: boolean; benchmark?: { caseCount?: number; passes?: number } }
 type St = { s: 'load' } | { s: 'err' } | { s: 'ok'; g: Graph }
 
 const TIER: Record<string, { zh: string; en: string; cls: string }> = {
@@ -31,6 +32,7 @@ export function MemoryConstellation({ lang }: { lang: Lang }) {
   const zh = lang === 'zh'
   const [st, setSt] = useState<St>({ s: 'load' })
   const [sel, setSel] = useState<string | null>(null)
+  const [source, setSource] = useState<MemorySource | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -39,6 +41,18 @@ export function MemoryConstellation({ lang }: { lang: Lang }) {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error())))
       .then((g: Graph) => { if (alive) setSt(g && g.ok ? { s: 'ok', g } : { s: 'err' }) })
       .catch(() => { if (alive) setSt({ s: 'err' }) })
+    return () => { alive = false }
+  }, [])
+
+  /* memory-graph currently has no provenance fields. Read the authoritative
+   * labels from evolution; failure leaves a visible neutral description rather
+   * than guessing from the node names. */
+  useEffect(() => {
+    let alive = true
+    fetch('/api/rca/evolution?passes=4', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: MemorySource) => { if (alive) setSource(data) })
+      .catch(() => { if (alive) setSource(null) })
     return () => { alive = false }
   }, [])
 
@@ -59,8 +73,42 @@ export function MemoryConstellation({ lang }: { lang: Lang }) {
     return m
   }, [st])
 
-  if (st.s === 'load') return <div className="mc"><div className="mc-state">{zh ? '运行真实自演化流,构建记忆图…' : 'BUILDING MEMORY GRAPH…'}</div></div>
-  if (st.s === 'err') return <div className="mc"><div className="mc-state">{zh ? '记忆图端点不可达' : 'MEMORY-GRAPH ENDPOINT UNREACHABLE'}</div></div>
+  const offlineReplay = source?.dataMode === 'offline_benchmark_replay'
+  const scope = [
+    typeof source?.benchmark?.caseCount === 'number'
+      ? `${source.benchmark.caseCount} ${zh ? '案例' : 'cases'}`
+      : null,
+    typeof source?.benchmark?.passes === 'number'
+      ? `${source.benchmark.passes} ${zh ? '轮' : 'passes'}`
+      : null,
+  ].filter((part): part is string => part !== null).join(' × ')
+  const modeText = offlineReplay
+    ? (zh ? '离线基准重放' : 'Offline benchmark replay')
+    : source?.dataMode
+      ? (zh ? `记忆数据 · ${source.dataMode}` : `Memory data · ${source.dataMode}`)
+      : (zh ? '记忆数据 · 数据模式未标明' : 'Memory data · mode not specified')
+  const sourceText = [
+    modeText,
+    scope ? `${zh ? '留出集 ' : 'Held-out set '}${scope}` : null,
+    offlineReplay ? (zh ? '记忆从空开始' : 'Memory starts empty') : null,
+  ].filter((part): part is string => part !== null).join(' · ')
+  const onlineText = source?.onlineMemory === false
+    ? (zh ? '这不是线上记忆' : 'This is not online memory')
+    : source?.onlineMemory === true
+      ? (zh ? '当前数据是线上记忆' : 'Current data is online memory')
+      : (zh ? '线上状态未标明' : 'Online status not specified')
+  const sourceBanner = (
+    <div className="mc-source" aria-label={zh ? '记忆数据源' : 'Memory data source'} aria-live="polite">
+      <span className="mc-source-main">{sourceText}</span>
+      <span className="mc-source-online">
+        {onlineText} <span aria-hidden="true">→</span>{' '}
+        <a href="#live-memory">{zh ? '看线上记忆' : 'View live memory'}</a>
+      </span>
+    </div>
+  )
+
+  if (st.s === 'load') return <div className="mc">{sourceBanner}<div className="mc-state">{zh ? '构建记忆图…' : 'BUILDING MEMORY GRAPH…'}</div></div>
+  if (st.s === 'err') return <div className="mc">{sourceBanner}<div className="mc-state">{zh ? '记忆图端点不可达' : 'MEMORY-GRAPH ENDPOINT UNREACHABLE'}</div></div>
   const g = st.g
   const nodeById = new Map(g.nodes.map((n) => [n.id, n]))
   const neigh = new Set<string>()
@@ -71,6 +119,7 @@ export function MemoryConstellation({ lang }: { lang: Lang }) {
 
   return (
     <div className="mc">
+      {sourceBanner}
       <div className="mc-legend">
         {Object.entries(TIER).map(([k, v]) => g.stats.by_tier?.[k] || k === 'insight' ? (
           <span key={k} className={`mc-leg ${v.cls}`}><i /> {zh ? v.zh : v.en}{g.stats.by_tier?.[k] ? ` ×${g.stats.by_tier[k]}` : ''}</span>
@@ -114,7 +163,7 @@ export function MemoryConstellation({ lang }: { lang: Lang }) {
           </g>
         </svg>
 
-        {/* detail readout — real record content on hover */}
+        {/* detail readout — replay record content on hover */}
         <aside className={`mc-detail${selNode ? ' on' : ''}`}>
           {selNode ? (
             <>
@@ -125,7 +174,7 @@ export function MemoryConstellation({ lang }: { lang: Lang }) {
               {selNode.assets.length ? <div className="mc-detail-assets">{zh ? '资产' : 'assets'}: {selNode.assets.join(' · ')}</div> : null}
               <div className="mc-detail-str">{zh ? '强度' : 'strength'} {selNode.strength.toFixed(2)} · {zh ? '重要度' : 'importance'} {selNode.importance.toFixed(2)}</div>
             </>
-          ) : <div className="mc-detail-hint">{zh ? '悬停任一记忆节点,查看真实内容与它的关系边' : 'Hover a memory node for its real content + links'}</div>}
+          ) : <div className="mc-detail-hint">{zh ? '悬停任一记忆节点,查看记录内容与它的关系边' : 'Hover a memory node for its record content + links'}</div>}
         </aside>
       </div>
     </div>

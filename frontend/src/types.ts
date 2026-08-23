@@ -403,6 +403,68 @@ export interface MemRecord {
   evidence_snapshot: { evidence_id?: string; source?: string; summary?: string }[]
 }
 
+/* Current durable production memory from GET /api/rca/memory. The collection
+ * response deliberately carries a provenance count; full ids are available
+ * only from the per-record audit endpoint below. */
+export interface LiveMemoryListRecord {
+  memory_id: string
+  tier: MemTier
+  text: string
+  tags: string[]
+  asset_ids: string[]
+  confidence: number
+  importance: number
+  strength: number
+  access_count: number
+  first_observed_at: string | null
+  last_observed_at: string | null
+  valid_from: string | null
+  valid_to: string | null
+  quarantined: boolean
+  source_trace_ids: number
+}
+
+export interface LiveMemoryCounts extends Record<MemTier, number> {
+  quarantined: number
+}
+
+export interface LiveMemoryListResponse {
+  ok: boolean
+  durable: boolean
+  counts: LiveMemoryCounts
+  budget: { configured: number | null; active: number }
+  retention: {
+    decay_wired: boolean
+    eviction_wired: boolean
+    last_decay_at: string | null
+  }
+  records: LiveMemoryListRecord[]
+}
+
+export interface LiveMemoryRelation {
+  target_id: string
+  relation_type: string
+  confidence: number
+  evidence_ids: string[]
+}
+
+export interface LiveMemoryDetailRecord
+  extends Omit<LiveMemoryListRecord, 'source_trace_ids'> {
+  source_trace_ids: string[]
+  evidence_ids: string[]
+  links: string[]
+  relations: LiveMemoryRelation[]
+  evidence_snapshot: { count: number; evidence_ids: string[] }
+  quarantine_reason: string | null
+  superseded_by: string | null
+}
+
+export interface LiveMemoryDetailResponse {
+  ok: boolean
+  durable: boolean
+  record: LiveMemoryDetailRecord
+}
+
 /** Scalar+list snapshot taken either side of an in-place mutation. */
 export interface MemSnapshot {
   confidence: number

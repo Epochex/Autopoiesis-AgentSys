@@ -253,6 +253,8 @@
   color: var(--ink-soft, #2a2a27); }
 .th-inc-row > span { flex: none; min-width: 40px; font-size: 8px; font-weight: 700;
   letter-spacing: .1em; color: var(--gray, #605f5a); padding-top: 2px; }
+.th-incident > :not(foreignObject) { pointer-events: none; }
+.th-incident > foreignObject { pointer-events: auto; }
 
 /* ── the citation chain on an escalated card ──────────────────────────────
    Which recorded rounds produced the refusal. Set apart by a rule and its own
@@ -262,8 +264,33 @@
   border-bottom: 1px solid rgba(122, 21, 38, .3); }
 .th-inc-cite-k { font-size: 8px; font-weight: 700; letter-spacing: .1em; color: #7a1526;
   margin-bottom: 1px; }
-.th-inc-cite-i { font-size: 9.5px; line-height: 1.4; color: var(--ink, #0d0d0d);
+.th-inc-cite-entry { border-left: 1px solid transparent; }
+.th-inc-cite-entry.is-open { border-left-color: var(--ink, #0d0d0d); }
+.th-inc-cite-i { appearance: none; width: 100%; display: flex; align-items: baseline;
+  justify-content: space-between; gap: 8px; margin: 0; padding: 2px 0;
+  border: 0; background: transparent; color: var(--ink, #0d0d0d); cursor: pointer;
+  font: 500 9.5px/1.4 'IBM Plex Mono', monospace; text-align: left;
   font-variant-numeric: tabular-nums; }
+.th-inc-cite-i:hover { text-decoration: underline; text-underline-offset: 2px; }
+.th-inc-cite-i:focus-visible { outline: 1px solid var(--ink, #0d0d0d); outline-offset: 1px; }
+.th-inc-cite-open { flex: none; font-size: 7.5px; font-weight: 700; letter-spacing: .08em;
+  color: var(--gray, #605f5a); }
+.th-inc-memory { margin: 2px 0 3px; padding: 5px 6px; border-top: 1px solid var(--rule, #cfcfca);
+  background: var(--paper, #e7e7e3); color: var(--ink, #0d0d0d); }
+.th-inc-memory-meta { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 5px;
+  margin-bottom: 3px; font-size: 8px; line-height: 1.35; }
+.th-inc-memory-meta > span, .th-inc-memory-text > span { font-size: 7.5px; font-weight: 700;
+  letter-spacing: .1em; color: var(--gray, #605f5a); }
+.th-inc-memory-meta > span::before, .th-inc-memory-text > span::before { content: '';
+  display: inline-block; width: 5px; height: 5px; margin-right: 4px;
+  border: 1px solid currentColor; vertical-align: 0; }
+.th-inc-memory-meta code { overflow: hidden; color: var(--ink, #0d0d0d); font: inherit;
+  text-overflow: ellipsis; white-space: nowrap; }
+.th-inc-memory-text > span { display: block; margin-bottom: 2px; }
+.th-inc-memory-text p { max-height: 68px; overflow: auto; margin: 0; padding-right: 3px;
+  font-size: 8.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.th-inc-memory-empty { padding: 5px 0; font-size: 8px; line-height: 1.4;
+  letter-spacing: .04em; color: var(--gray, #605f5a); }
 
 /* Escalation is a harder state than an incident in flight, and it has to look
    like one before the text is read. */

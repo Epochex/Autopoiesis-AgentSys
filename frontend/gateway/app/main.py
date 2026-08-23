@@ -681,6 +681,202 @@ def _memory_detail_record(record: Any) -> dict[str, Any]:
     }
 
 
+_MEMORY_INFLUENCE_KINDS = frozenset({
+    "memory_attributed",
+    "memory_resolved",
+    "memory_shortcut",
+})
+
+
+def _trace_memory_ids(event: Any) -> set[str]:
+    """Read only explicit attribution fields from a decision trace event."""
+    payload = event.payload
+    memory_ids = {
+        str(memory_id)
+        for memory_id in payload.get("memory_ids", [])
+        if memory_id
+    }
+    memory_id = payload.get("memory_id")
+    if memory_id:
+        memory_ids.add(str(memory_id))
+    for item in payload.get("items", []):
+        if isinstance(item, dict) and item.get("memory_id"):
+            memory_ids.add(str(item["memory_id"]))
+    return memory_ids
+
+
+def _memory_trace_events() -> list[Any]:
+    """Replay the decision ledger without treating retrieval events as influence."""
+    service = _evolving_service
+    orchestrator = getattr(service, "orchestrator", None) if service is not None else None
+    ledger = getattr(orchestrator, "ledger", None)
+    replay = getattr(ledger, "replay", None)
+    if callable(replay):
+        return list(replay())
+
+    if not settings.trace_ledger_path.exists():
+        return []
+    from core.trace.ledger import JSONLTraceLedger
+
+    return JSONLTraceLedger(settings.trace_ledger_path).replay()
+
+
+def _memory_influence_timeline() -> list[dict[str, Any]]:
+    from core.remediate.sentinel import timeline
+
+    return timeline(None)
+
+
+def _memory_resolved_cycles(record: Any) -> set[tuple[str, str, str, str]]:
+    """Identify the exact sentinel resolution rows retained by one memory."""
+    cycles: set[tuple[str, str, str, str]] = set()
+    for evidence in record.evidence_snapshot:
+        if not isinstance(evidence, dict):
+            continue
+        row = evidence.get("data")
+        if not isinstance(row, dict) or row.get("kind") != "resolved":
+            continue
+        at = str(row.get("at") or "")
+        subject = str(row.get("subject") or "")
+        if at and subject:
+            cycles.add((
+                at,
+                str(row.get("detector") or ""),
+                subject,
+                str(row.get("action") or ""),
+            ))
+    return cycles
+
+
+def _prior_cycle_memory_index(records: list[Any]) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    """Map a cited repair round back to the episodic record that retained it."""
+    index: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    # A semantic or procedural record may share the source run, while the
+    # episodic record alone retains the incident body. Prefer it deterministically.
+    ordered = sorted(
+        records,
+        key=lambda record: (record.tier != "episodic", record.quarantined, record.memory_id),
+    )
+    for record in ordered:
+        for cycle in _memory_resolved_cycles(record):
+            index.setdefault(cycle, {
+                "memory_id": record.memory_id,
+                "tier": record.tier,
+                "text": record.text,
+            })
+    return index
+
+
+def _attach_prior_cycle_memories(
+    rows: list[dict[str, Any]], records: list[Any]
+) -> list[dict[str, Any]]:
+    """Add real record content to escalation citations when the link exists."""
+    index = _prior_cycle_memory_index(records)
+    enriched: list[dict[str, Any]] = []
+    for source in rows:
+        row = dict(source)
+        if row.get("kind") != "escalated":
+            enriched.append(row)
+            continue
+        cycles = []
+        for source_cycle in row.get("prior_cycles", []):
+            if not isinstance(source_cycle, dict):
+                continue
+            cycle = dict(source_cycle)
+            key = (
+                str(cycle.get("at") or ""),
+                str(row.get("detector") or ""),
+                str(row.get("subject") or ""),
+                str(row.get("action") or ""),
+            )
+            memory = index.get(key)
+            if memory is not None:
+                cycle["memory"] = dict(memory)
+            cycles.append(cycle)
+        row["prior_cycles"] = cycles
+        enriched.append(row)
+    return enriched
+
+
+def _trace_influence(event: Any, record: Any) -> dict[str, Any]:
+    payload = event.payload
+    source_trace_ids = list(record.source_trace_ids)
+    evidence: dict[str, Any] = {
+        "source_trace_id": event.run_id,
+        "record_source_trace_ids": source_trace_ids,
+    }
+    subject = str(payload.get("subject") or event.case_id)
+
+    if event.kind == "memory_shortcut":
+        skills = list(payload.get("skills") or [])
+        candidate_count = payload.get("candidate_probe_count")
+        saved_count = payload.get("saved_probe_count")
+        if (
+            isinstance(candidate_count, int)
+            and not isinstance(candidate_count, bool)
+            and isinstance(saved_count, int)
+            and not isinstance(saved_count, bool)
+            and saved_count > 0
+        ):
+            narrowed_to = max(0, candidate_count - saved_count)
+            what_changed = f"探针集从 {candidate_count} 条收窄到 {narrowed_to} 条"
+        else:
+            what_changed = f"探针集收窄到 {len(skills)} 条"
+        for key in (
+            "skills", "preferred_probes", "candidate_probe_count",
+            "saved_probe_count", "skipped_probes", "effect",
+            "confirmed_root_key", "procedural_confidence",
+        ):
+            if key in payload:
+                evidence[key] = payload[key]
+        return {
+            "kind": "probe_shortcut",
+            "at": event.timestamp.isoformat(),
+            "subject": subject,
+            "what_changed": what_changed,
+            "evidence": evidence,
+        }
+
+    if event.kind == "memory_resolved":
+        fresh_probe_count = int(payload.get("fresh_probe_count") or 0)
+        evidence.update({
+            key: payload[key]
+            for key in (
+                "remembered_root_cause_key", "fresh_probe_count",
+                "freshness_verified", "current_evidence_ids",
+                "historical_evidence_ids", "recalled_confidence",
+            )
+            if key in payload
+        })
+        return {
+            "kind": "diagnosis_resolution",
+            "at": event.timestamp.isoformat(),
+            "subject": subject,
+            "what_changed": f"历史假设经 {fresh_probe_count} 条新探针确认",
+            "evidence": evidence,
+        }
+
+    items = [
+        dict(item) for item in payload.get("items", [])
+        if isinstance(item, dict) and item.get("memory_id") == record.memory_id
+    ]
+    roles = {str(item.get("role") or "") for item in items}
+    evidence["items"] = items
+    if "episodic_hypothesis" in roles:
+        what_changed = "诊断采用了历史假设"
+    elif "procedural_shortcut" in roles:
+        what_changed = "探针选择采用了既有流程"
+    else:
+        what_changed = "本次决定采用了该记忆"
+    return {
+        "kind": "diagnosis_attribution",
+        "at": event.timestamp.isoformat(),
+        "subject": subject,
+        "what_changed": what_changed,
+        "evidence": evidence,
+    }
+
+
 @app.get("/api/rca/memory")
 async def rca_memory(
     tier: Literal["episodic", "semantic", "procedural", "asset_profile"] | None = None,
@@ -728,6 +924,70 @@ async def rca_memory_detail(memory_id: str) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail="memory record not found")
     return {"ok": True, "durable": durable, "record": _memory_detail_record(record)}
+
+
+@app.get("/api/rca/memory/{memory_id}/influence")
+async def rca_memory_influence(memory_id: str) -> dict[str, Any]:
+    """Decisions that explicitly recorded this memory as changing their path."""
+    _durable, records, _configured_budget, _last_decay_at = await asyncio.to_thread(
+        _memory_records
+    )
+    record = next((item for item in records if item.memory_id == memory_id), None)
+    if record is None:
+        raise HTTPException(status_code=404, detail="memory record not found")
+
+    trace_events, timeline_rows = await asyncio.gather(
+        asyncio.to_thread(_memory_trace_events),
+        asyncio.to_thread(_memory_influence_timeline),
+    )
+    influences = [
+        _trace_influence(event, record)
+        for event in trace_events
+        if event.kind in _MEMORY_INFLUENCE_KINDS
+        and memory_id in _trace_memory_ids(event)
+    ]
+
+    resolved_cycles = _memory_resolved_cycles(record)
+    for row in timeline_rows:
+        if row.get("kind") != "escalated":
+            continue
+        matching_cycles = [
+            dict(cycle)
+            for cycle in row.get("prior_cycles", [])
+            if isinstance(cycle, dict)
+            and (
+                str(cycle.get("at") or ""),
+                str(row.get("detector") or ""),
+                str(row.get("subject") or ""),
+                str(row.get("action") or ""),
+            ) in resolved_cycles
+        ]
+        if not matching_cycles:
+            continue
+        action = str(row.get("action") or "该动作")
+        influences.append({
+            "kind": "escalation",
+            "at": str(row.get("at") or ""),
+            "subject": str(row.get("subject") or ""),
+            "what_changed": f"拒绝执行 {action}，转人工",
+            "evidence": {
+                "recurrences": int(row.get("recurrences") or len(row.get("prior_cycles", []))),
+                "prior_cycles": [
+                    dict(cycle)
+                    for cycle in row.get("prior_cycles", [])
+                    if isinstance(cycle, dict)
+                ],
+                "matching_prior_cycles": matching_cycles,
+            },
+        })
+
+    influences.sort(key=lambda influence: str(influence.get("at") or ""))
+    return {
+        "ok": True,
+        "memory_id": memory_id,
+        "influences": influences,
+        "note": "没有任何影响时 influences 为空数组，不要编",
+    }
 
 
 @app.get("/api/rca/evolution")
@@ -1473,6 +1733,11 @@ async def sentinel_timeline(limit: int = Query(default=200, ge=1, le=2000)) -> d
     from core.remediate.sentinel import timeline
 
     rows = await asyncio.to_thread(timeline, limit)
+    if any(row.get("kind") == "escalated" for row in rows):
+        _durable, records, _budget, _last_decay_at = await asyncio.to_thread(
+            _memory_records
+        )
+        rows = _attach_prior_cycle_memories(rows, records)
     return {"ok": True, "events": rows, "count": len(rows)}
 
 

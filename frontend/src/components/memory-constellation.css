@@ -1,10 +1,15 @@
-/* ── 基准态势 · 记忆星座图 (real evolved memory graph, fully expanded) ─────────── */
+/* ── 基准态势 · 记忆星座图 (offline benchmark replay, fully expanded) ────────── */
 .mc {
   --paper:#e7e7e3; --paper-2:#efeee9; --paper-3:#dddcd5; --ink:#0d0d0d; --ink-soft:#2a2a27;
   --gray:#605f5a; --rule:#cfcfca; --acid:#ccff00; --acid-ink:#0d0d0d; --teal:#12615c; --amber:#a86a12; --hot:#c3384a;
   --font-mono:'IBM Plex Mono',monospace;
 }
 .mc-state { padding:44px 0; text-align:center; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft); }
+.mc-source { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; min-width:0; margin-bottom:-1px; padding:5px 8px; border:1px solid var(--rule); font-family:var(--font-mono); font-size:9.5px; line-height:1.35; letter-spacing:.03em; color:var(--ink-soft); }
+.mc-source-main { min-width:0; }
+.mc-source-online { margin-left:auto; padding-left:10px; border-left:1px solid var(--rule); color:var(--gray); }
+.mc-source a { color:var(--ink); text-decoration:none; border-bottom:1px solid currentColor; }
+.mc-source a:hover, .mc-source a:focus-visible { border-bottom-width:2px; }
 .mc-legend { display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding:8px 12px; font-size:10px; color:var(--gray); border:1.5px solid var(--ink); border-bottom:none; background:var(--paper-2); }
 .mc-leg { display:inline-flex; align-items:center; gap:6px; letter-spacing:.04em; text-transform:uppercase; }
 .mc-leg i { width:9px; height:9px; border-radius:50%; display:inline-block; }
@@ -40,3 +45,7 @@
 .mc-detail-tags code { font-size:9px; color:var(--ink); background:var(--paper-3); padding:1px 5px; }
 .mc-detail-assets { font-size:9.5px; color:var(--gray); margin-top:6px; }
 .mc-detail-str { font-size:9.5px; color:var(--teal); margin-top:4px; font-variant-numeric:tabular-nums; }
+
+@media (max-width:720px) {
+  .mc-source-online { flex-basis:100%; margin-left:0; padding-left:0; border-left:0; }
+}
