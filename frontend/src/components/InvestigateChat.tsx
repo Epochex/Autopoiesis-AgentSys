@@ -47,7 +47,10 @@ interface AnalyzeResp {
   diagnosis: string
   runbook: Step[]
   citations: string[]
+  root_cause?: string
 }
+
+interface CloseResp { ok: boolean; resolution: 'confirmed' | 'inconclusive' | 'refuted'; dossier: { dossier_id: string } }
 
 interface AskResp {
   ok: boolean
@@ -81,13 +84,13 @@ interface RunAllResp {
   stopped_at: number | null
 }
 
-type Busy = 'start' | 'analyze' | 'ask' | 'step' | 'all' | null
+type Busy = 'start' | 'analyze' | 'ask' | 'step' | 'all' | 'close' | null
 
 type StepOut = { state: 'run' | 'done' | 'err'; text: string; note?: string }
 
 type Turn = { id: number; q: string; a: string; citations: string[]; state: 'run' | 'done' | 'err' }
 
-type Verdict = { diagnosis: string; runbook: Step[]; citations: string[] }
+type Verdict = { diagnosis: string; rootCause: string; runbook: Step[]; citations: string[] }
 
 type Stop = { n: number; reason: string }
 
@@ -187,6 +190,15 @@ const T = (zh: boolean) => ({
   cites: zh ? '依据' : 'FROM',
   ok: zh ? '有输出' : 'ANSWERED',
   bad: zh ? '没跑通' : 'FAILED',
+  disposition: zh ? '人工确认 · 写入故障档案' : 'OPERATOR DISPOSITION · ARCHIVE DOSSIER',
+  root: zh ? '根因' : 'ROOT CAUSE',
+  operator: zh ? '确认人' : 'CONFIRMED BY',
+  note: zh ? '处置备注' : 'OPERATOR NOTE',
+  confirm: zh ? '确认根因' : 'CONFIRM ROOT',
+  refute: zh ? '否定根因' : 'REFUTE ROOT',
+  inconclusive: zh ? '证据不足并升级' : 'INCONCLUSIVE · ESCALATE',
+  archiving: zh ? '正在归档…' : 'ARCHIVING…',
+  archived: zh ? '已写入长期故障档案' : 'SAVED TO LONG-TERM DOSSIER',
 })
 
 export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?: string; subject?: string }) {
@@ -207,6 +219,10 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
   const [err, setErr] = useState<string | null>(null)
   const [openCtx, setOpenCtx] = useState(true)
   const [flash, setFlash] = useState<{ id: string } | null>(null)
+  const [rootDraft, setRootDraft] = useState('')
+  const [operatorId, setOperatorId] = useState('')
+  const [operatorNote, setOperatorNote] = useState('')
+  const [archived, setArchived] = useState<string | null>(null)
 
   // One request at a time: the session accumulates evidence server-side, so two
   // in flight would interleave into a context neither answer was written from.
@@ -230,6 +246,8 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
     setStepOut({})
     setStop(null)
     setTurns([])
+    setRootDraft('')
+    setArchived(null)
     try {
       const d = await post<StartResp>('/api/rca/investigate/start', { question: q, family, subject })
       if (!aliveRef.current) return
@@ -265,7 +283,11 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
     try {
       const d = await post<AnalyzeResp>('/api/rca/investigate/analyze', { session_id: sessionId })
       if (!aliveRef.current) return
-      setVerdict({ diagnosis: d.diagnosis ?? '', runbook: d.runbook ?? [], citations: d.citations ?? [] })
+      setVerdict({
+        diagnosis: d.diagnosis ?? '', rootCause: d.root_cause ?? '',
+        runbook: d.runbook ?? [], citations: d.citations ?? [],
+      })
+      setRootDraft(d.root_cause ?? '')
       setStepOut({})
       setStop(null)
     } catch (e) {
@@ -275,6 +297,29 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
       if (aliveRef.current) setBusy(null)
     }
   }, [sessionId])
+
+  const archive = useCallback(async (resolution: 'confirmed' | 'inconclusive' | 'refuted') => {
+    if (busyRef.current || !sessionId || !verdict || !rootDraft.trim() || !operatorId.trim()) return
+    busyRef.current = true
+    setBusy('close')
+    setErr(null)
+    try {
+      const d = await post<CloseResp>('/api/rca/investigate/close', {
+        session_id: sessionId,
+        resolution,
+        root_cause: rootDraft,
+        confirmed_by: operatorId,
+        evidence_ids: verdict.citations,
+        operator_note: operatorNote || null,
+      })
+      if (aliveRef.current) setArchived(d.dossier.dossier_id)
+    } catch (e) {
+      if (aliveRef.current) setErr(errText(e))
+    } finally {
+      busyRef.current = false
+      if (aliveRef.current) setBusy(null)
+    }
+  }, [operatorId, operatorNote, rootDraft, sessionId, verdict])
 
   const runStep = useCallback(async (step: Step) => {
     if (busyRef.current || !sessionId) return
@@ -492,6 +537,31 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
           <div className="dx-iv-sec">
             <p className="dx-iv-diag">{verdict.diagnosis}</p>
             {chips(verdict.citations)}
+          </div>
+
+          <div className="dx-iv-k"><h3 className="dx-iv-k-t">{tx.disposition}</h3></div>
+          <div className="dx-iv-sec dx-iv-disposition">
+            <label className="dx-iv-lab" htmlFor={`${uid}-root`}>{tx.root}</label>
+            <textarea id={`${uid}-root`} className="dx-iv-in" value={rootDraft}
+              onChange={(e) => setRootDraft(e.target.value)} disabled={Boolean(archived)} />
+            <div className="dx-iv-disposition-grid">
+              <label><span className="dx-iv-lab">{tx.operator}</span><input className="dx-iv-in"
+                value={operatorId} onChange={(e) => setOperatorId(e.target.value)} disabled={Boolean(archived)} /></label>
+              <label><span className="dx-iv-lab">{tx.note}</span><input className="dx-iv-in"
+                value={operatorNote} onChange={(e) => setOperatorNote(e.target.value)} disabled={Boolean(archived)} /></label>
+            </div>
+            {archived ? <p className="dx-iv-archived">{tx.archived} · {archived}</p> : (
+              <div className="dx-iv-disposition-actions">
+                <button type="button" className="dx-iv-go" onClick={() => void archive('confirmed')}
+                  disabled={!idle || !rootDraft.trim() || !operatorId.trim() || !verdict.citations.length}>
+                  {busy === 'close' ? tx.archiving : tx.confirm}
+                </button>
+                <button type="button" className="dx-iv-go is-secondary" onClick={() => void archive('refuted')}
+                  disabled={!idle || !rootDraft.trim() || !operatorId.trim() || !verdict.citations.length}>{tx.refute}</button>
+                <button type="button" className="dx-iv-go is-secondary" onClick={() => void archive('inconclusive')}
+                  disabled={!idle || !rootDraft.trim() || !operatorId.trim()}>{tx.inconclusive}</button>
+              </div>
+            )}
           </div>
 
           <div className="dx-iv-k">

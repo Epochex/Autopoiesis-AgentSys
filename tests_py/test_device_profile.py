@@ -225,3 +225,101 @@ def test_serialization_round_trip_preserves_profile_and_next_decision() -> None:
     next_event = event(at + timedelta(hours=1), dst_ip="9.9.9.9", src_intf="port6")
     assert restored.anomalies(next_event) == store.anomalies(next_event)
     assert restored.to_dict() == store.to_dict()
+
+
+def test_stable_self_history_can_still_be_an_outlier_in_its_subnet() -> None:
+    store = ProfileStore()
+    first = datetime(2026, 8, 18, 10, tzinfo=UTC)
+
+    # 五台同网段设备各有 40 次会话、5 个对端，两个群体中位数分别是 40 和 8。
+    for device in range(5):
+        src_ip = f"192.168.16.{10 + device}"
+        for index in range(40):
+            store.observe(
+                event(
+                    first + timedelta(seconds=index),
+                    src_ip=src_ip,
+                    dst_ip=f"203.0.113.{index % 5 + 1}",
+                )
+            )
+
+    # 仿照 192.168.16.56：每天都稳定地产生大量会话，只访问两个对端，99% deny。
+    target_ip = "192.168.16.56"
+    for day in range(2):
+        for index in range(200):
+            store.observe(
+                event(
+                    first + timedelta(days=day, seconds=index),
+                    src_ip=target_ip,
+                    dst_ip=f"198.51.100.{index % 2 + 1}",
+                    action="accept" if index % 100 == 0 else "deny",
+                )
+            )
+
+    candidate = event(
+        first + timedelta(days=2),
+        src_ip=target_ip,
+        dst_ip="198.51.100.1",
+        action="deny",
+    )
+    anomalies = store.anomalies(candidate)
+    kinds = {item.type for item in anomalies}
+
+    # 对端、deny、接口和同一小时流量都延续自己的历史，所以原有自比判据全部沉默。
+    assert not {"new_peer", "first_deny", "new_interface", "session_spike"} & kinds
+    assert {"peer_outlier", "volume_outlier"} <= kinds
+
+    peer = next(item for item in anomalies if item.type == "peer_outlier")
+    assert peer.numbers == {
+        "sessions": 401,
+        "peer_count": 2,
+        "sessions_per_peer": 200.5,
+        "group_median_sessions_per_peer": 8.0,
+        "multiple": 25.0625,
+    }
+    assert peer.criterion == {
+        "window_days": 7,
+        "group": "192.168.16.0/24",
+        "group_samples": 5,
+        "multiplier": 8.0,
+        "threshold_sessions_per_peer": 64.0,
+    }
+    assert peer.explanation == (
+        "192.168.16.56 过去 7 天 401 次会话只涉及 2 个对端，每个对端 "
+        "200.5 次，是同子网中位数 8 次的 25.1 倍"
+    )
+
+    volume = next(item for item in anomalies if item.type == "volume_outlier")
+    assert volume.numbers == {
+        "sessions": 401,
+        "group_median_sessions": 40.0,
+        "multiple": 10.025,
+    }
+    assert volume.criterion == {
+        "window_days": 7,
+        "group": "192.168.16.0/24",
+        "group_samples": 5,
+        "multiplier": 10.0,
+        "threshold_sessions": 400.0,
+    }
+
+    restored = ProfileStore.loads(store.dumps())
+    assert restored.anomalies(candidate) == anomalies
+
+
+def test_group_baseline_has_fixed_group_and_device_limits() -> None:
+    store = ProfileStore(group_limit=2, group_device_limit=4, group_min_samples=2)
+    at = datetime(2026, 8, 20, 12, tzinfo=UTC)
+    for subnet in range(5):
+        for device in range(10):
+            store.observe(
+                event(
+                    at + timedelta(seconds=subnet * 10 + device),
+                    src_ip=f"10.{subnet}.0.{device + 1}",
+                    dst_ip="203.0.113.1",
+                )
+            )
+
+    groups = store.to_dict()["group_baselines"]
+    assert len(groups) == 2
+    assert all(len(group["devices"]) <= 4 for group in groups)

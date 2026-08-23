@@ -7,6 +7,7 @@ import { isDocRange, kindLabel, portsOf } from './scan-data'
 import { AttackSurfaceGraph } from './surface-graph'
 import { AddressSpace, CoverageRail, OwnershipContention, OwnershipStable, ScopeStrip } from './environment-blocks'
 import { InvestigateChat } from './InvestigateChat'
+import { OperationalMemoryPanel } from './OperationalMemoryPanel'
 import { SentinelTimeline } from './SentinelTimeline'
 import { FAULT_LABEL, VERIFY_LABEL, pick } from './environment-labels'
 import {
@@ -468,6 +469,13 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject }: {
                 </div>
               ) : null}
             </section>
+
+            {scenario === 'live' ? (
+              <section className="dx-sec">
+                <div className="dx-sec-k">{zh ? '真实故障 · 长期风险 · 已验证网络特征' : 'INCIDENTS · LONG-RUN RISKS · VALIDATED FEATURES'}</div>
+                <OperationalMemoryPanel lang={lang} subject={focusIp ?? undefined} />
+              </section>
+            ) : null}
 
             {scenario === 'live' ? (
               <section className="dx-sec">

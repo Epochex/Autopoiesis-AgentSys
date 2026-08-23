@@ -33,6 +33,8 @@ _cache_payload: dict[str, Any] | None = None
 _cache_loaded_at = 0.0
 _evolving_service = None
 _runtime_error: str | None = None
+_operational_memory = None
+_operational_stop = None
 _diagnosis_cases: dict[str, Any] = {}
 _PRODUCTION_MEMORY_BUDGET = 64
 _PRODUCTION_CONSOLIDATION_OPTIONS = {"resolve_conflicts": True}
@@ -246,16 +248,12 @@ def _start_prewarm() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    global _diagnosis_cases, _evolving_service, _runtime_error
+    global _diagnosis_cases, _evolving_service, _runtime_error, _operational_memory, _operational_stop
     _start_prewarm()
     _configure_production_memory_budget()
+    from .operational_memory import build_operational_memory_service
 
-    # The autonomous loop. Off unless AUTOPOIESIS_SENTINEL=1, because something
-    # that acts on the live system on its own must be switched on deliberately
-    # rather than arriving with a deploy.
-    from .sentinel_wiring import start_background
-
-    start_background()
+    _operational_memory = await asyncio.to_thread(build_operational_memory_service)
     try:
         from domains.network_rca.factory import build_network_rca_service
         from domains.network_rca.real_dataset import (
@@ -294,12 +292,34 @@ async def _lifespan(app: FastAPI):
             _runtime_error = "validated RCA dataset is unavailable"
     except Exception as exc:
         _runtime_error = f"{type(exc).__name__}: {exc}"
+
+    # Start source refresh and the autonomous detector loop after both memory
+    # services exist, so their first completed event can be persisted instead
+    # of racing gateway construction.
+    import threading
+    from .sentinel_wiring import start_background
+
+    stop_event = threading.Event()
+    _operational_stop = stop_event
+
+    def refresh_operational_memory() -> None:
+        interval = max(30.0, float(os.getenv("AUTOPOIESIS_OPERATIONAL_REFRESH_INTERVAL", "300")))
+        while not stop_event.is_set():
+            _operational_memory.refresh()
+            stop_event.wait(interval)
+
+    threading.Thread(target=refresh_operational_memory, daemon=True).start()
+    start_background()
     try:
         yield
     finally:
+        if _operational_stop is not None:
+            _operational_stop.set()
         if _evolving_service is not None:
             await asyncio.to_thread(_evolving_service.close)
         _diagnosis_cases = {}
+        _operational_memory = None
+        _operational_stop = None
 
 
 app = FastAPI(
@@ -1628,6 +1648,23 @@ class RemediationRequest(BaseModel):
 
     action: str = Field(min_length=1, max_length=64)
     target: str = Field(min_length=1, max_length=128)
+    dossier_id: str | None = Field(default=None, min_length=1, max_length=160)
+
+
+@app.get("/api/rca/operational-memory")
+async def operational_memory(subject: str | None = Query(default=None, max_length=128)) -> dict[str, Any]:
+    """Auditable projection of dossiers, long-run risks, and promoted features."""
+    if _operational_memory is None:
+        raise HTTPException(status_code=503, detail="operational memory is initializing")
+    return await asyncio.to_thread(_operational_memory.audit_view, subject=subject)
+
+
+@app.post("/api/rca/operational-memory/refresh")
+async def operational_memory_refresh() -> dict[str, Any]:
+    """Merge bounded real-source windows into durable operational records."""
+    if _operational_memory is None:
+        raise HTTPException(status_code=503, detail="operational memory is initializing")
+    return await asyncio.to_thread(_operational_memory.refresh)
 
 
 @app.get("/api/rca/remediation/actions")
@@ -1667,7 +1704,21 @@ async def remediation_execute(request: RemediationRequest) -> dict[str, Any]:
     result = await asyncio.to_thread(execute, request.action, request.target)
     if result.get("refused"):
         raise HTTPException(status_code=400, detail=result.get("reason", "refused"))
-    return {"ok": True, **result}
+    dossier = None
+    if request.dossier_id:
+        if _operational_memory is None:
+            raise HTTPException(status_code=503, detail="operational memory is initializing")
+        try:
+            dossier = await asyncio.to_thread(
+                _operational_memory.attach_remediation_run,
+                request.dossier_id,
+                result,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown incident dossier") from None
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+    return {"ok": True, **result, "dossier": dossier}
 
 
 @app.get("/api/rca/remediation/runs")
@@ -1700,6 +1751,15 @@ class InvestigateStep(BaseModel):
 class InvestigateSession(BaseModel):
     session_id: str = Field(min_length=1, max_length=64)
     lang: Literal["zh", "en"] = "zh"
+
+
+class InvestigateClose(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    resolution: Literal["confirmed", "inconclusive", "refuted"]
+    root_cause: str = Field(min_length=1, max_length=2000)
+    confirmed_by: str = Field(min_length=1, max_length=128)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=120)
+    operator_note: str | None = Field(default=None, max_length=2000)
 
 
 @app.post("/api/rca/investigate/start")
@@ -1760,6 +1820,30 @@ async def investigate_run_all(request: InvestigateSession) -> dict[str, Any]:
         result = await asyncio.to_thread(run_all, request.session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/investigate/close")
+async def investigate_close(request: InvestigateClose) -> dict[str, Any]:
+    """Archive an explicit operator disposition and feed verified claims downstream."""
+    from .investigate import close
+
+    try:
+        result = await asyncio.to_thread(
+            close,
+            request.session_id,
+            resolution=request.resolution,
+            root_cause=request.root_cause,
+            confirmed_by=request.confirmed_by,
+            evidence_ids=request.evidence_ids,
+            operator_note=request.operator_note,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown session") from None
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from None
     return {"ok": True, **result}
 
 

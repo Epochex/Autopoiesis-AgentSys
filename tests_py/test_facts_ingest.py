@@ -14,6 +14,115 @@ def _traffic_line(src: str) -> bytes:
     ).encode()
 
 
+def _security_row(line: str, provenance: str = "real") -> dict[str, object]:
+    row = facts_ingest.parse_security_event(line, provenance)
+    assert row is not None
+    return dict(zip(facts_ingest._SECURITY_COLS, row, strict=True))
+
+
+_ADMIN_FAILED = (
+    'date=2026-08-23 time=12:01:00 devname="FGT" devid="FG-1" '
+    'logid="0100032002" type="event" subtype="system" level="alert" vd="root" '
+    'logdesc="Admin login failed" user="mike" method="https" srcip=198.51.100.7 '
+    'dstip=192.0.2.1 action="login" status="failed" reason="name_invalid" '
+    'msg="Administrator mike login failed because of invalid user name"'
+)
+
+_ADMIN_LOCKOUT = (
+    'date=2026-08-23 time=12:02:00 logid="0100032021" type="event" '
+    'subtype="system" level="alert" logdesc="Admin login disabled" '
+    'srcip=198.51.100.8 action="login" status="failed" reason="exceed_limit" '
+    'msg="Login disabled from IP 198.51.100.8 because of 3 bad attempts"'
+)
+
+
+def test_parse_security_event_normalizes_admin_auth_events_and_provenance():
+    failed = _security_row(_ADMIN_FAILED, "replay")
+    lockout = _security_row(_ADMIN_LOCKOUT, "drill")
+    failed_event_id = failed.pop("event_id")
+    lockout_event_id = lockout.pop("event_id")
+
+    assert len(str(failed_event_id)) == 64
+    assert len(str(lockout_event_id)) == 64
+
+    assert failed == {
+        "event_ts": "2026-08-23 12:01:00.000",
+        "event_type": "admin_login_failed",
+        "severity": "alert",
+        "device_name": "FGT",
+        "device_id": "FG-1",
+        "virtual_domain": "root",
+        "srcip": "198.51.100.7",
+        "dstip": "192.0.2.1",
+        "dstport": 0,
+        "username": "mike",
+        "method": "https",
+        "action": "login",
+        "status": "failed",
+        "reason": "name_invalid",
+        "logid": "0100032002",
+        "logdesc": "Admin login failed",
+        "message": "Administrator mike login failed because of invalid user name",
+        "provenance": "replay",
+        "raw_log": _ADMIN_FAILED,
+    }
+    assert lockout["event_type"] == "admin_login_lockout"
+    assert lockout["srcip"] == "198.51.100.8"
+    assert lockout["provenance"] == "drill"
+
+
+def test_parse_security_event_distinguishes_disabled_account_and_management_surface():
+    disabled = _security_row(
+        'date=2026-08-23 time=12:03:00 type="event" subtype="system" '
+        'level="warning" logdesc="Administrator account disabled" user="retired-admin" '
+        'action="edit" status="success" msg="Administrator account disabled"'
+    )
+    probe = _security_row(
+        'date=2026-08-23 time=12:04:00 type="traffic" subtype="local" level="notice" '
+        'srcip=203.0.113.9 srcintfrole="wan" dstip=192.0.2.1 dstport=443 action="deny"'
+    )
+    exposure = _security_row(
+        'date=2026-08-23 time=12:05:00 type="traffic" subtype="local" level="notice" '
+        'srcip=203.0.113.10 srcintfrole="wan" dstip=192.0.2.1 dstport=22 action="accept"'
+    )
+
+    assert disabled["event_type"] == "admin_account_disabled"
+    assert disabled["username"] == "retired-admin"
+    assert probe["event_type"] == "management_probe"
+    assert probe["dstport"] == 443
+    assert exposure["event_type"] == "management_exposure"
+
+
+def test_parse_security_event_rejects_unrelated_and_unknown_provenance():
+    assert facts_ingest.parse_security_event(
+        'date=2026-08-23 time=12:00:00 type="traffic" subtype="forward" '
+        'dstport=443 action="accept"'
+    ) is None
+    with pytest.raises(ValueError, match="unsupported security-event provenance"):
+        facts_ingest.parse_security_event(_ADMIN_FAILED, "synthetic")
+
+
+def test_create_and_insert_security_events_use_independent_table(monkeypatch):
+    posts: list[tuple[str, bytes | None]] = []
+    monkeypatch.setattr(
+        facts_ingest,
+        "_ch_post",
+        lambda query, data=None: posts.append((query, data)),
+    )
+
+    facts_ingest.create_security_events_table()
+    facts_ingest.ch_insert_security([facts_ingest.parse_security_event(_ADMIN_FAILED)])
+
+    ddl, _ = posts[0]
+    insert, payload = posts[1]
+    assert "CREATE TABLE IF NOT EXISTS netops.security_events" in ddl
+    assert "provenance Enum8('real' = 1, 'replay' = 2, 'drill' = 3)" in ddl
+    assert "ENGINE = ReplacingMergeTree(ingested_at)" in ddl
+    assert "ORDER BY event_id" in ddl
+    assert insert.startswith("INSERT INTO netops.security_events")
+    assert payload is not None and b"admin_login_failed" in payload
+
+
 class _FakeStdout:
     def __init__(self, lines: list[bytes]):
         self._lines = lines
@@ -99,6 +208,26 @@ def test_live_stream_flushes_read_rows_before_nonzero_disconnect(monkeypatch):
     assert proc.stdout.closed is True
 
 
+def test_stream_batches_facts_and_security_events_to_separate_sinks(monkeypatch):
+    _install_process(monkeypatch, [_traffic_line("192.0.2.4"), (_ADMIN_FAILED + "\n").encode()])
+    fact_batches: list[list[list]] = []
+    security_batches: list[list[list]] = []
+
+    inserted = facts_ingest._stream(
+        "unused",
+        lambda rows: fact_batches.append(list(rows)),
+        "batch-test",
+        on_security_rows=lambda rows: security_batches.append(list(rows)),
+        security_provenance="replay",
+    )
+
+    assert inserted == 1
+    assert [len(rows) for rows in fact_batches] == [1]
+    assert [len(rows) for rows in security_batches] == [1]
+    assert security_batches[0][0][2] == "admin_login_failed"
+    assert security_batches[0][0][18] == "replay"
+
+
 def test_stream_stops_ssh_child_when_insert_fails(monkeypatch):
     proc, _ = _install_process(monkeypatch, [_traffic_line("192.0.2.6")])
 
@@ -115,8 +244,20 @@ def test_stream_stops_ssh_child_when_insert_fails(monkeypatch):
 def test_live_disconnect_records_reconnect_and_keeps_running(monkeypatch, capsys):
     statuses: list[dict] = []
 
-    def stream_once(remote_cmd, on_row, label, on_process=None, *, live_mode=False, clock=None):
+    def stream_once(
+        remote_cmd,
+        on_row,
+        label,
+        on_process=None,
+        *,
+        live_mode=False,
+        clock=None,
+        on_security_rows=None,
+        security_provenance="real",
+    ):
         assert live_mode is True
+        assert callable(on_security_rows)
+        assert security_provenance == "real"
         if on_process is not None:
             on_process(SimpleNamespace(pid=4321))
         raise facts_ingest.RecoverableSSHError("SSH live stream ended with status 255")
@@ -129,6 +270,7 @@ def test_live_disconnect_records_reconnect_and_keeps_running(monkeypatch, capsys
         raise _StopLive
 
     monkeypatch.setattr(facts_ingest, "_source_position", lambda: {})
+    monkeypatch.setattr(facts_ingest, "create_security_events_table", lambda: None)
     monkeypatch.setattr(facts_ingest, "_stream", stream_once)
     monkeypatch.setattr(facts_ingest, "_write_status", lambda **updates: statuses.append(updates))
     monkeypatch.setattr(facts_ingest.time, "sleep", stop_after_first_reconnect)
@@ -146,6 +288,7 @@ def test_live_fatal_error_is_logged_and_propagated(monkeypatch, capsys):
     statuses: list[dict] = []
 
     monkeypatch.setattr(facts_ingest, "_source_position", lambda: {})
+    monkeypatch.setattr(facts_ingest, "create_security_events_table", lambda: None)
     monkeypatch.setattr(
         facts_ingest,
         "_stream",
@@ -159,6 +302,76 @@ def test_live_fatal_error_is_logged_and_propagated(monkeypatch, capsys):
     failed = [state for state in statuses if state.get("ssh_connection") == "error"]
     assert failed[-1]["last_error_type"] == "ValueError"
     assert "fatal stream error (ValueError: bad fact row)" in capsys.readouterr().err
+
+
+def test_backfill_creates_and_routes_security_sink(monkeypatch):
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        facts_ingest.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="fortigate.log.1.gz\nfortigate.log\n"),
+    )
+    monkeypatch.setattr(
+        facts_ingest,
+        "create_security_events_table",
+        lambda: calls.append(("create",)),
+    )
+
+    def fake_stream(command, on_row, label, **kwargs):
+        calls.append((command, on_row, label, kwargs))
+        return 0
+
+    monkeypatch.setattr(facts_ingest, "_stream", fake_stream)
+
+    facts_ingest.backfill()
+
+    assert calls[0] == ("create",)
+    streams = calls[1:]
+    assert len(streams) == 2
+    assert all('subtype="system"' in call[0] for call in streams)
+    assert all(call[1] is facts_ingest.ch_insert for call in streams)
+    assert all(callable(call[3]["on_security_rows"]) for call in streams)
+    assert all(call[3]["security_provenance"] == "real" for call in streams)
+
+
+def test_security_backfill_never_writes_historical_facts(monkeypatch):
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        facts_ingest.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout="fortigate.log.1.gz\nfortigate.log\nunrelated.txt\n"
+        ),
+    )
+    monkeypatch.setattr(
+        facts_ingest,
+        "create_security_events_table",
+        lambda: calls.append(("create",)),
+    )
+
+    def fake_stream(command, on_row, label, **kwargs):
+        calls.append((command, on_row, label, kwargs))
+        kwargs["on_security_rows"]([["security-row"]])
+        return 0
+
+    monkeypatch.setattr(facts_ingest, "_stream", fake_stream)
+    inserted: list[list[list]] = []
+    monkeypatch.setattr(
+        facts_ingest,
+        "ch_insert_security",
+        lambda rows: inserted.append(list(rows)),
+    )
+
+    facts_ingest.security_backfill()
+
+    assert calls[0] == ("create",)
+    streams = calls[1:]
+    assert len(streams) == 2
+    assert all(call[1] is None for call in streams)
+    assert all(call[3]["parse_facts"] is False for call in streams)
+    assert all('subtype="system"' in call[0] for call in streams)
+    assert all('subtype="local"' in call[0] for call in streams)
+    assert len(inserted) == 2
 
 
 def test_ssh_command_is_detached_from_standard_input():

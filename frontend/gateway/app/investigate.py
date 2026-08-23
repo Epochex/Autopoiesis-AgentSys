@@ -26,11 +26,12 @@ at, which is what makes the check work at all.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from core.investigate.safe_exec import is_safe, run
 from core.memory.bm25 import tokenize
@@ -87,6 +88,142 @@ TRIAGE_PROBES = [
     "journalctl -p err -n 40 --no-pager --since -24h",
     "dmesg -T --level err,crit,alert -x",
 ]
+
+# A device portrait is a routing hint, never evidence.  Each anomaly names only
+# existing read-only checks whose fresh output can investigate that observation.
+# The helper below always returns a permutation of its input, so an unavailable or
+# mistaken portrait can cost ordering only; it cannot waive a check or confirm a
+# diagnosis.
+PROFILE_TRIAGE_PROBES: dict[str, tuple[str, ...]] = {
+    "first_deny": (
+        "journalctl -p err -n 40 --no-pager --since -24h",
+        "ip route show",
+    ),
+    "new_peer": (
+        "ip neigh show",
+        "ss -tulpn",
+    ),
+    "new_interface": ("ip -br link show",),
+    "session_spike": ("ss -tulpn",),
+    "peer_outlier": ("ss -tulpn", "ip route show"),
+    "volume_outlier": ("ss -tulpn", "ip -br link show"),
+}
+
+
+def order_triage_by_profile(
+    ordered: list[str], anomaly_types: list[str] | tuple[str, ...]
+) -> list[str]:
+    """Move portrait-relevant checks forward while preserving the full set."""
+    preferred = list(dict.fromkeys(
+        command
+        for anomaly_type in anomaly_types
+        for command in PROFILE_TRIAGE_PROBES.get(anomaly_type, ())
+        if command in ordered
+    ))
+    return preferred + [command for command in ordered if command not in preferred]
+
+
+def _device_profile_anomaly_types(subject: str | None) -> list[str]:
+    """Rebuild one device's latest portrait decision from read-only fact rows.
+
+    This deliberately fails closed to an empty hint.  ClickHouse supplies history,
+    while ``ProfileStore`` owns every anomaly rule and raw-count comparison; this
+    endpoint does not duplicate or loosen those rules.
+    """
+    if subject is None or re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", subject) is None:
+        return []
+    try:
+        from domains.network_rca.device_profile import ProfileStore
+        from domains.network_rca.fortigate_stream import FortiEvent
+        from .history import _CH_DB, _q
+
+        safe_subject = ".".join(str(int(part)) for part in subject.split("."))
+        if any(not 0 <= int(part) <= 255 for part in safe_subject.split(".")):
+            return []
+        rows = _q(
+            "SELECT event_ts, srcip, dstip, dstport, proto, action, type, subtype, "
+            "srcintf, dstintf, sentbyte, rcvdbyte "
+            f"FROM {_CH_DB}.facts WHERE srcip='{safe_subject}' "
+            "AND event_ts >= (SELECT max(event_ts) - INTERVAL 7 DAY "
+            f"FROM {_CH_DB}.facts WHERE srcip='{safe_subject}') "
+            "ORDER BY event_ts DESC LIMIT 5001"
+        )
+        if not rows:
+            return []
+
+        def event(row: dict[str, Any]) -> FortiEvent:
+            raw_at = str(row["event_ts"])
+            at = datetime.fromisoformat(raw_at.replace(" ", "T"))
+            at = (
+                at.replace(tzinfo=timezone.utc)
+                if at.tzinfo is None
+                else at.astimezone(timezone.utc)
+            )
+            return FortiEvent(
+                at=at,
+                logid="clickhouse-fact",
+                type=str(row.get("type") or "traffic"),
+                subtype=str(row.get("subtype") or "forward"),
+                level="notice",
+                action=str(row.get("action") or "") or None,
+                src_ip=str(row.get("srcip") or safe_subject),
+                dst_ip=str(row.get("dstip") or "") or None,
+                src_port=None,
+                dst_port=int(row.get("dstport") or 0) or None,
+                proto=int(row.get("proto") or 0) or None,
+                src_intf=str(row.get("srcintf") or "") or None,
+                dst_intf=str(row.get("dstintf") or "") or None,
+                user=None,
+                logdesc=None,
+                msg=None,
+                status=None,
+                sent_bytes=int(row.get("sentbyte") or 0),
+                rcvd_bytes=int(row.get("rcvdbyte") or 0),
+                raw={key: str(value) for key, value in row.items()},
+            )
+
+        events = sorted((event(row) for row in rows), key=lambda item: item.at)
+        candidate = events.pop()
+        profile = ProfileStore()
+        for item in events:
+            profile.observe(item)
+        # Cohort rules need the whole /24, while replaying millions of flows in
+        # a request is wasteful.  ClickHouse supplies exact seven-day counts;
+        # ProfileStore still owns thresholds and the anomaly decision.
+        prefix = ".".join(safe_subject.split(".")[:3]) + "."
+        cutoff = candidate.at.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        try:
+            group_rows = _q(
+                "SELECT srcip, count() AS sessions, uniqExactIf(dstip, dstip!='') AS peers, "
+                "countIf(action='accept') AS accepted, countIf(action='deny') AS denied "
+                f"FROM {_CH_DB}.facts WHERE startsWith(srcip,'{prefix}') "
+                f"AND event_ts < toDateTime64('{cutoff}',3) "
+                f"AND event_ts >= toDateTime64('{cutoff}',3) - INTERVAL 7 DAY "
+                "GROUP BY srcip ORDER BY srcip LIMIT 256"
+            )
+        except Exception:  # self-history anomalies remain useful without a cohort query
+            group_rows = []
+        known_candidate_peer = (
+            (str(candidate.dst_ip),)
+            if candidate.dst_ip is not None
+            and any(item.dst_ip == candidate.dst_ip for item in events)
+            else ()
+        )
+        for row in group_rows:
+            row_ip = str(row.get("srcip") or "")
+            if not row_ip:
+                continue
+            profile.seed_group_summary(
+                row_ip,
+                sessions=int(row.get("sessions") or 0),
+                peer_count=int(row.get("peers") or 0),
+                accepted=int(row.get("accepted") or 0),
+                denied=int(row.get("denied") or 0),
+                known_peers=known_candidate_peer if row_ip == safe_subject else (),
+            )
+        return list(dict.fromkeys(item.type for item in profile.anomalies(candidate)))
+    except Exception:  # noqa: BLE001 - portrait loss must preserve the old order
+        return []
 
 # Procedural memories name the read-only skill that paid off, while this endpoint
 # owns shell commands rather than domain adapters.  This explicit bridge keeps the
@@ -190,8 +327,11 @@ class Session:
     # as a permutation instead of looking like memory silently deleted checks.
     probe_candidates: list[str] = field(default_factory=list)
     probe_prior: dict[str, Any] = field(default_factory=dict)
+    historical_context: dict[str, Any] = field(default_factory=dict)
     trace_events: list[dict[str, Any]] = field(default_factory=list)
     diagnosis: str = ""
+    root_cause: str = ""
+    analysis_citations: list[str] = field(default_factory=list)
     opened_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def next_evidence_id(self) -> str:
@@ -211,6 +351,24 @@ class Session:
         self.evidence.append(item)
         return item
 
+    def collect_observation(
+        self, *, label: str, payload: Mapping[str, Any], ok: bool = True
+    ) -> dict[str, Any]:
+        """File a read-only adapter response in the same citable evidence ledger."""
+        if len(self.evidence) >= MAX_EVIDENCE:
+            return {"evidence_id": "", "command": label, "output": "", "ok": False,
+                    "refused": "session evidence limit reached"}
+        item = {
+            "evidence_id": self.next_evidence_id(),
+            "command": label,
+            "output": json.dumps(dict(payload), ensure_ascii=False, sort_keys=True),
+            "ok": bool(ok),
+            "at": datetime.now(timezone.utc).isoformat(),
+            "source": "read_only_adapter",
+        }
+        self.evidence.append(item)
+        return item
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
@@ -222,8 +380,11 @@ class Session:
             "runbook": self.runbook,
             "probe_candidates": self.probe_candidates,
             "probe_prior": self.probe_prior,
+            "historical_context": self.historical_context,
             "trace_events": self.trace_events,
             "diagnosis": self.diagnosis,
+            "root_cause": self.root_cause,
+            "analysis_citations": self.analysis_citations,
             "opened_at": self.opened_at,
         }
 
@@ -241,6 +402,19 @@ def _live_memory_store() -> TieredMemoryStore | None:
         return memory if isinstance(memory, TieredMemoryStore) else None
     except Exception:  # noqa: BLE001 - startup/degraded mode must retain old probing
         return None
+
+
+def _operational_context(subject: str | None, family: str | None) -> dict[str, Any]:
+    """Recall domain records as hypotheses; absence never changes probe coverage."""
+    try:
+        from . import main
+
+        service = getattr(main, "_operational_memory", None)
+        if service is None:
+            return {}
+        return dict(service.recall(subject=subject, family=family, limit=6))
+    except Exception:  # source degradation must preserve evidence collection
+        return {}
 
 
 def _query_terms(question: str, family: str | None, subject: str | None) -> list[str]:
@@ -511,6 +685,18 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
         subject=subject,
     )
     _SESSIONS[session.session_id] = session
+    session.historical_context = _operational_context(subject, family)
+    if any(session.historical_context.get(key) for key in ("dossiers", "risks", "features")):
+        session.trace_events.append({
+            "kind": "operational_memory_recalled",
+            "at": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "dossiers": len(session.historical_context.get("dossiers") or ()),
+                "risks": len(session.historical_context.get("risks") or ()),
+                "features": len(session.historical_context.get("features") or ()),
+                "historical_only": True,
+            },
+        })
 
     # A named family gets its targeted checks; an open question gets the full
     # triage sweep, because "what is wrong here" has no smaller honest answer.
@@ -522,6 +708,30 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
         "strictly_narrowed": False,
     }
     ordered_extra = list(prior["ordered"])
+    profile_anomalies = _device_profile_anomaly_types(subject) if uses_triage else []
+    # Preserve a procedural memory's earned prefix so its existing evidence-only
+    # early-stop contract remains intact.  The portrait sorts the untouched tail;
+    # with no procedural prefix it sorts the whole original triage sweep.
+    procedural_prefix = list(prior["preferred"])
+    profile_tail = [
+        command for command in ordered_extra if command not in procedural_prefix
+    ]
+    ordered_extra = [
+        *procedural_prefix,
+        *order_triage_by_profile(profile_tail, profile_anomalies),
+    ]
+    profile_preferred = [
+        command
+        for command in order_triage_by_profile(profile_tail, profile_anomalies)
+        if command in {
+            candidate
+            for anomaly_type in profile_anomalies
+            for candidate in PROFILE_TRIAGE_PROBES.get(anomaly_type, ())
+        }
+    ]
+    if profile_anomalies:
+        prior["profile_anomalies"] = profile_anomalies
+        prior["profile_preferred"] = profile_preferred
     session.probe_prior = {key: value for key, value in prior.items() if key != "ordered"}
 
     subject_probes: list[str] = []
@@ -529,6 +739,24 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
         for template in (f"ping -c 2 -W 2 {subject}", f"ip neigh show {subject}"):
             if is_safe(template):
                 subject_probes.append(template)
+
+    if subject and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", subject):
+        try:
+            from .history import device_history
+
+            history = device_history(subject, 7, False)
+            if history is not None:
+                session.collect_observation(
+                    label=f"clickhouse:device_history {subject} 7d",
+                    payload=history,
+                    ok=bool(history.get("ok", True)),
+                )
+        except Exception as error:  # source failure is visible but does not stop host probes
+            session.collect_observation(
+                label=f"clickhouse:device_history {subject} 7d",
+                payload={"error": f"{type(error).__name__}: {error}"[:240]},
+                ok=False,
+            )
 
     planned = list(BASELINE_PROBES)
     for command in [*ordered_extra, *subject_probes]:
@@ -588,6 +816,7 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
         "evidence": session.evidence,
         "probe_candidates": session.probe_candidates,
         "probe_prior": session.probe_prior,
+        "historical_context": session.historical_context,
         "trace_events": session.trace_events,
         "summary": _summarise(session),
     }
@@ -756,6 +985,8 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
                     f"问题：{session.question}\n"
                     f"故障族：{session.family or '未指定'}\n"
                     f"对象：{session.subject or '未指定'}\n\n"
+                    "历史档案只用于提出和排序假设，根因结论必须引用本次会话的新鲜证据。\n"
+                    f"历史档案：{json.dumps(session.historical_context, ensure_ascii=False)}\n\n"
                     f"已采集的真实命令输出：\n{_evidence_block(session)}\n\n"
                     + ("这是最后一轮，必须基于现有证据给出结论；need_commands 请留空。\n\n"
                        if round_index == MAX_ANALYZE_ROUNDS - 1 else "")
@@ -783,6 +1014,8 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
     session.diagnosis = str(payload.get("diagnosis") or "")
     root_cause = str(payload.get("root_cause") or "").strip()
     citations = _verified_citations(session, payload.get("citations") or [])
+    session.root_cause = root_cause
+    session.analysis_citations = citations
     return {
         "diagnosis": session.diagnosis,
         "root_cause": root_cause,
@@ -795,6 +1028,135 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
         "summary": _summarise(session),
         "degraded": False,
     }
+
+
+def close(
+    session_id: str,
+    *,
+    resolution: str,
+    root_cause: str,
+    confirmed_by: str,
+    evidence_ids: list[str] | tuple[str, ...] = (),
+    operator_note: str | None = None,
+) -> dict[str, Any]:
+    """Archive an operator disposition as an authoritative incident dossier."""
+    from domains.network_rca.incident_dossier import (
+        EvidenceReference,
+        IncidentDossier,
+        RootCauseHypothesis,
+    )
+    from . import main
+
+    session = get(session_id)
+    resolution = resolution.strip().lower()
+    if resolution not in {"confirmed", "inconclusive", "refuted"}:
+        raise ValueError("unsupported investigation resolution")
+    root_cause = root_cause.strip()
+    confirmed_by = confirmed_by.strip()
+    if not root_cause or not confirmed_by:
+        raise ValueError("root_cause and confirmed_by are required")
+    service = getattr(main, "_operational_memory", None)
+    if service is None:
+        raise RuntimeError("operational memory is unavailable")
+    dossier_id = f"investigate:{session.session_id}"
+    existing = service.dossiers.get(dossier_id)
+    if existing is not None:
+        prior = existing.root_causes[0] if existing.root_causes else None
+        expected_status = "hypothesis" if resolution == "inconclusive" else resolution
+        if (
+            prior is not None
+            and prior.statement == root_cause
+            and prior.status == expected_status
+            and (prior.confirmed_by or confirmed_by) == confirmed_by
+        ):
+            return {"dossier": existing.model_dump(mode="json"), "resolution": resolution}
+        raise ValueError("investigation already has a different archived disposition")
+
+    selected = list(dict.fromkeys(evidence_ids or session.analysis_citations))
+    unknown = sorted(set(selected) - session.evidence_ids())
+    if unknown:
+        raise ValueError("unknown session evidence: " + ", ".join(unknown))
+    if resolution in {"confirmed", "refuted"} and not selected:
+        raise ValueError("confirmed or refuted root cause requires fresh session evidence")
+
+    now = datetime.now(timezone.utc)
+    references: list[EvidenceReference] = []
+    dossier_id_by_session_id: dict[str, str] = {}
+    for item in session.evidence:
+        evidence_id = f"investigate:{session.session_id}:{item['evidence_id']}"
+        dossier_id_by_session_id[item["evidence_id"]] = evidence_id
+        output = str(item.get("output") or "")
+        observed_at = datetime.fromisoformat(
+            str(item.get("at") or session.opened_at).replace("Z", "+00:00")
+        )
+        references.append(EvidenceReference(
+            evidence_id=evidence_id,
+            source_type="telemetry",
+            locator=f"investigate-session:{session.session_id}:{item['evidence_id']}",
+            observed_at=observed_at,
+            summary=f"{item.get('command')}: {'ok' if item.get('ok') else 'failed'}",
+            content_sha256=hashlib.sha256(output.encode("utf-8")).hexdigest(),
+        ))
+    operator_payload = json.dumps(
+        {
+            "confirmed_by": confirmed_by,
+            "note": operator_note or "",
+            "resolution": resolution,
+            "root_cause": root_cause,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    operator_evidence_id = f"investigate:{session.session_id}:operator-disposition"
+    references.append(EvidenceReference(
+        evidence_id=operator_evidence_id,
+        source_type="operator",
+        locator=f"investigate-session:{session.session_id}:operator-disposition",
+        observed_at=now,
+        summary=operator_note or f"operator marked root cause {resolution}",
+        content_sha256=hashlib.sha256(operator_payload.encode("utf-8")).hexdigest(),
+    ))
+    root_status = "hypothesis" if resolution == "inconclusive" else resolution
+    root_evidence = tuple(
+        [dossier_id_by_session_id[item] for item in selected]
+        + [operator_evidence_id]
+    )
+    root = RootCauseHypothesis(
+        hypothesis_id=f"investigate-root:{session.session_id}",
+        statement=root_cause,
+        status=root_status,
+        origin="operator",
+        confidence=1.0 if resolution == "confirmed" else 0.0,
+        evidence_ids=root_evidence,
+        updated_at=now,
+        confirmed_by=confirmed_by if resolution == "confirmed" else None,
+    )
+    opened_at = datetime.fromisoformat(session.opened_at.replace("Z", "+00:00"))
+    fingerprint = hashlib.sha256(
+        f"{session.family or 'general'}\0{session.subject or 'local'}\0{session.question}".encode("utf-8")
+    ).hexdigest()
+    dossier = IncidentDossier(
+        dossier_id=dossier_id,
+        source_mode="live",
+        status="escalated" if resolution == "inconclusive" else "investigating",
+        fault_family=session.family or "general_investigation",
+        fault_summary=session.question,
+        severity="medium",
+        symptom_fingerprint=fingerprint,
+        asset_ids=(session.subject or "local-system",),
+        opened_at=opened_at,
+        updated_at=now,
+        evidence=tuple(references),
+        root_causes=(root,),
+    )
+    payload = service.save_dossier(dossier)
+    session.trace_events.append({
+        "kind": "incident_dossier_saved",
+        "at": now.isoformat(),
+        "payload": {"dossier_id": dossier.dossier_id, "resolution": resolution},
+    })
+    return {"dossier": payload, "resolution": resolution}
 
 
 def _sanitise_runbook(raw: list[Any]) -> list[dict[str, Any]]:

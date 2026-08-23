@@ -1,13 +1,15 @@
-"""FortiGate syslog → ClickHouse `netops.facts` ingest (backfill + live tail).
+"""FortiGate syslog → ClickHouse facts and security-event ingest.
 
 Feeds the situational-awareness console's HISTORICAL device portraits. The raw
 FortiGate logs live on R230 (`/data/fortigate-runtime/input/`): the live file
 plus ~2.5 months of rotated `.gz`. This reads them over SSH, parses each traffic
-line into a flat fact row, and batch-inserts into ClickHouse (reachable from
-node 27 at the netops-core cluster IP).
+line into a flat fact row, normalizes selected authentication and management-
+plane signals into `netops.security_events`, and batch-inserts both streams
+into ClickHouse (reachable from node 27 at the netops-core cluster IP).
 
 Two modes:
   backfill  — replay every rotated .gz (oldest→newest) + the current file once.
+  security-backfill — replay only system/local signals into security_events.
   live      — `tail -F` the current file, inserting new flows continuously.
 
 The live path currently has one sink: ClickHouse. Redpanda publication is not
@@ -19,10 +21,12 @@ Config via env (falls back to `/etc/selfevo-console.env` values):
   CLICKHOUSE_USER/PASSWORD/DB              — default user/db: netops/netops
   FACTS_LIVE_FLUSH_SECONDS                  — default 5
   FACTS_STATUS_FILE                         — default /run/netops-facts-ingest/status.json
+  SECURITY_EVENTS_PROVENANCE                — real (default), replay, or drill
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -70,6 +74,7 @@ CH_USER = _env("CLICKHOUSE_USER", "netops")
 CH_PASS = _env("CLICKHOUSE_PASSWORD")
 CH_DB = _env("CLICKHOUSE_DB", "netops")
 CH_TABLE = "facts"
+SECURITY_TABLE = "security_events"
 
 R230_SSH = _env("R230_SSH", "root@192.168.1.23")
 R230_PASS = _env("R230_PASS")
@@ -87,6 +92,14 @@ _COLS = [
     "service", "app", "type", "subtype", "srcintf", "dstintf", "dstcountry",
     "srcname", "sentbyte", "rcvdbyte",
 ]
+_SECURITY_COLS = [
+    "event_ts", "event_id", "event_type", "severity", "device_name", "device_id",
+    "virtual_domain", "srcip", "dstip", "dstport", "username", "method",
+    "action", "status", "reason", "logid", "logdesc", "message",
+    "provenance", "raw_log",
+]
+_SECURITY_PROVENANCE = frozenset({"real", "replay", "drill"})
+_MANAGEMENT_PORTS = frozenset({22, 23, 80, 443, 541, 3000, 8000, 8080, 8443, 10443})
 
 
 class RecoverableSSHError(RuntimeError):
@@ -136,6 +149,104 @@ def parse_line(line: str) -> list | None:
     ]
 
 
+def _uint16(value: str | None) -> int:
+    try:
+        parsed = int(value or 0)
+    except ValueError:
+        return 0
+    return parsed if 0 <= parsed <= 65535 else 0
+
+
+def parse_security_event(line: str, provenance: str = "real") -> list | None:
+    """Map one FortiGate line to a normalized security event.
+
+    This function has no I/O or mutable state. Unsupported lines return ``None``.
+    ``provenance`` describes the origin of the observation, independently of
+    whether a historical file happens to be read by the backfill command.
+    """
+    provenance = provenance.strip().lower()
+    if provenance not in _SECURITY_PROVENANCE:
+        raise ValueError(f"unsupported security-event provenance: {provenance!r}")
+
+    d = _kv(line)
+    ts = _ts(d)
+    if not ts:
+        return None
+
+    log_type = d.get("type", "").lower()
+    subtype = d.get("subtype", "").lower()
+    logdesc = d.get("logdesc", "")
+    message = d.get("msg", "")
+    action = d.get("action", "")
+    status = d.get("status", "")
+    reason = d.get("reason", "")
+    combined = " ".join((logdesc, message, action, status, reason)).lower()
+    event_type: str | None = None
+
+    if log_type == "event" and subtype == "system":
+        admin_context = "admin" in combined or "administrator" in combined
+        login_context = "login" in combined or action.lower() == "login"
+        lockout_context = login_context and (
+            "disabled" in combined
+            or "lockout" in combined
+            or "locked out" in combined
+            or reason.lower() == "exceed_limit"
+        )
+        account_disabled = (
+            admin_context
+            and ("account" in combined or "user" in combined)
+            and "disabled" in combined
+            and not login_context
+        )
+        login_failed = admin_context and "login" in combined and any(
+            marker in combined for marker in ("failed", "failure", "invalid")
+        )
+        if account_disabled:
+            event_type = "admin_account_disabled"
+        elif lockout_context:
+            event_type = "admin_login_lockout"
+        elif login_failed:
+            event_type = "admin_login_failed"
+
+    dstport = _uint16(d.get("dstport") or d.get("dst_port"))
+    if log_type == "traffic" and subtype == "local" and dstport in _MANAGEMENT_PORTS:
+        traffic_action = action.lower()
+        from_wan = d.get("srcintfrole", "").lower() == "wan"
+        if traffic_action in {"deny", "blocked", "block", "reject"}:
+            event_type = "management_probe"
+        elif from_wan and traffic_action in {"accept", "allow", "pass", "close"}:
+            event_type = "management_exposure"
+
+    if event_type is None:
+        return None
+    raw_log = line.rstrip("\r\n")
+    event_id = hashlib.sha256(
+        f"{provenance}\0{ts}\0{raw_log}".encode("utf-8", errors="replace")
+    ).hexdigest()
+    return [
+        ts,
+        event_id,
+        event_type,
+        d.get("level", ""),
+        d.get("devname", ""),
+        d.get("devid", ""),
+        d.get("vd", ""),
+        d.get("srcip", ""),
+        d.get("dstip", ""),
+        dstport,
+        d.get("user", ""),
+        d.get("method", ""),
+        action,
+        status,
+        reason,
+        d.get("logid", ""),
+        logdesc,
+        message,
+        provenance,
+        raw_log,
+    ]
+
+
 def _tsv(rows: list[list]) -> bytes:
     out = []
     for r in rows:
@@ -169,6 +280,72 @@ def ch_insert(rows: list[list]) -> None:
                 flush=True,
             )
             time.sleep(2 * attempt)
+
+
+def _ch_post(query: str, data: bytes | None = None) -> None:
+    url = f"{CH_URL}/?query={urllib.parse.quote(query)}"
+    req = urllib.request.Request(
+        url,
+        data=data if data is not None else b"",
+        headers={"X-ClickHouse-User": CH_USER, "X-ClickHouse-Key": CH_PASS},
+        method="POST",
+    )
+    for attempt in (1, 2, 3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                response.read()
+            return
+        except Exception as exc:
+            if attempt == 3:
+                raise
+            print(
+                f"[clickhouse] query attempt {attempt}/3 failed "
+                f"({type(exc).__name__}: {exc}); retrying",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(2 * attempt)
+
+
+def create_security_events_table() -> None:
+    """Create the independent security-event sink without modifying existing tables."""
+    _ch_post(
+        f"""CREATE TABLE IF NOT EXISTS {CH_DB}.{SECURITY_TABLE} (
+            event_ts DateTime64(3, 'UTC'),
+            event_id String,
+            event_type LowCardinality(String),
+            severity LowCardinality(String),
+            device_name String,
+            device_id String,
+            virtual_domain String,
+            srcip String,
+            dstip String,
+            dstport UInt16,
+            username String,
+            method LowCardinality(String),
+            action LowCardinality(String),
+            status LowCardinality(String),
+            reason String,
+            logid String,
+            logdesc String,
+            message String,
+            provenance Enum8('real' = 1, 'replay' = 2, 'drill' = 3),
+            raw_log String,
+            ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+        ) ENGINE = ReplacingMergeTree(ingested_at)
+        PARTITION BY toYYYYMM(event_ts)
+        ORDER BY event_id"""
+    )
+
+
+def ch_insert_security(rows: list[list]) -> None:
+    if not rows:
+        return
+    query = (
+        f"INSERT INTO {CH_DB}.{SECURITY_TABLE} ({','.join(_SECURITY_COLS)}) "
+        "FORMAT TabSeparated"
+    )
+    _ch_post(query, _tsv(rows))
 
 
 def _ssh_cmd(remote_cmd: str) -> list[str]:
@@ -256,6 +433,9 @@ def _stream(
     *,
     live_mode: bool = False,
     clock=None,
+    on_security_rows=None,
+    security_provenance: str = "real",
+    parse_facts: bool = True,
 ) -> int:
     """Run a remote command and batch-insert parsed rows.
 
@@ -275,33 +455,44 @@ def _stream(
     if on_process is not None:
         on_process(proc)
     batch: list[list] = []
+    security_batch: list[list] = []
     n = 0
     t0 = time.time()
     last_flush_at = clock() if live_mode else None
 
     def flush(pulse_at=None) -> None:
-        nonlocal batch, n, last_flush_at
-        if not batch:
+        nonlocal batch, security_batch, n, last_flush_at
+        if not batch and not security_batch:
             return
-        on_row(batch)
-        n += len(batch)
+        if batch and on_row is not None:
+            on_row(batch)
+            n += len(batch)
+        if security_batch and on_security_rows is not None:
+            on_security_rows(security_batch)
         batch = []
+        security_batch = []
         if live_mode:
             last_flush_at = pulse_at if pulse_at is not None else clock()
 
     try:
         for raw in proc.stdout:
-            row = parse_line(raw.decode("utf-8", errors="ignore"))
-            if row is not None:
-                batch.append(row)
-            if not batch:
+            line = raw.decode("utf-8", errors="ignore")
+            if parse_facts:
+                row = parse_line(line)
+                if row is not None:
+                    batch.append(row)
+            if on_security_rows is not None:
+                security_row = parse_security_event(line, security_provenance)
+                if security_row is not None:
+                    security_batch.append(security_row)
+            if not batch and not security_batch:
                 continue
             pulse_at = clock() if live_mode else None
-            size_due = len(batch) >= BATCH
+            size_due = len(batch) >= BATCH or len(security_batch) >= BATCH
             time_due = live_mode and pulse_at - last_flush_at >= LIVE_FLUSH_SECONDS
             if size_due or time_due:
                 flush(pulse_at)
-                if n % (BATCH * 20) == 0:
+                if n and n % (BATCH * 20) == 0:
                     rate = n / max(1e-3, time.time() - t0)
                     print(f"[{label}] {n:,} facts inserted ({rate:,.0f}/s)", flush=True)
         flush()
@@ -328,6 +519,8 @@ def _stream(
 
 def backfill() -> None:
     """Replay every rotated .gz (oldest→newest) then the current file, into ClickHouse."""
+    create_security_events_table()
+    provenance = _env("SECURITY_EVENTS_PROVENANCE", "real")
     ls = subprocess.run(
         _ssh_cmd(f"ls -1tr {shlex.quote(R230_DIR)}/"),
         env=_ssh_env(),
@@ -340,33 +533,118 @@ def backfill() -> None:
     plain = [f for f in files if f.endswith(".log")]
     print(f"[backfill] {len(gz)} rotated .gz + {len(plain)} current file", flush=True)
     total = 0
+    security_total = 0
     for f in gz + plain:
         path = f"{R230_DIR}/{f}"
         cat = "zcat" if f.endswith(".gz") else "cat"
         # grep on the R230 side to cut transfer to just the lines we ingest
-        cmd = f"{cat} {path} | grep -aE 'type=\"traffic\"|subtype=\"voip\"'"
+        cmd = (
+            f"{cat} {shlex.quote(path)} | "
+            "grep -aE 'type=\"traffic\"|subtype=\"voip\"|subtype=\"system\"'"
+        )
         t0 = time.time()
-        n = _stream(cmd, ch_insert, f"backfill:{f}")
+        security_file_rows = 0
+
+        def insert_security_backfill(rows: list[list]) -> None:
+            nonlocal security_file_rows, security_total
+            ch_insert_security(rows)
+            security_file_rows += len(rows)
+            security_total += len(rows)
+
+        n = _stream(
+            cmd,
+            ch_insert,
+            f"backfill:{f}",
+            on_security_rows=insert_security_backfill,
+            security_provenance=provenance,
+        )
         total += n
-        print(f"[backfill] {f}: +{n:,} facts in {time.time()-t0:.0f}s (total {total:,})", flush=True)
-    print(f"[backfill] DONE — {total:,} facts", flush=True)
+        print(
+            f"[backfill] {f}: +{n:,} facts, +{security_file_rows:,} security events "
+            f"in {time.time()-t0:.0f}s (total {total:,}/{security_total:,})",
+            flush=True,
+        )
+    print(f"[backfill] DONE — {total:,} facts, {security_total:,} security events", flush=True)
+
+
+def security_backfill() -> None:
+    """Replay security signals without writing duplicate rows to ``facts``.
+
+    ``security_events`` uses a stable event id and ``ReplacingMergeTree``, so
+    re-running this command is safe. The existing ``facts`` table has no
+    equivalent event key; keeping this path independent prevents an operational
+    memory deployment from duplicating historical flow observations.
+    """
+    create_security_events_table()
+    provenance = _env("SECURITY_EVENTS_PROVENANCE", "real")
+    ls = subprocess.run(
+        _ssh_cmd(f"ls -1tr {shlex.quote(R230_DIR)}/"),
+        env=_ssh_env(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    files = [f.strip() for f in ls.stdout.splitlines() if f.strip()]
+    inputs = [f for f in files if f.endswith((".gz", ".log"))]
+    print(f"[security-backfill] {len(inputs)} source files", flush=True)
+    total = 0
+    for filename in inputs:
+        path = f"{R230_DIR}/{filename}"
+        cat = "zcat" if filename.endswith(".gz") else "cat"
+        # Authentication events are system logs. Management-plane probes are
+        # local traffic. Filtering remotely avoids transferring forward traffic
+        # while leaving event classification to parse_security_event().
+        cmd = (
+            f"{cat} {shlex.quote(path)} | "
+            "grep -aE 'subtype=\"system\"|subtype=\"local\"' | "
+            "grep -aE 'subtype=\"system\"|srcintfrole=\"wan\"' | "
+            "grep -aE 'subtype=\"system\"|dstport=(22|23|80|443|541|3000|8000|8080|8443|10443)( |$)'"
+        )
+        file_rows = 0
+
+        def insert_security_only(rows: list[list]) -> None:
+            nonlocal file_rows, total
+            ch_insert_security(rows)
+            file_rows += len(rows)
+            total += len(rows)
+
+        started = time.time()
+        _stream(
+            cmd,
+            None,
+            f"security-backfill:{filename}",
+            on_security_rows=insert_security_only,
+            security_provenance=provenance,
+            parse_facts=False,
+        )
+        print(
+            f"[security-backfill] {filename}: +{file_rows:,} events "
+            f"in {time.time()-started:.0f}s (total {total:,})",
+            flush=True,
+        )
+    print(f"[security-backfill] DONE — {total:,} security events", flush=True)
 
 
 def live() -> None:
     """tail -F the current log; insert new flows continuously."""
+    create_security_events_table()
+    provenance = _env("SECURITY_EVENTS_PROVENANCE", "real")
     print(f"[live] tailing {R230_LOG}", flush=True)
     cmd = (
         f"tail -n0 -F -- {shlex.quote(R230_LOG)} | "
-        "grep --line-buffered -aE 'type=\"traffic\"|subtype=\"voip\"'"
+        "grep --line-buffered -aE 'type=\"traffic\"|subtype=\"voip\"|subtype=\"system\"'"
     )
     started_at = datetime.now(timezone.utc).isoformat()
     rows_since_start = 0
+    security_rows_since_start = 0
     reconnect_count = 0
     _write_status(
         mode="live",
         pid=os.getpid(),
         started_at=started_at,
         rows_inserted_since_start=0,
+        security_rows_inserted_since_start=0,
         reconnect_count=0,
         ssh_connection="connecting",
         ssh_pid=None,
@@ -388,6 +666,21 @@ def live() -> None:
             flush=True,
         )
 
+    def insert_security_live(rows: list[list]) -> None:
+        nonlocal security_rows_since_start
+        ch_insert_security(rows)
+        security_rows_since_start += len(rows)
+        _write_status(
+            security_rows_inserted_since_start=security_rows_since_start,
+            security_last_insert_at=datetime.now(timezone.utc).isoformat(),
+            security_last_batch_rows=len(rows),
+        )
+        print(
+            f"[live] inserted {len(rows):,} security events "
+            f"(total since start {security_rows_since_start:,})",
+            flush=True,
+        )
+
     while True:
         try:
             position = _source_position()
@@ -400,7 +693,15 @@ def live() -> None:
                     **position,
                 )
 
-            _stream(cmd, insert_live, "live", stream_started, live_mode=True)
+            _stream(
+                cmd,
+                insert_live,
+                "live",
+                stream_started,
+                live_mode=True,
+                on_security_rows=insert_security_live,
+                security_provenance=provenance,
+            )
         except RecoverableSSHError as exc:
             reconnect_count += 1
             _write_status(
@@ -474,6 +775,10 @@ def status() -> int:
     print(f"collector_ssh: {collector_ssh}")
     print(f"last_insert_at: {state.get('last_insert_at', '-')}")
     print(f"rows_inserted_since_start: {state.get('rows_inserted_since_start', 0)}")
+    print(
+        "security_rows_inserted_since_start: "
+        f"{state.get('security_rows_inserted_since_start', 0)}"
+    )
     print(f"reconnect_count: {state.get('reconnect_count', 0)}")
 
     ssh_ok = False
@@ -504,7 +809,9 @@ def status() -> int:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", nargs="?", choices=["backfill", "live"])
+    ap.add_argument(
+        "mode", nargs="?", choices=["backfill", "security-backfill", "live"]
+    )
     ap.add_argument("--status", action="store_true", help="report live ingest and ClickHouse freshness")
     args = ap.parse_args()
     if args.status:
@@ -515,5 +822,7 @@ if __name__ == "__main__":
         ap.error("mode is required unless --status is used")
     if args.mode == "backfill":
         backfill()
+    elif args.mode == "security-backfill":
+        security_backfill()
     else:
         live()

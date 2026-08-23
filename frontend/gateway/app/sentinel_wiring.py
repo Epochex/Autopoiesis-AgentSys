@@ -17,6 +17,8 @@ from core.env import autopoiesis_env
 from core.remediate.sentinel import Sentinel, record, timeline
 from domains.network_rca.detectors import ALL_DETECTORS
 from domains.network_rca.incident_memory import consolidate_incident_timeline
+from domains.network_rca.incident_memory import completed_incident_chains
+from domains.network_rca.incident_dossier import from_sentinel_chain
 
 _sentinel: Sentinel | None = None
 _lock = threading.Lock()
@@ -35,12 +37,20 @@ def _resolve_learning_service() -> Any | None:
 
 
 def _remember_completed_incidents() -> None:
+    rows = timeline(2000)
+    from . import main
+
+    operational = getattr(main, "_operational_memory", None)
+    if operational is not None:
+        for chain in completed_incident_chains(rows):
+            operational.save_dossier(from_sentinel_chain(chain, source_mode="live"))
+
     service = _resolve_learning_service()
     if service is None:
         return
     request_lock = getattr(service, "_request_lock", None)
     with request_lock if request_lock is not None else nullcontext():
-        consolidate_incident_timeline(timeline(2000), service.memory, service.skills)
+        consolidate_incident_timeline(rows, service.memory, service.skills)
         apply_retention = getattr(service, "_apply_memory_retention", None)
         if apply_retention is not None:
             # Diagnose applies retention after consolidation, while sentinel

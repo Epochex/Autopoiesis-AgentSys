@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import math
 import statistics
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import RLock
@@ -19,6 +20,17 @@ DEFAULT_PEER_TOP_K = 64
 DEFAULT_PORT_TOP_K = 32
 DEFAULT_INTERFACE_TOP_K = 32
 DEFAULT_SESSION_MULTIPLIER = 5.0
+DEFAULT_GROUP_LIMIT = 256
+DEFAULT_GROUP_DEVICE_LIMIT = 512
+DEFAULT_GROUP_MIN_SAMPLES = 5
+DEFAULT_PEER_OUTLIER_MULTIPLIER = 8.0
+DEFAULT_VOLUME_OUTLIER_MULTIPLIER = 10.0
+
+# 自比只能发现行为变化，无法发现长期稳定的畸形行为。真数据里的 192.168.16.56
+# 七天有 641 万会话却只有 2 个对端，它相对自己的历史很稳定，但会话/对端比仍是
+# 同网段第二名的 8.6 倍。群体判据因此采用中位数：至少 5 台同子网设备形成基线，
+# 会话/对端比超过中位数 8 倍表示接近一个数量级的集中发送；会话量超过中位数 10 倍
+# 表示完整数量级的流量差距。两条阈值都保留原始计数、倍数和样本量，便于报告复核。
 
 
 try:
@@ -93,6 +105,15 @@ class _HourBucket:
     interface_seen: bytearray = field(default_factory=bytearray)
 
 
+@dataclass(slots=True)
+class _GroupDeviceStats:
+    sessions: int = 0
+    peer_count: int = 0
+    accepted: int = 0
+    denied: int = 0
+    peer_seen: bytearray = field(default_factory=bytearray)
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("FortiEvent.at must be timezone-aware")
@@ -162,6 +183,11 @@ class ProfileStore:
         interface_top_k: int = DEFAULT_INTERFACE_TOP_K,
         session_multiplier: float = DEFAULT_SESSION_MULTIPLIER,
         membership_bits: int = 8192,
+        group_limit: int = DEFAULT_GROUP_LIMIT,
+        group_device_limit: int = DEFAULT_GROUP_DEVICE_LIMIT,
+        group_min_samples: int = DEFAULT_GROUP_MIN_SAMPLES,
+        peer_outlier_multiplier: float = DEFAULT_PEER_OUTLIER_MULTIPLIER,
+        volume_outlier_multiplier: float = DEFAULT_VOLUME_OUTLIER_MULTIPLIER,
     ) -> None:
         if min(peer_top_k, port_top_k, interface_top_k) <= 0:
             raise ValueError("top-K limits must be positive")
@@ -169,13 +195,31 @@ class ProfileStore:
             raise ValueError("session_multiplier must be a positive finite number")
         if membership_bits < 64 or membership_bits % 8:
             raise ValueError("membership_bits must be a multiple of 8 and at least 64")
+        if min(group_limit, group_device_limit, group_min_samples) <= 0:
+            raise ValueError("group limits and minimum samples must be positive")
+        if group_min_samples > group_device_limit:
+            raise ValueError("group_min_samples cannot exceed group_device_limit")
+        for name, value in (
+            ("peer_outlier_multiplier", peer_outlier_multiplier),
+            ("volume_outlier_multiplier", volume_outlier_multiplier),
+        ):
+            if value <= 1 or not math.isfinite(value):
+                raise ValueError(f"{name} must be finite and greater than 1")
 
         self.peer_top_k = peer_top_k
         self.port_top_k = port_top_k
         self.interface_top_k = interface_top_k
         self.session_multiplier = float(session_multiplier)
         self.membership_bits = membership_bits
+        self.group_limit = group_limit
+        self.group_device_limit = group_device_limit
+        self.group_min_samples = group_min_samples
+        self.peer_outlier_multiplier = float(peer_outlier_multiplier)
+        self.volume_outlier_multiplier = float(volume_outlier_multiplier)
         self._profiles: dict[str, dict[datetime, _HourBucket]] = {}
+        self._group_baselines: OrderedDict[
+            str, OrderedDict[str, _GroupDeviceStats]
+        ] = OrderedDict()
         self._watermark: datetime | None = None
         self._last_auto_prune_hour: datetime | None = None
         self._lock = RLock()
@@ -192,6 +236,7 @@ class ProfileStore:
             ip = str(event.src_ip)
             hour = _hour_start(at)
             buckets = self._profiles.setdefault(ip, {})
+            peer = str(event.dst_ip) if event.dst_ip is not None else None
             bucket = buckets.get(hour)
             if bucket is None:
                 bitmap_bytes = self.membership_bits // 8
@@ -208,8 +253,7 @@ class ProfileStore:
             bucket.last_seen = max(bucket.last_seen, at)
             bucket.sessions += 1
 
-            if event.dst_ip is not None:
-                peer = str(event.dst_ip)
+            if peer is not None:
                 _bounded_increment(bucket.peers, peer, self.peer_top_k)
                 _seen_add(bucket.peer_seen, peer)
             if event.dst_port is not None:
@@ -224,6 +268,7 @@ class ProfileStore:
             bucket.denied += int(action == "deny")
             bucket.sent_bytes += int(event.sent_bytes or 0)
             bucket.rcvd_bytes += int(event.rcvd_bytes or 0)
+            self._record_group_observation(ip, event)
 
     def profile(self, ip: str) -> DeviceProfile | None:
         """返回当前窗口的快照，调用方修改 Counter 不会污染存储。"""
@@ -259,6 +304,34 @@ class ProfileStore:
                 sent_bytes=sum(bucket.sent_bytes for bucket in values),
                 rcvd_bytes=sum(bucket.rcvd_bytes for bucket in values),
                 hourly=dict(sorted(hourly.items())),
+            )
+
+    def seed_group_summary(
+        self,
+        ip: str,
+        *,
+        sessions: int,
+        peer_count: int,
+        accepted: int = 0,
+        denied: int = 0,
+        known_peers: tuple[str, ...] = (),
+    ) -> None:
+        """Load an exact cohort aggregate without replaying every historical flow."""
+        if min(sessions, peer_count, accepted, denied) < 0:
+            raise ValueError("group summary counts cannot be negative")
+        bitmap = bytearray(self.membership_bits // 8)
+        for peer in known_peers:
+            _seen_add(bitmap, peer)
+        with self._lock:
+            self._insert_group_device(
+                str(ip),
+                _GroupDeviceStats(
+                    sessions=int(sessions),
+                    peer_count=int(peer_count),
+                    accepted=int(accepted),
+                    denied=int(denied),
+                    peer_seen=bitmap,
+                ),
             )
 
     def anomalies(self, event: FortiEvent) -> list[Anomaly]:
@@ -357,6 +430,7 @@ class ProfileStore:
                         )
                     )
 
+            result.extend(self._group_anomalies(ip, event))
             return result
 
     def prune(self, *, now: datetime, window_days: int = DEFAULT_WINDOW_DAYS) -> int:
@@ -378,21 +452,46 @@ class ProfileStore:
                     for _hour, bucket in sorted(buckets.items())
                 ]
             return {
-                "version": 1,
+                "version": 2,
                 "config": {
                     "peer_top_k": self.peer_top_k,
                     "port_top_k": self.port_top_k,
                     "interface_top_k": self.interface_top_k,
                     "session_multiplier": self.session_multiplier,
                     "membership_bits": self.membership_bits,
+                    "group_limit": self.group_limit,
+                    "group_device_limit": self.group_device_limit,
+                    "group_min_samples": self.group_min_samples,
+                    "peer_outlier_multiplier": self.peer_outlier_multiplier,
+                    "volume_outlier_multiplier": self.volume_outlier_multiplier,
                 },
                 "watermark": self._watermark.isoformat() if self._watermark else None,
                 "devices": devices,
+                "group_baselines": [
+                    {
+                        "group": group,
+                        "devices": [
+                            {
+                                "ip": ip,
+                                "sessions": stats.sessions,
+                                "peer_count": stats.peer_count,
+                                "accepted": stats.accepted,
+                                "denied": stats.denied,
+                                "peer_seen": base64.b64encode(stats.peer_seen).decode(
+                                    "ascii"
+                                ),
+                            }
+                            for ip, stats in members.items()
+                        ],
+                    }
+                    for group, members in self._group_baselines.items()
+                ],
             }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> ProfileStore:
-        if payload.get("version") != 1:
+        version = payload.get("version")
+        if version not in (1, 2):
             raise ValueError("unsupported profile snapshot version")
         config = payload.get("config")
         devices = payload.get("devices")
@@ -405,6 +504,23 @@ class ProfileStore:
             interface_top_k=int(config["interface_top_k"]),
             session_multiplier=float(config["session_multiplier"]),
             membership_bits=int(config["membership_bits"]),
+            group_limit=int(config.get("group_limit", DEFAULT_GROUP_LIMIT)),
+            group_device_limit=int(
+                config.get("group_device_limit", DEFAULT_GROUP_DEVICE_LIMIT)
+            ),
+            group_min_samples=int(
+                config.get("group_min_samples", DEFAULT_GROUP_MIN_SAMPLES)
+            ),
+            peer_outlier_multiplier=float(
+                config.get(
+                    "peer_outlier_multiplier", DEFAULT_PEER_OUTLIER_MULTIPLIER
+                )
+            ),
+            volume_outlier_multiplier=float(
+                config.get(
+                    "volume_outlier_multiplier", DEFAULT_VOLUME_OUTLIER_MULTIPLIER
+                )
+            ),
         )
         watermark = payload.get("watermark")
         store._watermark = _utc(datetime.fromisoformat(watermark)) if watermark else None
@@ -418,6 +534,44 @@ class ProfileStore:
                 store._profiles[ip][bucket.hour] = bucket
             if not store._profiles[ip]:
                 del store._profiles[ip]
+        if version == 2:
+            raw_groups = payload.get("group_baselines")
+            if not isinstance(raw_groups, list):
+                raise ValueError("invalid group baselines in profile snapshot")
+            for raw_group in raw_groups:
+                if not isinstance(raw_group, Mapping):
+                    raise ValueError("invalid group baseline in profile snapshot")
+                group = str(raw_group["group"])
+                raw_members = raw_group.get("devices")
+                if not isinstance(raw_members, list):
+                    raise ValueError("invalid group devices in profile snapshot")
+                members: OrderedDict[str, _GroupDeviceStats] = OrderedDict()
+                for raw_stats in raw_members:
+                    if not isinstance(raw_stats, Mapping):
+                        raise ValueError("invalid group device stats in profile snapshot")
+                    peer_seen = bytearray(
+                        base64.b64decode(raw_stats["peer_seen"], validate=True)
+                    )
+                    if len(peer_seen) != store.membership_bits // 8:
+                        raise ValueError(
+                            "group membership bitmap size does not match snapshot config"
+                        )
+                    members[str(raw_stats["ip"])] = _GroupDeviceStats(
+                        sessions=int(raw_stats["sessions"]),
+                        peer_count=int(raw_stats["peer_count"]),
+                        accepted=int(raw_stats["accepted"]),
+                        denied=int(raw_stats["denied"]),
+                        peer_seen=peer_seen,
+                    )
+                if len(members) > store.group_device_limit:
+                    raise ValueError("group baseline exceeds configured device limit")
+                store._group_baselines[group] = members
+            if len(store._group_baselines) > store.group_limit:
+                raise ValueError("group baselines exceed configured group limit")
+        else:
+            # 第一版快照没有群体汇总。加载时从现有七天桶重建，旧数据可直接升级。
+            for ip in store._profiles:
+                store._insert_group_device(ip, store._summarize_device(ip))
         return store
 
     def dumps(self) -> str:
@@ -455,16 +609,206 @@ class ProfileStore:
         cutoff = effective_now - timedelta(days=window_days)
         removed = 0
         empty_devices: list[str] = []
+        changed_devices: list[str] = []
         for ip, buckets in self._profiles.items():
             expired = [hour for hour, bucket in buckets.items() if bucket.last_seen <= cutoff]
             for hour in expired:
                 removed += buckets[hour].sessions
                 del buckets[hour]
+            if expired:
+                changed_devices.append(ip)
             if not buckets:
                 empty_devices.append(ip)
         for ip in empty_devices:
             del self._profiles[ip]
+            self._remove_group_device(ip)
+        for ip in changed_devices:
+            if ip not in empty_devices:
+                self._refresh_tracked_group_device(ip)
         return removed
+
+    @staticmethod
+    def _group_for_ip(ip: str) -> str | None:
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            return None
+        prefix = 24 if address.version == 4 else 64
+        return str(ipaddress.ip_network(f"{address}/{prefix}", strict=False))
+
+    def _record_group_observation(self, ip: str, event: FortiEvent) -> None:
+        group = self._group_for_ip(ip)
+        if group is None:
+            return
+        members = self._group_baselines.get(group)
+        stats = members.get(ip) if members is not None else None
+        if stats is None:
+            self._insert_group_device(ip, self._summarize_device(ip))
+            return
+
+        stats.sessions += 1
+        if event.dst_ip is not None:
+            peer = str(event.dst_ip)
+            if not _seen_contains(stats.peer_seen, peer):
+                stats.peer_count += 1
+                _seen_add(stats.peer_seen, peer)
+        action = (event.action or "").casefold()
+        stats.accepted += int(action == "accept")
+        stats.denied += int(action == "deny")
+        members.move_to_end(ip)
+        self._group_baselines.move_to_end(group)
+
+    def _summarize_device(self, ip: str) -> _GroupDeviceStats:
+        buckets = self._profiles.get(ip, {})
+        peer_candidates = {
+            peer for bucket in buckets.values() for peer in bucket.peers.keys()
+        }
+        bitmap_bytes = self.membership_bits // 8
+        peer_seen_bits = 0
+        for bucket in buckets.values():
+            peer_seen_bits |= int.from_bytes(bucket.peer_seen, "little")
+        peer_seen = bytearray(peer_seen_bits.to_bytes(bitmap_bytes, "little"))
+        return _GroupDeviceStats(
+            sessions=sum(bucket.sessions for bucket in buckets.values()),
+            peer_count=len(peer_candidates),
+            accepted=sum(bucket.accepted for bucket in buckets.values()),
+            denied=sum(bucket.denied for bucket in buckets.values()),
+            peer_seen=peer_seen,
+        )
+
+    def _insert_group_device(self, ip: str, stats: _GroupDeviceStats) -> None:
+        group = self._group_for_ip(ip)
+        if group is None:
+            return
+        members = self._group_baselines.get(group)
+        if members is None:
+            if len(self._group_baselines) >= self.group_limit:
+                self._group_baselines.popitem(last=False)
+            members = OrderedDict()
+            self._group_baselines[group] = members
+        if ip not in members and len(members) >= self.group_device_limit:
+            members.popitem(last=False)
+        members[ip] = stats
+        members.move_to_end(ip)
+        self._group_baselines.move_to_end(group)
+
+    def _remove_group_device(self, ip: str) -> None:
+        group = self._group_for_ip(ip)
+        members = self._group_baselines.get(group) if group is not None else None
+        if members is None:
+            return
+        members.pop(ip, None)
+        if not members:
+            del self._group_baselines[group]
+
+    def _refresh_tracked_group_device(self, ip: str) -> None:
+        group = self._group_for_ip(ip)
+        members = self._group_baselines.get(group) if group is not None else None
+        if members is not None and ip in members:
+            members[ip] = self._summarize_device(ip)
+
+    def _group_anomalies(
+        self,
+        ip: str,
+        event: FortiEvent,
+    ) -> list[Anomaly]:
+        group = self._group_for_ip(ip)
+        members = self._group_baselines.get(group) if group is not None else None
+        if group is None or members is None:
+            return []
+
+        stored = members.get(ip)
+        current = (
+            _GroupDeviceStats(
+                sessions=stored.sessions,
+                peer_count=stored.peer_count,
+                accepted=stored.accepted,
+                denied=stored.denied,
+                peer_seen=bytearray(stored.peer_seen),
+            )
+            if stored is not None
+            else self._summarize_device(ip)
+        )
+        current.sessions += 1
+        if event.dst_ip is not None:
+            peer = str(event.dst_ip)
+            if not _seen_contains(current.peer_seen, peer):
+                current.peer_count += 1
+                _seen_add(current.peer_seen, peer)
+        action = (event.action or "").casefold()
+        current.accepted += int(action == "accept")
+        current.denied += int(action == "deny")
+
+        controls = [stats for other_ip, stats in members.items() if other_ip != ip]
+        result: list[Anomaly] = []
+
+        ratio_controls = [
+            stats.sessions / stats.peer_count
+            for stats in controls
+            if stats.peer_count > 0
+        ]
+        if current.peer_count > 0 and len(ratio_controls) >= self.group_min_samples:
+            median_ratio = float(statistics.median(ratio_controls))
+            current_ratio = current.sessions / current.peer_count
+            threshold = median_ratio * self.peer_outlier_multiplier
+            if median_ratio > 0 and current_ratio > threshold:
+                multiple = current_ratio / median_ratio
+                result.append(
+                    Anomaly(
+                        type="peer_outlier",
+                        explanation=(
+                            f"{ip} 过去 7 天 {current.sessions} 次会话只涉及 "
+                            f"{current.peer_count} 个对端，每个对端 "
+                            f"{_display_number(current_ratio)} 次，是同子网中位数 "
+                            f"{_display_number(median_ratio)} 次的 "
+                            f"{_display_number(multiple)} 倍"
+                        ),
+                        numbers={
+                            "sessions": current.sessions,
+                            "peer_count": current.peer_count,
+                            "sessions_per_peer": current_ratio,
+                            "group_median_sessions_per_peer": median_ratio,
+                            "multiple": multiple,
+                        },
+                        criterion={
+                            "window_days": DEFAULT_WINDOW_DAYS,
+                            "group": group,
+                            "group_samples": len(ratio_controls),
+                            "multiplier": self.peer_outlier_multiplier,
+                            "threshold_sessions_per_peer": threshold,
+                        },
+                    )
+                )
+
+        session_controls = [stats.sessions for stats in controls]
+        if len(session_controls) >= self.group_min_samples:
+            median_sessions = float(statistics.median(session_controls))
+            threshold = median_sessions * self.volume_outlier_multiplier
+            if median_sessions > 0 and current.sessions > threshold:
+                multiple = current.sessions / median_sessions
+                result.append(
+                    Anomaly(
+                        type="volume_outlier",
+                        explanation=(
+                            f"{ip} 过去 7 天有 {current.sessions} 次会话，是同子网设备"
+                            f"中位数 {_display_number(median_sessions)} 次的 "
+                            f"{_display_number(multiple)} 倍"
+                        ),
+                        numbers={
+                            "sessions": current.sessions,
+                            "group_median_sessions": median_sessions,
+                            "multiple": multiple,
+                        },
+                        criterion={
+                            "window_days": DEFAULT_WINDOW_DAYS,
+                            "group": group,
+                            "group_samples": len(session_controls),
+                            "multiplier": self.volume_outlier_multiplier,
+                            "threshold_sessions": threshold,
+                        },
+                    )
+                )
+        return result
 
     @staticmethod
     def _was_seen(buckets: Any, value: str, *, peer: bool) -> bool:
