@@ -27,6 +27,8 @@
 .la-row.p-watching { border-left-color:#ccff00; }
 .la-row.p-detected { border-left-color:#0d0d0d; }
 .la-row.p-reported { border-left-color:#80500e; }
+.la-row.p-declined { border-left-color:#80500e; }
+.la-row.p-cooling { border-left-color:#8a6518; }
 .la-row.p-resolved { border-left-color:#12615c; }
 
 .la-phase { font-family:var(--font-mono, monospace); font-size:8.5px; font-weight:600;
@@ -35,6 +37,8 @@
 .p-needs_human .la-phase { color:#9e2937; }
 .p-watching .la-phase { color:#0d0d0d; }
 .p-reported .la-phase { color:#80500e; }
+.p-declined .la-phase { color:#80500e; }
+.p-cooling .la-phase { color:#8a6518; }
 .p-resolved .la-phase { color:#12615c; }
 .p-detected .la-phase { color:#0d0d0d; }
 .la-subject { font-family:var(--font-mono, monospace); font-size:11.5px; color:var(--ink, #0d0d0d);

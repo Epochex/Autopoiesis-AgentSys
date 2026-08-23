@@ -298,6 +298,10 @@ def consolidate_run(
         sem_id = f"sem-{root_key}"
         sem = memory.get(sem_id)
         if sem is not None:
+            # A capacity-retired pattern becomes current again when a new run
+            # independently reaches the same verified root.  Contradiction and
+            # administrative quarantines retain their stronger boundary.
+            memory.restore(sem_id, "forgotten")
             before = _snap(sem)
             sem.confidence = min(conf_cap, sem.confidence + 0.3)
             sem.importance += 1.0
@@ -322,6 +326,7 @@ def consolidate_run(
         skill_tags = [f"skill:{s}" for s in winning]
         proc = memory.get(proc_id)
         if proc is not None:
+            memory.restore(proc_id, "forgotten")
             before = _snap(proc)
             retrieval_changed = False
             proc.confidence = min(conf_cap, proc.confidence + 0.4)

@@ -1,6 +1,7 @@
 import './live-alerts.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
+import { latestIncidentCycle } from './sentinel-cycle'
 
 /* ── 实时告警条 — what the sentinel found, on the page people watch ──────────
  *
@@ -18,7 +19,7 @@ interface Row {
   severity: string
   summary: string
   at: string
-  phase: 'escalated' | 'watching' | 'resolved' | 'needs_human' | 'reported' | 'detected'
+  phase: 'escalated' | 'watching' | 'resolved' | 'needs_human' | 'reported' | 'declined' | 'cooling' | 'detected'
   action: string | null
 }
 
@@ -40,6 +41,8 @@ const PHASE_LABEL: Record<Row['phase'], [string, string]> = {
   escalated: ['不再自动修', 'STOPPED REPAIRING'],
   needs_human: ['要人工', 'NEEDS A PERSON'],
   reported: ['只报不动', 'REPORTED ONLY'],
+  declined: ['安全门拒绝', 'DECLINED BY GATE'],
+  cooling: ['冷却中', 'COOLING DOWN'],
 }
 
 /** Anything older than this is history, not a live alert. */
@@ -59,7 +62,8 @@ function summarise(events: Record<string, unknown>[]): Row[] {
 
   const rows: Row[] = []
   const cutoff = Date.now() - RECENT_MS
-  for (const [subject, chain] of bySubject) {
+  for (const [subject, history] of bySubject) {
+    const chain = latestIncidentCycle(history)
     const last = chain[chain.length - 1]
     const at = String(last.at ?? '')
     if (Date.parse(at) < cutoff) continue
@@ -74,6 +78,8 @@ function summarise(events: Record<string, unknown>[]): Row[] {
     else if (kinds.includes('resolved')) phase = 'resolved'
     else if (remediated?.needs_human) phase = 'needs_human'
     else if (kinds.includes('no_safe_action')) phase = 'reported'
+    else if (kinds.includes('declined')) phase = 'declined'
+    else if (kinds.includes('cooldown')) phase = 'cooling'
     else if (kinds.includes('preflight')) phase = 'watching'
 
     const detection = [...chain].reverse().find((e) => e.kind === 'detected')
@@ -90,7 +96,8 @@ function summarise(events: Record<string, unknown>[]): Row[] {
   // Escalated outranks even that: it is the only row where the system has
   // stopped, so nothing else will move it until someone does.
   const order: Record<Row['phase'], number> = {
-    escalated: 0, needs_human: 1, watching: 2, detected: 3, reported: 4, resolved: 5,
+    escalated: 0, needs_human: 1, watching: 2, detected: 3,
+    cooling: 4, declined: 4, reported: 4, resolved: 5,
   }
   rows.sort((a, b) => order[a.phase] - order[b.phase] || (a.at < b.at ? 1 : -1))
   return rows
@@ -126,10 +133,12 @@ export function LiveAlerts({ lang, onOpen }: { lang: Lang; onOpen: (subject: str
   // An escalated incident is not being handled — counting it as 处理中 would tell
   // the operator the system has it when the whole point is that it has stopped.
   const stopped = rows.filter((r) => r.phase === 'escalated').length
-  const live = rows.filter((r) => r.phase !== 'resolved' && r.phase !== 'escalated').length
+  const live = rows.filter((r) => r.phase === 'detected' || r.phase === 'watching' || r.phase === 'needs_human').length
+  const held = rows.filter((r) => r.phase === 'reported' || r.phase === 'declined' || r.phase === 'cooling').length
   const counts = [
     stopped ? (zh ? `${stopped} 项要人工` : `${stopped} need a person`) : '',
     live ? (zh ? `${live} 项处理中` : `${live} in flight`) : '',
+    held ? (zh ? `${held} 项未执行写操作` : `${held} held without writes`) : '',
   ].filter(Boolean)
 
   return (

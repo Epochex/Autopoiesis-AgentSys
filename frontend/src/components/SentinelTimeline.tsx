@@ -1,6 +1,7 @@
 import './sentinel.css'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
+import { latestIncidentCycle } from './sentinel-cycle'
 
 /* ── 哨兵时间线 — the chain from noticing to proving it worked ────────────────
  *
@@ -14,6 +15,7 @@ export type TimelineKind =
   | 'sentinel_started' | 'sentinel_stopped' | 'cycle' | 'cycle_failed'
   | 'detected' | 'awaiting_confirmation' | 'no_safe_action' | 'cooldown'
   | 'preflight' | 'declined' | 'remediated' | 'resolved' | 'detector_failed'
+  | 'escalated' | 'escalation_cleared'
 
 export interface BlastRadius {
   scope: string
@@ -61,7 +63,7 @@ interface Incident {
   events: TimelineEvent[]
   opened: string
   closed: string | null
-  outcome: 'resolved' | 'needs_human' | 'declined' | 'watching' | 'reported'
+  outcome: 'resolved' | 'needs_human' | 'declined' | 'watching' | 'reported' | 'cooling' | 'escalated'
 }
 
 const T = (zh: boolean) => ({
@@ -90,6 +92,8 @@ const OUTCOME_LABEL: Record<Incident['outcome'], [string, string]> = {
   declined: ['未执行', 'DECLINED'],
   watching: ['处理中', 'IN FLIGHT'],
   reported: ['只报不动', 'REPORTED ONLY'],
+  cooling: ['冷却中', 'COOLING DOWN'],
+  escalated: ['转人工', 'HANDED TO A PERSON'],
 }
 
 const STEP_LABEL: Record<TimelineKind, [string, string]> = {
@@ -102,6 +106,8 @@ const STEP_LABEL: Record<TimelineKind, [string, string]> = {
   remediated: ['已执行', 'ACTED'],
   resolved: ['判定恢复', 'RESOLVED'],
   detector_failed: ['探测器报错', 'DETECTOR FAILED'],
+  escalated: ['停止自动处置', 'STOPPED AUTOMATION'],
+  escalation_cleared: ['升级解除', 'ESCALATION CLEARED'],
   cycle: ['巡检', 'CYCLE'],
   cycle_failed: ['巡检失败', 'CYCLE FAILED'],
   sentinel_started: ['哨兵启动', 'STARTED'],
@@ -114,7 +120,7 @@ const clock = (iso: string) => (iso || '').slice(11, 19)
 /** Steps that belong to a subject's chain rather than to the loop itself. */
 const SUBJECT_KINDS = new Set<TimelineKind>([
   'detected', 'awaiting_confirmation', 'no_safe_action', 'cooldown',
-  'preflight', 'declined', 'remediated', 'resolved',
+  'preflight', 'declined', 'remediated', 'resolved', 'escalated', 'escalation_cleared',
 ])
 
 function group(events: TimelineEvent[]): { incidents: Incident[]; quiet: number } {
@@ -133,14 +139,17 @@ function group(events: TimelineEvent[]): { incidents: Incident[]; quiet: number 
   }
 
   const incidents: Incident[] = []
-  for (const [subject, chain] of bySubject) {
+  for (const [subject, history] of bySubject) {
+    const chain = latestIncidentCycle(history)
     const last = chain[chain.length - 1]
     const remediated = [...chain].reverse().find((e) => e.kind === 'remediated')
     let outcome: Incident['outcome'] = 'watching'
-    if (chain.some((e) => e.kind === 'resolved')) outcome = 'resolved'
+    if (chain.some((e) => e.kind === 'escalated')) outcome = 'escalated'
+    else if (chain.some((e) => e.kind === 'resolved')) outcome = 'resolved'
     else if (remediated?.needs_human) outcome = 'needs_human'
     else if (last.kind === 'no_safe_action') outcome = 'reported'
-    else if (last.kind === 'declined' || last.kind === 'cooldown') outcome = 'declined'
+    else if (last.kind === 'cooldown') outcome = 'cooling'
+    else if (last.kind === 'declined') outcome = 'declined'
     incidents.push({
       subject,
       events: chain,

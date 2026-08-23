@@ -264,7 +264,7 @@ narrate() {
             # Preflight streams its read-only probes through the same channel;
             # only the restart itself is worth a line on stage.
             if [[ "$line" == *'"restart"'* ]]; then
-                echo "   · 执行 systemctl restart，接下来 90 秒观察期，终端会安静一会儿"
+                echo "   · 执行 systemctl restart，接下来进入快速回退窗和稳定性观察窗"
             fi ;;
         *'"kind": "declined"'*)             echo "   · 前置校验没过，拒绝执行" ;;
         *'"kind": "remediated"'*)           echo "   · 观察期结束，回读判定" ;;
@@ -321,7 +321,7 @@ service-down)
         echo "哨兵在自动巡检，不用手动做任何事。"
         echo
         echo "现在切到浏览器 → 诊断处置 页 → 往下滚到「系统自己做过什么」"
-        echo "页面每 5 秒自己刷新，大约 2 分钟内会依次出现："
+        echo "页面每 5 秒自己刷新，通常约 4 至 5 分钟会依次出现："
     else
         echo "哨兵没开（AUTOPOIESIS_SENTINEL=1 可开启自动巡检）。"
         echo "手动推进：curl -X POST localhost:8026/api/rca/sentinel/poll   （跑两次）"
@@ -330,8 +330,8 @@ service-down)
     fi
     echo "  发现 → 等确认 → 发现 → 前置校验 → 已执行 → 判定恢复"
     echo
-    echo "整条链大约 2 分钟走完，其中 90 秒是观察期——改完之后要盯着"
-    echo "确认没有回退才算修好，这段等待本身就是要演示的东西。"
+    echo "当前默认观察为约 60 秒快速回退窗 + 180 秒稳定性窗口。"
+    echo "关键保护指标恶化会快速失败；连续健康通过稳定性窗口后才记为恢复。"
     ;;
 
 bruteforce)
@@ -387,7 +387,7 @@ recurring)
 
     # 150s a round: ~20s to detect and confirm, ~95s of watch window, 30s pause.
     echo "接下来自动跑 $((ACT_ROUNDS + 1)) 轮，全程不用你动手，大约 $(( (ACT_ROUNDS * 150 + 100) / 60 )) 分钟："
-    echo "  前 $ACT_ROUNDS 轮：杀掉 $UNIT → 哨兵发现 → 确认 → 重启 → 90 秒观察期 → 判定恢复"
+    echo "  前 $ACT_ROUNDS 轮：杀掉 $UNIT → 哨兵发现 → 确认 → 重启 → 双窗口观察 → 判定恢复"
     echo "  最后 1 轮：同样杀掉，但这次系统拒绝重启，记 escalated，转人工"
     echo
     echo "边等边讲的话在 scripts/DEMO.md 第六幕。终端这里会同步打出每一步。"

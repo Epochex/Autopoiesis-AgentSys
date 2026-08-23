@@ -199,6 +199,24 @@ def test_an_in_flight_chain_reads_as_in_flight(tmp_path, monkeypatch):
     assert card["runbookDraft"]["approvalBoundary"]["approvalRequired"] is False
 
 
+def test_a_new_detection_after_resolution_opens_a_fresh_cycle(tmp_path, monkeypatch):
+    current = [
+        *HEALED,
+        {"kind": "detected", "at": _at(180), "subject": "demo.service", "severity": "high",
+         "detector": "failed_units", "action": "restart_unit", "summary": "demo.service 又挂了。",
+         "evidence": {"line": "demo.service loaded failed"}, "streak": 2},
+        {"kind": "cooldown", "at": _at(181), "subject": "demo.service",
+         "action": "restart_unit", "remaining_sec": 419},
+    ]
+    _write(tmp_path, current, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    assert card["reviewVerdict"]["verdictStatus"] == "cooling"
+    assert card["runbookDraft"]["planStatus"] == "blocked"
+    assert [step["kind"] for step in card["timeline"]] == ["detected", "cooldown"]
+    assert card["timeline"][0]["ts"] == _at(180)
+    assert any(stage["stageId"] == "cooldown" for stage in card["stageTelemetry"])
+
+
 def test_stale_chains_drop_out_of_the_live_list(tmp_path, monkeypatch):
     _write(tmp_path, HEALED, monkeypatch)
     assert sentinel_cards("zh", now=NOW + 7 * 3600) == []

@@ -199,6 +199,24 @@ def test_quarantined_records_are_hidden_from_retrieval_but_kept_for_audit():
     store.quarantine("missing-id", "noop")               # unknown id is a no-op
 
 
+def test_only_forgotten_record_can_be_restored_to_retrieval():
+    store = TieredMemoryStore()
+    forgotten = _rec("forgotten", tags=["service", "failed"])
+    contradicted = _rec("contradicted", tags=["service", "failed"])
+    store.seed([forgotten, contradicted])
+    store.quarantine("forgotten", "forgotten")
+    store.quarantine("contradicted", "repeated_explicit_contradiction")
+
+    assert store.restore("forgotten", "forgotten") is True
+    assert forgotten.quarantined is False
+    assert "quarantine:forgotten" not in forgotten.tags
+    assert store.restore("contradicted", "forgotten") is False
+    assert contradicted.quarantined is True
+    assert [row.memory_id for row in store.retrieve(["service"], [])["episodic"]] == [
+        "forgotten",
+    ]
+
+
 def test_incremental_index_tracks_add_reindex_delete_and_compaction():
     store = TieredMemoryStore(
         lexical_seal_threshold=1,

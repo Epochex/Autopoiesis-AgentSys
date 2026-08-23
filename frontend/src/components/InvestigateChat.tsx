@@ -4,6 +4,10 @@ import type { Lang } from '../i18n'
 import { pick } from './environment-labels'
 import { FAULT_CATALOG, STEP_LABEL } from './fault-catalog'
 import type { StepRisk } from './fault-catalog'
+import {
+  InvestigationContextReceipt,
+  type InvestigationReceipt,
+} from './InvestigationContextReceipt'
 
 /* ── 查一个故障 · the chat panel that works one fault end to end ──────────────
  *
@@ -40,6 +44,11 @@ interface StartResp {
   question: string
   evidence: Evidence[]
   summary: string
+  probe_candidates: string[]
+  probe_prior: InvestigationReceipt['probe_prior']
+  historical_context: InvestigationReceipt['historical_context']
+  knowledge_context: InvestigationReceipt['knowledge_context']
+  trace_events: InvestigationReceipt['trace_events']
 }
 
 interface AnalyzeResp {
@@ -210,6 +219,7 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
   const [draft, setDraft] = useState('')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [summary, setSummary] = useState('')
+  const [receipt, setReceipt] = useState<InvestigationReceipt | null>(null)
   const [evidence, setEvidence] = useState<Evidence[]>([])
   const [verdict, setVerdict] = useState<Verdict | null>(null)
   const [stepOut, setStepOut] = useState<Record<number, StepOut>>({})
@@ -241,6 +251,7 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
     setErr(null)
     setSessionId(null)
     setSummary('')
+    setReceipt(null)
     setEvidence([])
     setVerdict(null)
     setStepOut({})
@@ -254,6 +265,13 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
       setSessionId(d.session_id)
       setSummary(d.summary ?? '')
       setEvidence(d.evidence ?? [])
+      setReceipt({
+        probe_candidates: d.probe_candidates ?? [],
+        probe_prior: d.probe_prior ?? {},
+        historical_context: d.historical_context ?? {},
+        knowledge_context: d.knowledge_context ?? [],
+        trace_events: d.trace_events ?? [],
+      })
       setOpenCtx(true)
     } catch (e) {
       if (aliveRef.current) setErr(errText(e))
@@ -485,6 +503,10 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
       {err ? <p className="dx-iv-err">{tx.failed} · {err}</p> : null}
 
       {summary ? <p className="dx-iv-sum">{summary}</p> : null}
+
+      {sessionId && receipt ? (
+        <InvestigationContextReceipt lang={lang} sessionId={sessionId} receipt={receipt} />
+      ) : null}
 
       <div className="dx-iv-ev">
         <button

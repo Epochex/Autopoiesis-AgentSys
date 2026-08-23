@@ -870,11 +870,13 @@ def _trace_influence(event: Any, record: Any) -> dict[str, Any]:
             narrowed_to = max(0, candidate_count - saved_count)
             what_changed = f"探针集从 {candidate_count} 条收窄到 {narrowed_to} 条"
         else:
-            what_changed = f"探针集收窄到 {len(skills)} 条"
+            preferred = list(payload.get("preferred_probes") or skills)
+            what_changed = f"将 {len(preferred)} 条历史高收益探针调整到队首"
         for key in (
             "skills", "preferred_probes", "candidate_probe_count",
             "saved_probe_count", "skipped_probes", "effect",
             "confirmed_root_key", "procedural_confidence",
+            "original_probe_order", "planned_probe_order", "executed_probe_order",
         ):
             if key in payload:
                 evidence[key] = payload[key]

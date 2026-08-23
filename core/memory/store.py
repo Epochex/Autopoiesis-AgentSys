@@ -680,6 +680,36 @@ class TieredMemoryStore:
                 if self._vector is not None:
                     self._vector.delete(memory_id)
 
+    def restore(self, memory_id: str, reason: str) -> bool:
+        """Return a capacity-retired record to retrieval after fresh verification.
+
+        Restoration is deliberately reason-bound.  A new externally verified case
+        can make a record retired as ``forgotten`` useful again, while a record
+        quarantined for contradiction, supersession, or administrative redaction
+        stays excluded until a separate reviewed workflow handles it.
+        """
+        record = self._by_id.get(memory_id)
+        marker = f"quarantine:{reason.strip()}"
+        if (
+            record is None
+            or not record.quarantined
+            or not reason.strip()
+            or marker not in record.tags
+            or record.redacted_at is not None
+            or record.redaction_reason is not None
+        ):
+            return False
+        other_quarantines = [
+            tag for tag in record.tags
+            if tag.startswith("quarantine:") and tag != marker
+        ]
+        if other_quarantines:
+            return False
+        record.tags = [tag for tag in record.tags if tag != marker]
+        record.quarantined = False
+        self.reindex(memory_id)
+        return True
+
     @staticmethod
     def _redacted_record(record: MemoryRecord, reason: str) -> MemoryRecord:
         """Build a content-free tombstone while preserving identity and timestamps."""

@@ -389,6 +389,11 @@ def synthesize_incident_run(
         for event in rows
     ))
     exposed = [skill for skill in exposed if skill]
+    if detector == "failed_units":
+        # The detector's current systemd reading is the reusable observation.
+        # Keep the generic sentinel skills for audit, and add the explicit
+        # investigation skill whose command is already allowlisted.
+        exposed.append("failed_services")
     trace.append(TraceEvent(
         run_id=run_id,
         case_id=case_id,
@@ -409,7 +414,9 @@ def synthesize_incident_run(
                 payload={**event, "evidence_id": evidence_id},
             ))
         skill = None
-        if kind == "command":
+        if kind == "detected" and detector == "failed_units":
+            skill = "failed_services"
+        elif kind == "command":
             skill = "sentinel_command"
         elif kind == "preflight":
             skill = "sentinel_preflight"

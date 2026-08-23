@@ -125,6 +125,28 @@ def _last(chain: list[dict[str, Any]], kind: str) -> dict[str, Any] | None:
     return None
 
 
+def _latest_cycle(chain: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Slice one subject's append-only history to its current incident cycle.
+
+    A detection after a closed decision starts a new cycle.  Escalation stays
+    sticky while the detector keeps firing: those later detections belong to
+    the same incident the safety policy refused to touch.
+    """
+    start = 0
+    next_detection_starts_cycle = False
+    for index, event in enumerate(chain):
+        kind = str(event.get("kind") or "")
+        if kind == "detected" and next_detection_starts_cycle:
+            start = index
+            next_detection_starts_cycle = False
+        if (
+            kind in {"resolved", "no_safe_action", "declined", "cooldown", "escalation_cleared"}
+            or (kind == "remediated" and event.get("needs_human") is True)
+        ):
+            next_detection_starts_cycle = True
+    return chain[start:]
+
+
 def _outcome(chain: list[dict[str, Any]]) -> tuple[str, str, bool]:
     """(verdict_status, disposition, still_running) for this subject's chain."""
     remediated = _last(chain, "remediated")
@@ -162,6 +184,8 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     remediated = _last(chain, "remediated")
     resolved = _last(chain, "resolved")
     no_action = _last(chain, "no_safe_action")
+    declined = _last(chain, "declined")
+    cooldown = _last(chain, "cooldown")
     escalated = _last(chain, "escalated")
     radius = (preflight or {}).get("blast_radius") or {}
     verdict_status, disposition, running = _outcome(chain)
@@ -236,6 +260,26 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "ts": str(no_action.get("at") or ""),
             "detail": str(no_action.get("reason") or no_action.get("note") or ""),
         })
+    if declined:
+        stages.append({
+            "stageId": "gate",
+            "label": "前置校验拒绝" if not en else "preflight declined",
+            "provider": "remediation-policy",
+            "ts": str(declined.get("at") or ""),
+            "detail": str(declined.get("reason") or declined.get("note") or ""),
+        })
+    if cooldown:
+        remaining = int(cooldown.get("remaining_sec") or 0)
+        stages.append({
+            "stageId": "cooldown",
+            "label": "处置安全冷却" if not en else "remediation cooldown",
+            "provider": "remediation-budget",
+            "ts": str(cooldown.get("at") or ""),
+            "detail": (
+                f"同一目标暂不重复执行，剩余 {remaining} 秒"
+                if not en else f"repeat action held for {remaining} seconds"
+            ),
+        })
     if escalated:
         stages.append({
             "stageId": "escalated",
@@ -263,6 +307,13 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         actions.append(str(radius["summary"]))
     if no_action:
         actions.append(str(no_action.get("reason") or ""))
+    if declined:
+        actions.append(str(declined.get("reason") or ""))
+    if cooldown:
+        actions.append(
+            f"处置处于安全冷却，剩余 {int(cooldown.get('remaining_sec') or 0)} 秒"
+            if not en else f"remediation cooldown, {int(cooldown.get('remaining_sec') or 0)} seconds left"
+        )
     if escalated:
         # Without this the runbook still reads "restart the unit" on a card whose
         # whole point is that the restart was refused.
@@ -335,7 +386,7 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "planStatus": (
                 "blocked" if escalated
                 else "executed" if remediated
-                else "blocked" if no_action
+                else "blocked" if no_action or declined or cooldown
                 else "in_flight"
             ),
             "applicability": {
@@ -386,7 +437,7 @@ def sentinel_cards(lang: str = "zh", *, now: float | None = None) -> list[dict[s
             chains.setdefault(subject, []).append(event)
 
     cards = [
-        _card(subject, chain, lang)
+        _card(subject, _latest_cycle(chain), lang)
         for subject, chain in chains.items()
         if chain and _age_seconds(str(chain[-1].get("at") or ""), now) <= _MAX_AGE_SEC
     ]

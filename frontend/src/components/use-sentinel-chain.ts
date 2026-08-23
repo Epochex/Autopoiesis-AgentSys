@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PriorCycle } from '../types'
+import { latestIncidentCycle } from './sentinel-cycle'
 
 /* ── one live read of a sentinel chain, shared by everything that draws it ────
  *
@@ -94,10 +95,11 @@ export function useSentinelChain(subject: string | null | undefined, intervalMs 
         const body = (await response.json()) as { events?: (ChainStep & CommandLine)[] }
         if (!alive) return
         const ours = (body.events ?? []).filter((e) => (e.subject ?? '').includes(subject))
-        const mine = ours.filter((e) => SUBJECT_KINDS.has(e.kind))
+        const mine = latestIncidentCycle(ours.filter((e) => SUBJECT_KINDS.has(e.kind)))
+        const openedAt = mine[0]?.at ?? ''
         setChain({
           steps: mine,
-          commands: ours.filter((e) => e.kind === 'command') as unknown as CommandLine[],
+          commands: ours.filter((e) => e.kind === 'command' && (!openedAt || e.at >= openedAt)) as unknown as CommandLine[],
         })
         if (mine.some((e) => TERMINAL_KINDS.has(e.kind))) {
           settled += 1

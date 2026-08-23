@@ -148,6 +148,31 @@ def test_passed_chain_uses_existing_consolidation_and_is_retrievable_in_english(
 
     recalled = memory.retrieve(["failed_units"], [], limit_per_tier=3)
     assert episodic.memory_id in {record.memory_id for record in recalled["episodic"]}
+    procedure = next(record for record in memory.records() if record.tier == "procedural")
+    assert "skill:failed_services" in procedure.tags
+
+
+def test_new_verified_case_restores_capacity_retired_failed_unit_procedure():
+    memory = TieredMemoryStore()
+    first = _passed_chain()
+    assert consolidate_incident_timeline(first, memory, SkillRegistry())
+    memory.quarantine("proc-sentinel.failed_units", "forgotten")
+    memory.quarantine("sem-sentinel.failed_units", "forgotten")
+
+    second = deepcopy(first)
+    for event in second:
+        event["at"] = str(event["at"]).replace("2026-08-22", "2026-08-23")
+    assert consolidate_incident_timeline(second, memory, SkillRegistry())
+
+    procedure = memory.get("proc-sentinel.failed_units")
+    semantic = memory.get("sem-sentinel.failed_units")
+    assert procedure is not None and procedure.quarantined is False
+    assert semantic is not None and semantic.quarantined is False
+    assert "skill:failed_services" in procedure.tags
+    recalled = memory.retrieve(
+        ["service", "failed"], ["demo-api.service"], limit_per_tier=4,
+    )
+    assert procedure in recalled["procedural"]
 
 
 def test_replaying_the_same_chain_does_not_add_or_reinforce_again():

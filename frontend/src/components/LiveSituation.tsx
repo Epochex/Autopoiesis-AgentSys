@@ -224,7 +224,7 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
               {onTrace ? (
                 <button
                   className="ls-theater-cta"
-                  onClick={() => onTrace(selected.scope || selected.device || selected.id)}
+                  onClick={() => onTrace(selected.deviceKey || selected.device || selected.id)}
                 >
                   {zh ? '看处置链路 ▸' : 'RESPONSE CHAIN ▸'}
                 </button>

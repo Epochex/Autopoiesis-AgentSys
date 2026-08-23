@@ -436,6 +436,41 @@
 .dx-iv-archived { margin:0; padding:7px 9px; border-left:3px solid var(--teal); background:var(--paper-3);
   font-size:9.5px; letter-spacing:.08em; color:var(--ink-soft); }
 
+/* one receipt for the exact context that changed this investigation */
+.dx-cr { margin:10px 0 13px; border:1px solid var(--rule); background:var(--paper-2); }
+.dx-cr-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 11px;
+  border-bottom:1px solid var(--rule); background:var(--paper-3); }
+.dx-cr-head > div { display:flex; align-items:baseline; gap:9px; min-width:0; }
+.dx-cr-head > div span { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
+.dx-cr-head > div b { overflow:hidden; text-overflow:ellipsis; font-size:9.5px; font-weight:600; color:var(--ink); }
+.dx-cr-state { flex:none; border-left:2px solid var(--gray); padding-left:8px; font-size:8.5px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--gray); }
+.dx-cr-state.is-confirmed { border-color:var(--teal); color:var(--teal); }
+.dx-cr-state.is-missing,.dx-cr-state.is-error { border-color:var(--hi); color:var(--hi-t); }
+.dx-cr-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+.dx-cr-col { min-width:0; padding:11px; }
+.dx-cr-col + .dx-cr-col { border-left:1px solid var(--rule); }
+.dx-cr-col > header { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.dx-cr-col > header b { font-size:9px; letter-spacing:.1em; text-transform:uppercase; }
+.dx-cr-col > header span { font-size:9px; color:var(--gray); }
+.dx-cr-line { display:grid; grid-template-columns:72px minmax(0,1fr); gap:8px; margin:5px 0; font-size:9.5px;
+  line-height:1.45; color:var(--ink-soft); overflow-wrap:anywhere; }
+.dx-cr-line > span,.dx-cr-detail span { font-size:8px; letter-spacing:.08em; text-transform:uppercase; color:var(--gray); }
+.dx-cr-detail,.dx-cr-doc { border-top:1px solid var(--rule); margin-top:8px; padding-top:7px; }
+.dx-cr-detail summary,.dx-cr-doc summary { cursor:pointer; list-style:none; color:var(--ink-soft); }
+.dx-cr-detail summary::-webkit-details-marker,.dx-cr-doc summary::-webkit-details-marker { display:none; }
+.dx-cr-detail summary { font-size:8.5px; letter-spacing:.08em; text-transform:uppercase; }
+.dx-cr-detail > div { display:grid; grid-template-columns:78px minmax(0,1fr); gap:8px; margin-top:7px; }
+.dx-cr-detail code { white-space:normal; overflow-wrap:anywhere; font-size:8.5px; line-height:1.55; color:var(--ink-soft); }
+.dx-cr-doc summary { display:flex; justify-content:space-between; gap:8px; }
+.dx-cr-doc summary b { font-size:9.5px; font-weight:600; }
+.dx-cr-doc summary span { flex:none; font-size:8px; color:var(--teal); }
+.dx-cr-doc p { margin:7px 0 5px; font-size:9px; line-height:1.55; color:var(--ink-soft); }
+.dx-cr-doc footer { font-size:8px; line-height:1.45; color:var(--gray); overflow-wrap:anywhere; }
+.dx-cr-boundary { margin:10px 0 0; padding:7px 8px; border-left:2px solid var(--teal); background:var(--paper-3);
+  font-size:8.5px; line-height:1.5; color:var(--gray); }
+.dx-cr-empty { margin:0; font-size:9px; color:var(--gray); }
+
 /* runbook steps: teal for what only reads or only touches what is already
    broken, crimson hatch for what a person runs */
 .dx-iv-steps { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; }
@@ -488,4 +523,7 @@
   .dx-iv-ev-h { grid-template-columns:1fr; gap:4px; }
   .dx-iv-go.is-inline { margin-left:0; }
   .dx-iv-disposition-grid { grid-template-columns:1fr; }
+  .dx-cr-head { align-items:flex-start; flex-direction:column; }
+  .dx-cr-grid { grid-template-columns:1fr; }
+  .dx-cr-col + .dx-cr-col { border-left:0; border-top:1px solid var(--rule); }
 }

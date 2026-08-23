@@ -87,6 +87,35 @@ def _disk_memory(*, observed_at: datetime | None = None, every_probe: bool = Fal
     return memory
 
 
+def _failed_service_memory() -> TieredMemoryStore:
+    observed_at = datetime.now(timezone.utc)
+    memory = TieredMemoryStore()
+    memory.add(MemoryRecord(
+        memory_id="proc-sentinel.failed_units",
+        tier="procedural",
+        text="for failed units, inspect failed services first",
+        tags=[
+            "service", "failed", "demo-collector.service",
+            "root:sentinel.failed_units", "skill:failed_services",
+        ],
+        asset_ids=["demo-collector.service"],
+        confidence=1.8,
+        first_observed_at=observed_at,
+        last_observed_at=observed_at,
+    ))
+    memory.add(MemoryRecord(
+        memory_id="sem-sentinel.failed_units",
+        tier="semantic",
+        text="recurring failed systemd unit pattern",
+        tags=["service", "failed", "root:sentinel.failed_units"],
+        asset_ids=["demo-collector.service"],
+        confidence=1.4,
+        first_observed_at=observed_at,
+        last_observed_at=observed_at,
+    ))
+    return memory
+
+
 def test_without_relevant_memory_order_and_count_are_exactly_unchanged(monkeypatch):
     called = _fake_commands(monkeypatch)
     memory = TieredMemoryStore()
@@ -141,6 +170,36 @@ def test_fresh_matching_root_stops_the_tail_and_records_exact_savings(monkeypatc
     assert payload["saved_probe_count"] == len(investigate.TRIAGE_PROBES) - 1
     assert payload["saved_probe_count"] == len(payload["skipped_probes"])
     assert payload["memory_ids"] == ["proc-disk-pressure", "sem-disk-pressure"]
+
+
+def test_failed_service_demo_combines_memory_shortcut_and_knowledge_grounding(monkeypatch):
+    called: list[str] = []
+    outputs = _outputs()
+    outputs["systemctl --failed --no-legend"] = (
+        "demo-collector.service loaded failed failed Demo collector\n"
+    )
+
+    def execute(command: str) -> _Execution:
+        called.append(command)
+        return _Execution(command, outputs.get(command, "ok\n"))
+
+    monkeypatch.setattr(investigate, "run", execute)
+    monkeypatch.setattr(investigate, "_live_memory_store", _failed_service_memory)
+    monkeypatch.setattr(investigate, "_operational_context", lambda *_args: {})
+
+    opened = investigate.start(
+        "demo-collector.service 服务失败，现在是什么情况",
+        subject="demo-collector.service",
+    )
+
+    assert called == [*investigate.BASELINE_PROBES, "systemctl --failed --no-legend"]
+    assert opened["knowledge_context"]
+    assert opened["knowledge_context"][0]["document_id"] == "systemctl-failed-units"
+    shortcut = next(row for row in opened["trace_events"] if row["kind"] == "memory_shortcut")
+    assert shortcut["payload"]["effect"] == "probe_order_and_early_stop"
+    assert shortcut["payload"]["confirmed_root_key"] == "sentinel.failed_units"
+    assert shortcut["payload"]["saved_probe_count"] == len(investigate.TRIAGE_PROBES) - 1
+    assert shortcut["payload"]["subject"] == "demo-collector.service"
 
 
 def test_a_wrong_memory_guess_only_changes_order_and_runs_the_full_sweep(monkeypatch):
