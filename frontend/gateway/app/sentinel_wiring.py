@@ -63,8 +63,15 @@ def _remember_completed_incidents() -> None:
 
 
 class _LearningSentinel(Sentinel):
-    def poll_once(self) -> dict[str, Any]:
-        result = super().poll_once()
+    def poll_once(
+        self,
+        detectors=None,
+        *,
+        blocking: bool = True,
+    ) -> dict[str, Any]:
+        result = super().poll_once(detectors, blocking=blocking)
+        if result.get("busy"):
+            return result
         try:
             _remember_completed_incidents()
         except Exception:
@@ -119,8 +126,13 @@ def get_sentinel() -> Sentinel:
         return _sentinel
 
 
-def poll_once() -> dict[str, Any]:
-    return get_sentinel().poll_once()
+def poll_once(detector: str | None = None) -> dict[str, Any]:
+    selected = None
+    if detector:
+        selected = [candidate for candidate in ALL_DETECTORS if candidate.__name__ == detector]
+        if not selected:
+            raise ValueError(f"unknown detector: {detector}")
+    return get_sentinel().poll_once(selected, blocking=False)
 
 
 def start_background() -> None:

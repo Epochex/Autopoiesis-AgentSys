@@ -302,6 +302,35 @@ follow_until() {
     return 1
 }
 
+trigger_security_poll() {
+    # The endpoint is non-blocking when the background sentinel already owns
+    # the poll lock.  A short client timeout is intentional: the detector writes
+    # the timeline before incident consolidation finishes, and the timeline is
+    # what the browser consumes.
+    curl -fsS -m 3 -X POST \
+        "http://127.0.0.1:8026/api/rca/sentinel/poll?detector=admin_bruteforce" \
+        >/dev/null 2>&1 || true
+}
+
+security_event_since() {
+    local kind=$1
+    [[ -f "$TIMELINE" ]] || return 1
+    tail -n "+$((CURSOR + 1))" "$TIMELINE" 2>/dev/null \
+        | grep -F "\"subject\": \"$FAKE_SOURCE\"" \
+        | grep -q "\"kind\": \"$kind\""
+}
+
+wait_for_security_event() {
+    local kind=$1 timeout=$2 deadline
+    deadline=$((SECONDS + timeout))
+    while (( SECONDS < deadline )); do
+        security_event_since "$kind" && return 0
+        trigger_security_poll
+        sleep 2
+    done
+    return 1
+}
+
 case "${1:-}" in
 service-down)
     install_unit
@@ -335,14 +364,27 @@ service-down)
     ;;
 
 bruteforce)
+    resolve_timeline
+    CURSOR=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
     echo "向系统日志写入来自 $FAKE_SOURCE 的失败登录记录…"
     for i in $(seq 1 12); do
         logger -t sshd -p auth.warning \
             "Failed password for invalid user admin from ${FAKE_SOURCE} port $((40000 + i)) ssh2"
     done
-    echo "注入完成：12 条失败登录"
+    echo "日志已写入：12 条失败登录。正在触发真实巡检并等待首页收到事件…"
+    if wait_for_security_event detected 30; then
+        echo "  · 态势首页已收到 $FAKE_SOURCE，页面会在 5 秒轮询内显示提醒"
+    else
+        die "30 秒内没有生成 detected。检查：journalctl -t sshd --since -10m；再看 $TIMELINE"
+    fi
+    if wait_for_security_event no_safe_action 30; then
+        echo "  · 安全门判定完成：只报不动"
+    else
+        die "事件已经出现，但 30 秒内没有形成 no_safe_action。检查网关日志和哨兵时间线。"
+    fi
+    echo "注入完成：12 条失败登录，前端链路已经可见。"
     echo
-    echo "同样切到 诊断处置 页看。这一条会被检测到，但不会自动处置——"
+    echo "保持在 内网实时 页，点击顶部 $FAKE_SOURCE 提醒进入对应态势记录。"
     echo "封禁是可撤销的，但封错来源就等于堵住自己的管理通道，所以只报不动。"
     echo "页面上它是琥珀色的「只报不动」，链条停在「无安全动作」。"
     echo

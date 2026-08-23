@@ -291,6 +291,11 @@ class Sentinel:
     _escalated: set[str] = field(default_factory=set)
     _cooldown_until: dict[str, float] = field(default_factory=dict)
     _stop: threading.Event = field(default_factory=threading.Event)
+    # The timer, the console's "poll now" control and rehearsal scripts all
+    # reach the same Sentinel instance.  Only one may advance confirmation,
+    # consume budgets or execute an action at a time; a duplicate poll is a
+    # duplicate write decision, not harmless extra observation.
+    _poll_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def reconcile_interrupted_watches(self) -> list[dict[str, Any]]:
         """Close watches abandoned by an earlier process and restore cooling.
@@ -330,10 +335,33 @@ class Sentinel:
             )
         return written
 
-    def poll_once(self) -> dict[str, Any]:
-        """One full cycle: detect, decide, act, and record every branch."""
+    def poll_once(
+        self,
+        detectors: list[Callable[[], list[Detection]]] | None = None,
+        *,
+        blocking: bool = True,
+    ) -> dict[str, Any]:
+        """One serialized detect-decide-act cycle.
+
+        ``detectors`` narrows an operator-requested observation without
+        widening the action catalogue.  ``blocking=False`` is used by HTTP
+        callers so an in-progress watch returns ``busy`` immediately instead
+        of accumulating another cycle behind it.
+        """
+        if not self._poll_lock.acquire(blocking=blocking):
+            return {"detections": [], "acted": [], "busy": True}
+        try:
+            return self._poll_once_locked(detectors or self.detectors)
+        finally:
+            self._poll_lock.release()
+
+    def _poll_once_locked(
+        self,
+        detectors: list[Callable[[], list[Detection]]],
+    ) -> dict[str, Any]:
+        """Advance state while ``_poll_lock`` is held."""
         seen: list[Detection] = []
-        for detector in self.detectors:
+        for detector in detectors:
             try:
                 seen.extend(detector())
             except Exception as error:  # noqa: BLE001 - a broken detector is a finding
@@ -410,7 +438,7 @@ class Sentinel:
             acted.append(self._act(detection))
 
         record("cycle", {"detections": len(seen), "acted": len(acted)})
-        return {"detections": [d.as_dict() for d in seen], "acted": acted}
+        return {"detections": [d.as_dict() for d in seen], "acted": acted, "busy": False}
 
     def _history(self, detection: Detection) -> recurrence.History:
         """How often this exact repair has already worked and not held.

@@ -7,6 +7,8 @@ test here pins one of the brakes.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from core.remediate.sentinel import Detection, Sentinel
@@ -186,6 +188,48 @@ def test_a_broken_detector_does_not_stop_the_others():
     )
     result = sentinel.poll_once()
     assert len(result["detections"]) == 1
+
+
+def test_a_manual_poll_cannot_overlap_the_background_cycle():
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_detector():
+        entered.set()
+        assert release.wait(timeout=2)
+        return []
+
+    sentinel, _calls = _sentinel([])
+    sentinel.detectors = [slow_detector]
+    worker = threading.Thread(target=sentinel.poll_once)
+    worker.start()
+    assert entered.wait(timeout=1)
+
+    duplicate = sentinel.poll_once(blocking=False)
+    assert duplicate == {"detections": [], "acted": [], "busy": True}
+
+    release.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+
+
+def test_an_operator_poll_can_select_one_detector():
+    calls: list[str] = []
+
+    def unrelated():
+        calls.append("unrelated")
+        return []
+
+    def requested():
+        calls.append("requested")
+        return [_detection(action=None)]
+
+    sentinel, _ = _sentinel([])
+    sentinel.detectors = [unrelated, requested]
+    result = sentinel.poll_once([requested])
+    assert calls == ["requested"]
+    assert result["detections"][0]["subject"] == "demo.service"
+    assert result["busy"] is False
 
 
 def test_the_background_loop_is_off_unless_enabled(monkeypatch):

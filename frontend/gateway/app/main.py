@@ -1976,11 +1976,15 @@ async def sentinel_recurrence() -> dict[str, Any]:
 
 
 @app.post("/api/rca/sentinel/poll")
-async def sentinel_poll() -> dict[str, Any]:
+async def sentinel_poll(detector: str | None = None) -> dict[str, Any]:
     """Run one detect-decide-act cycle now, instead of waiting for the timer."""
     from .sentinel_wiring import poll_once
 
-    return {"ok": True, **await asyncio.to_thread(poll_once)}
+    try:
+        result = await asyncio.to_thread(poll_once, detector)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    return {"ok": True, **result}
 
 
 @app.get("/api/rca/cost/cache")
