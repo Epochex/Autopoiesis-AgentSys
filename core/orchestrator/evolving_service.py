@@ -481,9 +481,13 @@ class EvolvingRCAService:
         ).total_seconds() >= self._memory_decay_interval_seconds
         forgotten: list[str] = []
         if decay_due:
+            # forget=False: strength still falls, but age alone never retires a
+            # record here. See decay_and_forget's docstring — the default wiped
+            # every sentinel-learned incident on this box.
             forgotten = decay_and_forget(
                 memory,
                 recorder=self._retention_recorder(),
+                forget=False,
             )
             if checkpoint is None:
                 # The checkpoint is intentionally inactive: it persists with the

@@ -399,8 +399,9 @@ def test_harvested_tags_are_identifiers_not_debris():
     assert len(tags) <= 24, "an unbounded tag list is a blast radius, not a feature"
     assert "demo-collector.service" in tags, "the identifier that matters survives"
     assert "restart_unit" in tags
-    # debris that used to be indexed
-    for junk in ("2026", "08", "039836", "5", "loaded", "for", "and"):
+    # debris that used to be indexed, each class caught on a different real run
+    for junk in ("2026", "08", "039836", "5", "loaded", "for", "and",
+                 "642017z", "rehearsal...", "successfully."):
         assert junk not in tags, f"{junk!r} is not an operational identifier"
 
 
@@ -420,3 +421,32 @@ def test_host_output_cannot_inject_a_reserved_tag():
     tags = _ascii_terms(chain, "sentinel.failed_units")
 
     assert not any(t.startswith(("root:", "skill:", "quarantine:")) for t in tags)
+
+
+def test_timestamp_and_prose_debris_are_rejected():
+    """Two classes that survived the first filter, both found on a live run.
+
+    A microsecond field (`642017z`) beat a regex that capped the leading digit
+    group at four, and prose ending in a period (`successfully.`) satisfied the
+    "contains a separator" test that exists to tell an identifier from a word.
+    """
+    from domains.network_rca.incident_memory import _is_useful_term
+
+    for junk in ("642017z", "877581z", "2026-08-22t23", "rehearsal...",
+                 "successfully.", "and", "with", "42"):
+        assert not _is_useful_term(junk), f"{junk!r} should be dropped"
+    for real in ("demo-collector.service", "eth2", "netops-node1", "9/kill",
+                 "http_code", "192.168.1.27", "fam-perception-selfheal"):
+        assert _is_useful_term(real), f"{real!r} must survive"
+
+
+def test_trailing_punctuation_does_not_split_one_identifier_into_two():
+    """`x.service` and `x.service:` are the same thing and must index once."""
+    from domains.network_rca.incident_memory import _ascii_terms
+
+    chain = [{"kind": "detected", "at": "x", "detector": "failed_units",
+              "action": "restart_unit", "subject": "demo-collector.service",
+              "evidence": {"line": "demo-collector.service: main process exited"}}]
+    tags = _ascii_terms(chain, "sentinel.failed_units")
+    assert tags.count("demo-collector.service") == 1
+    assert "demo-collector.service:" not in tags

@@ -226,7 +226,15 @@ _RESERVED_TAG_PREFIXES = ("root:", "skill:", "probe:", "quarantine:",
 # Pure digits, timestamp fragments, and one- or two-character shards are not
 # identifiers; they are debris from splitting timestamps and command lines.
 _MIN_TERM_LEN = 3
-_TIMESTAMPISH = re.compile(r"^[0-9]{1,4}([t:._-][0-9]{1,6})*z?$", re.IGNORECASE)
+# Any run of digits with an optional ISO fraction marker. The first version
+# capped the leading group at four digits, so microsecond fields like `642017z`
+# sailed through and were indexed as identifiers.
+_TIMESTAMPISH = re.compile(r"^[0-9]+([t:._-][0-9]+)*z?$", re.IGNORECASE)
+# Trailing punctuation from prose: `rehearsal...`, `successfully.`, and
+# `demo-collector.service:` all reached the index because a trailing period or
+# colon satisfied the "contains a separator" test that is supposed to
+# distinguish an identifier from a word.
+_TRAILING_PUNCT = ".:,;/-_"
 
 # A record carries at most this many harvested tags. Every tag is a BM25 token
 # and an exact-match route, so an unbounded list from one noisy journal line
@@ -236,15 +244,26 @@ _MAX_HARVESTED_TAGS = 24
 
 
 def _is_useful_term(term: str) -> bool:
-    """Whether a harvested token is worth indexing as an identifier."""
-    if len(term) < _MIN_TERM_LEN or term.isdigit() or _TIMESTAMPISH.match(term):
+    """Whether a harvested token is worth indexing as an identifier.
+
+    Judged on the token with trailing punctuation stripped, because prose that
+    ends in a period would otherwise pass the separator test that exists to
+    tell `demo-collector.service` apart from `successfully`.
+    """
+    core = term.rstrip(_TRAILING_PUNCT)
+    if len(core) < _MIN_TERM_LEN or core.isdigit():
         return False
-    if term.startswith(_RESERVED_TAG_PREFIXES):
+    # An address is digits-and-dots too, and broadening the timestamp pattern to
+    # catch microsecond fields made it swallow every IPv4 — the single most
+    # useful operational identifier there is. Check for an address first.
+    if not _IPV4.fullmatch(core) and _TIMESTAMPISH.match(core):
         return False
-    # A bare word with no separator is a dictionary word far more often than an
-    # operational identifier; `demo-collector.service` and `eth2` survive, "and"
-    # / "with" / "result" do not.
-    return any(ch in term for ch in "-_./:") or any(ch.isdigit() for ch in term)
+    if core.startswith(_RESERVED_TAG_PREFIXES):
+        return False
+    # An interior separator or a digit is what makes something look like a name
+    # a machine chose; `eth2`, `demo-collector.service`, `192.168.1.27` keep it,
+    # "and" / "with" / "successfully" do not.
+    return any(ch in core for ch in "-_./:") or any(ch.isdigit() for ch in core)
 
 
 def _ascii_terms(chain: list[Mapping[str, Any]], root_key: str) -> list[str]:
@@ -268,12 +287,12 @@ def _ascii_terms(chain: list[Mapping[str, Any]], root_key: str) -> list[str]:
     for value in values:
         for match in _ASCII_IDENTIFIER.findall(value.lower()):
             if _is_useful_term(match):
-                terms.append(match)
+                terms.append(match.rstrip(_TRAILING_PUNCT))
             # Split only on the identifier's own parts, and only keep parts that
             # are themselves identifiers — never the timestamp shards.
             for part in _ASCII_PART.findall(match):
                 if _is_useful_term(part):
-                    terms.append(part)
+                    terms.append(part.rstrip(_TRAILING_PUNCT))
     deduped = list(dict.fromkeys(term for term in terms if term))
     return deduped[:_MAX_HARVESTED_TAGS]
 

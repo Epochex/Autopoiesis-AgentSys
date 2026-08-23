@@ -275,26 +275,44 @@ related = [
     if any("demo-collector" in str(value).lower()
            for value in [*(record.get("tags") or []), *(record.get("asset_ids") or [])])
 ]
-if after["active_count"] <= before["active_count"]:
+# 吸收进已有记录和新建一条，都是"记忆记住了这次"。只认新建是错的：
+# 路由器对高相似度的复发本来就该合并（UPDATE/NOOP）而不是每次开一条新的，
+# 否则同一个故障发生一百次就是一百条几乎相同的情景记忆。
+#
+# 这条断言最初只看新增，直到真机上撞见：标签抽取修好之前，每条链的时间戳
+# 碎片都进了标签，于是每条记录看起来都独一无二，去重完全失效、次次新建；
+# 修好之后路由器才开始正常合并——而脚本把正常行为报成了失败。
+absorbed = [
+    record for record in after["records"]
+    if record["memory_id"] in old_ids
+    and any("demo-collector" in str(value).lower()
+            for value in [*(record.get("tags") or []), *(record.get("asset_ids") or [])])
+    and (record.get("last_observed_at") or "") > (
+        {r["memory_id"]: (r.get("last_observed_at") or "") for r in before["records"]}
+    ).get(record["memory_id"], "")
+]
+if not related and not absorbed:
     print(
-        f"错误：活跃记忆没有增加，基线 {before['active_count']} 条，当前 {after['active_count']} 条",
+        "错误：这次处置既没有新建记忆，也没有更新任何已有记忆——"
+        f"记忆没有吸收它。基线 {before['active_count']} 条，当前 {after['active_count']} 条",
         file=sys.stderr,
     )
-    raise SystemExit(1)
-if not new:
-    print("错误：活跃条数虽然变化，但完整 ID 差集中没有新记录", file=sys.stderr)
-    raise SystemExit(1)
-if not related:
-    print("错误：本次新增记录的 tags/asset_ids 都没有 demo-collector", file=sys.stderr)
     raise SystemExit(1)
 with open(ids_path, "w", encoding="utf-8") as handle:
     handle.writelines(f"{record['memory_id']}\n" for record in new)
 with open(related_path, "w", encoding="utf-8") as handle:
-    handle.writelines(f"{record['memory_id']}\n" for record in related)
-print(f"   活跃记忆：{before['active_count']} -> {after['active_count']}，净增 {after['active_count'] - before['active_count']} 条")
-print(f"   ID 差集里有 {len(new)} 条新记录，其中 {len(related)} 条通过 tags/asset_ids 指向 demo-collector：")
-for record in related:
-    print(f"     · {record['memory_id']} [{record.get('tier')}] tags={record.get('tags') or []} assets={record.get('asset_ids') or []}")
+    handle.writelines(f"{record['memory_id']}\n" for record in [*related, *absorbed])
+print(f"   活跃记忆：{before['active_count']} -> {after['active_count']}（净增 {after['active_count'] - before['active_count']}）")
+if related:
+    print(f"   新建 {len(related)} 条，指向 demo-collector：")
+    for record in related:
+        tags = (record.get("tags") or [])[:8]
+        print(f"     · {record['memory_id']} [{record.get('tier')}] tags={tags}…")
+if absorbed:
+    print(f"   吸收进已有 {len(absorbed)} 条（复发被合并而不是复制，这是路由器该做的）：")
+    for record in absorbed:
+        print(f"     · {record['memory_id']} [{record.get('tier')}] "
+              f"最后确认 {record.get('last_observed_at', '')[:19]}")
 PY
 }
 
@@ -353,7 +371,12 @@ follow_subject_until_resolved() {
 }
 
 wait_for_next_cycle() {
-    local timeout=$1 deadline=$((SECONDS + timeout)) total line
+    # 同一行的 local 会在绑定任何名字之前展开所有词，所以 $((SECONDS + timeout))
+    # 读到的是未绑定的 timeout，配 set -u 直接退出。这个坑在本脚本里踩过三次，
+    # 每次都是"语法检查通过、跑到那一行才炸"，所以留个注释别再犯。
+    local timeout=$1
+    local deadline=$((SECONDS + timeout))
+    local total line
     while (( SECONDS < deadline )); do
         total=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
         if (( total > CURSOR )); then
@@ -389,7 +412,7 @@ result = store.retrieve([query], [], limit_per_tier=max(10, len(store.active()))
 hits = [record for tier_hits in result.values() for record in tier_hits]
 matched = [record for record in hits if record.memory_id in new_ids]
 if not matched:
-    print(f"错误：ASCII 查询 {query!r} 没有命中本次新增记录", file=sys.stderr)
+    print(f"错误：ASCII 查询 {query!r} 没有命中本次涉及的记忆", file=sys.stderr)
     raise SystemExit(1)
 diagnostics = {item["memory_id"]: item for item in store.retrieval_diagnostics()}
 with open(hits_path, "w", encoding="utf-8") as handle:
@@ -585,8 +608,9 @@ assert_growth "$BASELINE" "$POST" "$NEW_IDS" "$RELATED_IDS" \
 echo
 echo "[4/7] 断言检索：只给 ASCII 查询，确认中文摘要之外的 tags/asset_ids 路径能召回。"
 RETRIEVED_IDS="$TMP_DIR/retrieved-new-ids.txt"
-retrieve_new_memory "$NEW_IDS" "$RETRIEVED_IDS" \
-    || die "新记忆已经存在，但真实 TieredMemoryStore.retrieve 检索不到它"
+retrieve_new_memory "$RELATED_IDS" "$RETRIEVED_IDS" \
+    || die "记忆吸收了这次处置，但真实 TieredMemoryStore.retrieve 检索不到它——
+中文摘要在 BM25 里是 0 token，tags/asset_ids 是唯一的召回路径，这条断了"
 
 echo
 echo "[5/7] 断言幂等：再等一个哨兵轮次，同一条 resolved 链不能再次长出记录。"

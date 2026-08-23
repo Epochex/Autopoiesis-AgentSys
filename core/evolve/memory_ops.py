@@ -640,13 +640,27 @@ def _is_protected(record: MemoryRecord, protect: tuple[str, ...]) -> bool:
     return record.tier == "asset_profile" or bool(set(record.tags).intersection(protect))
 
 
-def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floor: float = 0.4, protect: tuple[str, ...] = _PROTECTED_MEMORY_TAGS, recorder: list[dict] | None = None) -> list[str]:
+def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floor: float = 0.4, protect: tuple[str, ...] = _PROTECTED_MEMORY_TAGS, recorder: list[dict] | None = None, forget: bool = True) -> list[str]:
     """Ebbinghaus tick: every non-protected active memory loses retrievability;
     those below the floor are forgotten (quarantined). Memories reused this tick were
     reset to strength 1.0 and survive; a memory unused for ~2 ticks fades out.
     Protected priors (seeded / asset-profile / reflected insights) never decay.
     Every retrievability change is emitted as a DECAY op and each drop below the floor as
     a FORGET op, so the observatory replays real strength loss instead of an inert 1.0.
+    ``forget=False`` decays strength but never quarantines. That is the right
+    setting for a live ops store and it was learned the hard way: with the
+    default 0.55/0.4, two idle ticks retire a record, and a run of the benchmark
+    harness against the live store wiped every incident the sentinel had ever
+    learned — fifteen records, all `quarantine:forgotten`.
+
+    Age is the wrong reason to forget an operational fact. A failure mode seen
+    once six months ago is not less true for having been quiet, and rare-failure
+    knowledge is the entire reason to keep a memory at all. Strength still falls,
+    so an unused record ranks lower; retirement belongs to supersession (the
+    fact changed) and to capacity eviction (something has to go), both of which
+    have a reason attached. The benchmark keeps ``forget=True`` because
+    forgetting is one of the things it measures.
+
     Returns the ids forgotten this tick."""
     if not 0.0 < retention <= 1.0:
         raise ValueError(f"retention must be in (0, 1], got {retention}")
@@ -658,7 +672,7 @@ def decay_and_forget(memory: TieredMemoryStore, *, retention: float = 0.55, floo
             continue
         before = _snap(rec)
         rec.strength *= retention
-        if rec.strength < floor:
+        if forget and rec.strength < floor:
             memory.quarantine(rec.memory_id, "forgotten")
             _emit(recorder, "FORGET", rec.memory_id, rec.tier, before=before, after=_snap(rec))
             forgotten.append(rec.memory_id)

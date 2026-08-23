@@ -268,3 +268,31 @@ def test_consolidation_decay_eviction_and_checkpoint_share_one_failed_write(
     assert service.last_consolidation is None
     assert "retention transaction failed" in service.health()["last_error"]
     assert service.close()
+
+
+def test_production_decay_lowers_strength_but_never_forgets():
+    """Age is the wrong reason to retire an operational fact.
+
+    With the default 0.55/0.4 two idle ticks quarantine a record. A benchmark
+    run against the live store wiped every incident the sentinel had learned —
+    fifteen records, all `quarantine:forgotten`. Rare-failure knowledge is the
+    entire reason to keep a memory; retirement belongs to supersession and to
+    capacity eviction, both of which carry a reason.
+    """
+    from core.evolve.memory_ops import decay_and_forget
+    from core.memory.store import MemoryRecord, TieredMemoryStore
+
+    store = TieredMemoryStore()
+    store.add(MemoryRecord(memory_id="epi-rare-failure", tier="episodic",
+                           text="a fault seen once", strength=1.0))
+
+    for _ in range(6):
+        forgotten = decay_and_forget(store, forget=False)
+        assert forgotten == [], "nothing may be retired for being quiet"
+
+    record = store.get("epi-rare-failure")
+    assert record is not None and not record.quarantined
+    assert record.strength < 0.1, "it must still rank lower — decay is a signal"
+
+    # The benchmark keeps the forgetting behaviour, because it measures it.
+    assert decay_and_forget(store, forget=True) == ["epi-rare-failure"]

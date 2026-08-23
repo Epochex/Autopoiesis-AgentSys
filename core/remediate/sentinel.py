@@ -61,6 +61,19 @@ COOLDOWN_SEC = float(os.getenv("AUTOPOIESIS_SENTINEL_COOLDOWN", "600"))
 # during a deploy; two in a row is the system telling you something.
 CONFIRM_POLLS = int(os.getenv("AUTOPOIESIS_SENTINEL_CONFIRM", "2"))
 
+_WATCH_OPEN_KINDS = frozenset({"remediation_committed", "bakein_opened"})
+_WATCH_TERMINAL_KINDS = frozenset({
+    "remediated",
+    "resolved",
+    "bakein_passed",
+    "bakein_regressed",
+    "remediation_reverted",
+})
+_INTERRUPTED_NOTE = (
+    "动作已执行但观察期没走完（进程在中途重启）。"
+    "这次改动没有被回读验证过，需要人确认它站住了没有。"
+)
+
 
 @dataclass
 class Detection:
@@ -109,7 +122,7 @@ def record(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
-def timeline(limit: int = 200) -> list[dict[str, Any]]:
+def timeline(limit: int | None = 200) -> list[dict[str, Any]]:
     """The chain of what was seen, decided, done and verified — newest last."""
     path = _default_timeline()
     if not path.exists():
@@ -124,7 +137,137 @@ def timeline(limit: int = 200) -> list[dict[str, Any]]:
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    return rows[-limit:]
+    return rows if limit is None else rows[-limit:]
+
+
+@dataclass
+class _OpenWatch:
+    """The durable part of one watch that had not reached a disposition."""
+
+    subject: str
+    detector: str
+    action: str
+    committed_at: str | None = None
+    opened_at: str | None = None
+    last_sample_at: str | None = None
+    samples_seen: int = 0
+
+    @property
+    def identity(self) -> tuple[str, str, str, str, str, int]:
+        return (
+            self.detector,
+            self.subject,
+            self.action,
+            self.committed_at or "",
+            self.last_sample_at or "",
+            self.samples_seen,
+        )
+
+    def interrupted_payload(self) -> dict[str, Any]:
+        return {
+            "subject": self.subject,
+            "detector": self.detector,
+            "action": self.action,
+            "committed_at": self.committed_at,
+            "last_sample_at": self.last_sample_at,
+            "samples_seen": self.samples_seen,
+            "note": _INTERRUPTED_NOTE,
+        }
+
+
+def _watch_route(event: dict[str, Any]) -> tuple[str, str] | None:
+    subject = str(event.get("subject") or "")
+    action = str(event.get("action") or "")
+    return (subject, action) if subject and action else None
+
+
+def _interrupted_identity(event: dict[str, Any]) -> tuple[str, str, str, str, str, int]:
+    return (
+        str(event.get("detector") or ""),
+        str(event.get("subject") or ""),
+        str(event.get("action") or ""),
+        str(event.get("committed_at") or ""),
+        str(event.get("last_sample_at") or ""),
+        int(event.get("samples_seen") or 0),
+    )
+
+
+def _unfinished_watches(
+    events: list[dict[str, Any]],
+) -> tuple[list[_OpenWatch], list[dict[str, Any]]]:
+    """Fold process generations into watches that never reached a terminal."""
+    active: dict[tuple[str, str], _OpenWatch] = {}
+    unfinished: list[_OpenWatch] = []
+    announced: list[dict[str, Any]] = []
+    last_detector: dict[tuple[str, str], str] = {}
+
+    for event in events:
+        kind = str(event.get("kind") or "")
+        route = _watch_route(event)
+        detector = str(event.get("detector") or "")
+        if route is not None and detector:
+            last_detector[route] = detector
+
+        if kind == "sentinel_started":
+            # A CI deploy produced this exact boundary in production: the last
+            # line was bakein_sampled, then the gateway disappeared, and the
+            # next process wrote sentinel_started. The killed process had no
+            # opportunity to append a finalizer, so the next process must fold
+            # the durable log instead of depending on an exit hook.
+            unfinished.extend(active.values())
+            active.clear()
+            continue
+
+        if kind == "watch_interrupted":
+            announced.append(event)
+            if route is not None:
+                current = active.get(route)
+                if current is not None and current.identity == _interrupted_identity(event):
+                    active.pop(route)
+            continue
+
+        if kind in _WATCH_OPEN_KINDS and route is not None:
+            current = active.get(route)
+            starts_another = current is not None and (
+                (kind == "remediation_committed" and current.committed_at is not None)
+                or (kind == "bakein_opened" and current.opened_at is not None)
+            )
+            if starts_another:
+                unfinished.append(current)
+                current = None
+            if current is None:
+                current = _OpenWatch(
+                    subject=route[0],
+                    action=route[1],
+                    detector=detector or last_detector.get(route, ""),
+                )
+                active[route] = current
+            elif detector:
+                current.detector = detector
+            if kind == "remediation_committed":
+                current.committed_at = str(event.get("at") or "") or None
+            else:
+                current.opened_at = str(event.get("at") or "") or None
+            continue
+
+        if kind == "bakein_sampled" and route in active:
+            current = active[route]
+            current.samples_seen += 1
+            current.last_sample_at = str(event.get("at") or "") or None
+            continue
+
+        if kind in _WATCH_TERMINAL_KINDS and route is not None:
+            active.pop(route, None)
+
+    unfinished.extend(active.values())
+    already_announced = {_interrupted_identity(event) for event in announced}
+    pending: list[_OpenWatch] = []
+    seen: set[tuple[str, str, str, str, str, int]] = set()
+    for watch in unfinished:
+        if watch.identity not in already_announced and watch.identity not in seen:
+            pending.append(watch)
+            seen.add(watch.identity)
+    return pending, announced
 
 
 @dataclass
@@ -148,6 +291,44 @@ class Sentinel:
     _escalated: set[str] = field(default_factory=set)
     _cooldown_until: dict[str, float] = field(default_factory=dict)
     _stop: threading.Event = field(default_factory=threading.Event)
+
+    def reconcile_interrupted_watches(self) -> list[dict[str, Any]]:
+        """Close watches abandoned by an earlier process and restore cooling.
+
+        This is level-triggered startup work. SIGKILL, OOM, and power loss do
+        not run cleanup code; the next process can only trust the timeline that
+        survived them. Replaying the whole file also catches an older process
+        boundary that was missed before this reconciler existed.
+        """
+        try:
+            pending, announced = _unfinished_watches(timeline(None))
+        except OSError:
+            return []
+
+        written = [
+            record("watch_interrupted", watch.interrupted_payload())
+            for watch in pending
+        ]
+        interruptions = [*announced, *written]
+        wall_now = datetime.now(timezone.utc).timestamp()
+        monotonic_now = self.clock()
+        for event in interruptions:
+            detector = str(event.get("detector") or "")
+            subject = str(event.get("subject") or "")
+            if not detector or not subject:
+                continue
+            try:
+                interrupted_at = datetime.fromisoformat(str(event.get("at") or "")).timestamp()
+                remaining = self.cooldown_sec - max(0.0, wall_now - interrupted_at)
+            except (TypeError, ValueError):
+                remaining = self.cooldown_sec
+            if remaining <= 0:
+                continue
+            key = f"{detector}:{subject}"
+            self._cooldown_until[key] = max(
+                self._cooldown_until.get(key, 0.0), monotonic_now + remaining
+            )
+        return written
 
     def poll_once(self) -> dict[str, Any]:
         """One full cycle: detect, decide, act, and record every branch."""

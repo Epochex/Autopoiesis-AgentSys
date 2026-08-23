@@ -116,4 +116,10 @@ def start_background() -> None:
     """
     if os.getenv("AUTOPOIESIS_SENTINEL", "0") != "1":
         return
-    threading.Thread(target=get_sentinel().run_forever, daemon=True).start()
+    sentinel = get_sentinel()
+    # The gateway really was restarted by a CI deploy while execute() was
+    # blocked in its watch window. Reconcile before the new polling thread can
+    # act, so the old action is visible and its target is already cooling when
+    # the first detector result arrives.
+    sentinel.reconcile_interrupted_watches()
+    threading.Thread(target=sentinel.run_forever, daemon=True).start()

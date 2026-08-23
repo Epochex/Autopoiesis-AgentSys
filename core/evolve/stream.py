@@ -58,6 +58,18 @@ def run_evolving_stream(
         # it alone made the live /api/rca/evolution request ~4x slower.
         orch = build_network_rca_orchestrator(
             Path(tmp) / "stream.jsonl",
+            # Never the production store, however the environment is configured.
+            # `build_network_rca_orchestrator` falls back to AUTOPOIESIS_MEMORY_DSN
+            # when no dsn is passed, so the moment durable memory was switched on
+            # this benchmark started running against the live database: it wrote
+            # its four-pass replay into production memory, and read the sentinel's
+            # live records back into the observatory, which is how the memory
+            # observatory filled up with cells it could not place.
+            #
+            # The whole premise here is "memory starts empty and the only thing
+            # that changes across passes is what the agent learned". A shared
+            # store makes every number in this harness meaningless.
+            use_env_memory_dsn=False,
             data_source=data_source,
             real_stats_path=real_stats_path,
             reasoner_mode=reasoner_mode,

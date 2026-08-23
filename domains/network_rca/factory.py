@@ -69,6 +69,10 @@ def build_network_rca_orchestrator(
     seed_memory: bool = True,
     context_strategy: str = "structured",
     memory_dsn: str | None = None,
+    # An empty dsn cannot express "deliberately no repository" — `"" or env`
+    # falls straight back to the environment. Callers that must never touch the
+    # production store (the benchmark harness, most tests) say so here.
+    use_env_memory_dsn: bool = True,
     vector_memory_enabled: bool | None = None,
     memory_embedder: Any | None = None,
     vector_options: dict[str, Any] | None = None,
@@ -102,7 +106,7 @@ def build_network_rca_orchestrator(
             resolved_observability_path,
             exporters=exporters,
         )
-    resolved_memory_dsn = memory_dsn or autopoiesis_env("MEMORY_DSN")
+    resolved_memory_dsn = memory_dsn or (autopoiesis_env("MEMORY_DSN") if use_env_memory_dsn else "")
     if resolved_memory_dsn:
         from core.memory.postgres_repository import PostgresMemoryRepository
 
