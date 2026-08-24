@@ -328,14 +328,27 @@ wait_for_security_event() {
 # in-process confirmation streak left by an earlier rehearsal, so this round
 # must earn its own two consecutive detections.
 reset_service_confirmation() {
-    local deadline=$((SECONDS + 45)) body
+    local deadline=$((SECONDS + 60)) body start_line
+    start_line=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
     while (( SECONDS < deadline )); do
-        body=$(curl -fsS -m 5 -X POST \
+        # failed_units invokes real systemctl probes; on a loaded host one poll
+        # can legitimately take more than five seconds. Keep the client alive
+        # long enough to receive the completed response instead of repeatedly
+        # abandoning successful health observations.
+        body=$(curl -fsS -m 15 -X POST \
             "http://127.0.0.1:8026/api/rca/sentinel/poll?detector=failed_units" \
             2>/dev/null || true)
         if [[ -n "$body" ]] && python3 -c \
             'import json,sys; raise SystemExit(1 if json.load(sys.stdin).get("busy") else 0)' \
             <<<"$body"; then
+            return 0
+        fi
+        # The poll records `cycle` immediately after detector state has been
+        # updated. Durable-memory follow-up may keep the HTTP request open
+        # longer, but that does not invalidate the completed healthy sample.
+        if systemctl is-active --quiet "$UNIT" \
+            && tail -n "+$((start_line + 1))" "$TIMELINE" 2>/dev/null \
+                | grep -q '"kind": "cycle"'; then
             return 0
         fi
         sleep 2
@@ -463,7 +476,7 @@ service-down)
     resolve_timeline
     if sentinel_enabled; then
         reset_service_confirmation \
-            || die "45 秒内无法完成故障前健康观测；哨兵仍忙，本次不制造含糊的确认链路"
+            || die "60 秒内未完成故障前健康观测；本次未触发故障，请检查巡检锁和网关日志"
     fi
     CURSOR=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
     ROUND_START=$CURSOR

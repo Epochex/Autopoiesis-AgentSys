@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -85,6 +86,47 @@ def test_sentinel_consolidation_calls_retention_inside_existing_lock(monkeypatch
 
     assert calls == ["consolidate", "retention", "flush"]
     assert not request_lock.locked()
+
+
+def test_sentinel_memory_sync_never_blocks_the_next_detection_cycle(monkeypatch):
+    from frontend.gateway.app import sentinel_wiring
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def slow_memory_sync() -> None:
+        calls.append("memory")
+        entered.set()
+        release.wait(timeout=2)
+
+    monkeypatch.setattr(
+        sentinel_wiring,
+        "_remember_completed_incidents",
+        slow_memory_sync,
+    )
+    sentinel = sentinel_wiring._LearningSentinel(
+        detectors=[lambda: []],
+        execute=lambda *_args, **_kwargs: {},
+        preflight=lambda *_args, **_kwargs: {},
+    )
+
+    started = time.monotonic()
+    first = sentinel.poll_once()
+    elapsed = time.monotonic() - started
+    assert first["busy"] is False
+    assert elapsed < 0.2
+    assert entered.wait(timeout=1)
+
+    second = sentinel.poll_once()
+    assert second["busy"] is False
+    assert calls == ["memory"]
+
+    release.set()
+    deadline = time.monotonic() + 1
+    while sentinel_wiring._memory_sync_lock.locked() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not sentinel_wiring._memory_sync_lock.locked()
 
 
 def test_sentinel_root_change_supersedes_old_incident_without_merged_roots():

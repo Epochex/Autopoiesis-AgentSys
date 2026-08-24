@@ -23,6 +23,7 @@ from domains.network_rca.incident_dossier import from_sentinel_chain
 
 _sentinel: Sentinel | None = None
 _lock = threading.Lock()
+_memory_sync_lock = threading.Lock()
 
 
 def _resolve_learning_service() -> Any | None:
@@ -62,6 +63,39 @@ def _remember_completed_incidents() -> None:
             service.memory.flush()
 
 
+def _schedule_completed_incident_memory() -> bool:
+    """Persist completed incidents without blocking detection or remediation.
+
+    Memory consolidation can wait on a database or the shared service lock.
+    The sentinel's next detection cycle must remain available during that wait.
+    One daemon worker is enough because consolidation is idempotent and each
+    pass reads the latest durable timeline.
+    """
+    if not _memory_sync_lock.acquire(blocking=False):
+        return False
+
+    def work() -> None:
+        try:
+            _remember_completed_incidents()
+        except Exception:
+            # The append-only timeline already holds the disposition. A later
+            # cycle can retry the same stable incident ids.
+            pass
+        finally:
+            _memory_sync_lock.release()
+
+    try:
+        threading.Thread(
+            target=work,
+            name="sentinel-memory-sync",
+            daemon=True,
+        ).start()
+    except Exception:
+        _memory_sync_lock.release()
+        raise
+    return True
+
+
 class _LearningSentinel(Sentinel):
     def poll_once(
         self,
@@ -72,13 +106,7 @@ class _LearningSentinel(Sentinel):
         result = super().poll_once(detectors, blocking=blocking)
         if result.get("busy"):
             return result
-        try:
-            _remember_completed_incidents()
-        except Exception:
-            # The disposition is already durable in the append-only timeline.
-            # A store outage must leave the autonomous safety loop available;
-            # the stable run id lets a later poll retry without double counting.
-            pass
+        _schedule_completed_incident_memory()
         return result
 
 
