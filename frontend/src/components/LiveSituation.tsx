@@ -1,12 +1,10 @@
-/* 落地态势 / LANDED SITUATION — read-only records from NetOps disk sinks.
+/* Landed situation records from the event-processing audit files.
  *
  * Sits above the separate offline trajectory replay. These two panels have
  * independent data sources and timestamps.
  *
- * Every value comes from GET /api/rca/live-situation, which tails the NetOps
- * disk sinks (alerts + AIOps suggestions + cluster-state). Nothing is synthesized
- * here, and the panel states the timestamp of the newest landed record. The two
- * subsystems meet only at that read-only file boundary.
+ * GET /api/rca/live-situation supplies alerts, response suggestions, correlation
+ * state, and the timestamp of the newest landed record.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TheaterEvent } from '../types'
@@ -46,16 +44,16 @@ export interface SituationSnapshot {
 
 /** ISO → HH:MM:SS, in whatever zone the stamp carries. n/a stays n/a. */
 const hms = (iso: string): string => {
-  if (!iso || iso === 'n/a') return '—'
+  if (!iso || iso === 'n/a') return 'N/A'
   const m = iso.match(/T(\d{2}):(\d{2}):(\d{2})/)
   return m ? `${m[1]}:${m[2]}:${m[3]}` : iso
 }
 const ymd = (iso: string): string => {
-  if (!iso || iso === 'n/a') return '—'
+  if (!iso || iso === 'n/a') return 'N/A'
   const m = iso.match(/(\d{4})-(\d{2})-(\d{2})/)
   return m ? `${m[1]}-${m[2]}-${m[3]}` : iso
 }
-/* severity carried by weight/structure, never hue — the page allows no second accent */
+/* Severity is carried by weight and structure. */
 const sevRank = (s: string | undefined): number =>
   s === 'critical' ? 3 : s === 'major' || s === 'high' ? 2 : s === 'warning' || s === 'minor' ? 1 : 0
 
@@ -154,11 +152,11 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
     <section className="ls" aria-label={zh ? '落地态势记录' : 'Landed situation records'}>
       <header className="ls-head">
         <div className="ls-head-l">
-          <span className="ls-kick">{zh ? '落地态势 · 磁盘记录' : 'LANDED SITUATION · DISK RECORDS'}</span>
-          <h2 className="ls-title">{zh ? <>态势<mark>记录</mark></> : <>LANDED <mark>RECORDS</mark></>}</h2>
+          <span className="ls-kick">{zh ? '事件处置 · 审计记录' : 'INCIDENT RESPONSE · AUDIT RECORDS'}</span>
+          <h2 className="ls-title">{zh ? <>处置<mark>记录</mark></> : <>RESPONSE <mark>RECORDS</mark></>}</h2>
         </div>
         <div className="ls-head-r">
-          <span className="ls-src">{zh ? '告警 + 建议 + 簇状态 · 磁盘 sink' : 'ALERTS + SUGGESTIONS + CLUSTER STATE · DISK SINKS'}</span>
+          <span className="ls-src">{zh ? '检测事实 + 候选动作 + 关联状态' : 'DETECTION FACTS + CANDIDATE ACTIONS + CORRELATION STATE'}</span>
           <span className="ls-stamp">{zh ? '最新记录' : 'LATEST RECORD'} · {ymd(latest)} {hms(latest)}</span>
           <span className="ls-counts">
             <b>{feed.filter((f) => f.kind === 'alert').length}</b> {zh ? '告警' : 'alerts'} · <b>{suggestions.length}</b> {zh ? '建议' : 'suggestions'}
@@ -166,15 +164,15 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
         </div>
       </header>
 
-      {/* the rail the selected incident ran on — its own stages read as ink.
+      {/* The processing rail for the selected incident.
           Two subsystems, two rails: a sentinel chain never enters the correlator. */}
       <div className="ls-pipe" role="list" aria-label={zh ? '处理链路' : 'Processing chain'}>
         <span className="ls-pipe-k">
           {selected?.scope === 'sentinel'
             ? reportOnly
-              ? (zh ? '哨兵安全拒绝流程' : 'SENTINEL SAFETY-REFUSAL FLOW')
-              : (zh ? '哨兵自动处置流程' : 'SENTINEL AUTOMATED-ACTION FLOW')
-            : (zh ? 'NetOps 流处理' : 'NETOPS STREAM')}
+              ? (zh ? '安全门决策流程' : 'SAFETY-GATE DECISION FLOW')
+              : (zh ? '受控处置流程' : 'CONTROLLED RESPONSE FLOW')
+            : (zh ? '事件处理流程' : 'EVENT PROCESSING FLOW')}
         </span>
         {rail.map((p, i) => (
           <div key={p.id} className={`ls-stage ${hot.has(p.id) ? 'hot' : ''}`} role="listitem">
@@ -205,10 +203,10 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
                 >
                   <span className="ls-fi-top">
                     <span className={`ls-tag sev${sevRank(f.severity)}`}>{isSug ? f.priority || 'P?' : (zh ? '告警' : 'ALERT')}</span>
-                    <span className="ls-fi-kind">{isSug ? (f.scope === 'cluster' ? (zh ? '簇建议' : 'CLUSTER') : (zh ? '单点建议' : 'SINGLE')) : (f.scenario || '—')}</span>
+                    <span className="ls-fi-kind">{isSug ? (f.scope === 'cluster' ? (zh ? '簇建议' : 'CLUSTER') : (zh ? '单点建议' : 'SINGLE')) : (f.scenario || 'N/A')}</span>
                     <time className="ls-fi-ts">{hms(f.ts)}</time>
                   </span>
-                  <span className="ls-fi-dev">{f.device || '—'}</span>
+                  <span className="ls-fi-dev">{f.device || 'N/A'}</span>
                   {f.summary && <span className="ls-fi-sum">{f.summary}</span>}
                 </button>
               )
@@ -240,7 +238,7 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
             </div>
             <p className="ls-d-sum">{selected.summary}</p>
 
-            {/* real timeline: alert → inference → suggestion → critique → runbook */}
+            {/* Recorded event and decision timeline. */}
             <div className="ls-block">
               <div className="ls-block-h">{zh ? '诊断时间线' : 'DIAGNOSIS TIMELINE'}</div>
               <ol className="ls-tl">
@@ -252,24 +250,24 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
               </ol>
             </div>
 
-            {/* per-stage telemetry — the provider + detail each stage actually ran */}
+            {/* Per-stage observations and providers. */}
             <div className="ls-block">
-              <div className="ls-block-h">{zh ? '各阶段遥测' : 'STAGE TELEMETRY'}</div>
+              <div className="ls-block-h">{zh ? '检测与决策事实' : 'DETECTION & DECISION FACTS'}</div>
               <div className="ls-stages">
                 {selected.stageTelemetry.map((s) => (
                   <div key={s.stageId} className="ls-st">
                     <span className="ls-st-id">{s.stageId}</span>
-                    <span className="ls-st-detail">{s.detail || s.provider || '—'}</span>
+                    <span className="ls-st-detail">{s.detail || s.provider || 'N/A'}</span>
                     {s.provider && <span className="ls-st-prov">{s.provider}</span>}
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* hypothesis set: ranked, with real confidence and evidence refs */}
+            {/* Ranked root-cause candidates with confidence and evidence references. */}
             <div className="ls-block">
               <div className="ls-block-h">
-                {zh ? '假设集' : 'HYPOTHESES'} · <b>{selected.hypothesisSet.items.length}</b>
+                {zh ? '根因候选' : 'ROOT-CAUSE CANDIDATES'} · <b>{selected.hypothesisSet.items.length}</b>
                 {selected.hypothesisSet.summary.contradictory_ref_count != null && (
                   <span className="ls-block-sub">
                     {zh ? '支持' : 'supp'} {selected.hypothesisSet.summary.supporting_ref_count ?? 0} · {zh ? '反证' : 'contra'} {selected.hypothesisSet.summary.contradictory_ref_count ?? 0}
@@ -290,14 +288,14 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
               </ul>
             </div>
 
-            {/* runbook draft + the approval boundary it can never cross on its own */}
+            {/* Candidate action, safety decision, and follow-up owner. */}
             <div className="ls-block ls-runbook">
               <div className="ls-block-h">
                 {reportOnly
-                  ? (zh ? '安全决策 · 自动流程终态' : 'SAFETY DECISION · AUTOMATION TERMINAL')
-                  : (zh ? '处置预案 · 草案' : 'RUNBOOK · DRAFT')}
+                  ? (zh ? '候选动作与安全门条件' : 'CANDIDATE ACTION & SAFETY GATE')
+                  : (zh ? '候选处置方案' : 'CANDIDATE RESPONSE PLAN')}
               </div>
-              <div className="ls-rb-title">{selected.runbookDraft.title || '—'}</div>
+              <div className="ls-rb-title">{selected.runbookDraft.title || 'N/A'}</div>
               {selected.runbookDraft.actions.length > 0 && (
                 <ol className="ls-rb-actions">
                   {selected.runbookDraft.actions.map((a, i) => <li key={i}>{a}</li>)}
@@ -307,13 +305,13 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
                 <span className="ls-gate-lock" aria-hidden="true" />
                 <span className="ls-gate-t">
                   {reportOnly
-                    ? (zh ? '安全门已关闭写操作 · 事件已记录并转人工' : 'WRITES GATED · RECORDED AND HANDED OFF')
-                    : (zh ? '审批边界 · 预案永不自动执行' : 'APPROVAL BOUNDARY · NEVER AUTO-EXECUTED')}
+                    ? (zh ? '决策结果 · 写操作未授权' : 'DECISION · WRITE NOT AUTHORIZED')
+                    : (zh ? '审批状态 · 等待授权' : 'APPROVAL STATUS · AUTHORIZATION PENDING')}
                 </span>
                 <span className={`ls-gate-risk ${selected.reviewVerdict.checks.overreachRisk.status}`}>
                   {reportOnly
-                    ? (zh ? '自动流程已结束 · 待人工处置' : 'AUTOMATION CLOSED · HUMAN ACTION PENDING')
-                    : `${zh ? '越权风险' : 'OVERREACH'} · ${selected.reviewVerdict.checks.overreachRisk.status}`}
+                    ? (zh ? '后续责任 · 安全运营核验并处置' : 'OWNER · SECURITY OPERATIONS VALIDATION')
+                    : `${zh ? '安全门风险' : 'GATE RISK'} · ${selected.reviewVerdict.checks.overreachRisk.status}`}
                 </span>
               </div>
             </div>
@@ -323,7 +321,7 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
         )}
       </div>
 
-      {/* cluster watch — the correlation windows filling toward a cluster */}
+      {/* Correlation windows progressing toward a cluster threshold. */}
       {snap.clusterWatch.length > 0 && (
         <div className="ls-clusters">
           <div className="ls-col-h">{zh ? '关联窗口' : 'CORRELATION WINDOWS'} · {snap.runtime.windowSec}s</div>

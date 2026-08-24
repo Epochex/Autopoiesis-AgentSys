@@ -33,7 +33,9 @@ from typing import Any
 _CHAIN_KINDS = frozenset({
     "detected", "awaiting_confirmation", "no_safe_action", "cooldown",
     "preflight", "declined", "remediated", "resolved", "escalated",
-    "escalation_cleared",
+    "escalation_cleared", "remediation_committed", "bakein_opened",
+    "bakein_sampled", "bakein_passed", "bakein_regressed",
+    "remediation_reverted", "revert_unverified",
 })
 
 # Cards older than this are history the ledger already keeps; the live list is
@@ -48,9 +50,16 @@ _STEP_LABEL: dict[str, tuple[str, str]] = {
     "detected": ("发现", "detected"),
     "awaiting_confirmation": ("等待二次确认", "awaiting confirmation"),
     "preflight": ("前置校验", "preflight check"),
+    "remediation_committed": ("动作已提交", "action committed"),
+    "bakein_opened": ("观察窗口开启", "observation opened"),
+    "bakein_sampled": ("健康回读采样", "health readback sampled"),
+    "bakein_passed": ("观察窗口通过", "observation passed"),
+    "bakein_regressed": ("观察窗口发现回归", "observation regressed"),
+    "remediation_reverted": ("动作已回滚", "action reverted"),
+    "revert_unverified": ("回滚待验证", "revert awaiting verification"),
     "remediated": ("已执行并完成观察期", "acted, watch window closed"),
     "resolved": ("判定恢复", "resolved"),
-    "no_safe_action": ("无安全动作，只报不动", "no safe action — reported only"),
+    "no_safe_action": ("自动执行条件未满足，转人工处置", "automatic controls not satisfied — operator queued"),
     "declined": ("前置条件不通过，拒绝执行", "preconditions failed — declined"),
     "cooldown": ("冷却中", "cooling down"),
     "escalated": ("不再自动修，转人工", "STOPPED — HANDED TO A PERSON"),
@@ -118,28 +127,21 @@ def _no_action_reason(
     *,
     en: bool,
 ) -> str:
-    """Project a complete reason, including older timeline entries."""
+    """Project the unmet action controls, including older timeline entries."""
     recorded = str(no_action.get("reason") or "").strip()
-    legacy_generic = "没有可自动执行的动作" in recorded or "只出告警" in recorded
-    if recorded and not legacy_generic:
+    legacy_or_demo = any(marker in recorded for marker in (
+        "没有可自动执行的动作", "只出告警", "RFC 5737", "演示保留地址", "注入",
+    ))
+    if recorded and not legacy_or_demo:
         return recorded
     if str(detection.get("detector") or "") == "admin_bruteforce":
-        documentation_source = subject.startswith(("192.0.2.", "198.51.100.", "203.0.113."))
-        if documentation_source:
-            return (
-                f"Withheld temporary firewall block: {subject} is an RFC 5737 documentation address. "
-                "The rehearsal injected log evidence and created no live connection to block. A real ACL "
-                "write would add a meaningless rule and risk management access; evidence was retained and handed off."
-                if en else
-                f"保留未执行临时防火墙封禁：{subject} 属于 RFC 5737 演示保留地址，本次只有注入的失败登录日志，"
-                "没有可阻断的真实连接。写入真实防火墙会制造无效 ACL，并引入管理通道误封风险；系统保留证据并转人工。"
-            )
         return (
-            "Withheld temporary firewall block: no registered adapter currently combines a TTL, management-address "
-            "exemptions, post-commit readback, and timed rollback. Evidence was retained and handed off."
+            f"Automatic block controls not satisfied for {subject}: source ownership and management-address "
+            "exemptions are unverified, and the firewall action does not yet combine a TTL, post-commit readback, "
+            "and timed rollback. Existing configuration is retained and the incident is queued for an operator."
             if en else
-            "保留未执行临时防火墙封禁：当前未注册同时具备封禁 TTL、管理地址豁免、提交后回读和超时自动回滚的"
-            "防火墙适配器。直接写 ACL 可能误封管理来源；系统保留证据并转人工。"
+            f"自动封禁条件未满足：来源 {subject} 尚未完成归属确认与管理地址豁免校验；当前防火墙动作未同时提供"
+            "封禁 TTL、提交后回读和超时自动回滚。策略保持现有配置，并将事件转入人工处置队列。"
         )
     return str(no_action.get("note") or (
         "No registered action passed the safety gate; state was retained and handed off."
@@ -215,7 +217,11 @@ def _outcome(chain: list[dict[str, Any]]) -> tuple[str, str, bool]:
         return "declined", "preconditions_failed", False
     if _last(chain, "cooldown"):
         return "cooling", "cooldown", False
-    return "in_flight", "acting" if _last(chain, "preflight") else "confirming", True
+    if _last(chain, "bakein_opened"):
+        return "in_flight", "observing", True
+    if _last(chain, "remediation_committed"):
+        return "in_flight", "acting", True
+    return "in_flight", "prechecking" if _last(chain, "preflight") else "confirming", True
 
 
 def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any]:
@@ -228,6 +234,9 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     declined = _last(chain, "declined")
     cooldown = _last(chain, "cooldown")
     escalated = _last(chain, "escalated")
+    committed = _last(chain, "remediation_committed")
+    observation = _last(chain, "bakein_opened")
+    sampled = [event for event in chain if event.get("kind") == "bakein_sampled"]
     no_action_reason = _no_action_reason(subject, detection, no_action, en=en) if no_action else ""
     candidate_action = str(
         (no_action or {}).get("candidate_action")
@@ -281,6 +290,36 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "ts": str(preflight.get("at") or ""),
             "detail": str(radius.get("summary") or preflight.get("reason") or ""),
         })
+    if committed:
+        stages.append({
+            "stageId": "act",
+            "label": "动作提交" if not en else "action commit",
+            "provider": "safe-exec",
+            "ts": str(committed.get("at") or ""),
+            "detail": (
+                f"{action or committed.get('action') or 'registered action'} 已提交，动作回执已记录"
+                if not en else
+                f"{action or committed.get('action') or 'registered action'} committed; action receipt recorded"
+            ),
+        })
+    if observation and not remediated:
+        latest_sample = sampled[-1] if sampled else observation
+        phase = str(latest_sample.get("phase") or "fast")
+        phase_label = {
+            "baseline": ("基线", "baseline"),
+            "fast": ("快速回退窗口", "fast rollback window"),
+            "stability": ("稳定性窗口", "stability window"),
+        }.get(phase, (phase, phase))
+        stages.append({
+            "stageId": "watch",
+            "label": "处置后观察" if not en else "post-action observation",
+            "provider": "follow-up",
+            "ts": str(latest_sample.get("at") or observation.get("at") or ""),
+            "detail": (
+                f"{phase_label[0]} · 已完成 {len(sampled)} 次健康回读"
+                if not en else f"{phase_label[1]} · {len(sampled)} health readbacks completed"
+            ),
+        })
     if remediated:
         samples = remediated.get("samples")
         watch = (
@@ -288,7 +327,7 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             if not en else f"watch window, {samples} readings · {remediated.get('detail', '')}"
         )
         stages.append({
-            "stageId": "watch-window",
+            "stageId": "watch",
             "label": "处置后观察期" if not en else "post-change watch",
             "provider": "follow-up",
             "ts": str(remediated.get("at") or ""),
@@ -354,12 +393,12 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     if action:
         action_text = _ACTION_LABEL.get(action, (action, action))[1 if en else 0]
     else:
-        action_text = "无可自动执行的动作" if not en else "no action is auto-executable here"
+        action_text = "自动执行条件未满足" if not en else "automatic execution controls not satisfied"
     actions = [action_text]
     if no_action and candidate_action_text:
         actions.append(
-            f"候选动作（已保留、未执行）：{candidate_action_text}"
-            if not en else f"candidate action (withheld): {candidate_action_text}"
+            f"候选动作：{candidate_action_text}（未执行）"
+            if not en else f"candidate action: {candidate_action_text} (not executed)"
         )
     if radius.get("summary"):
         actions.append(str(radius["summary"]))
@@ -436,8 +475,8 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         "runbookDraft": {
             "planId": _stable_id(subject, action),
             "title": (
-                f"{subject} · 安全门保留写操作" if no_action and not en
-                else f"withheld write on {subject}" if no_action
+                f"{subject} · 来源隔离决策" if no_action and not en
+                else f"source-isolation decision for {subject}" if no_action
                 else f"{subject} · {action_text}" if not en
                 else f"{action_text} on {subject}"
             ),

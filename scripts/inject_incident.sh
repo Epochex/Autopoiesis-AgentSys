@@ -1,31 +1,25 @@
 #!/usr/bin/env bash
-# Create a real, observable fault for the sentinel to find — and clean it up.
+# Create controlled, observable conditions for sentinel response checks.
 #
-# Nothing here is simulated into a fixture. The service really runs, really
-# dies, and systemd really reports it as failed, because a demo that injects a
-# fake reading proves only that the reading was faked. The blast radius is a
-# unit that exists for this purpose and nothing depends on.
+# The service scenario changes a dedicated systemd unit. The security scenario
+# writes bounded authentication-log records from an RFC 5737 address. Cleanup
+# removes the unit and restores recurrence parameters changed by this script.
 #
 #   ./inject_incident.sh service-down   a watched unit crashes
-#   ./inject_incident.sh bruteforce     repeated failed SSH auth from a fake source
+#   ./inject_incident.sh bruteforce     repeated failed SSH auth from a controlled source
 #   ./inject_incident.sh recurring      the same unit crashes over and over until the
 #                                       system refuses to keep fixing it (~9 min, hands off)
 #   ./inject_incident.sh status         what is currently injected
 #   ./inject_incident.sh cleanup        remove everything this script created
 #
-# The three scenarios are chosen to end in three different verdicts.
-# service-down has a monotonic action and gets fixed unattended. bruteforce
-# deliberately has none, so the system reports it and stops. recurring gets
-# fixed three times and then refused — a fault that keeps coming back is not a
-# fault a restart fixes, and the system that keeps restarting it is hiding the
-# trend rather than handling it. A demo where everything auto-heals hides the
-# more important half of the design.
+# The scenarios exercise verified recovery, a safety-gated security handoff,
+# and recurrence escalation after the configured threshold.
 set -euo pipefail
 
 UNIT=demo-collector
 UNIT_FILE="/etc/systemd/system/${UNIT}.service"
 SUBJECT="${UNIT}.service"       # what systemd --failed prints, and what the timeline records
-FAKE_SOURCE="203.0.113.77"   # RFC 5737 documentation range: never a real host
+CONTROLLED_SOURCE="203.0.113.77"   # RFC 5737 documentation range
 
 GATEWAY=netops-ops-console-backend
 DROPIN_DIR="/etc/systemd/system/${GATEWAY}.service.d"
@@ -34,27 +28,24 @@ DEMO_ENV_FILE="/etc/selfevo-console-demo-recurrence.env"
 TIMELINE_DEFAULT="/data/autopoiesis-runtime/sentinel-timeline.jsonl"
 HEALTHZ="http://127.0.0.1:8026/api/healthz"
 
-# ── demo-only time compression ───────────────────────────────────────────────
+# Recurrence timing used by the controlled workflow.
 #
-# Production is a 24-hour recurrence window and a 600s base cooldown. No demo
-# waits that out, so `recurring` compresses the CLOCK — and only the clock.
-# The decision rule is untouched: the refusal threshold stays at 3, the same
-# number the code defaults to, so what the audience watches is the production
-# ladder running fast, not a special demo ladder.
+# Production uses a 24-hour recurrence window and a 600s base cooldown. The
+# `recurring` workflow shortens the time window and cooldown while retaining
+# the production refusal threshold of three recurrences.
 #
 # 3600 rather than something smaller because the escalation note prints
 # `window_sec // 3600` hours: at one hour the sentinel says "在 1 小时内已经生效
 # 过 3 次又复发" and that sentence is exactly true. A 30-minute window would put
-# a rounded-up number on the screen, which is the kind of small lie that costs
-# the whole demo when somebody checks.
+# a rounded-up number on the screen.
 DEMO_WINDOW=3600     # AUTOPOIESIS_RECURRENCE_WINDOW  (prod: 86400)
-DEMO_LIMIT=3         # AUTOPOIESIS_RECURRENCE_LIMIT   (prod: 3 — deliberately unchanged)
+DEMO_LIMIT=3         # AUTOPOIESIS_RECURRENCE_LIMIT   (prod: 3, unchanged)
 DEMO_COOLDOWN=30     # AUTOPOIESIS_SENTINEL_COOLDOWN  (prod: 600)
 DEMO_INTERVAL=10     # AUTOPOIESIS_SENTINEL_INTERVAL  (this box: 15)
 
 # 30s base is picked against the 90s watch window: the ladder doubles it to 60s
 # and then 120s, so the first two cooldowns expire while the sentinel is still
-# watching its own repair and never stall the demo, while the third is long
+# observing its own repair, while the third is long
 # enough to be visible in the timeline as a real escalating quiet period.
 
 die() { echo "$*" >&2; exit 1; }
@@ -79,10 +70,8 @@ UNITEOF
 }
 
 # ── reading the gateway's real environment ───────────────────────────────────
-# `systemctl show -p Environment` only lists Environment= lines, not what came
-# from an EnvironmentFile, so ask the running process instead. This is also the
-# only honest way to check whether an override actually took: the file being on
-# disk proves nothing until the process has been restarted through it.
+# `systemctl show -p Environment` omits EnvironmentFile values. Read the running
+# process environment to verify the active configuration after restart.
 gateway_env() {
     local pid value
     pid=$(systemctl show "$GATEWAY" -p MainPID --value 2>/dev/null || echo 0)
@@ -108,7 +97,7 @@ wait_for_gateway() {
     return 1
 }
 
-# ── the demo-only override, and how to take it back ──────────────────────────
+# Controlled recurrence override and restoration.
 #
 # Why a drop-in with its own EnvironmentFile, and not the obvious alternatives:
 #
@@ -117,7 +106,7 @@ wait_for_gateway() {
 #     a demo script that might be Ctrl-C'd halfway, is not a trade worth making
 #     for four numbers.
 #   - A drop-in with plain `Environment=` lines does NOT work here, and this is
-#     worth knowing: systemd applies EnvironmentFile= over Environment=
+#     systemd applies EnvironmentFile= over Environment=
 #     regardless of order, and AUTOPOIESIS_SENTINEL_INTERVAL is already set in
 #     /etc/selfevo-console.env. Measured on this box (systemd 249), not assumed.
 #     So the override has to arrive as an EnvironmentFile too.
@@ -132,9 +121,9 @@ wait_for_gateway() {
 apply_demo_override() {
     mkdir -p "$DROPIN_DIR"
     cat > "$DEMO_ENV_FILE" <<ENVEOF
-# 演示专用 · 由 scripts/inject_incident.sh recurring 写入，cleanup 删除。
+# 受控流程专用，由 scripts/inject_incident.sh recurring 写入，cleanup 删除。
 # 这里只压缩时间，不改判据：拒绝阈值 3 和生产默认一致。
-# 如果这个文件在一台没人在演示的机器上留着，那就是配置事故 —— 删掉它，
+# 非受控流程期间发现该文件时应删除它，
 # 然后 systemctl daemon-reload && systemctl restart ${GATEWAY}
 AUTOPOIESIS_RECURRENCE_WINDOW=${DEMO_WINDOW}
 AUTOPOIESIS_RECURRENCE_LIMIT=${DEMO_LIMIT}
@@ -142,18 +131,18 @@ AUTOPOIESIS_SENTINEL_COOLDOWN=${DEMO_COOLDOWN}
 AUTOPOIESIS_SENTINEL_INTERVAL=${DEMO_INTERVAL}
 ENVEOF
     cat > "$DROPIN_FILE" <<DROPEOF
-# 演示专用覆盖。文件名必须排在 provider-env.conf 之后：drop-in 按文件名字典序
+# 受控流程覆盖。文件名必须排在 provider-env.conf 之后：drop-in 按文件名字典序
 # 读入，后一个 EnvironmentFile 才盖得住前一个。cleanup 会删掉这一层。
 [Service]
 EnvironmentFile=-${DEMO_ENV_FILE}
 DROPEOF
     systemctl daemon-reload
-    echo "已写入演示覆盖，重启网关让它生效（环境变量在进程启动时读，改文件不重启等于没改）…"
+    echo "已写入受控流程参数，正在重启网关加载配置…"
     systemctl restart "$GATEWAY"
     wait_for_gateway || die "网关重启后 45 秒内没起来，先查 journalctl -u $GATEWAY -n 50"
 
     # Verify against the process, not the file. A drop-in that parsed wrong, or
-    # sorted wrong, fails exactly here and nowhere else — and a half-applied
+# sorted wrong, fails here, and a half-applied
     # override is the one outcome worth rolling back automatically, because the
     # alternative is a box left with a compressed window and nobody watching.
     local got got_limit
@@ -164,14 +153,14 @@ DROPEOF
         echo "systemd 读到的 drop-in 顺序（$(basename "$DROPIN_FILE") 必须排在 provider-env.conf 之后）：" >&2
         systemctl cat "$GATEWAY" 2>/dev/null | grep '^# /etc' >&2 || true
         revert_demo_override >/dev/null || true
-        die "已回滚演示覆盖，机器留在生产口径。"
+        die "已回滚受控流程参数，网关使用生产配置。"
     fi
     echo "覆盖已生效（窗口 ${DEMO_WINDOW}s / 阈值 ${DEMO_LIMIT} / 冷却 ${DEMO_COOLDOWN}s / 巡检 ${DEMO_INTERVAL}s）"
 }
 
-# Idempotent: says nothing and touches nothing when there is no override.
+# Idempotent: returns without changes when there is no override.
 # Returns 0 if it removed one (and therefore restarted the gateway), 1 if there
-# was nothing to remove.
+# no override was present.
 revert_demo_override() {
     if [[ ! -e "$DROPIN_FILE" && ! -e "$DEMO_ENV_FILE" ]]; then
         # Belt and braces: the files can be gone while a process started through
@@ -186,13 +175,13 @@ revert_demo_override() {
     fi
     rm -f "$DROPIN_FILE" "$DEMO_ENV_FILE"
     systemctl daemon-reload
-    echo "已删掉演示覆盖，重启网关收回压缩窗口（不重启的话进程里那份还在跑）…"
+    echo "已删除受控流程参数，正在重启网关恢复生产窗口…"
     systemctl restart "$GATEWAY"
     wait_for_gateway || echo "警告：网关没在 45 秒内起来，查 journalctl -u $GATEWAY" >&2
     local left
     left=$(gateway_env AUTOPOIESIS_RECURRENCE_WINDOW)
     if [[ -n "$left" ]]; then
-        echo "警告：网关进程里仍有 AUTOPOIESIS_RECURRENCE_WINDOW=$left，检查 /etc/selfevo-console.env 是不是也被人塞了一份" >&2
+        echo "警告：网关进程里仍有 AUTOPOIESIS_RECURRENCE_WINDOW=$left，请检查 /etc/selfevo-console.env 的重复配置" >&2
     else
         echo "已恢复生产口径（窗口 24h / 基础冷却 600s）"
     fi
@@ -207,7 +196,7 @@ DEMO_COMPLETE=0
 revert_on_abort() {
     if (( DEMO_COMPLETE )); then return 0; fi
     echo >&2
-    echo "演示没跑完，先把压缩窗口收回去…" >&2
+    echo "受控流程中断，正在恢复生产窗口…" >&2
     revert_demo_override >/dev/null 2>&1 || true
     echo "已回到生产口径。demo-collector 可能还留着，用 ./scripts/inject_incident.sh cleanup 收尾。" >&2
 }
@@ -216,7 +205,7 @@ revert_on_abort() {
 # Same shape as the projection the backend runs: a cycle counts only when a
 # `resolved` is followed by a LATER `detected` on the same subject. A repair
 # that is still holding is not a recurrence. If this ever disagrees with the
-# console, believe the console — this exists to warn the operator before an
+# console, the console projection is authoritative. This check warns the operator before an
 # eight-minute sequence starts from the wrong rung, not to be a second source
 # of truth.
 cycles_in_window() {
@@ -256,22 +245,26 @@ narrate() {
     local line=$1 reason
     [[ "$line" == *"$SUBJECT"* ]] || return 0
     case "$line" in
-        *'"kind": "detected"'*)             echo "   · 发现" ;;
-        *'"kind": "awaiting_confirmation"'*) echo "   · 等第二轮确认（一次采样可能撞上部署瞬态）" ;;
-        *'"kind": "preflight"'*)            echo "   · 前置校验：只有已经在最差状态的目标才放行" ;;
-        *'"kind": "cooldown"'*)             echo "   · 还在冷却，本轮不动作" ;;
+        *'"kind": "detected"'*)             echo "   · 检测事实已记录" ;;
+        *'"kind": "awaiting_confirmation"'*) echo "   · 二次确认：排除部署瞬态" ;;
+        *'"kind": "preflight"'*)            echo "   · 安全门条件：目标状态与影响范围校验" ;;
+        *'"kind": "remediation_committed"'*) echo "   · 动作已提交并完成回读，进入观察" ;;
+        *'"kind": "bakein_opened"'*)         echo "   · 快速回退窗与稳定性观察窗已打开" ;;
+        *'"kind": "bakein_passed"'*)         echo "   · 观察窗采样通过" ;;
+        *'"kind": "cooldown"'*)             echo "   · 决策结果：冷却期内写操作未授权" ;;
         *'"kind": "command"'*)
             # Preflight streams its read-only probes through the same channel;
             # only the restart itself is worth a line on stage.
             if [[ "$line" == *'"restart"'* ]]; then
-                echo "   · 执行 systemctl restart，接下来进入快速回退窗和稳定性观察窗"
+                echo "   · 动作回执：systemctl restart 已提交，进入回退窗和稳定性观察窗"
             fi ;;
-        *'"kind": "declined"'*)             echo "   · 前置校验没过，拒绝执行" ;;
-        *'"kind": "remediated"'*)           echo "   · 观察期结束，回读判定" ;;
-        *'"kind": "resolved"'*)             echo "   · 判定恢复，这一轮闭环" ;;
+        *'"kind": "declined"'*)             echo "   · 决策结果：安全门未放行" ;;
+        *'"kind": "remediated"'*)           echo "   · 回读观察完成" ;;
+        *'"kind": "resolved"'*)             echo "   · 决策结果：恢复已验证" ;;
         *'"kind": "escalated"'*)
             reason=${line#*'"reason": "'}; reason=${reason%%'"'*}
-            echo "   · 拒绝执行 → 转人工"
+            echo "   · 决策结果：写操作未授权"
+            echo "   · 后续责任：值班人员处置"
             echo "     「$reason」" ;;
     esac
 }
@@ -316,7 +309,7 @@ security_event_since() {
     local kind=$1
     [[ -f "$TIMELINE" ]] || return 1
     tail -n "+$((CURSOR + 1))" "$TIMELINE" 2>/dev/null \
-        | grep -F "\"subject\": \"$FAKE_SOURCE\"" \
+        | grep -F "\"subject\": \"$CONTROLLED_SOURCE\"" \
         | grep -q "\"kind\": \"$kind\""
 }
 
@@ -331,12 +324,149 @@ wait_for_security_event() {
     return 1
 }
 
+# Observe the unit healthy once before injecting the crash. This clears any
+# in-process confirmation streak left by an earlier rehearsal, so this round
+# must earn its own two consecutive detections.
+reset_service_confirmation() {
+    local deadline=$((SECONDS + 45)) body
+    while (( SECONDS < deadline )); do
+        body=$(curl -fsS -m 5 -X POST \
+            "http://127.0.0.1:8026/api/rca/sentinel/poll?detector=failed_units" \
+            2>/dev/null || true)
+        if [[ -n "$body" ]] && python3 -c \
+            'import json,sys; raise SystemExit(1 if json.load(sys.stdin).get("busy") else 0)' \
+            <<<"$body"; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+service_event_after() {
+    local kind=$1 start_line=$2
+    [[ -f "$TIMELINE" ]] || return 1
+    tail -n "+$((start_line + 1))" "$TIMELINE" 2>/dev/null \
+        | grep -F "\"subject\": \"$SUBJECT\"" \
+        | grep -q "\"kind\": \"$kind\""
+}
+
+wait_for_service_event() {
+    local kind=$1 start_line=$2 timeout=$3 deadline=$((SECONDS + $3))
+    while (( SECONDS < deadline )); do
+        service_event_after "$kind" "$start_line" && return 0
+        sleep 1
+    done
+    return 1
+}
+
+# LiveAlerts opens by subject. The landed-situation feed and suggestion must
+# carry that exact same deviceKey for the click to select the matching record.
+live_service_card_visible() {
+    curl -fsS -m 5 "http://127.0.0.1:8026/api/rca/live-situation?lang=zh" 2>/dev/null \
+        | python3 -c '
+import json, sys
+subject = sys.argv[1]
+payload = json.load(sys.stdin)
+card = next((row for row in payload.get("suggestions", [])
+             if row.get("scope") == "sentinel" and row.get("deviceKey") == subject), None)
+feed = next((row for row in payload.get("feed", [])
+             if row.get("scope") == "sentinel" and row.get("deviceKey") == subject), None)
+raise SystemExit(0 if card is not None and feed is not None else 1)
+' "$SUBJECT"
+}
+
+wait_for_live_service_card() {
+    local timeout=$1 deadline=$((SECONDS + $1))
+    while (( SECONDS < deadline )); do
+        live_service_card_visible && return 0
+        sleep 1
+    done
+    return 1
+}
+
+# Follow the current round and stop on every real terminal branch. Waiting only
+# for resolved would hide a prompt preflight refusal behind a six-minute timeout.
+SERVICE_OUTCOME=""
+follow_service_round() {
+    local timeout=$1 deadline=$((SECONDS + $1)) total line consumed
+    while (( SECONDS < deadline )); do
+        total=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
+        if (( total > CURSOR )); then
+            consumed=0
+            while IFS= read -r line; do
+                consumed=$((consumed + 1))
+                narrate "$line"
+                [[ "$line" == *"$SUBJECT"* ]] || continue
+                case "$line" in
+                    *'"kind": "resolved"'*) SERVICE_OUTCOME=resolved; break ;;
+                    *'"kind": "declined"'*) SERVICE_OUTCOME=declined; break ;;
+                    *'"kind": "escalated"'*) SERVICE_OUTCOME=escalated; break ;;
+                    *'"kind": "remediated"'*'"needs_human": true'*)
+                        SERVICE_OUTCOME=needs_human; break ;;
+                esac
+            done < <(tail -n "+$((CURSOR + 1))" "$TIMELINE" | head -n "$((total - CURSOR))")
+            CURSOR=$((CURSOR + consumed))
+        fi
+        [[ -z "$SERVICE_OUTCOME" ]] || return 0
+        sleep 2
+    done
+    return 1
+}
+
+# Verify actual durable timestamps for every stage. The detailed follow-up
+# events prove ACT and WATCH happened; neither is inferred from the final row.
+verify_service_chain() {
+    local start_line=$1
+    python3 - "$TIMELINE" "$start_line" "$SUBJECT" <<'PY'
+import json
+import sys
+
+path, cursor, subject = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+rows = []
+with open(path, encoding="utf-8") as handle:
+    for line in list(handle)[cursor:]:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("subject") == subject:
+            rows.append(row)
+
+required = [
+    "detected", "awaiting_confirmation", "detected", "preflight",
+    "remediation_committed", "bakein_opened", "remediated", "resolved",
+]
+position = 0
+evidence = []
+for wanted in required:
+    while position < len(rows) and rows[position].get("kind") != wanted:
+        position += 1
+    if position >= len(rows):
+        print(f"缺少链路事件 {wanted}；已看到 {[row.get('kind') for row in rows]}", file=sys.stderr)
+        raise SystemExit(1)
+    evidence.append((wanted, rows[position].get("at")))
+    position += 1
+
+print("   · 持久化链路顺序已核对：")
+for kind, at in evidence:
+    print(f"     {at}  {kind}")
+PY
+}
+
 case "${1:-}" in
 service-down)
     install_unit
     systemctl start "$UNIT"
     sleep 1
     systemctl is-active --quiet "$UNIT" || die "单元没起来，注入失败"
+    resolve_timeline
+    if sentinel_enabled; then
+        reset_service_confirmation \
+            || die "45 秒内无法完成故障前健康观测；哨兵仍忙，本次不制造含糊的确认链路"
+    fi
+    CURSOR=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
+    ROUND_START=$CURSOR
     echo "已启动 $UNIT，正在制造崩溃…"
     # SIGKILL the main process: systemd records a failed unit, which is exactly
     # what a real crash looks like to every layer above.
@@ -344,63 +474,89 @@ service-down)
     kill -9 "$MAIN_PID" 2>/dev/null || true
     sleep 2
     STATE=$(systemctl is-active "$UNIT" || true)
-    echo "注入完成：$UNIT 现在是 $STATE"
+    echo "故障条件已触发：$UNIT 当前状态为 $STATE"
     echo
     if sentinel_enabled; then
-        echo "哨兵在自动巡检，不用手动做任何事。"
+        echo "哨兵自动巡检已启用。"
         echo
-        echo "现在切到浏览器 → 诊断处置 页 → 往下滚到「系统自己做过什么」"
-        echo "页面每 5 秒自己刷新，通常约 4 至 5 分钟会依次出现："
+        echo "正在等待首页 LiveAlerts 先收到检测事实…"
+        wait_for_service_event detected "$ROUND_START" 45 \
+            || die "45 秒内首页告警源没有 detected。检查 $TIMELINE 和网关日志。"
+        echo "  · 首页 LiveAlerts 的后端时间线已出现 $SUBJECT"
+        wait_for_live_service_card 30 \
+            || die "detected 已落盘，但没有投影出同 deviceKey 的态势卡和 feed 记录"
+        echo "  · 点击该提醒可按 $SUBJECT 定位同一态势记录"
+        echo
+        echo "现在进入拓扑剧场观察：DETECT → CONFIRM → PREFLIGHT → ACT → WATCH → VERIFY"
+        echo "脚本继续等待真实双观察窗闭环，并在结束时核对持久化事件顺序。"
     else
         echo "哨兵没开（AUTOPOIESIS_SENTINEL=1 可开启自动巡检）。"
         echo "手动推进：curl -X POST localhost:8026/api/rca/sentinel/poll   （跑两次）"
         echo
         echo "会依次出现："
     fi
-    echo "  发现 → 等确认 → 发现 → 前置校验 → 已执行 → 判定恢复"
+    echo "  检测事实 → 二次确认 → 安全门条件 → 动作回执 → 回读观察 → 恢复已验证"
     echo
     echo "当前默认观察为约 60 秒快速回退窗 + 180 秒稳定性窗口。"
     echo "关键保护指标恶化会快速失败；连续健康通过稳定性窗口后才记为恢复。"
+    if sentinel_enabled; then
+        follow_service_round 360 || die "360 秒内未形成终态；检查网关日志和 $TIMELINE。"
+        case "$SERVICE_OUTCOME" in
+            resolved)
+                verify_service_chain "$ROUND_START" \
+                    || die "服务恢复了，但持久化阶段顺序不完整"
+                echo "service-down 端到端闭环通过，$UNIT 当前为 $(systemctl is-active "$UNIT" || true)。"
+                ;;
+            declined)
+                die "安全门拒绝本轮执行；检查全局暂停、预算和 preflight reason。" ;;
+            escalated)
+                die "本轮进入复发升级，不能作为首次 service-down 自愈演示；先检查 status 中的复发计数。" ;;
+            needs_human)
+                die "本轮观察或回滚需要人工确认；检查 remediated detail。" ;;
+        esac
+    fi
     ;;
 
 bruteforce)
     resolve_timeline
     CURSOR=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
-    echo "向系统日志写入来自 $FAKE_SOURCE 的失败登录记录…"
+    echo "检测事实准备：向认证日志写入来自 $CONTROLLED_SOURCE 的 12 条失败登录记录…"
     for i in $(seq 1 12); do
         logger -t sshd -p auth.warning \
-            "Failed password for invalid user admin from ${FAKE_SOURCE} port $((40000 + i)) ssh2"
+            "Failed password for invalid user admin from ${CONTROLLED_SOURCE} port $((40000 + i)) ssh2"
     done
     echo "日志已写入：12 条失败登录。正在触发真实巡检并等待首页收到事件…"
     if wait_for_security_event detected 30; then
-        echo "  · 态势首页已收到 $FAKE_SOURCE，页面会在 5 秒轮询内显示提醒"
+        echo "  · 检测事实已记录：来源 $CONTROLLED_SOURCE，12 条失败登录"
     else
         die "30 秒内没有生成 detected。检查：journalctl -t sshd --since -10m；再看 $TIMELINE"
     fi
     if wait_for_security_event no_safe_action 30; then
-        echo "  · 安全门判定完成：防火墙写入已保留，自动流程结束并转人工"
+        echo "  · 决策结果：写操作未授权，事件已交接安全运营"
     else
         die "事件已经出现，但 30 秒内没有形成 no_safe_action。检查网关日志和哨兵时间线。"
     fi
-    echo "注入完成：12 条失败登录，前端链路已经可见。"
+    echo "受控事件已记录：12 条失败登录，前端事件链已更新。"
     echo
-    echo "保持在 内网实时 页，点击顶部 $FAKE_SOURCE 提醒进入对应态势记录。"
-    echo "$FAKE_SOURCE 属于 RFC 5737 演示保留地址，本次只有注入日志，没有真实连接可阻断。"
-    echo "向真实防火墙写规则只会制造无效 ACL，并增加管理通道误封风险。"
-    echo "页面会显示：候选动作已保留、写操作未执行、证据已记账并转人工。"
+    echo "保持在“内网实时”页，选择 $CONTROLLED_SOURCE 进入对应事件记录。"
+    echo "检测事实：$CONTROLLED_SOURCE 产生重复失败登录记录，来源归属和活动会话待核验。"
+    echo "候选动作：临时防火墙封禁。"
+    echo "安全门条件：活动会话、管理地址豁免、封禁 TTL、提交后回读、超时自动回滚。"
+    echo "决策结果：缺少活动会话证据，写操作未授权，防火墙配置保持原版本。"
+    echo "后续责任：安全运营核验来源、活动会话和影响范围后处置。"
     echo
-    echo "演示时这一条比自愈那一条更值钱：它证明分级不是摆设。"
+    echo "收尾命令：sudo ./scripts/inject_incident.sh cleanup"
     ;;
 
 recurring)
-    sentinel_enabled || die "哨兵没开，这个场景全靠它自己跑。
+    sentinel_enabled || die "哨兵未启用，recurring 流程需要后台巡检。
 先在 /etc/selfevo-console.env 里设 AUTOPOIESIS_SENTINEL=1 再 systemctl restart $GATEWAY。"
 
-    echo "复发升级演示：同一个故障反复发生，看系统在第几次停手。"
+    echo "复发升级流程：重复触发同一故障并记录阈值决策。"
     echo
-    echo "真实口径是 24 小时窗口 + 600 秒基础冷却，没有哪场演示等得起。"
-    echo "所以这里压缩的是时钟，不是判据——拒绝阈值仍然是 $DEMO_LIMIT 次，"
-    echo "和生产默认一模一样。台上跑的是同一把梯子，只是走得快。"
+    echo "生产参数：24 小时窗口，600 秒基础冷却，$DEMO_LIMIT 次复发触发升级。"
+    echo "本流程参数：${DEMO_WINDOW} 秒窗口，${DEMO_COOLDOWN} 秒基础冷却，"
+    echo "复发阈值保持 $DEMO_LIMIT 次。"
     echo
 
     # Checked before anything is applied: if the ladder is already at the top,
@@ -409,18 +565,18 @@ recurring)
     PRIOR=$(cycles_in_window "$DEMO_WINDOW")
     if (( PRIOR >= DEMO_LIMIT )); then
         die "时间线里 $SUBJECT 在 $((DEMO_WINDOW / 60)) 分钟内已经有 $PRIOR 个「修好又复发」的周期，
-阶梯已经在顶端了——现在跑，第一次就会被拒绝，看不到「先修三次」那一段。
+当前复发计数已经达到阈值，本轮将直接进入人工升级。
 
-要么等窗口过期（最多 $((DEMO_WINDOW / 60)) 分钟），要么按 DEMO.md 开演前那一步清一次时间线：
+完整执行三次恢复周期需要等待窗口过期（最多 $((DEMO_WINDOW / 60)) 分钟），或按 DEMO.md 执行前检查清理时间线：
   ./scripts/inject_incident.sh cleanup
   rm -f $TIMELINE
   systemctl restart $GATEWAY
-时间线是审计日志，所以这一步只在开演前做，别当成日常操作。"
+时间线是审计日志，清理操作仅用于受控流程初始化。"
     fi
     ACT_ROUNDS=$((DEMO_LIMIT - PRIOR))
     if (( PRIOR > 0 )); then
         echo "注意：时间线里已经有 $PRIOR 个复发周期（$((DEMO_WINDOW / 60)) 分钟窗口内），"
-        echo "所以这次只会修 $ACT_ROUNDS 次就拒绝，不是 $DEMO_LIMIT 次。想要完整的三次，先清时间线。"
+        echo "本次剩余自动处置轮数为 $ACT_ROUNDS；完整流程需要先清理时间线。"
         echo
     fi
 
@@ -429,11 +585,11 @@ recurring)
     echo
 
     # 150s a round: ~20s to detect and confirm, ~95s of watch window, 30s pause.
-    echo "接下来自动跑 $((ACT_ROUNDS + 1)) 轮，全程不用你动手，大约 $(( (ACT_ROUNDS * 150 + 100) / 60 )) 分钟："
+    echo "接下来自动执行 $((ACT_ROUNDS + 1)) 轮，预计 $(( (ACT_ROUNDS * 150 + 100) / 60 )) 分钟："
     echo "  前 $ACT_ROUNDS 轮：杀掉 $UNIT → 哨兵发现 → 确认 → 重启 → 双窗口观察 → 判定恢复"
-    echo "  最后 1 轮：同样杀掉，但这次系统拒绝重启，记 escalated，转人工"
+    echo "  最后 1 轮：触发复发阈值，写操作未授权，记录 escalated 并转人工"
     echo
-    echo "边等边讲的话在 scripts/DEMO.md 第六幕。终端这里会同步打出每一步。"
+    echo "操作说明见 scripts/DEMO.md，终端同步输出每个处置阶段。"
     echo
 
     CURSOR=$(wc -l < "$TIMELINE" 2>/dev/null || echo 0)
@@ -444,18 +600,18 @@ recurring)
         echo "── 第 $round/$((ACT_ROUNDS + 1)) 次故障（预期：修好）──────────────────────────"
         crash_unit
         # Either terminal ends the round. The ladder can reach its limit earlier
-        # than this loop expects — a cycle left in the window by an earlier run
+        # than this loop expects because a cycle left by an earlier run
         # counts too, and the count is a property of the log, not of this script.
         # Waiting only for `resolved` turns the mechanism working correctly into
         # a five-minute timeout.
         if follow_until escalated 5 >/dev/null 2>&1; then
-            echo "   这一轮直接升级了——窗口里本来就有前次留下的复发。跳到终局。"
+            echo "   本轮直接升级：窗口内已有前序复发记录。"
             EARLY_ESCALATION=1
             break
         fi
         follow_until resolved 300 || {
             if follow_until escalated 5 >/dev/null 2>&1; then
-                echo "   它在这一轮就拒绝了：复发已经到限。这就是要演的那一幕，提前到了。"
+                echo "   本轮触发复发阈值：写操作未授权，事件升级人工。"
                 EARLY_ESCALATION=1
                 break
             fi
@@ -467,7 +623,7 @@ recurring)
         # third one outlives its own repair, so a short pause here keeps the
         # next kill from landing inside it and being recorded as `cooldown`
         # instead of the next rung.
-        echo "   等 30 秒让这一轮的冷却过期，再制造下一次——否则下一次会被记成冷却拦截，不是新一级阶梯。"
+        echo "   等待 30 秒冷却期结束；冷却期间触发的事件归类为冷却拦截。"
         echo
         sleep 30
     done
@@ -475,21 +631,21 @@ recurring)
     if [ "$EARLY_ESCALATION" = "1" ]; then
         DEMO_COMPLETE=1
         echo
-        echo "── 终局：它已经拒绝了 ────────────────────────────────────────────"
+        echo "── 决策结果：复发阈值触发 ────────────────────────────────────────"
         echo
-        echo "现在屏幕上："
-        echo "  · 态势页那一行变成红色「要人工」，并且排到了最前面"
-        echo "  · 环节条只亮到「已确认」，后面是暗的——它没执行，不是执行失败"
-        echo "  · 事故卡上有复发次数和引用链：前几次分别什么时候修好、什么时候又坏"
+        echo "前端核对字段："
+        echo "  · 状态：已升级人工处置"
+        echo "  · 决策结果：复发阈值触发，写操作未授权"
+        echo "  · 检测事实：复发次数和引用链"
         echo
-        echo "$UNIT 会一直是 failed，这是对的——「转人工」的意思就是它在等人。"
+        echo "$UNIT 保持 failed；后续责任已交接值班人员。"
         echo
-        echo "压缩窗口现在还在（不然重启网关会把你正要展示的这一屏冲掉）。"
-        echo "讲完一定要收： ./scripts/inject_incident.sh cleanup"
+        echo "受控流程参数保持生效，cleanup 将恢复生产窗口。"
+        echo "收尾命令：./scripts/inject_incident.sh cleanup"
     else
 
     echo "── 第 $((ACT_ROUNDS + 1))/$((ACT_ROUNDS + 1)) 次故障（预期：拒绝）──────────────────"
-    echo "   前 $DEMO_LIMIT 次都是「修好了又坏」。这一次它应该不修了。"
+    echo "   已记录 $DEMO_LIMIT 个恢复后复发周期，本轮预期触发升级。"
     crash_unit
     if follow_until escalated 180; then
         # From here the compressed window stays until cleanup: the escalated
@@ -497,24 +653,24 @@ recurring)
         # restart the gateway out from under it.
         DEMO_COMPLETE=1
         echo
-        echo "阶梯走完了。"
+        echo "复发阈值流程完成。"
         echo
-        echo "现在屏幕上："
-        echo "  · 态势页那一行变成红色「要人工」，并且排到了最前面"
-        echo "  · 环节条只亮到「已确认」，后面是暗的——它没执行，不是执行失败"
-        echo "  · 事故卡上有复发次数和引用链：前 $DEMO_LIMIT 次分别什么时候修好、什么时候又坏"
+        echo "前端核对字段："
+        echo "  · 状态：已升级人工处置"
+        echo "  · 决策结果：复发阈值触发，写操作未授权"
+        echo "  · 检测事实：前 $DEMO_LIMIT 次恢复和复发引用链"
         echo
-        echo "$UNIT 会一直是 failed，这是对的——「转人工」的意思就是它在等人。"
+        echo "$UNIT 保持 failed；后续责任已交接值班人员。"
         echo
-        echo "压缩窗口现在还在（不然重启网关会把你正要展示的这一屏冲掉）。"
-        echo "讲完一定要收： ./scripts/inject_incident.sh cleanup"
+        echo "受控流程参数保持生效，cleanup 将恢复生产窗口。"
+        echo "收尾命令：./scripts/inject_incident.sh cleanup"
     else
         echo
         # 覆盖在 apply 时已经对着进程校验过，所以这里基本不会是覆盖的问题。
-        echo "没等到 escalated（压缩覆盖会被自动收回，机器不会留在演示口径）。按顺序查：" >&2
+        echo "未收到 escalated；受控流程参数将自动回滚。按顺序检查：" >&2
         echo "  1. 后端记下这个事件了吗： grep '\"kind\": \"escalated\"' $TIMELINE" >&2
         echo "  2. 前几轮真的闭环了吗：   grep -c '\"kind\": \"resolved\"' $TIMELINE  应该 ≥ $DEMO_LIMIT" >&2
-        echo "  3. 第四轮是不是被冷却拦了：时间线尾部找 cooldown；是的话把脚本里的 DEMO_COOLDOWN 调小重来" >&2
+        echo "  3. 检查第四轮是否为 cooldown；若命中，调整 DEMO_COOLDOWN 后重试" >&2
         exit 1
     fi
     fi
@@ -531,23 +687,23 @@ status)
         echo "注入单元：未安装"
         echo "单元文件：无"
     fi
-    echo "近期该来源的失败登录：$(journalctl --since -30m --no-pager 2>/dev/null | grep -c "$FAKE_SOURCE" || true) 条"
+    echo "近期该来源的失败登录：$(journalctl --since -30m --no-pager 2>/dev/null | grep -c "$CONTROLLED_SOURCE" || true) 条"
     echo
     echo "复发阶梯（recurring 场景）"
     if [[ -f "$DROPIN_FILE" || -f "$DEMO_ENV_FILE" ]]; then
-        echo "  演示覆盖：已安装"
+        echo "  受控流程参数：已安装"
         [[ -f "$DROPIN_FILE" ]]   && echo "    drop-in   $DROPIN_FILE" \
-                                  || echo "    drop-in   缺失（$DROPIN_FILE）——覆盖不会生效"
+                                  || echo "    drop-in   缺失（$DROPIN_FILE），受控流程参数无法加载"
         [[ -f "$DEMO_ENV_FILE" ]] && echo "    env 文件  $DEMO_ENV_FILE" \
-                                  || echo "    env 文件  缺失（$DEMO_ENV_FILE）——覆盖不会生效"
+                                  || echo "    env 文件  缺失（$DEMO_ENV_FILE），受控流程参数无法加载"
     else
-        echo "  演示覆盖：未安装（生产口径）"
+        echo "  受控流程参数：未安装（生产配置）"
     fi
     WINDOW_NOW=$(gateway_env AUTOPOIESIS_RECURRENCE_WINDOW)
     LIMIT_NOW=$(gateway_env AUTOPOIESIS_RECURRENCE_LIMIT)
     COOLDOWN_NOW=$(gateway_env AUTOPOIESIS_SENTINEL_COOLDOWN)
     INTERVAL_NOW=$(gateway_env AUTOPOIESIS_SENTINEL_INTERVAL)
-    echo "  网关进程实际读到的（不是文件里写的——环境变量在启动时读一次）："
+    echo "  网关进程当前环境（进程启动时加载）："
     echo "    窗口   ${WINDOW_NOW:-未设置 → 代码默认 86400}s"
     echo "    阈值   ${LIMIT_NOW:-未设置 → 代码默认 3} 次"
     echo "    冷却   ${COOLDOWN_NOW:-未设置 → 代码默认 600}s（基础值，每复发一次翻倍）"
@@ -562,7 +718,7 @@ status)
         [[ "$WINDOW_FOR_COUNT" =~ ^[0-9]+$ ]] || WINDOW_FOR_COUNT=86400
         echo "    $SUBJECT 在窗口内「修好又复发」的周期：$(cycles_in_window "$WINDOW_FOR_COUNT") 次（$((WINDOW_FOR_COUNT / 60)) 分钟窗口，阈值 ${LIMIT_NOW:-3} 次时拒绝）"
         # grep -c prints 0 and exits 1 when nothing matches, so `|| true`, not
-        # `|| echo 0` — the latter prints the zero twice.
+        # `|| echo 0`, which prints the zero twice.
         echo "    已记录的 escalated：$(grep -c '"kind": "escalated"' "$TIMELINE" 2>/dev/null || true) 条"
     else
         echo "    还没有时间线文件（哨兵没跑过，或者被清过）"
@@ -579,8 +735,8 @@ cleanup)
     # Done second and on purpose: the gateway restart brings the sentinel back,
     # and it should come back to a box where the demo unit is already gone.
     if revert_demo_override; then
-        echo "时间线没动——它是审计日志，cleanup 不删。所以窗口内重跑 recurring 会从阶梯中间开始，"
-        echo "status 会告诉你还剩几级。要从头演，按 DEMO.md 开演前那一步清一次时间线。"
+        echo "时间线作为审计日志继续保留；窗口内重跑 recurring 会沿用当前复发计数，"
+        echo "status 会显示剩余级数；完整流程初始化步骤见 DEMO.md 的执行前检查。"
     fi
     ;;
 

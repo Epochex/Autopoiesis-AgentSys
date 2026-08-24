@@ -104,6 +104,31 @@ def test_a_healed_chain_becomes_one_closed_card(tmp_path, monkeypatch):
     assert card["runbookDraft"]["planStatus"] == "executed"
 
 
+def test_live_action_and_observation_events_advance_the_card(tmp_path, monkeypatch):
+    observing = HEALED[2:6] + [
+        {"kind": "remediation_committed", "at": _at(27),
+         "subject": "demo.service", "action": "restart_unit"},
+        {"kind": "bakein_opened", "at": _at(28),
+         "subject": "demo.service", "action": "restart_unit"},
+        {"kind": "bakein_sampled", "at": _at(29),
+         "subject": "demo.service", "action": "restart_unit", "phase": "fast"},
+        {"kind": "bakein_sampled", "at": _at(44),
+         "subject": "demo.service", "action": "restart_unit", "phase": "stability"},
+    ]
+    _write(tmp_path, observing, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 60)[0]
+    assert card["ts"] == _at(44)
+    assert card["reviewVerdict"]["verdictStatus"] == "in_flight"
+    assert card["reviewVerdict"]["recommendedDisposition"] == "observing"
+    assert [row["kind"] for row in card["timeline"]][-4:] == [
+        "remediation_committed", "bakein_opened", "bakein_sampled", "bakein_sampled",
+    ]
+    by_stage = {row["stageId"]: row for row in card["stageTelemetry"]}
+    assert "动作回执已记录" in by_stage["act"]["detail"]
+    assert by_stage["watch"]["ts"] == _at(44)
+    assert by_stage["watch"]["detail"] == "稳定性窗口 · 已完成 2 次健康回读"
+
+
 def test_report_only_chain_is_not_dressed_up_as_a_fix(tmp_path, monkeypatch):
     _write(tmp_path, REPORTED, monkeypatch)
     card = sentinel_cards("zh", now=NOW + 200)[0]
@@ -112,13 +137,14 @@ def test_report_only_chain_is_not_dressed_up_as_a_fix(tmp_path, monkeypatch):
     # the gate held it, so the card must say a person is required
     assert card["runbookDraft"]["approvalBoundary"]["approvalRequired"] is True
     assert card["reviewVerdict"]["checks"]["overreachRisk"]["status"] == "gated"
-    assert any("无可自动执行的动作" in a for a in card["runbookDraft"]["actions"])
-    assert any("候选动作（已保留、未执行）：临时防火墙封禁" in a
+    assert any("自动执行条件未满足" in a for a in card["runbookDraft"]["actions"])
+    assert any("候选动作：临时防火墙封禁（未执行）" in a
                for a in card["runbookDraft"]["actions"])
     reason = next(stage for stage in card["stageTelemetry"] if stage["stageId"] == "gate")["detail"]
-    assert "RFC 5737" in reason
-    assert "没有可阻断的真实连接" in reason
-    assert "无效 ACL" in reason
+    assert "归属确认" in reason
+    assert "管理地址豁免" in reason
+    assert "封禁 TTL" in reason
+    assert "超时自动回滚" in reason
 
 
 def test_escalation_outranks_the_successes_that_caused_it(tmp_path, monkeypatch):

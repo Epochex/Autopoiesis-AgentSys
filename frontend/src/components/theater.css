@@ -22,6 +22,8 @@
   --st-act: #b3243c;
   --st-watch: #1c8f88;
   --st-verify: #2f7d33;
+  --st-gate: #80500e;
+  --st-handoff: #343431;
   --role-workstation: #4954c9;
   --role-camera: #a86a12;
   --role-mobile: #7a3fa0;
@@ -46,16 +48,26 @@
 .th-pulse.st-act { fill: var(--st-act); }
 .th-pulse.st-watch { fill: var(--st-watch); }
 .th-pulse.st-verify { fill: var(--st-verify); }
+.th-pulse.st-gate { fill: var(--st-gate); }
+.th-pulse.st-handoff { fill: var(--st-handoff); }
 
 /* pipeline rail */
 .th-rail-kick { font: 600 11px 'IBM Plex Mono', monospace; letter-spacing: 0.18em; fill: var(--gray); text-transform: uppercase; }
-.th-stage-box { fill: var(--paper); stroke: var(--rule); stroke-width: 1; }
-.th-stage.hot .th-stage-box { stroke: var(--ink); stroke-width: 1.6; fill: var(--paper-2, #f2f2ee); }
+.th-stage { opacity: 1; }
+.th-stage-box { fill: var(--paper); stroke: var(--rule); stroke-width: 1; transition: opacity .2s ease, stroke-width .2s ease; }
 .th-stage-n { font: 600 8.5px 'IBM Plex Mono', monospace; fill: var(--gray); letter-spacing: 0.14em; }
 .th-stage-l { font: 600 10px 'IBM Plex Mono', monospace; fill: var(--gray); letter-spacing: 0.1em; }
-.th-stage.hot .th-stage-l, .th-stage.hot .th-stage-n { fill: var(--ink); }
+.th-stage.is-pending { opacity: .28; }
+.th-stage.is-pending .th-stage-box { stroke-dasharray: 3 4; }
+.th-stage.is-completed .th-stage-box { stroke: var(--sc, var(--ink)); stroke-width: 1.8; fill: var(--paper-2, #f2f2ee); }
+.th-stage.is-completed .th-stage-l, .th-stage.is-completed .th-stage-n { fill: var(--ink); }
+.th-stage.is-current .th-stage-box { stroke: var(--sc, var(--ink)); stroke-width: 3; }
+.th-stage.is-current .th-stage-l, .th-stage.is-current .th-stage-n { fill: var(--sc, var(--ink)); font-weight: 700; }
+.th-stage-done { font: 700 10px 'IBM Plex Mono', monospace; fill: var(--sc, var(--ink)); }
 .th-rail-arm { stroke: var(--rule); stroke-width: 1.2; }
-.th-rail-arm.hot { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 6 5; animation: th-march 0.9s linear infinite; }
+.th-rail-arm.is-pending { opacity: .28; }
+.th-rail-arm.is-completed { stroke: var(--sc, var(--ink)); stroke-width: 1.8; }
+.th-rail-arm.is-current { stroke: var(--sc, var(--ink)); stroke-width: 2.2; stroke-dasharray: 6 5; animation: th-march .9s linear infinite; }
 /* 环节分色: each stage carries its hue as --sc; hot elements pick it up */
 .st-correlator { --sc: var(--st-correlator); }
 .st-alerts-topic { --sc: var(--st-alerts-topic); }
@@ -68,10 +80,9 @@
 .st-act { --sc: var(--st-act); }
 .st-watch { --sc: var(--st-watch); }
 .st-verify { --sc: var(--st-verify); }
+.st-gate { --sc: var(--st-gate); }
+.st-handoff { --sc: var(--st-handoff); }
 .st-remediation { --sc: var(--st-remediation); }
-.th-stage.hot .th-stage-box { stroke: var(--sc, var(--ink)); }
-.th-stage.hot .th-stage-n { fill: var(--sc, var(--ink)); }
-.th-stage.hot .th-rail-arm.hot { stroke: var(--sc, var(--ink)); }
 
 /* event chain device → rail — flows, in the hue of the 环节 it enters */
 .th-chain-line { fill: none; stroke: var(--sc, var(--ink)); stroke-width: 2; stroke-dasharray: 7 5; opacity: 0.85; animation: th-march 1.1s linear infinite; }
@@ -317,19 +328,26 @@
 
 /* the step the chain is on right now — the rail has to look like it is moving,
    otherwise the whole stage reads as a static diagram of something already over */
-.th-stage.now .th-stage-box { stroke: var(--sc, var(--ink)); stroke-width: 3; }
-.th-stage.now .th-stage-l, .th-stage.now .th-stage-n { fill: var(--sc, var(--ink)); font-weight: 700; }
 /* the wash is what separates "this one is running" from "this one has a hue" */
 .th-stage-fill { fill: var(--sc, var(--ink)); opacity: .16; pointer-events: none; }
 .th-stage-now { font: 700 9px 'IBM Plex Mono', monospace; letter-spacing: .12em;
   fill: var(--sc, var(--ink)); }
+.th-stage.is-terminal .th-stage-box { stroke: var(--ink); stroke-width: 3.4; fill: var(--paper-2, #f2f2ee); }
+.th-stage-terminal-box { fill: var(--ink); stroke: var(--ink); stroke-width: 1; }
+.th-stage-terminal { font: 700 7.8px 'IBM Plex Mono', monospace; letter-spacing: .055em; fill: var(--paper); }
 @media (prefers-reduced-motion: no-preference) {
-  .th-stage.now .th-stage-fill { animation: th-now 1.6s ease-in-out infinite; }
-  .th-stage.now .th-stage-now { animation: th-now-text 1.6s ease-in-out infinite; }
+  .th-stage.is-current .th-stage-fill { animation: th-now 1.35s ease-in-out infinite; }
+  .th-stage.is-current .th-stage-now { animation: th-now-text 1.35s ease-in-out infinite; }
+  /* Three breaths announce where a terminal chain landed, then stop. The
+     resulting frame remains structurally stronger without pretending work is
+     still running. */
+  .th-stage.is-terminal .th-stage-terminal-box,
+  .th-stage.is-terminal .th-stage-terminal { animation: th-terminal-settle 1.1s ease-in-out 3; }
 }
 @keyframes th-now { 0%, 100% { opacity: .16 } 50% { opacity: .42 } }
 
 @keyframes th-now-text { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+@keyframes th-terminal-settle { 0%, 100% { opacity: 1 } 50% { opacity: .58 } }
 
 
 /* ── 涉事链路统一闪烁 ────────────────────────────────────────────────────

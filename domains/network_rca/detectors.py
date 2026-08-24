@@ -14,7 +14,6 @@ acting cannot lower a baseline that is already on the floor.
 from __future__ import annotations
 
 import re
-from ipaddress import ip_address, ip_network
 
 from core.remediate.sentinel import Detection
 from core.safety.tailscale import is_tailscale_target
@@ -25,24 +24,12 @@ from domains.network_rca.remediation import Command, PHYSICAL_NIC
 # debugging should not be restarted underneath them.
 WATCHED_UNIT_PREFIXES = ("netops-", "autopoiesis-", "demo-")
 
-_DOCUMENTATION_NETWORKS = tuple(ip_network(cidr) for cidr in (
-    "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
-))
-
-
 def _bruteforce_safety_reason(address: str) -> str:
-    """Explain the exact firewall-write boundary for this source."""
-    parsed = ip_address(address)
-    if any(parsed in network for network in _DOCUMENTATION_NETWORKS):
-        return (
-            f"保留未执行临时防火墙封禁：{address} 属于 RFC 5737 演示保留地址，"
-            "本次只有注入的失败登录日志，没有可阻断的真实连接。写入真实防火墙会制造无效 ACL，"
-            "并引入管理通道误封风险；系统保留证据并转人工。"
-        )
+    """State the unmet controls that keep a source block from auto-commit."""
     return (
-        "保留未执行临时防火墙封禁：当前未注册同时具备封禁 TTL、管理地址豁免、"
-        "提交后回读和超时自动回滚的防火墙适配器。直接写 ACL 可能误封管理来源；"
-        "系统保留证据并转人工。"
+        f"自动封禁条件未满足：来源 {address} 尚未完成归属确认与管理地址豁免校验；"
+        "当前防火墙动作未同时提供封禁 TTL、提交后回读和超时自动回滚。"
+        "策略保持现有配置，并将事件转入人工处置队列。"
     )
 
 
@@ -63,7 +50,10 @@ def failed_units(command: Command | None = None) -> list[Detection]:
             found.append(Detection(
                 detector="failed_units", family="fam-perception-selfheal",
                 subject=unit, severity="high",
-                summary=f"{unit} 处于 failed，但不在本系统托管的单元范围内，只报不动。",
+                summary=(
+                    f"{unit} 处于 failed 状态，且不在受控单元白名单内。"
+                    "自动重启动作未授权，事件进入人工处置队列。"
+                ),
                 evidence={"line": line.strip()},
                 candidate_action="restart_unit",
                 safety_reason=(
@@ -75,7 +65,10 @@ def failed_units(command: Command | None = None) -> list[Detection]:
         found.append(Detection(
             detector="failed_units", family="fam-perception-selfheal",
             subject=unit, severity="high",
-            summary=f"{unit} 挂了。它已经不在提供服务，重启不会比现状更差。",
+            summary=(
+                f"{unit} 处于 failed 状态，服务进程不可用。"
+                "目标属于受控单元白名单，已进入重启前置校验。"
+            ),
             evidence={"line": line.strip()},
             action="restart_unit", target=unit,
         ))
@@ -153,7 +146,7 @@ def admin_bruteforce(command: Command | None = None, threshold: int = 8,
             subject=address, severity="high",
             summary=(
                 f"{address} 在最近 {window.lstrip('-')} 内对 SSH 失败登录 {count} 次。"
-                "安全门已评估临时封禁，具体保留理由记录在处置链。"
+                "来源隔离策略已进入安全门判定。"
             ),
             evidence={"failures": count, "window": window},
             candidate_action="temporary_firewall_block",

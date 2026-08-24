@@ -3,16 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import { latestIncidentCycle } from './sentinel-cycle'
 
-/* ── 实时告警条 — what the sentinel found, on the page people watch ──────────
+/* Real-time incident queue for events emitted by the sentinel.
  *
  * The situational page draws the FortiGate corpus, which is a fixed historical
- * window. Anything the sentinel notices right now happens on a different data
- * path entirely, so a fault could be detected, acted on and closed without this
- * page changing at all — which is exactly what it looked like.
+ * window. Current sentinel events arrive through a separate data path.
  *
- * This strip is the missing link. It only appears when there is something to
- * say, and clicking a row goes to that subject's chain rather than to a
- * generic page. */
+ * The strip appears for actionable records and opens the selected subject's
+ * evidence and decision chain. */
 
 interface Row {
   subject: string
@@ -29,19 +26,13 @@ const SUBJECT_KINDS = new Set([
 ])
 
 const PHASE_LABEL: Record<Row['phase'], [string, string]> = {
-  detected: ['刚发现', 'DETECTED'],
-  watching: ['处置中', 'IN FLIGHT'],
-  resolved: ['已自动处置', 'HANDLED AUTOMATICALLY'],
-  // Both ask for a person, so both say so. They are not the same ask: needs_human
-  // is one attempt that went wrong, escalated is the system declining to try at
-  // all because it has already fixed this three times. The row's summary and the
-  // theater card carry that difference.
-  // Distinct from needs_human on purpose: that one means a revert could not
-  // be verified, this one means the system decided to stop repairing.
-  escalated: ['不再自动修', 'STOPPED REPAIRING'],
-  needs_human: ['要人工', 'NEEDS A PERSON'],
-  reported: ['写操作已保留', 'WRITE WITHHELD'],
-  declined: ['安全门拒绝', 'DECLINED BY GATE'],
+  detected: ['检测待确认', 'DETECTION PENDING'],
+  watching: ['处置观察中', 'ACTION UNDER OBSERVATION'],
+  resolved: ['处置已验证', 'ACTION VERIFIED'],
+  escalated: ['升级人工处置', 'ESCALATED TO OPERATOR'],
+  needs_human: ['待人工复核', 'OPERATOR REVIEW'],
+  reported: ['写操作未授权', 'WRITE NOT AUTHORIZED'],
+  declined: ['安全门未放行', 'SAFETY GATE BLOCKED'],
   cooling: ['冷却中', 'COOLING DOWN'],
 }
 
@@ -50,15 +41,15 @@ const RECENT_MS = 30 * 60 * 1000
 
 function reportSummary(subject: string, refusal: Record<string, unknown> | undefined, zh: boolean): string {
   const recorded = String(refusal?.reason ?? '').trim()
-  if (recorded) return recorded
   if (/^(192\.0\.2|198\.51\.100|203\.0\.113)\./.test(subject)) {
     return zh
-      ? '候选封禁未执行：演示保留地址没有真实连接可阻断；写 ACL 会产生无效规则并引入管理通道误封风险。'
-      : 'Firewall block withheld: the documentation address has no live connection to block; an ACL write would add a meaningless rule and risk management access.'
+      ? '安全门未放行临时封禁：来源归属未确认，管理地址豁免、封禁 TTL、提交后回读和超时回滚条件未齐；后续由安全运营核验并处置。'
+      : 'Temporary block not authorized: source ownership is unconfirmed and management exemptions, block TTL, post-commit readback, and timed rollback are incomplete; Security Operations owns validation and response.'
   }
+  if (recorded) return recorded
   return zh
-    ? '候选写操作未执行：当前动作缺少完整的安全门条件；证据已记录并转人工。'
-    : 'Candidate write withheld: the action does not satisfy the complete safety gate; evidence was recorded and handed off.'
+    ? '写操作未授权：安全门条件未满足；检测证据已记录，后续由值班人员核验并处置。'
+    : 'Write not authorized: safety-gate conditions were not met; evidence is recorded for operator validation and response.'
 }
 
 function summarise(events: Record<string, unknown>[], zh: boolean): Row[] {
@@ -85,9 +76,7 @@ function summarise(events: Record<string, unknown>[], zh: boolean): Row[] {
     const remediated = [...chain].reverse().find((e) => e.kind === 'remediated')
     const noAction = [...chain].reverse().find((e) => e.kind === 'no_safe_action')
     let phase: Row['phase'] = 'detected'
-    // Escalation is read first: the chain of a subject that keeps coming back
-    // still holds every fix that worked, and the newest of those would otherwise
-    // paint the row 已自愈 on the incident nobody is dealing with.
+    // Escalation takes precedence over successful outcomes from earlier cycles.
     if (kinds.includes('escalated')) phase = 'escalated'
     else if (kinds.includes('resolved')) phase = 'resolved'
     else if (remediated?.needs_human) phase = 'needs_human'
@@ -108,9 +97,7 @@ function summarise(events: Record<string, unknown>[], zh: boolean): Row[] {
       action: (detection?.action as string | null) ?? null,
     })
   }
-  // Anything still moving goes first; a healed incident is reassurance, not news.
-  // Escalated outranks even that: it is the only row where the system has
-  // stopped, so nothing else will move it until someone does.
+  // Operator-owned and active records sort ahead of closed records.
   const order: Record<Row['phase'], number> = {
     escalated: 0, needs_human: 1, watching: 2, detected: 3,
     cooling: 4, declined: 4, reported: 4, resolved: 5,
@@ -146,25 +133,23 @@ export function LiveAlerts({ lang, onOpen }: { lang: Lang; onOpen: (subject: str
 
   if (!rows.length) return null
 
-  // An escalated incident is not being handled — counting it as 处理中 would tell
-  // the operator the system has it when the whole point is that it has stopped.
   const stopped = rows.filter((r) => r.phase === 'escalated').length
   const live = rows.filter((r) => r.phase === 'detected' || r.phase === 'watching' || r.phase === 'needs_human').length
   const held = rows.filter((r) => r.phase === 'reported' || r.phase === 'declined' || r.phase === 'cooling').length
   const counts = [
-    stopped ? (zh ? `${stopped} 项要人工` : `${stopped} need a person`) : '',
+    stopped ? (zh ? `${stopped} 项已升级人工` : `${stopped} escalated`) : '',
     live ? (zh ? `${live} 项处理中` : `${live} in flight`) : '',
-    held ? (zh ? `${held} 项未执行写操作` : `${held} held without writes`) : '',
+    held ? (zh ? `${held} 项写操作未授权` : `${held} writes not authorized`) : '',
   ].filter(Boolean)
 
   return (
     <div className="la">
       <div className="la-head">
-        <span className="la-k">{zh ? '系统自己发现的' : 'FOUND BY THE SYSTEM'}</span>
+        <span className="la-k">{zh ? '实时安全与故障事件' : 'LIVE SECURITY & FAULT EVENTS'}</span>
         <span className="la-count">
-          {counts.length ? counts.join(' · ') : (zh ? '都已自动处置' : 'all handled automatically')}
+          {counts.length ? counts.join(' · ') : (zh ? '当前记录均已闭环' : 'all current records closed')}
         </span>
-        <span className="la-hint">{zh ? '点一条看完整处置链路 ▸' : 'click a row for its chain ▸'}</span>
+        <span className="la-hint">{zh ? '选择记录查看证据与决策链 ▸' : 'select a record for evidence and decision chain ▸'}</span>
       </div>
       <ul className="la-rows">
         {rows.slice(0, 6).map((row) => (

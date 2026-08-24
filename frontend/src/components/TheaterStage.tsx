@@ -22,7 +22,7 @@ import type { DataStats, SubnetGraph, TheaterEvent, Topology } from '../types'
 import type { Lang } from '../i18n'
 import { useReducedMotion } from '../reduced-motion'
 import { currentRound, railFor, sentinelStageIds } from './netops-pipeline'
-import { useSentinelChain } from './use-sentinel-chain'
+import { type ChainStep, useSentinelChain } from './use-sentinel-chain'
 import './theater.css'
 import { ExecutionLog } from './ExecutionLog'
 import { RemediationProgress } from './RemediationProgress'
@@ -45,6 +45,120 @@ const RAIL_DX = 244
 const INCIDENT_W = 330
 /* WAN tally block (1 mark = 1 real distinct source, a reading order not a map) */
 const TALLY = { x: 58, y: 330, cols: 18, cell: 6.4 }
+
+export type TheaterRailStatus = 'completed' | 'current' | 'pending'
+export interface TheaterRailPresentation {
+  stages: { id: string; status: TheaterRailStatus; terminal: boolean }[]
+  terminalKind: string | null
+}
+
+const CLOSED_SENTINEL_KINDS = new Set([
+  'resolved', 'no_safe_action', 'declined', 'cooldown', 'escalated',
+  'remediation_reverted', 'revert_unverified',
+])
+
+/**
+ * Project ledger rows onto visual stage states without inventing timestamps or
+ * phases. Follow-up rows are already written during execution; this function
+ * only maps their exact kinds onto the fixed, predeclared rail.
+ */
+// Exported for deterministic state-machine tests; it has no React state.
+// eslint-disable-next-line react-refresh/only-export-components
+export function theaterRailPresentation({
+  railIds,
+  timeline,
+  fallbackReached = [],
+  reportClosed = false,
+  sentinel = false,
+}: {
+  railIds: string[]
+  timeline: ChainStep[]
+  fallbackReached?: string[]
+  reportClosed?: boolean
+  sentinel?: boolean
+}): TheaterRailPresentation {
+  if (!railIds.length) return { stages: [], terminalKind: null }
+
+  const round = currentRound(timeline)
+  const latestClosed = [...round].reverse().find((step) => {
+    if (CLOSED_SENTINEL_KINDS.has(step.kind)) return true
+    return step.kind === 'remediated' && (step.outcome !== 'passed' || step.needs_human === true)
+  })
+  const terminalKind = reportClosed
+    ? (latestClosed?.kind ?? 'no_safe_action')
+    : (latestClosed?.kind ?? null)
+
+  // The four-step safety-refusal branch is a completed decision path. Showing
+  // its last box as merely "current" implies the system may still write.
+  if (reportClosed || round.some((step) => step.kind === 'no_safe_action')) {
+    return {
+      stages: railIds.map((id, index) => ({
+        id,
+        status: 'completed' as const,
+        terminal: index === railIds.length - 1,
+      })),
+      terminalKind: terminalKind ?? 'no_safe_action',
+    }
+  }
+
+  if (!sentinel || !round.length) {
+    const reached = new Set(fallbackReached)
+    const currentIndex = [...railIds].map((id, index) => ({ id, index }))
+      .reverse().find(({ id }) => reached.has(id))?.index ?? -1
+    return {
+      stages: railIds.map((id, index) => ({
+        id,
+        status: !reached.has(id) ? 'pending' : index === currentIndex ? 'current' : 'completed',
+        terminal: false,
+      })),
+      terminalKind: null,
+    }
+  }
+
+  const kinds = new Set(round.map((step) => step.kind))
+  let currentId = 'detector'
+  if (kinds.has('bakein_passed')) currentId = 'verify'
+  else if (kinds.has('remediation_committed') || kinds.has('bakein_opened') || kinds.has('bakein_sampled')) currentId = 'watch'
+  else if (kinds.has('preflight')) currentId = 'act'
+  // The confirming detection is the boundary that synchronously enters
+  // preflight. Before its result is appended, PREFLIGHT is therefore the
+  // honest in-flight step; the earlier awaiting row remains CONFIRM.
+  else if (round.some((step) => step.kind === 'detected' && (step.streak ?? 0) >= (step.need ?? 2))) currentId = 'preflight'
+  else if (kinds.has('awaiting_confirmation')) currentId = 'confirm'
+
+  let completedThrough = railIds.indexOf(currentId) - 1
+  let terminalId: string | null = null
+  if (terminalKind === 'resolved') {
+    completedThrough = railIds.length - 1
+    currentId = ''
+    terminalId = railIds[railIds.length - 1]
+  } else if (terminalKind === 'declined') {
+    completedThrough = railIds.indexOf('preflight')
+    currentId = ''
+    terminalId = 'preflight'
+  } else if (terminalKind === 'cooldown' || terminalKind === 'escalated') {
+    completedThrough = railIds.indexOf('confirm')
+    currentId = ''
+    terminalId = 'confirm'
+  } else if (terminalKind) {
+    completedThrough = railIds.length - 1
+    currentId = ''
+    terminalId = railIds[railIds.length - 1]
+  }
+
+  return {
+    stages: railIds.map((id, index) => ({
+      id,
+      status: index <= completedThrough
+        ? 'completed'
+        : id === currentId
+          ? 'current'
+          : 'pending',
+      terminal: id === terminalId,
+    })),
+    terminalKind,
+  }
+}
 
 const ROLE_ZH: Record<string, string> = {
   camera: '摄像头', intercom: '门禁', mobile: '移动端', workstation: '工作站', server: '服务器', unknown: '未识别',
@@ -319,18 +433,27 @@ export function TheaterStage({
   const reportClosed = terminal?.kind === 'no_safe_action' || theater.stageIds.includes('handoff')
   const railTimeline = chain?.steps.length
     ? chain.steps
-    : reportClosed ? [{ kind: 'no_safe_action' }] : []
+    : reportClosed ? [{ kind: 'no_safe_action', at: theater.ts || '' }] : []
   const railStages = railFor(theater.scope, railTimeline).map((p, i) => ({ ...p, p: { x: RAIL_X0 + i * RAIL_DX, y: RAIL_Y } as Pt }))
-  const hotStageSet = new Set(
-    isSentinel && chain?.steps.length ? sentinelStageIds(chain.steps) : theater.stageIds,
-  )
-  // The step the chain is on right now — the one that should read as moving,
-  // on the rail and in the incident card's 当前 row. A refused chain has none:
-  // it stopped, and naming the step it stopped on would say otherwise.
-  const nowStage = terminal || reportClosed
-    ? null
-    : [...railStages].reverse().find((r) => hotStageSet.has(r.id)) ?? null
-  const firstHot = railStages.find((s) => hotStageSet.has(s.id)) ?? railStages[0]
+  const railView = theaterRailPresentation({
+    railIds: railStages.map((stage) => stage.id),
+    timeline: railTimeline,
+    fallbackReached: isSentinel && chain?.steps.length
+      ? sentinelStageIds(chain.steps)
+      : theater.stageIds,
+    reportClosed,
+    sentinel: isSentinel,
+  })
+  const stageView = new Map(railView.stages.map((stage) => [stage.id, stage]))
+  const nowStage = railStages.find((stage) => stageView.get(stage.id)?.status === 'current') ?? null
+  const firstReached = railStages.find((stage) => stageView.get(stage.id)?.status !== 'pending') ?? railStages[0]
+  const terminalLabel = railView.terminalKind === 'no_safe_action'
+    ? (zh ? '决策已交接' : 'DECISION HANDED OFF')
+    : railView.terminalKind === 'resolved'
+      ? (zh ? '恢复已验证' : 'RECOVERY VERIFIED')
+      : railView.terminalKind
+        ? (zh ? '处置已终止' : 'RESPONSE CLOSED')
+        : null
   const atk = stats.topAttackerSrc.slice(0, 3)
 
   const kindLab = theater.kind === 'alert' ? (zh ? '实时告警' : 'LIVE ALERT') : theater.kind === 'suggestion' ? (zh ? '处置建议' : 'SUGGESTION') : (zh ? '自由浏览' : 'BROWSE')
@@ -342,32 +465,53 @@ export function TheaterStage({
         <text x={RAIL_X0 - 12} y={RAIL_Y - 26} className="th-rail-kick" textAnchor="start">
           {isSentinel
             ? reportClosed
-              ? (zh ? '哨兵安全拒绝流程 · 自动流程结束后转人工' : 'SENTINEL SAFETY-REFUSAL FLOW · HANDED OFF')
-              : (zh ? '哨兵自动处置流程 · 运行于 R450 网关进程' : 'SENTINEL AUTOMATED-ACTION FLOW · IN THE R450 GATEWAY')
-            : (zh ? 'NetOps 流处理链 · 运行于 R230' : 'NETOPS STREAM CHAIN · ON R230')}
+              ? (zh ? '安全门决策链 · 写操作未授权' : 'SAFETY-GATE DECISION · WRITE NOT AUTHORIZED')
+              : (zh ? '受控处置链 · 实时状态' : 'CONTROLLED RESPONSE · LIVE STATUS')
+            : (zh ? '事件处理链 · 实时状态' : 'EVENT PROCESSING · LIVE STATUS')}
         </text>
         {railStages.map((s, i) => {
-          const hot = hotStageSet.has(s.id)
-          const armHot = i < railStages.length - 1 && hot && hotStageSet.has(railStages[i + 1].id)
+          const view = stageView.get(s.id) ?? { id: s.id, status: 'pending' as const, terminal: false }
+          const nextView = railStages[i + 1] ? stageView.get(railStages[i + 1].id) : null
+          const armState = i >= railStages.length - 1
+            ? 'pending'
+            : view.status === 'completed' && nextView?.status === 'completed'
+              ? 'completed'
+              : view.status !== 'pending' && nextView?.status === 'current'
+                ? 'current'
+                : 'pending'
           const armD = `M ${s.p.x + 74} ${s.p.y} L ${railStages[i + 1]?.p.x - 74} ${railStages[i + 1]?.p.y}`
           return (
-            <g key={s.id} className={`th-stage st-${s.id} ${hot ? 'hot' : ''} ${nowStage?.id === s.id ? 'now' : ''}`}>
+            <g
+              key={s.id}
+              className={`th-stage st-${s.id} is-${view.status}${view.terminal ? ' is-terminal' : ''}`}
+              data-stage-id={s.id}
+              data-stage-status={view.status}
+              aria-label={`${zh ? s.zh : s.en} · ${view.status}`}
+            >
               {i < railStages.length - 1 ? (
                 <line x1={s.p.x + 74} y1={s.p.y} x2={railStages[i + 1].p.x - 74} y2={railStages[i + 1].p.y}
-                  className={`th-rail-arm ${armHot ? 'hot' : ''}`} />
+                  className={`th-rail-arm is-${armState}`} />
               ) : null}
-              {armHot ? <Flow d={armD} n={2} dur={1.8} cls={`st-${s.id}`} /> : null}
+              {armState === 'current' ? <Flow d={armD} n={2} dur={1.8} cls={`st-${s.id}`} /> : null}
               <rect x={s.p.x - 70} y={s.p.y - 15} width={140} height={30} className="th-stage-box" />
               <text x={s.p.x} y={s.p.y - 2} className="th-stage-n" textAnchor="middle">{String(i + 1).padStart(2, '0')}</text>
               <text x={s.p.x} y={s.p.y + 10} className="th-stage-l" textAnchor="middle">{zh ? s.zh : s.en}</text>
-              {/* every stage already carries its own hue, so a heavier border
-                  cannot say "this one is happening now" — it needs a mark of
-                  its own. */}
-              {nowStage?.id === s.id ? (
+              {view.status === 'completed' ? (
+                <text x={s.p.x + 59} y={s.p.y + 4} className="th-stage-done" textAnchor="middle">✓</text>
+              ) : null}
+              {view.status === 'current' ? (
                 <>
                   <rect x={s.p.x - 70} y={s.p.y - 15} width={140} height={30} className="th-stage-fill" />
                   <text x={s.p.x} y={s.p.y - 22} className="th-stage-now" textAnchor="middle">
                     ▶ {zh ? '正在进行' : 'IN FLIGHT'}
+                  </text>
+                </>
+              ) : null}
+              {view.terminal && terminalLabel ? (
+                <>
+                  <rect x={s.p.x - 70} y={s.p.y - 34} width={140} height={14} className="th-stage-terminal-box" />
+                  <text x={s.p.x} y={s.p.y - 24} className="th-stage-terminal" textAnchor="middle">
+                    ■ {terminalLabel}
                   </text>
                 </>
               ) : null}
@@ -379,12 +523,12 @@ export function TheaterStage({
       {/* event chain: the mapped device node climbs into the pipeline rail —
           colored by the first 环节 it lights, with pulses flowing device → rail */}
       {theater.kind !== 'browse' && anchorP ? (
-        <g className={`th-chain st-${firstHot.id}`} pointerEvents="none">
-          <path d={bez(anchorP, { x: firstHot.p.x, y: firstHot.p.y + 15 })} className="th-chain-line" />
-          <Flow d={bez(anchorP, { x: firstHot.p.x, y: firstHot.p.y + 15 })} n={4} dur={3.2} cls={`st-${firstHot.id}`} />
-          <text x={(anchorP.x + firstHot.p.x) / 2} y={(anchorP.y + firstHot.p.y) / 2 - 8} className="th-chain-lab" textAnchor="middle">
+        <g className={`th-chain st-${firstReached.id}`} pointerEvents="none">
+          <path d={bez(anchorP, { x: firstReached.p.x, y: firstReached.p.y + 15 })} className="th-chain-line" />
+          <Flow d={bez(anchorP, { x: firstReached.p.x, y: firstReached.p.y + 15 })} n={4} dur={3.2} cls={`st-${firstReached.id}`} />
+          <text x={(anchorP.x + firstReached.p.x) / 2} y={(anchorP.y + firstReached.p.y) / 2 - 8} className="th-chain-lab" textAnchor="middle">
             {isSentinel
-              ? (zh ? '在这台机器上处置' : 'handled on this host')
+              ? (zh ? '执行节点' : 'execution node')
               : (theater.scenario || (zh ? '事件流入' : 'event ingest'))} ↗
           </text>
         </g>

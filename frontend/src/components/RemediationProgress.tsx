@@ -3,16 +3,14 @@ import type { Lang } from '../i18n'
 import { currentRound } from './netops-pipeline'
 import { type ChainStep as Step, useSentinelChain } from './use-sentinel-chain'
 
-/* ── 处置进度 — what the system is doing to this device, right now ───────────
+/* Current response state for the selected device.
  *
  * Lives inside the theater so the blast radius and the response are read in one
  * place: the topology says which nodes are involved, this says what is being
  * done to them and how far along it is.
  *
- * The watch window is the reason this exists as live progress rather than a
- * log. Ninety seconds of "nothing visible is happening" is exactly when an
- * operator assumes the thing has hung — so the sample count ticks up while it
- * waits, and the bar says what it is waiting for. */
+ * Observation-window samples expose progress and the condition required for a
+ * verified close or rollback. */
 
 /** The chain's shape, in the order the system walks it. */
 const ACTION_PHASES = ['detected', 'confirmed', 'preflight', 'acting', 'watching', 'closed'] as const
@@ -20,14 +18,14 @@ const REPORT_PHASES = ['detected', 'confirmed', 'gate', 'handoff'] as const
 type Phase = (typeof ACTION_PHASES)[number] | (typeof REPORT_PHASES)[number]
 
 const PHASE_LABEL: Record<Phase, [string, string]> = {
-  detected: ['发现', 'DETECTED'],
-  confirmed: ['已确认', 'CONFIRMED'],
-  preflight: ['前置校验', 'PREFLIGHT'],
-  acting: ['执行', 'ACTING'],
-  watching: ['观察期', 'WATCHING'],
-  closed: ['收尾', 'CLOSED'],
-  gate: ['安全门判定', 'SAFETY GATE'],
-  handoff: ['记录并转人工', 'RECORD & HAND OFF'],
+  detected: ['检测事实', 'DETECTION FACT'],
+  confirmed: ['二次确认', 'SECOND CONFIRMATION'],
+  preflight: ['安全门条件', 'SAFETY CONDITIONS'],
+  acting: ['动作执行', 'ACTION'],
+  watching: ['回读观察', 'READBACK'],
+  closed: ['决策结果', 'DECISION'],
+  gate: ['安全门条件', 'SAFETY CONDITIONS'],
+  handoff: ['人工交接', 'OPERATOR HANDOFF'],
 }
 
 function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal: string | null } {
@@ -60,9 +58,7 @@ function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal
         terminal = 'no_safe_action'
         break
       case 'escalated':
-        // Refused on the confirmed detection: nothing was measured, nothing was
-        // run. The rail ends here rather than at a preflight this round was
-        // never allowed to reach.
+        // Recurrence escalation closes this round at the confirmation decision.
         reached.add('confirmed')
         reached.add('closed')
         terminal = 'escalated'
@@ -76,7 +72,7 @@ function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal
         break
     }
   }
-  // A preflight that passed with no verdict yet means the action is in flight —
+  // A preflight that passed with no verdict yet means the action is in flight,
   // including the long silent stretch of the watch window.
   if (reached.has('preflight') && !reached.has('closed')) {
     reached.add('acting')
@@ -88,35 +84,43 @@ function phaseOf(steps: Step[]): { reached: Set<Phase>; current: Phase; terminal
 }
 
 const TERMINAL_LABEL: Record<string, [string, string]> = {
-  resolved: ['已恢复', 'RESOLVED'],
-  passed: ['已恢复', 'RESOLVED'],
-  escalated: ['反复复发，已转人工', 'ESCALATED — NEEDS A PERSON'],
-  needs_human: ['需人工介入', 'NEEDS A PERSON'],
-  no_safe_action: ['自动流程结束 · 待人工处置', 'AUTOMATION CLOSED · HUMAN ACTION PENDING'],
-  declined: ['前置条件不通过', 'PRECONDITIONS FAILED'],
+  resolved: ['恢复已验证', 'RECOVERY VERIFIED'],
+  passed: ['恢复已验证', 'RECOVERY VERIFIED'],
+  escalated: ['复发阈值触发 · 已升级人工', 'RECURRENCE THRESHOLD · ESCALATED'],
+  needs_human: ['待人工复核', 'OPERATOR REVIEW'],
+  no_safe_action: ['写操作未授权 · 已转人工', 'WRITE NOT AUTHORIZED · HANDED OFF'],
+  declined: ['安全门未放行', 'SAFETY GATE BLOCKED'],
   cooldown: ['冷却中', 'COOLING DOWN'],
   reverted: ['已回滚', 'REVERTED'],
   revert_unverified: ['回滚未能验证', 'REVERT UNVERIFIED'],
 }
 
-function withheldWrite(steps: Step[], zh: boolean): { action: string; reason: string; result: string } | null {
+function withheldWrite(steps: Step[], zh: boolean): {
+  fact: string; action: string; gate: string; result: string; owner: string
+} | null {
   const refusal = [...steps].reverse().find((step) => step.kind === 'no_safe_action')
   if (!refusal) return null
   const detection = [...steps].reverse().find((step) => step.kind === 'detected')
   const subject = detection?.subject ?? refusal.subject ?? ''
   const recorded = refusal.reason?.trim()
-  const documentationSource = /^(192\.0\.2|198\.51\.100|203\.0\.113)\./.test(subject)
-  const reason = recorded || (documentationSource
+  const sourceRequiresValidation = /^(192\.0\.2|198\.51\.100|203\.0\.113)\./.test(subject)
+  const gate = sourceRequiresValidation
     ? (zh
-        ? `${subject} 属于 RFC 5737 演示保留地址，本次只有注入的失败登录日志，没有可阻断的真实连接。写入真实防火墙会制造无效 ACL，并引入管理通道误封风险。`
-        : `${subject} is an RFC 5737 documentation address. This rehearsal injected log evidence and created no live connection to block; a real ACL write would add a meaningless rule and risk management access.`)
-    : (refusal.note || (zh
-        ? '当前没有同时具备封禁 TTL、管理地址豁免、提交后回读和超时自动回滚的已注册防火墙动作。'
-        : 'No registered firewall action currently combines a TTL, management-address exemptions, post-commit readback, and timed rollback.')))
+        ? '安全门条件 · 来源归属确认；管理地址豁免；封禁 TTL；提交后回读；超时自动回滚。当前条件未齐。'
+        : 'SAFETY CONDITIONS · Confirmed source ownership; management-address exemption; block TTL; post-commit readback; timed rollback. Current conditions are incomplete.')
+    : (recorded || refusal.note || (zh
+        ? '安全门条件 · 封禁 TTL、管理地址豁免、提交后回读和超时自动回滚均需满足。'
+        : 'SAFETY CONDITIONS · Block TTL, management-address exemption, post-commit readback, and timed rollback are required.'))
   return {
-    action: zh ? '候选动作：临时防火墙封禁（已保留、未执行）' : 'CANDIDATE: TEMPORARY FIREWALL BLOCK (WITHHELD)',
-    reason,
-    result: zh ? '结果：防火墙配置未变化，事件证据已记账并转人工。' : 'RESULT: FIREWALL UNCHANGED; EVIDENCE RECORDED AND HANDED OFF.',
+    fact: sourceRequiresValidation
+      ? (zh
+          ? `检测事实 · ${subject} 产生重复失败登录记录；来源归属和活动会话待核验。`
+          : `DETECTION FACT · ${subject} produced repeated failed-login records; source ownership and active sessions require validation.`)
+      : (zh ? `检测事实 · ${subject} 触发安全事件规则。` : `DETECTION FACT · ${subject} triggered the security-event rule.`),
+    action: zh ? '候选动作 · 临时防火墙封禁' : 'CANDIDATE ACTION · TEMPORARY FIREWALL BLOCK',
+    gate,
+    result: zh ? '决策结果 · 写操作未授权，防火墙配置保持原版本。' : 'DECISION · WRITE NOT AUTHORIZED; FIREWALL CONFIGURATION REMAINS AT THE PRIOR VERSION.',
+    owner: zh ? '后续责任 · 安全运营核验来源、活动会话和影响范围后处置。' : 'FOLLOW-UP OWNER · SECURITY OPERATIONS VALIDATES THE SOURCE, ACTIVE SESSIONS, AND IMPACT SCOPE.',
   }
 }
 
@@ -141,8 +145,8 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
       <div className="rp-head">
         <span className="rp-k">
           {running
-            ? (zh ? '系统正在处置' : 'SYSTEM RESPONSE')
-            : (zh ? '系统处置结果' : 'SYSTEM DISPOSITION')}
+            ? (zh ? '当前处置状态' : 'CURRENT RESPONSE STATUS')
+            : (zh ? '处置决策' : 'RESPONSE DECISION')}
         </span>
         <span className="rp-subject">{subject}</span>
         {view.terminal ? (
@@ -173,18 +177,19 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
       {withheld ? (
         <div className="rp-decision">
           <strong>{withheld.action}</strong>
-          <p>{withheld.reason}</p>
+          <p>{withheld.fact}</p>
+          <span>{withheld.gate}</span>
           <span>{withheld.result}</span>
+          <span>{withheld.owner}</span>
         </div>
       ) : null}
 
-      {/* 影响面 and 当前 are on the incident marker out on the map, where the eye
-          already is. Repeating them here only cost the transcript its room. */}
+      {/* Impact scope and current state remain on the incident marker. */}
       {running && view.current === 'watching' ? (
         <p className="rp-hint">
           {zh
-            ? '改完了，但还没算修好。观察期里持续回读这台设备和网关，指标回退就自动退回上一状态。'
-            : 'Changed, but not yet fixed. The window keeps re-reading this device and the gateway; a regression reverts it.'}
+            ? '观察窗持续回读目标与网关；保护指标恶化时触发回退，连续健康后提交闭环结果。'
+            : 'The observation window re-reads the target and gateway; guardrail regression triggers rollback, and sustained health closes the incident.'}
         </p>
       ) : null}
     </div>

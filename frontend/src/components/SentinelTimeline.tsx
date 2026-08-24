@@ -3,13 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import { latestIncidentCycle } from './sentinel-cycle'
 
-/* ── 哨兵时间线 — the chain from noticing to proving it worked ────────────────
+/* Event audit timeline from detection through disposition.
  *
- * Grouped by incident rather than shown as a flat log, because the question an
- * operator asks is "what happened to this thing", not "what happened at 13:04".
- * A cycle where nothing fired is folded away; the branches where the system
- * declined to act are not, since those are the half that shows the grading is
- * real rather than decorative. */
+ * Records are grouped by affected object. Quiet polling cycles are folded, while
+ * safety-gate decisions and operator handoffs remain visible for audit.
+ */
 
 export type TimelineKind =
   | 'sentinel_started' | 'sentinel_stopped' | 'cycle' | 'cycle_failed'
@@ -67,16 +65,16 @@ interface Incident {
 }
 
 const T = (zh: boolean) => ({
-  title: zh ? '哨兵时间线' : 'SENTINEL TIMELINE',
+  title: zh ? '事件审计时间线' : 'INCIDENT AUDIT TIMELINE',
   lede: zh
-    ? '系统从发现、判断、执行到验证的完整记录，也包括系统决定交给人工处理的步骤。'
-    : 'What the system noticed, decided, did and then verified. The steps where it declined are here too; a log with only successes in it is not an audit trail.',
+    ? '按事件记录检测事实、安全门条件、候选动作、决策结果和人工交接。'
+    : 'Incident records covering detection facts, safety conditions, candidate actions, decisions, and operator handoff.',
   live: zh ? '自动刷新' : 'AUTO REFRESH',
   refresh: zh ? '刷新' : 'REFRESH',
   poll: zh ? '立即巡检一轮' : 'POLL NOW',
   polling: zh ? '巡检中…' : 'POLLING…',
   updated: zh ? '上次刷新' : 'UPDATED',
-  empty: zh ? '还没有记录。在服务器上跑 ./scripts/inject_incident.sh service-down 注入一次真实故障。' : 'Nothing recorded yet.',
+  empty: zh ? '当前没有事件审计记录。' : 'NO INCIDENT AUDIT RECORDS.',
   loading: zh ? '读取中…' : 'LOADING…',
   quiet: zh ? '条巡检未发现异常，已折叠' : 'quiet cycles folded',
   showRaw: zh ? '看原始事件' : 'RAW EVENTS',
@@ -87,27 +85,27 @@ const T = (zh: boolean) => ({
 })
 
 const OUTCOME_LABEL: Record<Incident['outcome'], [string, string]> = {
-  resolved: ['已恢复', 'RESOLVED'],
-  needs_human: ['需人工', 'NEEDS A PERSON'],
-  declined: ['未执行', 'DECLINED'],
-  watching: ['处理中', 'IN FLIGHT'],
-  reported: ['只报不动', 'REPORTED ONLY'],
+  resolved: ['恢复已验证', 'RECOVERY VERIFIED'],
+  needs_human: ['待人工复核', 'OPERATOR REVIEW'],
+  declined: ['写操作未授权', 'WRITE NOT AUTHORIZED'],
+  watching: ['处置进行中', 'RESPONSE IN PROGRESS'],
+  reported: ['写操作未授权', 'WRITE NOT AUTHORIZED'],
   cooling: ['冷却中', 'COOLING DOWN'],
-  escalated: ['转人工', 'HANDED TO A PERSON'],
+  escalated: ['已升级人工处置', 'ESCALATED TO OPERATOR'],
 }
 
 const STEP_LABEL: Record<TimelineKind, [string, string]> = {
-  detected: ['发现', 'DETECTED'],
-  awaiting_confirmation: ['等确认', 'CONFIRMING'],
-  no_safe_action: ['无安全动作', 'NO SAFE ACTION'],
+  detected: ['检测事实', 'DETECTION FACT'],
+  awaiting_confirmation: ['二次确认', 'SECOND CONFIRMATION'],
+  no_safe_action: ['安全门未放行', 'SAFETY GATE BLOCKED'],
   cooldown: ['冷却中', 'COOLING DOWN'],
-  preflight: ['前置校验', 'PREFLIGHT'],
-  declined: ['拒绝执行', 'DECLINED'],
-  remediated: ['已执行', 'ACTED'],
-  resolved: ['判定恢复', 'RESOLVED'],
+  preflight: ['安全门条件', 'SAFETY CONDITIONS'],
+  declined: ['写操作未授权', 'WRITE NOT AUTHORIZED'],
+  remediated: ['动作回执', 'ACTION RECEIPT'],
+  resolved: ['恢复已验证', 'RECOVERY VERIFIED'],
   detector_failed: ['探测器报错', 'DETECTOR FAILED'],
-  escalated: ['停止自动处置', 'STOPPED AUTOMATION'],
-  escalation_cleared: ['升级解除', 'ESCALATION CLEARED'],
+  escalated: ['升级人工处置', 'ESCALATED TO OPERATOR'],
+  escalation_cleared: ['升级状态解除', 'ESCALATION CLEARED'],
   cycle: ['巡检', 'CYCLE'],
   cycle_failed: ['巡检失败', 'CYCLE FAILED'],
   sentinel_started: ['哨兵启动', 'STARTED'],
@@ -132,7 +130,7 @@ function group(events: TimelineEvent[]): { incidents: Incident[]; quiet: number 
       continue
     }
     if (!SUBJECT_KINDS.has(event.kind)) continue
-    const subject = event.subject || event.target || '—'
+    const subject = event.subject || event.target || 'N/A'
     const bucket = bySubject.get(subject)
     if (bucket) bucket.push(event)
     else bySubject.set(subject, [event])
@@ -158,8 +156,7 @@ function group(events: TimelineEvent[]): { incidents: Incident[]; quiet: number 
       outcome,
     })
   }
-  // Newest incident first: during a demo the thing just injected is the thing
-  // being looked at.
+  // Newest incidents appear first for operator triage.
   incidents.sort((a, b) => (a.opened < b.opened ? 1 : -1))
   return { incidents, quiet }
 }
@@ -249,8 +246,7 @@ export function SentinelTimeline({ lang, focus }: { lang: Lang; focus?: string }
     try {
       await fetch('/api/rca/sentinel/poll', { method: 'POST' })
     } catch {
-      // The poll can outlive its request during a watch window; the timeline
-      // is the source of truth, so a transport error here is not a failure.
+      // The timeline refresh captures polls that complete after the request window.
     } finally {
       setPolling(false)
       void load()
@@ -293,7 +289,7 @@ export function SentinelTimeline({ lang, focus }: { lang: Lang; focus?: string }
       {st.s === 'ok' && !incidents.length ? (
         <div className="sx-state">
           {focus
-            ? (zh ? `${focus} 还没有被自动处置过。` : `Nothing handled for ${focus} yet.`)
+            ? (zh ? `${focus} 当前没有处置审计记录。` : `No response audit records for ${focus}.`)
             : tx.empty}
         </div>
       ) : null}

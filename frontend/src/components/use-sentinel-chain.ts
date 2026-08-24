@@ -39,6 +39,14 @@ export interface ChainStep {
 export const SUBJECT_KINDS = new Set([
   'detected', 'awaiting_confirmation', 'no_safe_action', 'cooldown',
   'preflight', 'declined', 'remediated', 'resolved', 'escalated',
+  // Follow-up is emitted while execute() is still blocking inside the watch
+  // window. Keeping these existing ledger rows in `steps` lets the theater
+  // advance ACT → WATCH → VERIFY on each poll instead of jumping from
+  // PREFLIGHT straight to a closed result. No phase is inferred here: the
+  // hook preserves the backend kinds exactly as written.
+  'remediation_committed', 'bakein_opened', 'bakein_sampled',
+  'bakein_passed', 'bakein_regressed', 'remediation_reverted',
+  'revert_unverified',
 ])
 
 /** One shell command the sentinel ran, and what came back. */
