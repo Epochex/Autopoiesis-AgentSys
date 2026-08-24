@@ -16,7 +16,19 @@
 # and recurrence escalation after the configured threshold.
 set -euo pipefail
 
-UNIT=demo-collector
+SCENARIO="${1:-}"
+BASE_UNIT=demo-collector
+RUN_STATE="/run/autopoiesis-service-down-unit"
+if [[ "$SCENARIO" == "service-down" ]]; then
+    # A single-fault run represents a newly provisioned disposable service
+    # instance. The fixed BASE_UNIT is reserved for the recurring scenario so
+    # recurrence evidence from that scenario cannot alter this one's outcome.
+    UNIT="${BASE_UNIT}-$(date -u +%Y%m%d%H%M%S)"
+elif [[ ( "$SCENARIO" == "cleanup" || "$SCENARIO" == "status" ) && -s "$RUN_STATE" ]]; then
+    UNIT=$(<"$RUN_STATE")
+else
+    UNIT="$BASE_UNIT"
+fi
 UNIT_FILE="/etc/systemd/system/${UNIT}.service"
 SUBJECT="${UNIT}.service"       # what systemd --failed prints, and what the timeline records
 CONTROLLED_SOURCE="203.0.113.77"   # RFC 5737 documentation range
@@ -469,6 +481,7 @@ PY
 
 case "${1:-}" in
 service-down)
+    printf '%s\n' "$UNIT" > "$RUN_STATE"
     install_unit
     systemctl start "$UNIT"
     sleep 1
@@ -742,6 +755,7 @@ cleanup)
     systemctl stop "$UNIT" 2>/dev/null || true
     systemctl disable "$UNIT" 2>/dev/null || true
     rm -f "$UNIT_FILE"
+    rm -f "$RUN_STATE"
     systemctl daemon-reload
     systemctl reset-failed "$UNIT" 2>/dev/null || true
     echo "已清理 $UNIT。日志里的失败登录记录会随 journal 轮转自然过期，不影响任何东西。"

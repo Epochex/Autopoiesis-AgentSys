@@ -112,12 +112,12 @@ def test_live_action_and_observation_events_advance_the_card(tmp_path, monkeypat
          "subject": "demo.service", "action": "restart_unit"},
         {"kind": "bakein_sampled", "at": _at(29),
          "subject": "demo.service", "action": "restart_unit", "phase": "fast"},
-        {"kind": "bakein_sampled", "at": _at(44),
+        {"kind": "bakein_sampled", "at": _at(44).replace("+00:00", "Z"),
          "subject": "demo.service", "action": "restart_unit", "phase": "stability"},
     ]
     _write(tmp_path, observing, monkeypatch)
     card = sentinel_cards("zh", now=NOW + 60)[0]
-    assert card["ts"] == _at(44)
+    assert card["ts"] == _at(44).replace("+00:00", "Z")
     assert card["reviewVerdict"]["verdictStatus"] == "in_flight"
     assert card["reviewVerdict"]["recommendedDisposition"] == "observing"
     assert [row["kind"] for row in card["timeline"]][-4:] == [
@@ -125,7 +125,7 @@ def test_live_action_and_observation_events_advance_the_card(tmp_path, monkeypat
     ]
     by_stage = {row["stageId"]: row for row in card["stageTelemetry"]}
     assert "动作回执已记录" in by_stage["act"]["detail"]
-    assert by_stage["watch"]["ts"] == _at(44)
+    assert by_stage["watch"]["ts"] == _at(44).replace("+00:00", "Z")
     assert by_stage["watch"]["detail"] == "稳定性窗口 · 已完成 2 次健康回读"
 
 

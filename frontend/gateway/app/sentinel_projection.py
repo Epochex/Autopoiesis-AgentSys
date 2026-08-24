@@ -156,7 +156,8 @@ def _stable_id(*parts: str) -> str:
 def _age_seconds(iso: str, now: float) -> float:
     from datetime import datetime
     try:
-        return now - datetime.fromisoformat(iso).timestamp()
+        normalized = iso[:-1] + "+00:00" if iso.endswith("Z") else iso
+        return now - datetime.fromisoformat(normalized).timestamp()
     except (ValueError, TypeError):
         return float("inf")
 
