@@ -23,6 +23,7 @@ interface Row {
 const SUBJECT_KINDS = new Set([
   'detected', 'awaiting_confirmation', 'no_safe_action', 'cooldown',
   'preflight', 'declined', 'remediated', 'resolved', 'escalated',
+  'escalation_cleared',
 ])
 
 const PHASE_LABEL: Record<Row['phase'], [string, string]> = {
