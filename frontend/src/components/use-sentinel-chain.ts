@@ -39,6 +39,7 @@ export interface ChainStep {
 export const SUBJECT_KINDS = new Set([
   'detected', 'awaiting_confirmation', 'no_safe_action', 'cooldown',
   'preflight', 'declined', 'remediated', 'resolved', 'escalated',
+  'escalation_cleared',
   // Follow-up is emitted while execute() is still blocking inside the watch
   // window. Keeping these existing ledger rows in `steps` lets the theater
   // advance ACT → WATCH → VERIFY on each poll instead of jumping from

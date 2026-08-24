@@ -75,9 +75,14 @@ function summarise(events: Record<string, unknown>[], zh: boolean): Row[] {
     const kinds = chain.map((e) => String(e.kind))
     const remediated = [...chain].reverse().find((e) => e.kind === 'remediated')
     const noAction = [...chain].reverse().find((e) => e.kind === 'no_safe_action')
+    const escalated = [...chain].reverse().find((e) => e.kind === 'escalated')
+    const escalationCleared = [...chain].reverse().find((e) => e.kind === 'escalation_cleared')
+    const escalationActive = Boolean(escalated) && (
+      !escalationCleared || String(escalationCleared.at ?? '') < String(escalated?.at ?? '')
+    )
     let phase: Row['phase'] = 'detected'
     // Escalation takes precedence over successful outcomes from earlier cycles.
-    if (kinds.includes('escalated')) phase = 'escalated'
+    if (escalationActive) phase = 'escalated'
     else if (kinds.includes('resolved')) phase = 'resolved'
     else if (remediated?.needs_human) phase = 'needs_human'
     else if (kinds.includes('no_safe_action')) phase = 'reported'
