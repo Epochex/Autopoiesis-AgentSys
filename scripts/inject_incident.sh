@@ -426,7 +426,10 @@ follow_service_round() {
                 case "$line" in
                     *'"kind": "resolved"'*) SERVICE_OUTCOME=resolved; break ;;
                     *'"kind": "declined"'*) SERVICE_OUTCOME=declined; break ;;
+                    *'"kind": "cooldown"'*) SERVICE_OUTCOME=cooldown; break ;;
                     *'"kind": "escalated"'*) SERVICE_OUTCOME=escalated; break ;;
+                    *'"kind": "remediated"'*'"outcome": "refused"'*)
+                        SERVICE_OUTCOME=refused; break ;;
                     *'"kind": "remediated"'*'"needs_human": true'*)
                         SERVICE_OUTCOME=needs_human; break ;;
                 esac
@@ -535,6 +538,10 @@ service-down)
                 ;;
             declined)
                 die "安全门拒绝本轮执行；检查全局暂停、预算和 preflight reason。" ;;
+            refused)
+                die "处置预算未放行本轮执行；检查 remediated 记录中的 budget_decision。" ;;
+            cooldown)
+                die "本轮处于冷却期，写操作未授权；等待时间线中的 remaining_sec 归零后重试。" ;;
             escalated)
                 die "本轮进入复发升级，不能作为首次 service-down 自愈演示；先检查 status 中的复发计数。" ;;
             needs_human)
