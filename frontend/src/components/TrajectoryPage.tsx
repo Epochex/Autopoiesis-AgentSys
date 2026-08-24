@@ -57,13 +57,13 @@ export function TrajectoryPage({
 
       {/* Explicit source boundary: disk-sink records above, temp-dir benchmark below. */}
       <div className="tp-seam" role="separator">
-        <span>{zh ? '↓ 离线基准回放 · 六案例临时目录计算' : '↓ OFFLINE BENCHMARK REPLAY · SIX-CASE TEMP-DIR RUN'}</span>
+        <span>{zh ? '02 · 离线记忆算法回放 · 六案例 × 四轮' : '02 · OFFLINE MEMORY ALGORITHM REPLAY · SIX CASES × FOUR PASSES'}</span>
       </div>
 
       <header className="fx-mast">
         <div className="fx-mast-l">
-          <span className="fx-mast-kick">{zh ? '重复故障排查 · 复用之前留下的记录' : 'REPEATED-FAULT CHECKS · REUSE EARLIER RECORDS'}</span>
-          <h1 className="fx-mast-title">{zh ? <>多轮<mark>故障回放</mark></> : <>MULTI-RUN <mark>FAULT REPLAY</mark></>}</h1>
+          <span className="fx-mast-kick">{zh ? '固定留出案例 · 长线记忆状态机演化' : 'FIXED HELD-OUT CASES · LONG-RUN MEMORY STATE EVOLUTION'}</span>
+          <h1 className="fx-mast-title">{zh ? <>离线<mark>记忆算法回放</mark></> : <>OFFLINE <mark>MEMORY ALGORITHM REPLAY</mark></>}</h1>
           <div className="fx-mast-mission">
             <span className="fx-mast-q" title={c.query}>{clip(c.query, 62)}</span>
             <mark className="fx-mast-root">{rc(c.diagnosis.rootCauseKey, lang)}</mark>
@@ -90,6 +90,9 @@ export function TrajectoryPage({
           : <div className="fx-first-wait">{zh ? '正在计算离线基准回放…' : 'RUNNING OFFLINE BENCHMARK REPLAY…'}</div>}
       </section>
 
+      <div className="tp-seam online" role="separator">
+        <span>{zh ? '03 · 本机在线记忆演化 · PostgreSQL 持久化事件账本' : '03 · ONLINE MEMORY EVOLUTION · POSTGRESQL EVENT LEDGER'}</span>
+      </div>
       <LiveMemory lang={lang} />
 
       {/* Offline benchmark result returned by /api/rca/evolution. */}

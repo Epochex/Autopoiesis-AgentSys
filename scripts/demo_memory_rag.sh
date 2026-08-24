@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 API=http://127.0.0.1:8026/api/rca
-SUBJECT=demo-collector.service
+RUN_STATE=/run/autopoiesis-service-down-unit
 MARKER=/run/autopoiesis-memory-rag-demo.paused
 ACTOR=memory-rag-demo
 
@@ -51,6 +51,14 @@ else:
 PY
 }
 
+current_subject() {
+    if [[ -s "$RUN_STATE" ]]; then
+        printf '%s.service\n' "$(<"$RUN_STATE")"
+    else
+        printf '%s\n' "demo-collector.service"
+    fi
+}
+
 resume_if_owned() {
     if [[ -f "$MARKER" ]] || [[ "$(pause_actor)" == "$ACTOR" ]]; then
         post remediation/resume \
@@ -68,19 +76,27 @@ arm() {
     [[ "$(paused_field)" == false ]] \
         || die "全局写操作已经处于暂停状态，actor=$(pause_actor)。先确认暂停来源，脚本不会覆盖别人的安全开关。"
 
+    # The first verified run leaves its disposable unit available for audit.
+    # Its durable dossier and memories survive cleanup, while removing the unit
+    # prevents the next unique subject from overwriting the only cleanup handle.
+    "$ROOT_DIR/scripts/inject_incident.sh" cleanup >/dev/null
+
     post remediation/pause \
         '{"actor":"memory-rag-demo","reason":"保留 failed 单元供只读调查，防止哨兵先于页面调查完成重启"}' \
         >/dev/null
     touch "$MARKER"
     trap 'resume_if_owned >/dev/null || true' ERR INT TERM
 
-    "$ROOT_DIR/scripts/inject_incident.sh" service-down
+    "$ROOT_DIR/scripts/inject_incident.sh" service-detect-only
     trap - ERR INT TERM
+
+    local subject
+    subject=$(current_subject)
 
     echo
     echo "记忆 + 知识检索演示已布置："
     echo "  1. 自动写操作已暂停，检测和只读调查继续工作。"
-    echo "  2. $SUBJECT 保持 failed，避免调查开始前被恢复。"
+    echo "  2. $subject 保持 failed，避免调查开始前被恢复。"
     echo "  3. 等态势页出现该对象，点入对应态势记录。"
     echo "  4. 点『看处置链路』进入诊断处置，调查会自动开始。"
     echo "  5. 看『本次调查上下文回执』：记忆命中、探针顺序、RAG 文档和 influence。"
@@ -89,19 +105,22 @@ arm() {
 }
 
 resume_demo() {
+    local subject
+    subject=$(current_subject)
     resume_if_owned
-    echo "$SUBJECT 当前状态：$(systemctl is-active "$SUBJECT" 2>/dev/null || true)"
+    echo "$subject 当前状态：$(systemctl is-active "$subject" 2>/dev/null || true)"
     echo "后台哨兵会在后续巡检中重新评估；Demo 1 已经展示过完整处置时，可以直接 cleanup 收尾。"
 }
 
 status() {
-    local service_state
-    service_state=$(systemctl is-active "$SUBJECT" 2>/dev/null || true)
+    local service_state subject
+    subject=$(current_subject)
+    service_state=$(systemctl is-active "$subject" 2>/dev/null || true)
     [[ -n "$service_state" ]] || service_state="未安装"
     echo "自动写操作暂停：$(paused_field)"
     echo "暂停 actor：$(pause_actor)"
     echo "本脚本 marker：$([[ -f "$MARKER" ]] && echo 存在 || echo 无)"
-    echo "$SUBJECT：$service_state"
+    echo "$subject：$service_state"
     if memory_ready >/dev/null 2>&1; then
         echo "failed_units 记忆：可用于探针排序"
     else

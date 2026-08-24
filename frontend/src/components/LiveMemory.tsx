@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Lang } from '../i18n'
 import type {
@@ -10,11 +10,10 @@ import type {
   LiveMemoryListResponse,
   MemTier,
 } from '../types'
-import { prefersReducedMotion } from '../reduced-motion'
 import './live-memory.css'
 
 const TICK_MS = 180
-const EXPANDED_STORAGE_KEY = 'live-memory-expanded'
+const EXPANDED_STORAGE_KEY = 'live-memory-expanded-v2'
 const TIER_ORDER: MemTier[] = ['semantic', 'procedural', 'episodic', 'asset_profile']
 
 const readInitialExpanded = (): boolean => {
@@ -47,14 +46,29 @@ type LiveStep = {
   changesByMemory: Record<string, string[]>
   events: LiveMemoryEvent[]
 }
-type EdgeSpec = {
-  key: string
-  source: string
-  target: string
-  kind: 'link' | 'relation' | 'superseded'
-  label: string
+type MemoryView = 'recent' | 'active' | 'shelved' | 'all'
+
+const TIER_SHORT: Record<MemTier, [string, string]> = {
+  semantic: ['规律', 'PATTERN'],
+  procedural: ['方法', 'HOW-TO'],
+  episodic: ['案例', 'CASE'],
+  asset_profile: ['资产', 'ASSET'],
 }
-type DrawnEdge = EdgeSpec & { d: string; lx: number; ly: number }
+
+const recordTime = (record: LiveMemoryListRecord): number => {
+  const value = record.last_observed_at ?? record.first_observed_at ?? record.valid_from
+  const parsed = value ? Date.parse(value) : Number.NaN
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+const shortTime = (value: string | null, zh: boolean): string => {
+  if (!value) return '∅'
+  const parsed = Date.parse(value)
+  if (Number.isNaN(parsed)) return value
+  return new Intl.DateTimeFormat(zh ? 'zh-CN' : 'en-GB', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(parsed))
+}
 
 const STEP_LABEL: Record<StepKind, [string, string]> = {
   upsert: ['写入一个版本', 'VERSION WRITTEN'],
@@ -237,21 +251,6 @@ async function readMemoryEvents(signal: AbortSignal): Promise<LiveMemoryEvent[] 
   return null
 }
 
-const squareBar = (value: number, ceiling: number) => {
-  const filled = Math.round(Math.max(0, Math.min(1, value / ceiling)) * 4)
-  return `${'▇'.repeat(filled)}${'▁'.repeat(4 - filled)}`
-}
-
-function Metric({ label, value, ceiling }: { label: string; value: number; ceiling: number }) {
-  return (
-    <span className="lm-metric">
-      <i aria-hidden="true">{squareBar(value, ceiling)}</i>
-      <span>{label}</span>
-      <b>{value.toFixed(2)}</b>
-    </span>
-  )
-}
-
 function ChipList({ items }: { items: string[] }) {
   if (!items.length) return <span className="lm-none">∅</span>
   return <span className="lm-chips">{items.map((item) => <i key={item}>{item}</i>)}</span>
@@ -263,69 +262,6 @@ function AuditRow({ label, changed = false, children }: { label: string; changed
       <span className="lm-audit-key">{label}</span>
       <span className="lm-audit-value">{children}</span>
     </div>
-  )
-}
-
-function MemoryCard({
-  record,
-  visible,
-  selected,
-  changedFields,
-  invalidated,
-  onSelect,
-  cardRef,
-  zh,
-}: {
-  record: LiveMemoryListRecord
-  visible: boolean
-  selected: boolean
-  changedFields: Set<string>
-  invalidated: boolean
-  onSelect: () => void
-  cardRef: (node: HTMLButtonElement | null) => void
-  zh: boolean
-}) {
-  const reason = quarantineTag(record)
-  const classes = [
-    'lm-card',
-    visible ? 'visible' : 'pending',
-    selected ? 'selected' : '',
-    record.quarantined ? 'quarantined' : '',
-    invalidated ? 'invalidated' : '',
-  ].filter(Boolean).join(' ')
-  return (
-    <button
-      ref={cardRef}
-      type="button"
-      className={classes}
-      aria-pressed={selected}
-      onClick={onSelect}
-    >
-      <span className={changedFields.has('record') ? 'lm-card-id changed' : 'lm-card-id'} title={record.memory_id}>
-        {record.memory_id}
-        {visible && record.access_count > 0 ? <b title={zh ? '被找到或再次采用的次数' : 'TIMES FOUND OR REUSED'}>×{record.access_count}</b> : null}
-      </span>
-      {!visible ? <span className="lm-card-pending">{zh ? '未写入 · NOT YET WRITTEN' : 'NOT YET WRITTEN'}</span> : null}
-      <span className="lm-card-content" aria-hidden={!visible}>
-          <span className="lm-card-text">{record.text}</span>
-          <span className="lm-card-metrics">
-            <Metric label={zh ? '可信' : 'CONF'} value={record.confidence} ceiling={3} />
-            <Metric label={zh ? '重要' : 'IMP'} value={record.importance} ceiling={52} />
-            <Metric label={zh ? '保留' : 'KEEP'} value={record.strength} ceiling={1} />
-          </span>
-          <span className="lm-card-times">
-            <i className={changedFields.has('first_observed_at') ? 'changed' : ''}>FIRST {record.first_observed_at ?? '∅'}</i>
-            <i className={changedFields.has('last_observed_at') ? 'changed' : ''}>LAST {record.last_observed_at ?? '∅'}</i>
-            {record.valid_to ? <i className={changedFields.has('valid_to') ? 'changed' : ''}>VALID_TO {record.valid_to}</i> : null}
-          </span>
-          {record.quarantined ? (
-            <span className="lm-card-quarantine">
-              <b>{zh ? '当前已打入冷宫' : 'SHELVED NOW'}</b>
-              <i>{reason ?? (zh ? '没有记录原因' : 'NO REASON RECORDED')}</i>
-            </span>
-          ) : null}
-      </span>
-    </button>
   )
 }
 
@@ -531,17 +467,18 @@ function Timeline({
 export function LiveMemory({ lang }: { lang: Lang }) {
   const zh = lang === 'zh'
   const rootRef = useRef<HTMLElement | null>(null)
-  const graphRef = useRef<HTMLDivElement | null>(null)
-  const cardRefs = useRef(new Map<string, HTMLButtonElement>())
   const [data, setData] = useState<LiveMemoryListResponse | null>(null)
   const [ledgerEvents, setLedgerEvents] = useState<LiveMemoryEvent[] | null>(null)
-  const [details, setDetails] = useState<Map<string, LiveMemoryDetailRecord>>(new Map())
+  const [selectedDetail, setSelectedDetail] = useState<LiveMemoryDetailRecord | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cursor, setCursor] = useState(0)
-  const [playing, setPlaying] = useState(() => !prefersReducedMotion())
+  const cursorInitialized = useRef(false)
+  const [playing, setPlaying] = useState(false)
   const [onScreen, setOnScreen] = useState(() => typeof IntersectionObserver !== 'function')
   const [pinnedId, setPinnedId] = useState<string | null>(null)
-  const [drawnEdges, setDrawnEdges] = useState<DrawnEdge[]>([])
+  const [viewMode, setViewMode] = useState<MemoryView>('recent')
+  const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState(readInitialExpanded)
 
   useEffect(() => {
@@ -574,64 +511,46 @@ export function LiveMemory({ lang }: { lang: Lang }) {
 
   useEffect(() => {
     const controller = new AbortController()
-    fetch('/api/rca/memory?limit=1000&include_quarantined=true', {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json() as Promise<LiveMemoryListResponse>
+    let timer: number | undefined
+    const load = () => {
+      fetch('/api/rca/memory?limit=1000&include_quarantined=true', {
+        headers: { Accept: 'application/json' }, signal: controller.signal,
       })
-      .then((payload) => {
-        setData(payload)
-      })
-      .catch((reason: unknown) => {
-        if (controller.signal.aborted) return
-        setError(zh ? `线上记忆读取失败：${String(reason)}` : `Failed to read live memory: ${String(reason)}`)
-      })
-    return () => controller.abort()
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          return response.json() as Promise<LiveMemoryListResponse>
+        })
+        .then((payload) => { setData(payload); setError(null) })
+        .catch((reason: unknown) => {
+          if (controller.signal.aborted) return
+          setError(zh ? `线上记忆读取失败：${String(reason)}` : `Failed to read live memory: ${String(reason)}`)
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) timer = window.setTimeout(load, 5000)
+        })
+    }
+    load()
+    return () => { controller.abort(); if (timer !== undefined) window.clearTimeout(timer) }
   }, [zh])
 
   useEffect(() => {
     const controller = new AbortController()
-    readMemoryEvents(controller.signal)
-      .then((events) => {
-        if (!controller.signal.aborted) setLedgerEvents(events)
-      })
-      .catch(() => {
-        // Event replay is additive. A missing or older gateway must leave the
-        // existing snapshot-derived timeline fully usable.
-        if (!controller.signal.aborted) setLedgerEvents(null)
-      })
-    return () => controller.abort()
-  }, [])
-
-  useEffect(() => {
-    if (!data?.durable || !data.records.length) return
-    const controller = new AbortController()
-    let next = 0
-    const loaded = new Map<string, LiveMemoryDetailRecord>()
-    const worker = async () => {
-      while (!controller.signal.aborted) {
-        const record = data.records[next++]
-        if (!record) return
-        try {
-          const response = await fetch(`/api/rca/memory/${encodeURIComponent(record.memory_id)}`, {
-            headers: { Accept: 'application/json' },
-            signal: controller.signal,
-          })
-          if (!response.ok) continue
-          const payload = await response.json() as LiveMemoryDetailResponse
-          loaded.set(record.memory_id, payload.record)
-          setDetails(new Map(loaded))
-        } catch {
-          if (controller.signal.aborted) return
-        }
-      }
+    let timer: number | undefined
+    const load = () => {
+      readMemoryEvents(controller.signal)
+        .then((events) => {
+          if (!controller.signal.aborted) setLedgerEvents(events)
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setLedgerEvents((current) => current ?? null)
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) timer = window.setTimeout(load, 5000)
+        })
     }
-    void Promise.all(Array.from({ length: Math.min(6, data.records.length) }, () => worker()))
-    return () => controller.abort()
-  }, [data])
+    load()
+    return () => { controller.abort(); if (timer !== undefined) window.clearTimeout(timer) }
+  }, [])
 
   useEffect(() => {
     const root = rootRef.current
@@ -663,7 +582,13 @@ export function LiveMemory({ lang }: { lang: Lang }) {
   const running = expanded && playing && onScreen && !atEnd && steps.length > 0
 
   useEffect(() => {
-    setCursor(prefersReducedMotion() ? Math.max(0, steps.length - 1) : 0)
+    if (!steps.length) return
+    if (!cursorInitialized.current) {
+      cursorInitialized.current = true
+      setCursor(Math.max(0, steps.length - 1))
+      return
+    }
+    setCursor((value) => Math.min(value, Math.max(0, steps.length - 1)))
   }, [steps])
 
   useEffect(() => {
@@ -682,19 +607,11 @@ export function LiveMemory({ lang }: { lang: Lang }) {
     })
     return values
   }, [steps])
-  const invalidatedAt = useMemo(() => {
-    const values = new Map<string, number>()
-    steps.forEach((step, index) => {
-      if (step.kind === 'invalidated') values.set(step.memoryId, index)
-    })
-    return values
-  }, [steps])
   const visibleIds = useMemo(() => new Set(
     eventLedger
       ? steps.slice(0, cursor + 1).flatMap((step) => step.memoryIds)
       : (data?.records ?? []).filter((record) => (firstStep.get(record.memory_id) ?? Number.POSITIVE_INFINITY) <= cursor).map((record) => record.memory_id),
   ), [cursor, data, eventLedger, firstStep, steps])
-  const visibleKey = useMemo(() => Array.from(visibleIds).sort().join('|'), [visibleIds])
   const eventsAtCursor = useMemo(() => {
     const values = new Map<string, LiveMemoryEvent>()
     if (!eventLedger) return values
@@ -716,67 +633,41 @@ export function LiveMemory({ lang }: { lang: Lang }) {
       quarantined: event.event_type === 'QUARANTINE' || event.quarantine_reason !== null,
     }
   }), [data, eventsAtCursor])
-  const selectedId = pinnedId ?? currentStep?.memoryId ?? data?.records[0]?.memory_id ?? null
+  const selectedId = pinnedId
   const selectedSummary = displayRecords.find((record) => record.memory_id === selectedId) ?? null
-  const selectedDetail = selectedId ? details.get(selectedId) ?? null : null
-
-  const byTier = useMemo(() => {
-    const grouped = new Map<MemTier, LiveMemoryListRecord[]>(TIER_ORDER.map((tier) => [tier, []]))
-    for (const record of displayRecords) grouped.get(record.tier)?.push(record)
-    return grouped
-  }, [displayRecords])
-
-  const edgeSpecs = useMemo(() => {
-    const ids = new Set(data?.records.map((record) => record.memory_id) ?? [])
-    const values: EdgeSpec[] = []
-    const seen = new Set<string>()
-    const push = (edge: Omit<EdgeSpec, 'key'>) => {
-      if (!ids.has(edge.target) || edge.source === edge.target) return
-      const pair = edge.kind === 'link' && edge.source > edge.target
-        ? `${edge.target}|${edge.source}|${edge.kind}|${edge.label}`
-        : `${edge.source}|${edge.target}|${edge.kind}|${edge.label}`
-      if (seen.has(pair)) return
-      seen.add(pair)
-      values.push({ ...edge, key: pair })
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedDetail(null)
+      setDetailLoading(false)
+      return
     }
-    for (const detail of details.values()) {
-      for (const target of detail.links) push({ source: detail.memory_id, target, kind: 'link', label: 'link' })
-      for (const relation of detail.relations) push({ source: detail.memory_id, target: relation.target_id, kind: 'relation', label: relation.relation_type })
-      if (detail.superseded_by) push({ source: detail.memory_id, target: detail.superseded_by, kind: 'superseded', label: 'superseded_by' })
-    }
-    return values
-  }, [data, details])
+    const controller = new AbortController()
+    setDetailLoading(true)
+    setSelectedDetail(null)
+    fetch(`/api/rca/memory/${encodeURIComponent(selectedId)}`, {
+      headers: { Accept: 'application/json' }, signal: controller.signal,
+    })
+      .then((response) => response.ok ? response.json() as Promise<LiveMemoryDetailResponse> : Promise.reject(new Error(`HTTP ${response.status}`)))
+      .then((payload) => { if (!controller.signal.aborted) setSelectedDetail(payload.record) })
+      .catch(() => {})
+      .finally(() => { if (!controller.signal.aborted) setDetailLoading(false) })
+    return () => controller.abort()
+  }, [selectedId])
 
-  const measureEdges = useCallback(() => {
-    const graph = graphRef.current
-    if (!graph) return
-    const bounds = graph.getBoundingClientRect()
-    const next: DrawnEdge[] = []
-    for (const edge of edgeSpecs) {
-      if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) continue
-      const source = cardRefs.current.get(edge.source)
-      const target = cardRefs.current.get(edge.target)
-      if (!source || !target) continue
-      const a = source.getBoundingClientRect()
-      const b = target.getBoundingClientRect()
-      const x1 = a.left - bounds.left + a.width / 2
-      const y1 = a.top - bounds.top + a.height / 2
-      const x2 = b.left - bounds.left + b.width / 2
-      const y2 = b.top - bounds.top + b.height / 2
-      const bend = y1 + (y2 - y1) / 2
-      next.push({ ...edge, d: `M${x1} ${y1} L${x1} ${bend} L${x2} ${bend} L${x2} ${y2}`, lx: (x1 + x2) / 2, ly: bend })
-    }
-    setDrawnEdges(next)
-  }, [edgeSpecs, visibleIds])
+  const tierCounts = useMemo(() => Object.fromEntries(TIER_ORDER.map((tier) => [
+    tier,
+    displayRecords.filter((record) => record.tier === tier && !record.quarantined).length,
+  ])) as Record<MemTier, number>, [displayRecords])
 
-  useLayoutEffect(() => {
-    measureEdges()
-    const graph = graphRef.current
-    if (!graph || typeof ResizeObserver !== 'function') return
-    const observer = new ResizeObserver(measureEdges)
-    observer.observe(graph)
-    return () => observer.disconnect()
-  }, [expanded, measureEdges, visibleKey])
+  const tableRecords = useMemo(() => {
+    const term = query.trim().toLowerCase()
+    let records = displayRecords.filter((record) => visibleIds.has(record.memory_id))
+    if (viewMode === 'active') records = records.filter((record) => !record.quarantined)
+    if (viewMode === 'shelved') records = records.filter((record) => record.quarantined)
+    if (term) records = records.filter((record) => `${record.memory_id} ${record.text} ${record.tags.join(' ')} ${record.asset_ids.join(' ')}`.toLowerCase().includes(term))
+    records = [...records].sort((left, right) => recordTime(right) - recordTime(left) || left.memory_id.localeCompare(right.memory_id))
+    return viewMode === 'recent' ? records.slice(0, 18) : records
+  }, [displayRecords, query, viewMode, visibleIds])
 
   const scrub = (index: number) => {
     setPlaying(false)
@@ -821,42 +712,29 @@ export function LiveMemory({ lang }: { lang: Lang }) {
 
   return (
     <section id="live-memory" className="lm-root" ref={rootRef} aria-label={zh ? '本机记忆' : "This host's memory"}>
-      <div className="lm-collapse-summary">
-        <span>
-          {zh ? '本机记忆' : "THIS HOST'S MEMORY"}
-          {' · '}{zh ? '活跃' : 'ACTIVE'} {data ? activeCount : '…'}
-          {' · '}{zh ? '冷宫' : 'SHELVED'} {data ? quarantineCount : '…'}
-          {' · '}{zh ? '最近写入' : 'LAST WRITE'} {latestWrite}
-        </span>
+      <header className="lm-dashboard-head">
+        <div className="lm-dashboard-title">
+          <span>03 · {zh ? '在线记忆' : 'ONLINE MEMORY'}</span>
+          <h2>{zh ? '本机记忆演化' : 'LIVE MEMORY EVOLUTION'}</h2>
+          <p>{zh ? '近期变化优先，完整审计按需展开' : 'RECENT CHANGES FIRST, FULL AUDIT ON DEMAND'}</p>
+        </div>
+        <div className="lm-health" aria-live="polite">
+          <div className="lm-health-ratio" aria-label={`${activeCount} active, ${quarantineCount} shelved`}>
+            <i style={{ width: `${total ? (activeCount / total) * 100 : 0}%` }} />
+          </div>
+          <div className="lm-health-number active"><b>{data ? activeCount : '…'}</b><span>{zh ? '可检索' : 'ACTIVE'}</span></div>
+          <div className="lm-health-number shelved"><b>{data ? quarantineCount : '…'}</b><span>{zh ? '已隔离' : 'SHELVED'}</span></div>
+          <div className="lm-health-write"><span>{zh ? '最近写入' : 'LAST WRITE'}</span><b>{latestWrite}</b></div>
+        </div>
         <button
           type="button"
+          className="lm-expand"
           aria-expanded={expanded}
           aria-controls="live-memory-content"
           onClick={() => setExpanded((value) => !value)}
-        >[{expanded ? (zh ? '收起' : 'COLLAPSE') : (zh ? '展开' : 'EXPAND')}]</button>
-      </div>
-      <div id="live-memory-content" hidden={!expanded}>
-      <header className="lm-head">
-        <div>
-          <h2>{zh ? '本机记忆 · 现在真的记得什么' : "THIS HOST'S MEMORY · WHAT IT ACTUALLY REMEMBERS"}</h2>
-          <p>{zh ? '哨兵在生产中处置留下的。存在 PostgreSQL 里，重启还在。' : 'Left by Sentinel while handling production incidents. Stored in PostgreSQL and retained across restarts.'}</p>
-        </div>
-        <div className="lm-stats" aria-live="polite">
-          <span>{zh ? '游标可见' : 'VISIBLE'} <b>{visibleActive + visibleQuarantined}</b>/{total}</span>
-          <span>{zh ? '活跃' : 'ACTIVE'} <b>{activeCount}</b></span>
-          <span>{zh ? '冷宫' : 'SHELVED'} <b>{quarantineCount}</b></span>
-        </div>
+        >{expanded ? (zh ? '收起审计' : 'CLOSE AUDIT') : (zh ? '查看变化与审计' : 'OPEN CHANGES & AUDIT')}</button>
       </header>
-
-      {data?.durable ? (
-        <div className="lm-source-note">
-          <b>{eventLedger ? (zh ? '按每次写入回放' : 'REPLAY EACH WRITE') : (zh ? '只看现有时间记录' : 'AVAILABLE TIMES ONLY')}</b>
-          <span>{eventLedger
-            ? (zh ? '时间线按 offset 推进，同一时刻写入的内容合并显示。可以回放版本写入、打入冷宫，以及接口保存的文本和数值。关系、完整来源和接口没保存的版本差异只能显示当前值。' : 'The timeline advances by offset and groups writes made at the same time. It replays version writes, SHELVED actions, and saved text and values. Links, full source data, and version changes the API did not save use current values.')
-            : (zh ? '当前接口没有提供每次写入记录，时间线只能使用第一次见到、最近一次见到和有效期。打入冷宫状态与连接来自当前值，具体动作时间和各版本差异无法回放。' : 'The API does not provide every write. The timeline uses first seen, last seen, and validity times. SHELVED state and links come from current values; exact action time and per-version changes cannot be replayed.')}</span>
-        </div>
-      ) : null}
-
+      <div id="live-memory-content" hidden={!expanded}>
       {!data && !error ? <div className="lm-message">{zh ? '正在读取本机记忆…' : "READING THIS HOST'S MEMORY…"}</div> : null}
       {error ? <div className="lm-message error">{error}</div> : null}
       {data && !data.durable ? (
@@ -868,83 +746,75 @@ export function LiveMemory({ lang }: { lang: Lang }) {
 
       {data?.durable ? (
         <>
-          <div className="lm-ratio" aria-label={`${activeCount} active, ${quarantineCount} quarantined`}>
-            <div className="lm-ratio-label"><span>{zh ? '当前数量比例' : 'CURRENT COUNT RATIO'}</span><b>{activeCount}:{quarantineCount}</b></div>
-            <div className="lm-ratio-cells">
-              {data.records.filter((record) => !record.quarantined).map((record) => <i className="active" key={record.memory_id} title={record.memory_id} />)}
-              {data.records.filter((record) => record.quarantined).map((record) => <i className="quarantined" key={record.memory_id} title={`${record.memory_id} · ${quarantineTag(record) ?? ''}`} />)}
-            </div>
+          <div className="lm-tier-strip">
+            {TIER_ORDER.map((tier) => (
+              <div key={tier}><span>{TIER_SHORT[tier][zh ? 0 : 1]}</span><b>{tierCounts[tier]}</b></div>
+            ))}
+            <div className="lm-visible-count"><span>{zh ? '游标可见' : 'AT CURSOR'}</span><b>{visibleActive + visibleQuarantined}/{total}</b></div>
+            <details className="lm-method-note">
+              <summary>{zh ? '数据口径' : 'DATA SCOPE'}</summary>
+              <p>{eventLedger
+                ? (zh ? '按 PostgreSQL 写入 offset 回放；同一事务合并为一步。完整来源只在点开单条记忆时读取。' : 'Replayed by PostgreSQL write offset; one transaction is one step. Full provenance loads only when a row is opened.')
+                : (zh ? '当前使用记录中的首次、最近和有效期时间构造变化顺序。' : 'The sequence uses first, latest, and validity timestamps from current records.')}</p>
+            </details>
           </div>
 
           <Timeline steps={steps} cursor={cursor} playing={running} onCursor={scrub} onToggle={toggle} eventLedger={eventLedger} zh={zh} />
 
-          <div className="lm-body">
-            <div className="lm-space" ref={graphRef}>
-              <svg className="lm-edges" width="100%" height="100%" aria-label={zh ? '记忆关系连线' : 'Memory relation links'}>
-                <defs>
-                  <marker id="lm-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                    <path d="M0 0 L8 4 L0 8" />
-                  </marker>
-                </defs>
-                {drawnEdges.map((edge) => (
-                  <g key={edge.key} className={`lm-edge ${edge.kind}`}>
-                    <path d={edge.d} markerEnd={edge.kind === 'link' ? undefined : 'url(#lm-arrow)'} />
-                    {edge.kind !== 'link' ? <text x={edge.lx + 4} y={edge.ly - 4}>{edge.label}</text> : null}
-                  </g>
-                ))}
-              </svg>
-              {TIER_ORDER.map((tier) => {
-                const records = byTier.get(tier) ?? []
+          <section className="lm-ledger" aria-label={zh ? '在线记忆列表' : 'Online memory ledger'}>
+            <header className="lm-ledger-tools">
+              <div className="lm-view-tabs" role="group" aria-label={zh ? '记忆筛选' : 'Memory filter'}>
+                {(['recent', 'active', 'shelved', 'all'] as MemoryView[]).map((mode) => {
+                  const labels: Record<MemoryView, [string, string]> = {
+                    recent: ['近期变化', 'RECENT'], active: ['可检索', 'ACTIVE'], shelved: ['已隔离', 'SHELVED'], all: ['全部', 'ALL'],
+                  }
+                  return <button type="button" className={viewMode === mode ? 'on' : ''} key={mode} onClick={() => setViewMode(mode)}>{labels[mode][zh ? 0 : 1]}</button>
+                })}
+              </div>
+              <label className="lm-search">
+                <span>{zh ? '过滤' : 'FILTER'}</span>
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={zh ? 'ID / 资产 / 标签' : 'ID / ASSET / TAG'} />
+              </label>
+              <span className="lm-result-count">{tableRecords.length} {zh ? '条' : 'ROWS'}</span>
+            </header>
+            <div className="lm-table-head" aria-hidden="true">
+              <span>{zh ? '状态' : 'STATE'}</span><span>{zh ? '类型' : 'TYPE'}</span><span>ID</span><span>{zh ? '内容摘要' : 'SUMMARY'}</span><span>{zh ? '最近观察' : 'LAST SEEN'}</span><span>{zh ? '采用' : 'USES'}</span>
+            </div>
+            <div className="lm-table-body">
+              {tableRecords.map((record) => {
+                const touched = currentStep?.memoryIds.includes(record.memory_id) ?? false
                 return (
-                  <section className={`lm-tier tier-${tier}`} key={tier}>
-                    <header>
-                      <span>{TIER_LABEL[tier][zh ? 0 : 1]}</span>
-                      <b>{records.filter((record) => visibleIds.has(record.memory_id)).length}/{records.length}</b>
-                    </header>
-                    <div className="lm-card-grid">
-                      {records.map((record) => {
-                        const touched = new Set(fieldsAtStep(currentStep, record.memory_id))
-                        return (
-                          <MemoryCard
-                            key={record.memory_id}
-                            record={record}
-                            visible={visibleIds.has(record.memory_id)}
-                            selected={selectedId === record.memory_id}
-                            changedFields={touched}
-                            invalidated={eventLedger ? record.quarantined : (invalidatedAt.get(record.memory_id) ?? Number.POSITIVE_INFINITY) <= cursor}
-                            onSelect={() => setPinnedId((value) => value === record.memory_id ? null : record.memory_id)}
-                            cardRef={(node) => {
-                              if (node) cardRefs.current.set(record.memory_id, node)
-                              else cardRefs.current.delete(record.memory_id)
-                            }}
-                            zh={zh}
-                          />
-                        )
-                      })}
-                      {!records.length ? <div className="lm-tier-empty">{zh ? '这类记录当前为 0 条' : '0 RECORDS OF THIS TYPE'}</div> : null}
-                    </div>
-                  </section>
+                  <button
+                    type="button"
+                    key={record.memory_id}
+                    className={`lm-table-row${record.quarantined ? ' shelved' : ''}${selectedId === record.memory_id ? ' selected' : ''}${touched ? ' touched' : ''}`}
+                    onClick={() => setPinnedId((value) => value === record.memory_id ? null : record.memory_id)}
+                  >
+                    <span className="lm-row-state"><i />{record.quarantined ? (zh ? '隔离' : 'SHELVED') : (zh ? '可用' : 'ACTIVE')}</span>
+                    <span className={`lm-row-tier tier-${record.tier}`}>{TIER_SHORT[record.tier][zh ? 0 : 1]}</span>
+                    <b className="lm-row-id" title={record.memory_id}>{record.memory_id}</b>
+                    <span className="lm-row-text" title={record.text}>{record.text}</span>
+                    <time>{shortTime(record.last_observed_at ?? record.first_observed_at, zh)}</time>
+                    <strong>×{record.access_count}</strong>
+                  </button>
                 )
               })}
+              {!tableRecords.length ? <div className="lm-table-empty">{zh ? '当前筛选没有记录' : 'NO RECORDS MATCH THIS VIEW'}</div> : null}
             </div>
+          </section>
 
+          {selectedSummary ? (
+            <div className="lm-detail-sheet">
+              <button type="button" className="lm-detail-close" onClick={() => setPinnedId(null)}>{zh ? '关闭详情' : 'CLOSE DETAIL'} ×</button>
             <LiveMemoryInspector
               summary={selectedSummary}
               detail={selectedDetail}
               step={currentStep}
-              loading={Boolean(selectedId && !selectedDetail)}
+              loading={detailLoading}
               zh={zh}
             />
-          </div>
-
-          <footer className="lm-legend">
-            <span><i className="sample-card" />{zh ? '实线框 = 游标处已出现' : 'SOLID FRAME = PRESENT AT CURSOR'}</span>
-            <span><i className="sample-pending" />{zh ? '虚线框 = 此刻尚未写入' : 'DASHED FRAME = NOT YET WRITTEN'}</span>
-            <span><i className="sample-acid" />{zh ? '荧光格 = 本步真实时间字段变化' : 'ACID CELL = REAL TIME FIELD CHANGED THIS STEP'}</span>
-            <span><i className="sample-quarantine" />{zh ? '双线 = 当前已打入冷宫，原因保留原文' : 'DOUBLE RULE = SHELVED NOW, RAW REASON SHOWN'}</span>
-            <span>×N {zh ? '= 被找到或再次采用的次数' : '= TIMES FOUND OR REUSED'}</span>
-            <span>─ {zh ? '关联' : 'LINK'} · → {zh ? '有向关系或取代' : 'DIRECTED RELATION OR SUPERSESSION'}</span>
-          </footer>
+            </div>
+          ) : null}
         </>
       ) : null}
       </div>

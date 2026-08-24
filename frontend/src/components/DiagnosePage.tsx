@@ -266,6 +266,21 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject }: {
         ) : null}
       </header>
 
+      {scenario === 'live' && focusSubject ? (
+        <section className="dx-sec dx-focused-investigation" aria-label={zh ? '当前事件调查' : 'Current incident investigation'}>
+          <div className="dx-sec-k dx-focused-investigation-head">
+            <span>{zh ? '当前事件调查' : 'CURRENT INCIDENT INVESTIGATION'}</span>
+            <code>{focusSubject}</code>
+          </div>
+          <p className="dx-focused-investigation-note">
+            {zh
+              ? '正在对告警中选定的对象执行只读调查。下方回执直接列出命中的历史记忆、调整后的探针顺序、实际执行数量和知识检索结果。'
+              : 'Read-only investigation is running for the selected alert subject. The receipt below shows recalled memory, the reordered probe plan, actual execution count, and retrieved knowledge.'}
+          </p>
+          <InvestigateChat key={focusSubject} lang={lang} subject={focusSubject} />
+        </section>
+      ) : null}
+
       {st.s === 'load' ? <div className="dx-state">{tx.loading}</div>
         : st.s === 'err' ? <div className="dx-state">{tx.offline} · {st.m}</div>
         : (
@@ -484,7 +499,7 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject }: {
               </section>
             ) : null}
 
-            {scenario === 'live' ? (
+            {scenario === 'live' && !focusSubject ? (
               <section className="dx-sec">
                 <div className="dx-sec-k">{tx.chat}</div>
                 <InvestigateChat lang={lang} family={openRow ?? undefined} subject={focusIp ?? undefined} />

@@ -478,6 +478,7 @@ class FeatureStore:
         self._observation_ids_by_feature: dict[str, set[str]] = {}
         self._features: dict[str, NetworkFeature] = {}
         self._decisions: dict[str, PromotionDecision] = {}
+        self._decision_ids_by_feature: dict[str, set[str]] = {}
 
     def upsert_observation(self, observation: FeatureObservation) -> bool:
         previous = self._observations.get(observation.observation_id)
@@ -520,12 +521,18 @@ class FeatureStore:
         if decision.decision_id in self._decisions:
             return False
         self._decisions[decision.decision_id] = decision
+        self._decision_ids_by_feature.setdefault(decision.feature_id, set()).add(
+            decision.decision_id
+        )
         return True
 
     def decisions_for(self, feature_id: str) -> tuple[PromotionDecision, ...]:
         return tuple(
             sorted(
-                (row for row in self._decisions.values() if row.feature_id == feature_id),
+                (
+                    self._decisions[decision_id]
+                    for decision_id in self._decision_ids_by_feature.get(feature_id, set())
+                ),
                 key=lambda row: (row.decided_at, row.decision_id),
             )
         )
@@ -767,13 +774,14 @@ class NetworkFeatureEngine:
         if limit <= 0:
             return ()
         at = _utc(at, field_name="at")
-        self.reassess_all(now=at)
         wanted_assets = set(_tuple_strings(asset_ids))
         wanted_roles = set(_tuple_strings(roles))
-        matches: list[FeatureMatch] = []
+        # Scope is stable across reassessment, so first narrow the feature ids
+        # to records that could influence this investigation.  Reassessing all
+        # network-wide features on every single-host lookup made the first
+        # evidence receipt wait on thousands of unrelated promotion decisions.
+        candidate_ids: list[str] = []
         for feature in self.store.features():
-            if feature.state != "promoted":
-                continue
             scope = feature.scope
             if scope.asset_ids and wanted_assets and not wanted_assets.intersection(scope.asset_ids):
                 continue
@@ -786,6 +794,18 @@ class NetworkFeatureEngine:
                 and scope.config_version not in {config_version, "unversioned"}
             ):
                 continue
+            candidate_ids.append(feature.feature_id)
+        for feature_id in candidate_ids:
+            self.reassess(feature_id, now=at)
+
+        matches: list[FeatureMatch] = []
+        for feature_id in candidate_ids:
+            feature = self.store.get(feature_id)
+            if feature is None:
+                continue
+            if feature.state != "promoted":
+                continue
+            scope = feature.scope
             matched: list[str] = []
             specificity = 0.0
             if wanted_assets.intersection(scope.asset_ids):

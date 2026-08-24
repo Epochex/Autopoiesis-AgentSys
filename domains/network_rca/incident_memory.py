@@ -46,6 +46,7 @@ _INEFFECTIVE_TERMINALS = frozenset({
     "escalated",
     "revert_unverified",
 })
+_SAFETY_GATED_TERMINALS = frozenset({"no_safe_action"})
 _TERMINAL_KINDS = frozenset({
     *_INEFFECTIVE_TERMINALS,
     "no_safe_action",
@@ -95,6 +96,21 @@ def _identity(event: Mapping[str, Any]) -> tuple[str, str, str] | None:
     if not subject:
         return None
     return detector, subject, action
+
+
+def incident_ref(chain: Iterable[Mapping[str, Any]]) -> str:
+    """Stable identity for one Sentinel cycle while its timeline is still growing."""
+    rows = list(chain)
+    detected = next((row for row in rows if row.get("kind") == "detected"), None)
+    if detected is None:
+        raise ValueError("incident ref requires a detected row")
+    detector = _text(detected.get("detector"))
+    subject = _text(detected.get("target") or detected.get("subject"))
+    opened_at = _text(detected.get("at"))
+    if not detector or not subject or not opened_at:
+        raise ValueError("incident ref requires detector, subject, and detected time")
+    raw = f"{detector}\0{subject}\0{opened_at}".encode("utf-8")
+    return f"sentinel:{hashlib.sha256(raw).hexdigest()[:32]}"
 
 
 def completed_incident_chains(
@@ -530,13 +546,34 @@ def _ineffective_reason(
     return "the terminal disposition did not verify an effective repair"
 
 
+def is_control_hold_chain(chain: Iterable[Mapping[str, Any]]) -> bool:
+    """Whether an operator stop held a write before any action was attempted.
+
+    The repeated detector readings remain in the Sentinel timeline. They are
+    control-plane observations, not independent failed remediations, so turning
+    every poll into an ineffective memory would manufacture cases and dossiers.
+    """
+    rows = [dict(event) for event in chain]
+    if not rows:
+        return False
+    outcome = _ineffective_outcome(rows)
+    if outcome != "declined":
+        return False
+    terminal = _terminal_event(rows, outcome)
+    reason = _ineffective_reason(rows, terminal).lower()
+    return (
+        _attempt_count(rows, outcome, terminal) == 0
+        and "global remediation pause is active" in reason
+    )
+
+
 def synthesize_ineffective_memory(
     chain: Iterable[Mapping[str, Any]],
 ) -> SyntheticIneffectiveMemory | None:
     """Build a separately labelled memory for one ineffective terminal chain."""
 
     rows = [dict(event) for event in chain]
-    if not rows:
+    if not rows or is_control_hold_chain(rows):
         return None
     outcome = _ineffective_outcome(rows)
     if outcome is None:
@@ -601,6 +638,70 @@ def synthesize_ineffective_memory(
     return SyntheticIneffectiveMemory(run_id=run_id, record=record)
 
 
+def synthesize_safety_gated_memory(
+    chain: Iterable[Mapping[str, Any]],
+) -> SyntheticIneffectiveMemory | None:
+    """Retain a refusal decision without granting diagnosis or action credit."""
+    rows = [dict(event) for event in chain]
+    if not rows or _text(rows[-1].get("kind")) not in _SAFETY_GATED_TERMINALS:
+        return None
+    detected = next((event for event in rows if event.get("kind") == "detected"), None)
+    if detected is None:
+        return None
+    detector = _text(detected.get("detector"))
+    subject = _text(detected.get("target") or detected.get("subject"))
+    if not detector or not subject:
+        return None
+    terminal = rows[-1]
+    candidate = _text(
+        terminal.get("candidate_action") or detected.get("candidate_action") or "none"
+    )
+    reason = _text(terminal.get("reason") or terminal.get("note")) or (
+        "the registered write controls were not satisfied"
+    )
+    digest = _canonical_digest(rows)
+    run_id = f"sentinel-safety-run-{digest[:32]}"
+    memory_id = f"epi-safety-{digest[:32]}"
+    root_key = f"sentinel.{detector.lower()}"
+    tags = list(dict.fromkeys([
+        *_ascii_terms(rows, root_key),
+        "outcome:safety_gated",
+        "terminal:no_safe_action",
+        f"candidate-action:{candidate.lower()}",
+        f"detector:{detector.lower()}",
+    ]))
+    evidence_snapshot: list[dict[str, Any]] = []
+    evidence_ids: list[str] = []
+    for index, event in enumerate(rows):
+        kind = _text(event.get("kind"))
+        evidence_id = f"sentinel-evidence:{digest[:20]}:{index:03d}:{kind}"
+        evidence_ids.append(evidence_id)
+        evidence_snapshot.append({
+            "evidence_id": evidence_id,
+            "source": f"sentinel:{kind}",
+            "summary": _evidence_summary(event),
+            "data": dict(event),
+        })
+    record = MemoryRecord(
+        memory_id=memory_id,
+        tier="episodic",
+        text=(
+            f"SAFETY GATE: candidate={candidate}; subject={subject}; "
+            f"outcome=no_safe_action; reason={reason}"
+        ),
+        tags=tags,
+        asset_ids=_assets(rows, subject),
+        evidence_ids=evidence_ids,
+        confidence=1.0,
+        source_trace_ids=[run_id],
+        evidence_snapshot=evidence_snapshot,
+        first_observed_at=_timestamp(rows[0].get("at")),
+        last_observed_at=_timestamp(rows[-1].get("at")),
+        event_type="safety_gated:no_safe_action",
+    )
+    return SyntheticIneffectiveMemory(run_id=run_id, record=record)
+
+
 def _already_consolidated(memory: TieredMemoryStore, run_id: str) -> bool:
     return any(run_id in record.source_trace_ids for record in memory.records())
 
@@ -609,6 +710,8 @@ def consolidate_incident_chain(
     chain: Iterable[Mapping[str, Any]],
     memory: TieredMemoryStore | None,
     skills: SkillRegistry | None = None,
+    *,
+    flush_retained: bool = True,
 ) -> ConsolidationReport | None:
     """Retain one passed or ineffective chain, skipping an absent store/replay."""
 
@@ -617,8 +720,14 @@ def consolidate_incident_chain(
     rows = [dict(event) for event in chain]
     synthetic = synthesize_incident_run(rows)
     ineffective = synthesize_ineffective_memory(rows) if synthetic is None else None
+    safety_gated = (
+        synthesize_safety_gated_memory(rows)
+        if synthetic is None and ineffective is None else None
+    )
     run_id = synthetic.run_id if synthetic is not None else (
-        ineffective.run_id if ineffective is not None else ""
+        ineffective.run_id if ineffective is not None else (
+            safety_gated.run_id if safety_gated is not None else ""
+        )
     )
     if not run_id or _already_consolidated(memory, run_id):
         return None
@@ -629,16 +738,19 @@ def consolidate_incident_chain(
         skill.spec.name: skill.spec.model_copy(deep=True) for skill in registry.all()
     }
     try:
-        if ineffective is not None:
+        if ineffective is not None or safety_gated is not None:
             # An ineffective action is useful as a stop signal, but it is not a
             # diagnosis or a successful procedure.  Keep it out of the positive
             # credit, routing, reflection, and skill-evolution path entirely.
-            memory.add(ineffective.record)
-            memory.flush()
+            retained = ineffective or safety_gated
+            assert retained is not None
+            memory.add(retained.record)
+            if flush_retained:
+                memory.flush()
             return ConsolidationReport(
-                run_id=ineffective.run_id,
+                run_id=retained.run_id,
                 passed=False,
-                added=[ineffective.record.memory_id],
+                added=[retained.record.memory_id],
             )
         return consolidate_run(
             synthetic.events,
@@ -676,7 +788,11 @@ def consolidate_incident_timeline(
         return []
     reports: list[ConsolidationReport] = []
     for chain in completed_incident_chains(timeline):
-        report = consolidate_incident_chain(chain, memory, skills)
+        report = consolidate_incident_chain(
+            chain, memory, skills, flush_retained=False,
+        )
         if report is not None:
             reports.append(report)
+    if reports:
+        memory.flush()
     return reports

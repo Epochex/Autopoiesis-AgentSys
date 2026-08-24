@@ -186,9 +186,10 @@ class PostgresOperationalRepository:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_xact_lock(%s)", (_WRITER_LOCK,))
                 cursor.execute(
-                    "SELECT version, payload, updated_at FROM operational_memory_records "
+                    "SELECT version, updated_at, payload = %s::jsonb AS unchanged "
+                    "FROM operational_memory_records "
                     "WHERE kind=%s AND record_id=%s FOR UPDATE",
-                    (kind, record_id),
+                    (encoded, kind, record_id),
                 )
                 row = cursor.fetchone()
                 current_version = int(row[0]) if row is not None else 0
@@ -197,12 +198,13 @@ class PostgresOperationalRepository:
                         f"{kind}:{record_id} expected version {expected_version}, "
                         f"current version is {current_version}"
                     )
-                current_payload = row[1] if row is not None else None
-                if isinstance(current_payload, str):
-                    current_payload = json.loads(current_payload)
-                if row is not None and current_payload == document:
+                # Compare inside PostgreSQL.  The aggregate risk and feature
+                # records can be tens of megabytes; selecting the old JSONB
+                # value made psycopg decode the whole document under the GIL
+                # before every refresh and starved unrelated HTTP requests.
+                if row is not None and bool(row[2]):
                     return OperationalSnapshot(
-                        kind, record_id, current_version, document, row[2]
+                        kind, record_id, current_version, document, row[1]
                     )
                 version = current_version + 1
                 cursor.execute(

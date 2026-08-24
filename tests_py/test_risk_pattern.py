@@ -83,6 +83,14 @@ def test_update_is_idempotent_and_does_not_change_snapshot():
     assert store.list_patterns()[0].event_count == 1
 
 
+def test_duplicate_batch_reports_no_affected_patterns():
+    store = RiskPatternStore()
+    event = _event("same-batch")
+    assert len(store.ingest_many([event])) == 1
+
+    assert store.ingest_many([event]) == []
+
+
 def test_real_replay_and_drill_are_isolated_patterns():
     store = RiskPatternStore()
 

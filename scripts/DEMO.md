@@ -40,6 +40,14 @@ curl -fsS http://127.0.0.1:8026/api/healthz | python3 -m json.tool
 - 网关、哨兵、记忆库和前端是独立组件。
 - 前端展示来自轮询接口和审计账本。
 
+页面按数据来源分成三段：
+
+1. “01 · 真实事件处置记录”读取哨兵和事件落地记录，选中事件后显示本轮记忆回执。
+2. “02 · 离线记忆算法回放”固定运行 6 个留出案例 × 4 轮，使用独立临时目录展示长期晋升、强化、冲突、衰减和隔离。
+3. “03 · 本机在线记忆演化”读取 PostgreSQL 记忆事件账本，每 5 秒更新新增、强化、隔离和版本变化。
+
+真实事件的选择只联动第一段回执和第三段在线记忆。第二段保留独立游标，用于讲解长线算法演化。
+
 ## 流程 1：实时态势与有界处置
 
 本流程包含安全事件和隔离服务故障两个场景，分别检查安全门决策和低影响动作的执行回读。
@@ -77,13 +85,15 @@ sudo ./scripts/inject_incident.sh bruteforce
 
 #### 提示出现后：点击记录
 
-点击实时提示行。页面自动切换到“多轮故障回放”，并选中 `203.0.113.77` 对应态势记录。
+点击实时提示行。页面进入“真实事件处置记录”，并选中 `203.0.113.77` 对应态势记录。
 
 核对字段：
 
 - 处理轨迹完整记录“检测事实 → 二次确认 → 安全门条件 → 人工交接”。
 - “候选动作与安全门条件”卡列出临时封禁及未满足的条件。
 - 决策结果显示“写操作未授权”，后续责任显示“安全运营核验并处置”。
+- “本次事件记忆回执”依次显示事件证据、IncidentDossier、安全门事件记忆和后续引用状态。
+- 在线记忆仅生成 `safety_gated:no_safe_action` 事件记录，本轮不生成封禁成功经验和处置程序。
 
 确认页面落点与 `203.0.113.77` 对应，检测事实、候选动作、安全门条件、决策结果和后续责任引用同一条事件链。
 
@@ -105,13 +115,13 @@ sudo ./scripts/inject_incident.sh bruteforce
 sudo ./scripts/inject_incident.sh service-down
 ```
 
-脚本会创建 `demo-collector.service`，启动后使用 `SIGKILL` 杀死主进程。systemd 会把它记录为真实的 `failed` 单元。
+脚本会创建 `demo-collector-<UTC 时间>.service`，实际名称会打印到终端并写入 `/run/autopoiesis-service-down-unit`。启动后使用 `SIGKILL` 杀死主进程，systemd 会把它记录为真实的 `failed` 单元。
 
 #### 0 至约 45 秒：看态势首页
 
 注意：
 
-- 实时提示出现 `demo-collector.service`。
+- 实时提示出现终端刚打印的 `demo-collector-<UTC 时间>.service`。
 - 状态从“刚发现”进入“处置中”。
 - 两次检测之间存在二次确认阶段。
 
@@ -122,7 +132,14 @@ sudo ./scripts/inject_incident.sh service-down
 
 #### 出现提示后：点击记录
 
-页面进入“多轮故障回放”，对应服务记录自动选中。
+页面进入“真实事件处置记录”，对应服务记录自动选中。
+
+事件详情中的“本次事件记忆回执”会持续轮询本轮稳定事件标识：
+
+1. 检测后显示事件证据。
+2. 链路形成终态后显示本轮 IncidentDossier。
+3. 双窗口回读通过后显示本轮产生或强化的情节、模式和处置程序记忆。
+4. 后续相似调查产生 `influence` 后显示可归因引用数量。
 
 注意处理轨迹依次变化：
 
@@ -148,7 +165,7 @@ sudo ./scripts/inject_incident.sh service-down
 
 重点观察：
 
-1. 影响范围只包含 `demo-collector.service`。
+1. 影响范围只包含本轮唯一的 `demo-collector-<UTC 时间>.service`。
 2. 执行动作后，快速观察约 60 秒。
 3. 快速观察通过后，稳定性观察约 180 秒。
 4. 目标探针和保护探针采样数持续增加。
@@ -208,7 +225,7 @@ sudo ./scripts/demo_memory_rag.sh arm
 1. 检查 `failed_units` 程序性记忆是否处于可检索状态。
 2. 检查全局写操作当前没有被其他操作员暂停。
 3. 以 `memory-rag-demo` 身份暂停自动写操作。
-4. 再次杀死 `demo-collector.service`。
+4. 创建并杀死另一个唯一的 `demo-collector-<UTC 时间>.service`，实际对象从状态文件传给后续步骤。
 5. 保持哨兵检测和调查接口可用。
 
 注意终端输出：
@@ -224,9 +241,9 @@ sudo ./scripts/demo_memory_rag.sh arm
 
 ### 步骤 2：从态势首页进入对应记录
 
-等待 Page1 出现 `demo-collector.service`，点击该行。
+等待 Page1 出现终端打印的实际服务名，点击该行。
 
-页面切换到“多轮故障回放”，对应态势记录自动选中。
+页面进入“真实事件处置记录”，对应态势记录自动选中。
 
 注意：
 
@@ -241,7 +258,7 @@ sudo ./scripts/demo_memory_rag.sh arm
 页面进入“诊断处置”，焦点对象应保持为：
 
 ```text
-demo-collector.service
+demo-collector-<本轮 UTC 时间>.service
 ```
 
 “查这一个故障”会自动开始只读调查。
@@ -257,7 +274,7 @@ demo-collector.service
 - 优先探针是 `systemctl --failed --no-legend`。
 - 原始通用探针约 10 条。
 - 程序性记忆把失败服务检查调整到第一位。
-- 当前输出中确实包含 `demo-collector.service`。
+- 当前输出中确实包含本轮终端打印的实际服务名。
 - 现场证据确认后跳过其余无关通用探针。
 - 顶部显示“影响记录已持久化”。
 
@@ -348,7 +365,7 @@ done
 重点字段：
 
 - `kind: probe_shortcut`
-- `subject: demo-collector.service`
+- `subject: demo-collector-<本轮 UTC 时间>.service`
 - `preferred_probes`
 - `candidate_probe_count`
 - `saved_probe_count`
@@ -378,11 +395,11 @@ sudo ./scripts/demo_memory_rag.sh status
 排练时可以让视觉审查脚本按下面的状态抓图和断言：
 
 1. 态势首页存在实时提示行。
-2. 点击提示后，顶栏切换为“多轮故障回放”。
+2. 点击提示后，页面进入“真实事件处置记录”。
 3. 对应对象处于选中状态。
 4. “全链路拓扑剧场”可以打开。
 5. 服务故障期间进度和采样数发生变化。
-6. “看处置链路”进入诊断处置后仍保持 `demo-collector.service` 焦点。
+6. “看处置链路”进入诊断处置后仍保持终端打印的本轮服务名。
 7. `investigation-context-receipt` 存在。
 8. influence 状态最终变为 confirmed。
 9. 浏览器控制台无新增异常。
@@ -402,7 +419,7 @@ sudo ./scripts/inject_incident.sh status
 
 ```bash
 curl -fsS http://127.0.0.1:8026/api/rca/remediation/safety | python3 -m json.tool
-systemctl status demo-collector.service --no-pager
+unit=$(cat /run/autopoiesis-service-down-unit); systemctl status "$unit.service" --no-pager
 ```
 
 重点查看 EmergencyStop、动作预算、冷却时间和故障域锁。

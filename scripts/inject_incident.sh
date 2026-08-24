@@ -6,6 +6,7 @@
 # removes the unit and restores recurrence parameters changed by this script.
 #
 #   ./inject_incident.sh service-down   a watched unit crashes
+#   ./inject_incident.sh service-detect-only  leave a unique unit failed for read-only investigation
 #   ./inject_incident.sh bruteforce     repeated failed SSH auth from a controlled source
 #   ./inject_incident.sh recurring      the same unit crashes over and over until the
 #                                       system refuses to keep fixing it (~9 min, hands off)
@@ -19,7 +20,7 @@ set -euo pipefail
 SCENARIO="${1:-}"
 BASE_UNIT=demo-collector
 RUN_STATE="/run/autopoiesis-service-down-unit"
-if [[ "$SCENARIO" == "service-down" ]]; then
+if [[ "$SCENARIO" == "service-down" || "$SCENARIO" == "service-detect-only" ]]; then
     # A single-fault run represents a newly provisioned disposable service
     # instance. The fixed BASE_UNIT is reserved for the recurring scenario so
     # recurrence evidence from that scenario cannot alter this one's outcome.
@@ -483,7 +484,7 @@ PY
 }
 
 case "${1:-}" in
-service-down)
+service-down|service-detect-only)
     printf '%s\n' "$UNIT" > "$RUN_STATE"
     install_unit
     systemctl start "$UNIT"
@@ -515,6 +516,12 @@ service-down)
         wait_for_live_service_card 30 \
             || die "detected 已落盘，但没有投影出同 deviceKey 的态势卡和 feed 记录"
         echo "  · 点击该提醒可按 $SUBJECT 定位同一态势记录"
+        if [[ "$SCENARIO" == "service-detect-only" ]]; then
+            echo
+            echo "只读调查条件已就绪：$SUBJECT 保持 failed，实际对象已写入 $RUN_STATE。"
+            echo "页面调查完成后运行 cleanup，或解除暂停让哨兵重新评估。"
+            exit 0
+        fi
         echo
         echo "现在进入拓扑剧场观察：DETECT → CONFIRM → PREFLIGHT → ACT → WATCH → VERIFY"
         echo "脚本继续等待真实双观察窗闭环，并在结束时核对持久化事件顺序。"
@@ -765,7 +772,7 @@ cleanup)
     rm -f "$RUN_STATE"
     systemctl daemon-reload
     systemctl reset-failed "$UNIT" 2>/dev/null || true
-    echo "已清理 $UNIT。日志里的失败登录记录会随 journal 轮转自然过期，不影响任何东西。"
+    echo "已清理 $UNIT。本轮注入日志保留在 journal 审计记录中，并按系统轮转策略到期。"
     # Done second and on purpose: the gateway restart brings the sentinel back,
     # and it should come back to a box where the demo unit is already gone.
     if revert_demo_override; then

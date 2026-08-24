@@ -8,6 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TheaterEvent } from '../types'
+import { IncidentMemoryReceipt } from './IncidentMemoryReceipt'
 import { railFor, sentinelStageIds } from './netops-pipeline'
 import './live-situation.css'
 
@@ -16,6 +17,7 @@ interface TPt { ts: string; label: string; kind: string }
 interface Hypo { id: string; rank: number; statement: string; confidence: number; confidenceLabel: string; evidenceRefs: string[] }
 interface Suggestion {
   id: string; ts: string; scope: string; severity: string; priority: string; summary: string
+  incidentRef?: string; detectedAt?: string
   service: string; device: string; deviceKey: string; clusterSize: number; adaptiveMode: string
   triggerReasons: string[]; impactLevel: string
   anchorIp?: string | null; originIp?: string | null
@@ -131,6 +133,12 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
     }
     return suggestions.find((s) => s.id === snap?.defaultSuggestionId) ?? suggestions[0] ?? null
   }, [suggestions, pick, focusSubject, snap])
+  const newerThanSelected = useMemo(() => {
+    if (!focusSubject || !selected) return null
+    const latest = suggestions[0]
+    if (!latest || latest.id === selected.id) return null
+    return Date.parse(latest.ts) > Date.parse(selected.ts) ? latest : null
+  }, [focusSubject, selected, suggestions])
   const hot = useMemo(() => hotStages(selected), [selected])
   const rail = useMemo(() => railFor(selected?.scope, selected?.timeline), [selected])
   const reportOnly = selected?.reviewVerdict.verdictStatus === 'reported'
@@ -152,8 +160,8 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
     <section className="ls" aria-label={zh ? '落地态势记录' : 'Landed situation records'}>
       <header className="ls-head">
         <div className="ls-head-l">
-          <span className="ls-kick">{zh ? '事件处置 · 审计记录' : 'INCIDENT RESPONSE · AUDIT RECORDS'}</span>
-          <h2 className="ls-title">{zh ? <>处置<mark>记录</mark></> : <>RESPONSE <mark>RECORDS</mark></>}</h2>
+          <span className="ls-kick">{zh ? '01 · 真实事件处置 · 审计记录' : '01 · LIVE INCIDENT RESPONSE · AUDIT RECORDS'}</span>
+          <h2 className="ls-title">{zh ? <>真实事件<mark>处置记录</mark></> : <>LIVE INCIDENT <mark>RESPONSE</mark></>}</h2>
         </div>
         <div className="ls-head-r">
           <span className="ls-src">{zh ? '检测事实 + 候选动作 + 关联状态' : 'DETECTION FACTS + CANDIDATE ACTIONS + CORRELATION STATE'}</span>
@@ -163,6 +171,20 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
           </span>
         </div>
       </header>
+
+      {newerThanSelected ? (
+        <div className="ls-newer" role="status">
+          <span>
+            {zh ? '当前正在查看较早事件' : 'VIEWING AN EARLIER INCIDENT'} · <code>{selected?.deviceKey || selected?.device}</code>
+          </span>
+          <button
+            type="button"
+            onClick={() => setPick({ id: newerThanSelected.id, under: focusSubject ?? null })}
+          >
+            {zh ? `切换到最新事件 · ${newerThanSelected.deviceKey || newerThanSelected.device}` : `OPEN LATEST · ${newerThanSelected.deviceKey || newerThanSelected.device}`}
+          </button>
+        </div>
+      ) : null}
 
       {/* The processing rail for the selected incident.
           Two subsystems, two rails: a sentinel chain never enters the correlator. */}
@@ -237,6 +259,14 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
               ) : null}
             </div>
             <p className="ls-d-sum">{selected.summary}</p>
+
+            {selected.scope === 'sentinel' ? (
+              <IncidentMemoryReceipt
+                subject={selected.deviceKey || selected.device}
+                incidentRef={selected.incidentRef}
+                zh={zh}
+              />
+            ) : null}
 
             {/* Recorded event and decision timeline. */}
             <div className="ls-block">

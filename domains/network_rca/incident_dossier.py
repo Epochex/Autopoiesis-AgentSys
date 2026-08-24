@@ -650,7 +650,7 @@ def from_sentinel_chain(
                 observation=observation,
             ),
         )
-    elif terminal_kind == "escalated":
+    elif terminal_kind in {"escalated", "no_safe_action"}:
         status = "escalated"
 
     fingerprint = hashlib.sha256(f"{detector}\0{subject}".encode("utf-8")).hexdigest()

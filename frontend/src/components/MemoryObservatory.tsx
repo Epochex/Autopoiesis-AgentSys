@@ -209,18 +209,18 @@ export function MemoryObservatory({
     offlineReplay ? (zh ? '记忆从空开始' : 'Memory starts empty') : null,
   ].filter((part): part is string => part !== null).join(' · ')
   const onlineText = source?.onlineMemory === false
-    ? (zh ? '这不是本机记忆' : "This is not this host's memory")
+    ? (zh ? '计算范围：独立临时目录；本机在线库保持原值' : "Scope: isolated temporary directory; the host's online store remains unchanged")
     : source?.onlineMemory === true
       ? (zh ? '当前数据是本机记忆' : "This is this host's memory")
       : (zh ? '本机记忆状态未标明' : "This host's memory status is not specified")
 
   return (
-    <section className="mo" ref={rootRef} aria-label={zh ? '记忆机制回放' : 'Memory replay'}>
+    <section className="mo" ref={rootRef} aria-label={zh ? '离线记忆算法回放' : 'Offline memory algorithm replay'}>
       <header className="mo-head">
-        <span className="mo-head-t">{zh ? '记忆机制回放' : 'MEMORY REPLAY'}</span>
+        <span className="mo-head-t">{zh ? '02 · 离线记忆算法回放' : '02 · OFFLINE MEMORY ALGORITHM REPLAY'}</span>
         <p className="mo-head-s">{zh
-          ? '6 个留出集案例 × 4 轮，记忆从空开始。跑完即弃，与这台机器无关。'
-          : '6 held-out cases × 4 passes, memory starts empty. Discarded after the run and unrelated to this host.'}</p>
+          ? '6 个留出案例 × 4 轮，在独立临时目录中从空库计算，展示晋升、强化、冲突、衰减和隔离。'
+          : '6 held-out cases × 4 passes, computed from an empty store in an isolated directory to show promotion, reinforcement, conflict, decay, and quarantine.'}</p>
         <div className="mo-source" aria-label={zh ? '记忆数据源' : 'Memory data source'} aria-live="polite">
           <span className="mo-source-main">{sourceText}</span>
           <span className="mo-source-online">

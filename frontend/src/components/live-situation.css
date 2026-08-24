@@ -27,6 +27,9 @@
 
 /* ── header ─────────────────────────────────────────────────────────────── */
 .ls-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-bottom: 1.5px solid var(--ink); padding-bottom: 8px; }
+.ls-newer { align-items: center; background: #f2f3ed; border: 2px solid #b43a4d; display: flex; justify-content: space-between; gap: 16px; margin: 12px 0; padding: 10px 12px; }
+.ls-newer code { color: #8c2639; }
+.ls-newer button { background: #c7ff00; border: 1px solid #151715; cursor: pointer; font: inherit; font-weight: 700; padding: 7px 10px; }
 .ls-kick { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gray); }
 .ls-title { margin: 2px 0 0; font-family: var(--font-display); font-weight: 600; font-size: 26px; line-height: 0.92; letter-spacing: -0.02em; text-transform: uppercase; color: var(--ink); }
 .ls-title mark { background: var(--acid); color: var(--ink); padding: 0 2px; }

@@ -19,6 +19,7 @@ from core.remediate.sentinel import Sentinel, record, timeline
 from domains.network_rca.detectors import ALL_DETECTORS
 from domains.network_rca.incident_memory import consolidate_incident_timeline
 from domains.network_rca.incident_memory import completed_incident_chains
+from domains.network_rca.incident_memory import is_control_hold_chain
 from domains.network_rca.incident_dossier import from_sentinel_chain
 
 _sentinel: Sentinel | None = None
@@ -44,8 +45,17 @@ def _remember_completed_incidents() -> None:
 
     operational = getattr(main, "_operational_memory", None)
     if operational is not None:
-        for chain in completed_incident_chains(rows):
-            operational.save_dossier(from_sentinel_chain(chain, source_mode="live"))
+        dossiers = [
+            from_sentinel_chain(chain, source_mode="live")
+            for chain in completed_incident_chains(rows)
+            if not is_control_hold_chain(chain)
+        ]
+        save_batch = getattr(operational, "save_dossiers", None)
+        if callable(save_batch):
+            save_batch(dossiers)
+        else:
+            for dossier in dossiers:
+                operational.save_dossier(dossier)
 
     service = _resolve_learning_service()
     if service is None:

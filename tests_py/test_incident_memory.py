@@ -10,6 +10,8 @@ from core.memory.store import TieredMemoryStore
 from core.skills.registry import SkillRegistry
 from domains.network_rca.incident_memory import (
     consolidate_incident_timeline,
+    incident_ref,
+    is_control_hold_chain,
     synthesize_incident_run,
 )
 
@@ -125,6 +127,31 @@ def _escalated_chain() -> list[dict]:
     ]
 
 
+def _safety_gated_chain() -> list[dict]:
+    return [
+        {
+            "at": "2026-08-22T11:00:00+00:00",
+            "kind": "detected",
+            "detector": "admin_bruteforce",
+            "family": "security",
+            "subject": "203.0.113.77",
+            "target": "203.0.113.77",
+            "severity": "high",
+            "summary": "SSH 登录连续失败",
+            "candidate_action": "temporary_firewall_block",
+            "action": "",
+        },
+        {
+            "at": "2026-08-22T11:00:01+00:00",
+            "kind": "no_safe_action",
+            "detector": "admin_bruteforce",
+            "subject": "203.0.113.77",
+            "candidate_action": "temporary_firewall_block",
+            "reason": "来源归属和超时回滚条件未满足",
+        },
+    ]
+
+
 def test_passed_chain_uses_existing_consolidation_and_is_retrievable_in_english():
     memory = TieredMemoryStore()
 
@@ -173,6 +200,59 @@ def test_new_verified_case_restores_capacity_retired_failed_unit_procedure():
         ["service", "failed"], ["demo-api.service"], limit_per_tier=4,
     )
     assert procedure in recalled["procedural"]
+
+
+def test_reinforcement_retains_each_verified_run_and_asset_as_provenance():
+    memory = TieredMemoryStore()
+    first = _passed_chain()
+    second = deepcopy(first)
+    for event in second:
+        event["at"] = str(event["at"]).replace("2026-08-22", "2026-08-23")
+        if event.get("subject") == "demo-api.service":
+            event["subject"] = "demo-worker.service"
+        if event.get("target") == "demo-api.service":
+            event["target"] = "demo-worker.service"
+    first_run = synthesize_incident_run(first)
+    second_run = synthesize_incident_run(second)
+    assert first_run is not None and second_run is not None
+
+    consolidate_incident_timeline(first, memory, SkillRegistry())
+    consolidate_incident_timeline(second, memory, SkillRegistry())
+
+    for memory_id in ("sem-sentinel.failed_units", "proc-sentinel.failed_units"):
+        record = memory.get(memory_id)
+        assert record is not None
+        assert first_run.run_id in record.source_trace_ids
+        assert second_run.run_id in record.source_trace_ids
+        assert {"demo-api.service", "demo-worker.service"}.issubset(record.asset_ids)
+
+
+def test_no_safe_action_creates_only_a_safety_gate_event_memory():
+    memory = TieredMemoryStore()
+    chain = _safety_gated_chain()
+
+    first = consolidate_incident_timeline(chain, memory, SkillRegistry())
+    second = consolidate_incident_timeline(deepcopy(chain), memory, SkillRegistry())
+
+    assert len(first) == 1 and first[0].passed is False
+    assert second == []
+    assert len(memory.records()) == 1
+    record = memory.records()[0]
+    assert record.tier == "episodic"
+    assert record.event_type == "safety_gated:no_safe_action"
+    assert "outcome:safety_gated" in record.tags
+    assert "candidate-action:temporary_firewall_block" in record.tags
+    assert "203.0.113.77" in record.asset_ids
+    assert "SAFETY GATE" in record.text
+    assert all(item.tier not in {"semantic", "procedural"} for item in memory.records())
+
+
+def test_incident_ref_is_stable_while_a_chain_grows_and_changes_next_cycle():
+    chain = _passed_chain()
+    assert incident_ref(chain[:1]) == incident_ref(chain)
+    next_cycle = deepcopy(chain)
+    next_cycle[0]["at"] = "2026-08-23T10:00:00+00:00"
+    assert incident_ref(next_cycle) != incident_ref(chain)
 
 
 def test_replaying_the_same_chain_does_not_add_or_reinforce_again():
@@ -276,6 +356,25 @@ def test_other_ineffective_terminals_record_reason_and_attempt_count(
     assert f"outcome={terminal}" in record.text
     assert f"attempts={attempts}" in record.text
     assert "reason=" in record.text
+
+
+def test_global_operator_pause_does_not_manufacture_ineffective_cases():
+    chain = [
+        deepcopy(_passed_chain()[0]),
+        {
+            "at": "2026-08-22T10:00:03+00:00",
+            "kind": "declined",
+            "subject": "demo-api.service",
+            "action": "restart_unit",
+            "detector": "failed_units",
+            "reason": "global remediation pause is active: keep the unit failed for read-only investigation",
+        },
+    ]
+    memory = TieredMemoryStore()
+
+    assert is_control_hold_chain(chain) is True
+    assert consolidate_incident_timeline(chain, memory, SkillRegistry()) == []
+    assert memory.records() == []
 
 
 def test_ineffective_memory_bypasses_positive_consolidation(monkeypatch):

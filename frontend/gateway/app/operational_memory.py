@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from threading import Lock, RLock
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Iterable, Mapping, Protocol
 
 from core.env import autopoiesis_env
 from core.memory.operational_repository import (
@@ -33,7 +33,11 @@ from domains.network_rca.incident_dossier import (
     RemediationAttempt,
     from_risk_pattern,
 )
-from domains.network_rca.risk_pattern import RiskEvent, RiskPatternStore
+from domains.network_rca.risk_pattern import (
+    RiskEvent,
+    RiskPatternStore,
+    risk_event_from_clickhouse_row,
+)
 
 
 _RISK_STORE_ID = "risk-pattern-store-v1"
@@ -124,8 +128,20 @@ class OperationalMemoryService:
             "network_feature", _FEATURE_STORE_ID, self.features.store.to_dict()
         )
 
-    def save_dossier(self, dossier: Any) -> dict[str, Any]:
-        """Persist a completed dossier and feed only its verified claims downstream."""
+    def health_view(self) -> dict[str, Any]:
+        """Cheap counters for health checks, without running aggregation queries."""
+        with self._lock:
+            return {
+                "durable": self.durable,
+                "last_refresh": self.last_refresh.isoformat() if self.last_refresh else None,
+                "dossiers": len(self.dossiers.list()),
+                "risk_patterns": len(self.risks.list_patterns()),
+                "network_features": len(self.features.store.features()),
+                "sources": dict(self.source_status),
+            }
+
+    @staticmethod
+    def _dossier_payload(dossier: Any) -> dict[str, Any]:
         if isinstance(dossier, Mapping):
             payload = dict(dossier)
         elif callable(getattr(dossier, "to_dict", None)):
@@ -136,6 +152,11 @@ class OperationalMemoryService:
             payload = dict(dossier.model_dump(mode="json"))
         else:
             raise TypeError("dossier must be a mapping or expose to_dict()/as_dict()")
+        return payload
+
+    def save_dossier(self, dossier: Any) -> dict[str, Any]:
+        """Persist a completed dossier and feed only its verified claims downstream."""
+        payload = self._dossier_payload(dossier)
         dossier_id = str(
             payload.get("dossier_id") or payload.get("incident_id") or payload.get("id") or ""
         ).strip()
@@ -154,29 +175,65 @@ class OperationalMemoryService:
             self._persist_derived()
         return payload
 
+    def save_dossiers(self, dossiers: Iterable[Any]) -> list[dict[str, Any]]:
+        """Persist a timeline batch and reconcile derived stores once."""
+        saved: list[dict[str, Any]] = []
+        with self._lock:
+            for dossier in dossiers:
+                payload = self._dossier_payload(dossier)
+                dossier_id = str(
+                    payload.get("dossier_id") or payload.get("incident_id")
+                    or payload.get("id") or ""
+                ).strip()
+                if not dossier_id:
+                    raise ValueError("dossier id is required")
+                existing = self.dossiers.get(dossier_id)
+                if existing is not None and existing.model_dump(mode="json") == payload:
+                    continue
+                if payload.get("schema_version") == "1.0":
+                    self.dossiers.ingest(IncidentDossier.model_validate(payload))
+                self.repository.upsert("incident_dossier", dossier_id, payload)
+                try:
+                    self.features.update(payload, now=_now())
+                except (TypeError, ValueError):
+                    pass
+                saved.append(payload)
+            if saved:
+                self._persist_derived()
+        return saved
+
     def ingest_risk_rows(
         self, rows: list[dict[str, Any]], *, source_table: str
     ) -> int:
         with self._lock:
             before = self.risks.snapshot_json()
             affected = self.risks.ingest_clickhouse_rows(rows, source_table=source_table)
-            for pattern in affected:
-                self.features.update(pattern, now=_now())
-                if (
-                    pattern.provenance == "real"
-                    and pattern.status in {"active", "recurrent"}
-                    and pattern.risk_type in _INCIDENT_RISK_TYPES
-                    and pattern.event_count >= _INCIDENT_RISK_THRESHOLD
-                ):
-                    dossier = from_risk_pattern(pattern)
-                    if self.dossiers.get(dossier.dossier_id) is None:
-                        self.dossiers.ingest(dossier)
-                        self.repository.upsert(
-                            "incident_dossier", dossier.dossier_id,
-                            dossier.model_dump(mode="json"),
-                        )
+            # The bounded source query intentionally overlaps the previous
+            # window.  Most refreshes therefore replay the same event ids.  Do
+            # not rebuild and rewrite thousands of derived features when the
+            # authoritative risk store did not change.
+            if self.risks.snapshot_json() == before:
+                return 0
+            self._update_affected_patterns(affected)
             self._persist_derived()
-            return len(affected) if self.risks.snapshot_json() != before else 0
+            return len(affected)
+
+    def _update_affected_patterns(self, affected: Iterable[Any]) -> None:
+        for pattern in affected:
+            self.features.update(pattern, now=_now())
+            if (
+                pattern.provenance == "real"
+                and pattern.status in {"active", "recurrent"}
+                and pattern.risk_type in _INCIDENT_RISK_TYPES
+                and pattern.event_count >= _INCIDENT_RISK_THRESHOLD
+            ):
+                dossier = from_risk_pattern(pattern)
+                if self.dossiers.get(dossier.dossier_id) is None:
+                    self.dossiers.ingest(dossier)
+                    self.repository.upsert(
+                        "incident_dossier", dossier.dossier_id,
+                        dossier.model_dump(mode="json"),
+                    )
 
     def attach_remediation_run(
         self, dossier_id: str, result: Mapping[str, Any]
@@ -312,6 +369,7 @@ class OperationalMemoryService:
             database = "netops"
         source_status: dict[str, str] = {}
         updated = 0
+        risk_events: list[RiskEvent] = []
 
         source_queries = (
             (
@@ -336,7 +394,14 @@ class OperationalMemoryService:
         for source_table, sql in source_queries:
             try:
                 rows = query(sql)
-                updated += self.ingest_risk_rows(rows, source_table=source_table)
+                risk_events.extend(
+                    event
+                    for event in (
+                        risk_event_from_clickhouse_row(row, source_table=source_table)
+                        for row in rows
+                    )
+                    if event is not None
+                )
                 source_status[source_table] = f"ok:{len(rows)}"
             except Exception as error:  # source health is returned, never hidden
                 source_status[source_table] = f"error:{type(error).__name__}"
@@ -348,8 +413,14 @@ class OperationalMemoryService:
 
             rows = self._timeline_reader() if self._timeline_reader is not None else timeline(2000)
             chains = completed_incident_chains(rows)
-            for chain in chains:
-                self.save_dossier(from_sentinel_chain(chain, source_mode="live"))
+            # One timeline read is one repository transaction boundary.  A
+            # per-dossier save serializes and writes the complete risk and
+            # feature snapshots once per historical incident, even when every
+            # dossier already exists.  Batch comparison keeps an idle refresh
+            # cheap and persists derived state once when something changed.
+            self.save_dossiers(
+                from_sentinel_chain(chain, source_mode="live") for chain in chains
+            )
             source_status["sentinel.timeline"] = f"ok:{len(chains)}"
         except Exception as error:
             source_status["sentinel.timeline"] = f"error:{type(error).__name__}"
@@ -364,7 +435,7 @@ class OperationalMemoryService:
             checked_at = datetime.fromisoformat(
                 str(environment["checked_at"]).replace("Z", "+00:00")
             ).astimezone(timezone.utc)
-            risk_events = []
+            environment_events: list[RiskEvent] = []
             for finding in environment.get("findings") or ():
                 verification = dict(finding.get("verification") or {})
                 if verification.get("state") != "confirmed":
@@ -374,7 +445,7 @@ class OperationalMemoryService:
                 fault_class = str(finding.get("fault_class") or "").strip()
                 if not finding_id or not subject or not fault_class:
                     continue
-                risk_events.append(RiskEvent(
+                environment_events.append(RiskEvent(
                     event_id=f"environment:{finding_id}:{checked_at.date().isoformat()}",
                     observed_at=checked_at,
                     risk_type=fault_class,
@@ -384,29 +455,34 @@ class OperationalMemoryService:
                     evidence_ref=f"environment.findings:{finding_id}",
                     source_table="environment.findings",
                 ))
-            with self._lock:
-                before = self.risks.snapshot_json()
-                affected = self.risks.ingest_many(risk_events)
-                for pattern in affected:
-                    self.features.update(pattern, now=_now())
-                self._persist_derived()
-                changed_count = len(affected) if self.risks.snapshot_json() != before else 0
-            updated += changed_count
-            source_status["environment.findings"] = f"ok:{len(risk_events)}"
+            risk_events.extend(environment_events)
+            source_status["environment.findings"] = f"ok:{len(environment_events)}"
         except Exception as error:
             source_status["environment.findings"] = f"error:{type(error).__name__}"
 
+        # Apply the complete source cut under one capacity decision.  This
+        # prevents security events, flow facts and environment findings from
+        # evicting one another at the bounded-store edge, and it writes one
+        # authoritative risk/feature snapshot per refresh.
         try:
             with self._lock:
-                now = _now()
-                for dossier in self.dossiers.list():
-                    self.features.update(dossier, now=max(now, dossier.updated_at))
-                for pattern in self.risks.list_patterns():
-                    self.features.update(pattern, now=max(now, pattern.last_seen))
-                self._persist_derived()
-            source_status["feature.reconciliation"] = "ok:1"
+                before = self.risks.snapshot_json()
+                affected = self.risks.ingest_many(risk_events)
+                changed = self.risks.snapshot_json() != before
+                if changed:
+                    self._update_affected_patterns(affected)
+                    self._persist_derived()
+                updated += len(affected) if changed else 0
+            source_status["feature.risk_reconciliation"] = f"ok:{len(affected)}"
         except Exception as error:
-            source_status["feature.reconciliation"] = f"error:{type(error).__name__}"
+            source_status["feature.risk_reconciliation"] = f"error:{type(error).__name__}"
+
+        # Derived features are updated in the same critical section as every
+        # changed dossier, risk pattern and environment finding above.  A full
+        # sweep here only reparses unchanged sources and rewrites the same large
+        # snapshot.  Time-based feature reassessment remains part of ranked
+        # investigation reads, where its decision is actually consumed.
+        source_status["feature.reconciliation"] = "ok:source-driven"
 
         with self._lock:
             self.last_refresh = _now()
@@ -594,6 +670,27 @@ class OperationalMemoryService:
             "dossiers": dossiers,
             "risks": risks,
             "features": features,
+        }
+
+    def incident_receipt_view(
+        self, *, subject: str, dossier_id: str | None,
+    ) -> dict[str, Any]:
+        """Exact dossier lookup for one selected live incident.
+
+        Risk and feature aggregation have their own whole-network surface. The
+        event receipt stays on the deterministic chain key and never waits for
+        a broad source refresh holding the service orchestration lock.
+        """
+        dossier = self.dossiers.get(dossier_id) if dossier_id else None
+        dossiers = [
+            self._dossier_row(dossier.model_dump(mode="json"))
+        ] if dossier is not None else []
+        return {
+            "ok": True,
+            "durable": self.durable,
+            "dossiers": dossiers,
+            "risks": [],
+            "features": [],
         }
 
 

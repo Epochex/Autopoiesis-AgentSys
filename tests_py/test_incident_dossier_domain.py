@@ -312,7 +312,7 @@ def sentinel_chain(terminal: str) -> list[dict]:
     [
         ("declined", "open", "declined"),
         ("escalated", "escalated", "failed"),
-        ("no_safe_action", "open", None),
+        ("no_safe_action", "escalated", None),
     ],
 )
 def test_sentinel_non_success_outcomes_become_auditable_dossiers(

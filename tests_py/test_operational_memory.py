@@ -225,3 +225,18 @@ def test_environment_refresh_keeps_only_current_confirmed_structural_risks():
 
     assert [row["title"] for row in risks] == ["duplicate_ip_static"]
     assert risks[0]["evidence_count"] == 1
+
+
+def test_health_view_reports_stored_objects_without_refreshing_sources():
+    service = OperationalMemoryService(InMemoryOperationalRepository(), durable=False)
+
+    health = service.health_view()
+
+    assert health == {
+        "durable": False,
+        "last_refresh": None,
+        "dossiers": 0,
+        "risk_patterns": 0,
+        "network_features": 0,
+        "sources": {},
+    }

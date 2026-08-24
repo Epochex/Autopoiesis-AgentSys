@@ -4,6 +4,31 @@
    rest of a 1920 screen empty. */
 .stage[data-view='diagnose'] { max-width: none; padding: 24px 28px 60px; }
 
+.dx-focused-investigation {
+  border: 2px solid var(--ink, #161816);
+  box-shadow: inset 6px 0 0 var(--acid, #c7ff00);
+  margin-top: 18px;
+  padding: 16px 18px 20px;
+}
+
+.dx-focused-investigation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dx-focused-investigation-head code {
+  color: #315f61;
+  font-size: 13px;
+}
+
+.dx-focused-investigation-note {
+  margin: 10px 0 14px;
+  max-width: 1100px;
+  color: #424742;
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    PAGE 3 · 诊断处置 — the fault-family catalog for this network.
    Families read as a list, worst first; each expands in place to how a hit is

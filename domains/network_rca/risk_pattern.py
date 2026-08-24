@@ -477,7 +477,8 @@ class RiskPatternStore:
             max_event_ids=self.max_event_ids_per_pattern,
             prune=prune,
         )
-        self._enforce_pattern_bound()
+        if prune:
+            self._enforce_pattern_bound()
         return self._patterns.get(event.pattern_id)
 
     def ingest_many(self, events: Iterable[RiskEvent]) -> list[RiskPattern]:
@@ -490,16 +491,29 @@ class RiskPatternStore:
         newest = max(event.observed_at for event in batch)
         self._watermark = max(self._watermark or newest, newest)
         self.expire(self._watermark)
+        touched: set[str] = set()
         affected: set[str] = set()
         for event in batch:
+            existing = self._patterns.get(event.pattern_id)
+            duplicate = existing is not None and event.event_id in existing._event_ids
             pattern = self._ingest_retained(event, prune=False)
             if pattern is not None:
-                affected.add(pattern.pattern_id)
-        for pattern_id in affected:
+                touched.add(pattern.pattern_id)
+                if not duplicate:
+                    affected.add(pattern.pattern_id)
+        # Retention still applies to every pattern present in the overlapping
+        # query window.  Only genuinely changed patterns are returned to
+        # downstream feature extraction, so replaying 30k duplicate source
+        # rows cannot trigger thousands of redundant feature reassessments.
+        for pattern_id in touched:
             self._patterns[pattern_id]._prune(
                 retention=self.retention,
                 max_event_ids=self.max_event_ids_per_pattern,
             )
+        # Enforce the capacity boundary once for the complete source window.
+        # Applying it after every event makes two overlapping source batches
+        # repeatedly evict and recreate each other's boundary patterns.
+        self._enforce_pattern_bound()
         return [self._patterns[key] for key in sorted(affected) if key in self._patterns]
 
     def ingest_clickhouse_rows(

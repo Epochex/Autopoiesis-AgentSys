@@ -58,6 +58,10 @@ const PHASE_LABEL: Record<Row['phase'], [string, string]> = {
 
 /** Anything older than this is history, not a live alert. */
 const RECENT_MS = 30 * 60 * 1000
+/** A refused transient condition should leave the live queue soon after its
+ * detector stops refreshing it.  The append-only event remains available in
+ * the incident theater and audit views. */
+const HELD_RECENT_MS = 2 * 60 * 1000
 
 function reportSummary(subject: string, refusal: Record<string, unknown> | undefined, zh: boolean): string {
   const recorded = String(refusal?.reason ?? '').trim()
@@ -169,6 +173,11 @@ function summarise(events: Record<string, unknown>[], suggestions: SituationSugg
     else if (kinds.includes('declined')) phase = 'declined'
     else if (kinds.includes('cooldown')) phase = 'cooling'
     else if (kinds.includes('preflight')) phase = 'watching'
+
+    if (
+      (phase === 'declined' || phase === 'cooling')
+      && Date.parse(at) < Date.now() - HELD_RECENT_MS
+    ) continue
 
     const detection = [...chain].reverse().find((e) => e.kind === 'detected')
     const resolved = [...chain].reverse().find((e) => e.kind === 'resolved')

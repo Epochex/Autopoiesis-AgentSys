@@ -350,10 +350,28 @@ def healthz() -> dict[str, Any]:
     if _evolving_service is None:
         return {"status": "degraded", "runtimeError": _runtime_error}
     runtime = _evolving_service.health()
+    memory_records = _evolving_service.memory.records()
+    sentinel_records = sum(
+        1
+        for record in memory_records
+        if any(str(trace_id).startswith("sentinel") for trace_id in record.source_trace_ids)
+    )
     return {
         "status": "ok" if runtime.get("last_error") is None else "degraded",
         "durableMemory": _evolving_service.memory.repository is not None,
         "runtime": runtime,
+        "memorySystem": {
+            # The legacy counter belongs only to explicit validated-diagnosis runs.
+            # Sentinel incident learning uses a separate ingestion path and is
+            # reported independently so a zero here cannot hide live memories.
+            "diagnosisRunConsolidations": runtime.get("consolidations", 0),
+            "records": len(memory_records),
+            "sentinelIncidentRecords": sentinel_records,
+            "operationalObjects": (
+                _operational_memory.health_view()
+                if _operational_memory is not None else None
+            ),
+        },
     }
 
 
@@ -797,6 +815,52 @@ def _memory_resolved_cycles(record: Any) -> set[tuple[str, str, str, str]]:
     return cycles
 
 
+def _completed_memory_chain(
+    subject: str, incident_reference: str | None = None,
+) -> list[dict[str, Any]]:
+    """Exact closed Sentinel chain, with subject fallback for older cards.
+
+    The live-situation projection also selects the latest cycle for a subject.
+    Using the same append-only ledger here lets the UI distinguish records
+    produced by the selected incident from older memories about the same asset.
+    """
+    from core.remediate.sentinel import timeline
+    from domains.network_rca.incident_memory import completed_incident_chains, incident_ref
+
+    matches: list[list[dict[str, Any]]] = []
+    for chain in completed_incident_chains(timeline(2000)):
+        detected = next(
+            (row for row in chain if row.get("kind") == "detected"),
+            {},
+        )
+        target = str(detected.get("target") or detected.get("subject") or "")
+        if target == subject and (
+            incident_reference is None or incident_ref(chain) == incident_reference
+        ):
+            matches.append([dict(row) for row in chain])
+    return matches[-1] if matches else []
+
+
+def _incident_memory_trace_id(chain: list[dict[str, Any]]) -> str | None:
+    """Return the exact source trace id consolidation assigns to a chain."""
+    if not chain:
+        return None
+    from domains.network_rca.incident_memory import (
+        synthesize_incident_run,
+        synthesize_ineffective_memory,
+        synthesize_safety_gated_memory,
+    )
+
+    passed = synthesize_incident_run(chain)
+    if passed is not None:
+        return passed.run_id
+    ineffective = synthesize_ineffective_memory(chain)
+    if ineffective is not None:
+        return ineffective.run_id
+    safety_gated = synthesize_safety_gated_memory(chain)
+    return safety_gated.run_id if safety_gated is not None else None
+
+
 def _prior_cycle_memory_index(records: list[Any]) -> dict[tuple[str, str, str, str], dict[str, Any]]:
     """Map a cited repair round back to the episodic record that retained it."""
     index: dict[tuple[str, str, str, str], dict[str, Any]] = {}
@@ -928,6 +992,58 @@ def _trace_influence(event: Any, record: Any) -> dict[str, Any]:
     }
 
 
+def _memory_influences_for_record(
+    record: Any,
+    trace_events: list[Any],
+    timeline_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """All explicitly attributable effects for one record, in time order."""
+    memory_id = record.memory_id
+    influences = [
+        _trace_influence(event, record)
+        for event in trace_events
+        if event.kind in _MEMORY_INFLUENCE_KINDS
+        and memory_id in _trace_memory_ids(event)
+    ]
+
+    resolved_cycles = _memory_resolved_cycles(record)
+    for row in timeline_rows:
+        if row.get("kind") != "escalated":
+            continue
+        matching_cycles = [
+            dict(cycle)
+            for cycle in row.get("prior_cycles", [])
+            if isinstance(cycle, dict)
+            and (
+                str(cycle.get("at") or ""),
+                str(row.get("detector") or ""),
+                str(row.get("subject") or ""),
+                str(row.get("action") or ""),
+            ) in resolved_cycles
+        ]
+        if not matching_cycles:
+            continue
+        action = str(row.get("action") or "该动作")
+        influences.append({
+            "kind": "escalation",
+            "at": str(row.get("at") or ""),
+            "subject": str(row.get("subject") or ""),
+            "what_changed": f"拒绝执行 {action}，转人工",
+            "evidence": {
+                "recurrences": int(row.get("recurrences") or len(row.get("prior_cycles", []))),
+                "prior_cycles": [
+                    dict(cycle)
+                    for cycle in row.get("prior_cycles", [])
+                    if isinstance(cycle, dict)
+                ],
+                "matching_prior_cycles": matching_cycles,
+            },
+        })
+
+    influences.sort(key=lambda influence: str(influence.get("at") or ""))
+    return influences
+
+
 @app.get("/api/rca/memory")
 async def rca_memory(
     tier: Literal["episodic", "semantic", "procedural", "asset_profile"] | None = None,
@@ -1031,53 +1147,120 @@ async def rca_memory_influence(memory_id: str) -> dict[str, Any]:
         asyncio.to_thread(_memory_trace_events),
         asyncio.to_thread(_memory_influence_timeline),
     )
-    influences = [
-        _trace_influence(event, record)
-        for event in trace_events
-        if event.kind in _MEMORY_INFLUENCE_KINDS
-        and memory_id in _trace_memory_ids(event)
-    ]
-
-    resolved_cycles = _memory_resolved_cycles(record)
-    for row in timeline_rows:
-        if row.get("kind") != "escalated":
-            continue
-        matching_cycles = [
-            dict(cycle)
-            for cycle in row.get("prior_cycles", [])
-            if isinstance(cycle, dict)
-            and (
-                str(cycle.get("at") or ""),
-                str(row.get("detector") or ""),
-                str(row.get("subject") or ""),
-                str(row.get("action") or ""),
-            ) in resolved_cycles
-        ]
-        if not matching_cycles:
-            continue
-        action = str(row.get("action") or "该动作")
-        influences.append({
-            "kind": "escalation",
-            "at": str(row.get("at") or ""),
-            "subject": str(row.get("subject") or ""),
-            "what_changed": f"拒绝执行 {action}，转人工",
-            "evidence": {
-                "recurrences": int(row.get("recurrences") or len(row.get("prior_cycles", []))),
-                "prior_cycles": [
-                    dict(cycle)
-                    for cycle in row.get("prior_cycles", [])
-                    if isinstance(cycle, dict)
-                ],
-                "matching_prior_cycles": matching_cycles,
-            },
-        })
-
-    influences.sort(key=lambda influence: str(influence.get("at") or ""))
+    influences = _memory_influences_for_record(record, trace_events, timeline_rows)
     return {
         "ok": True,
         "memory_id": memory_id,
         "influences": influences,
         "note": "没有任何影响时 influences 为空数组，不要编",
+    }
+
+
+@app.get("/api/rca/event-memory-receipt")
+async def rca_event_memory_receipt(
+    subject: str = Query(min_length=1, max_length=128),
+    incident_ref: str | None = Query(default=None, min_length=1, max_length=128),
+) -> dict[str, Any]:
+    """Join one selected live incident to its durable memory consequences.
+
+    The response keeps three facts separate: the dossier created for the latest
+    completed chain, tiered records written by that exact chain, and older
+    subject memories that later changed an investigation or escalation.
+    """
+    durable, records, _configured_budget, _last_decay_at = await asyncio.to_thread(
+        _memory_records
+    )
+    chain, trace_events, timeline_rows = await asyncio.gather(
+        asyncio.to_thread(_completed_memory_chain, subject, incident_ref),
+        asyncio.to_thread(_memory_trace_events),
+        asyncio.to_thread(_memory_influence_timeline),
+    )
+    source_trace_id = _incident_memory_trace_id(chain)
+    current_records = [
+        record for record in records
+        if source_trace_id and source_trace_id in record.source_trace_ids
+    ]
+    # The receipt is incident-scoped. Subject-wide history stays on the online
+    # memory surface, where it cannot be mistaken for output of this cycle.
+    related_records: list[Any] = []
+    incident_closed_at = str(chain[-1].get("at") or "") if chain else ""
+
+    def memory_row(record: Any) -> dict[str, Any]:
+        influences = _memory_influences_for_record(
+            record, trace_events, timeline_rows,
+        )
+        return {
+            **_memory_list_record(record),
+            "influence_count": len(influences),
+            "subsequent_influence_count": sum(
+                bool(incident_closed_at) and str(item.get("at") or "") > incident_closed_at
+                for item in influences
+            ),
+            "latest_influence": influences[-1] if influences else None,
+        }
+
+    dossier_id: str | None = None
+    terminal_kind: str | None = None
+    if chain:
+        from domains.network_rca.incident_dossier import from_sentinel_chain
+
+        dossier_id = from_sentinel_chain(chain, source_mode="live").dossier_id
+        terminal_kind = str(chain[-1].get("kind") or "")
+    operational = (
+        await asyncio.to_thread(
+            _operational_memory.incident_receipt_view,
+            subject=subject,
+            dossier_id=dossier_id,
+        )
+        if _operational_memory is not None
+        else {
+            "ok": False,
+            "durable": False,
+            "dossiers": [],
+            "risks": [],
+            "features": [],
+        }
+    )
+    exact_dossiers = list(operational.get("dossiers", []))
+    current = [memory_row(record) for record in current_records]
+    related = [memory_row(record) for record in related_records]
+    influence_count = sum(
+        int(row["influence_count"]) for row in [*current, *related]
+    )
+    subsequent_influence_count = sum(
+        int(row["subsequent_influence_count"]) for row in current
+    )
+
+    if terminal_kind == "no_safe_action" and current:
+        lifecycle = "safety_gated"
+    elif subsequent_influence_count:
+        lifecycle = "reused"
+    elif current:
+        lifecycle = "memory_committed"
+    elif exact_dossiers:
+        lifecycle = "dossier_recorded"
+    else:
+        lifecycle = "awaiting_terminal"
+
+    return {
+        "ok": True,
+        "subject": subject,
+        "incident_ref": incident_ref,
+        "durable": durable and bool(operational.get("durable")),
+        "lifecycle": lifecycle,
+        "latest_incident": {
+            "completed": bool(chain),
+            "terminal_kind": terminal_kind,
+            "dossier_id": dossier_id,
+            "source_trace_id": source_trace_id,
+        },
+        "dossiers": exact_dossiers,
+        "risks": list(operational.get("risks", [])),
+        "features": list(operational.get("features", [])),
+        "current_memories": current,
+        "related_memories": related,
+        "influence_count": influence_count,
+        "subsequent_influence_count": subsequent_influence_count,
     }
 
 

@@ -307,6 +307,12 @@ def consolidate_run(
             sem.importance += 1.0
             sem.strength = 1.0
             sem.last_observed_at = observed_at
+            if run_id and run_id not in sem.source_trace_ids:
+                sem.source_trace_ids.append(run_id)
+            added_assets = [asset for asset in case.assets if asset not in sem.asset_ids]
+            if added_assets:
+                sem.asset_ids.extend(added_assets)
+                memory.reindex(sem.memory_id)
             report.reinforced.append(sem_id)
             _emit(recorder, "REINFORCE", sem_id, sem.tier, before=before, after=_snap(sem))
         else:
@@ -333,6 +339,12 @@ def consolidate_run(
             proc.importance += 1.0
             proc.strength = 1.0
             proc.last_observed_at = observed_at
+            if run_id and run_id not in proc.source_trace_ids:
+                proc.source_trace_ids.append(run_id)
+            for asset in case.assets:
+                if asset not in proc.asset_ids:
+                    proc.asset_ids.append(asset)
+                    retrieval_changed = True
             for st in skill_tags:
                 if st not in proc.tags:
                     proc.tags.append(st)

@@ -28,6 +28,8 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from domains.network_rca.incident_memory import incident_ref
+
 # Events that belong to one subject's chain. `cycle` and `sentinel_started` are
 # loop bookkeeping with no subject and are skipped.
 _CHAIN_KINDS = frozenset({
@@ -433,6 +435,10 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
 
     return {
         "id": f"sentinel-{_stable_id(subject)[:16]}",
+        "incidentRef": incident_ref(chain) if any(
+            row.get("kind") == "detected" for row in chain
+        ) else None,
+        "detectedAt": str(detection.get("at") or ""),
         "ts": last_ts,
         "scope": "sentinel",
         "severity": severity,

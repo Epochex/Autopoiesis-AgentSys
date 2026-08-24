@@ -1,0 +1,19 @@
+.imr { border: 1.5px solid var(--ink); background: var(--paper-2); padding: 9px 10px; display: flex; flex-direction: column; gap: 8px; }
+.imr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.imr-head div { display: flex; flex-direction: column; gap: 2px; }
+.imr-head div span { font: 8px var(--font-mono); letter-spacing: .12em; color: var(--gray); }
+.imr-head b { font: 600 12px var(--font-mono); color: var(--ink); }
+.imr-state { border: 1px solid var(--ink); padding: 2px 6px; font: 600 8px var(--font-mono); letter-spacing: .06em; color: var(--ink); text-transform: uppercase; }
+.imr-state.memory_committed,.imr-state.reused,.imr-state.safety_gated { background: var(--acid); }
+.imr-steps { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--rule); }
+.imr-steps article { min-width: 0; min-height: 90px; padding: 7px 8px; border-right: 1px solid var(--rule); display: flex; flex-direction: column; gap: 4px; opacity: .55; }
+.imr-steps article:last-child { border-right: 0; }
+.imr-steps article.done { opacity: 1; border-top: 2px solid var(--ink); }
+.imr-steps article > span { font: 8px var(--font-mono); color: var(--gray); }
+.imr-steps article > b { font: 600 9px var(--font-mono); color: var(--ink); }
+.imr-steps p { margin: 0; font: 8.5px/1.4 var(--font-mono); color: var(--ink-soft); overflow-wrap: anywhere; }
+.imr-steps p small { display: block; margin-top: 2px; font: 7.5px var(--font-mono); color: var(--gray); }
+.imr-steps code { font: 8px/1.35 var(--font-mono); color: var(--gray); overflow-wrap: anywhere; }
+.imr-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; font: 8px var(--font-mono); letter-spacing: .03em; color: var(--gray); }
+.imr-foot a { margin-left: auto; color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+@media (max-width: 900px) { .imr-steps { grid-template-columns: repeat(2,minmax(0,1fr)); } .imr-steps article:nth-child(2) { border-right: 0; } }
