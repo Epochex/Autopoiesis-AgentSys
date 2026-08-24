@@ -1,6 +1,8 @@
 import './live-alerts.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
+import type { TheaterEvent } from '../types'
+import { sentinelStageIds } from './netops-pipeline'
 import { latestIncidentCycle } from './sentinel-cycle'
 
 /* Real-time incident queue for events emitted by the sentinel.
@@ -18,6 +20,23 @@ interface Row {
   at: string
   phase: 'escalated' | 'watching' | 'resolved' | 'needs_human' | 'reported' | 'declined' | 'cooling' | 'detected'
   action: string | null
+  theater: TheaterEvent
+}
+
+interface SituationSuggestion {
+  id?: string
+  ts?: string
+  scope?: string
+  severity?: string
+  priority?: string
+  summary?: string
+  device?: string
+  deviceKey?: string
+  anchorIp?: string | null
+  originIp?: string | null
+  impactLevel?: string
+  timeline?: { kind?: string }[]
+  stageTelemetry?: { stageId?: string; detail?: string }[]
 }
 
 const SUBJECT_KINDS = new Set([
@@ -53,7 +72,67 @@ function reportSummary(subject: string, refusal: Record<string, unknown> | undef
     : 'Write not authorized: safety-gate conditions were not met; evidence is recorded for operator validation and response.'
 }
 
-function summarise(events: Record<string, unknown>[], zh: boolean): Row[] {
+function escalationSummary(
+  detection: Record<string, unknown> | undefined,
+  escalation: Record<string, unknown> | undefined,
+  zh: boolean,
+): string {
+  const recurrences = Number(escalation?.recurrences ?? 0)
+  const windowHours = Number(escalation?.window_hours ?? 0)
+  const current = String(detection?.summary ?? '').trim()
+  const currentSentence = current.replace(/[。.!！]+$/, '')
+  if (zh) {
+    const history = recurrences > 0
+      ? `${windowHours || 24} 小时内已有 ${recurrences} 轮处置通过回读后再次复发`
+      : '同一故障在处置后再次复发'
+    return `复发升级：${history}；${currentSentence || '当前故障仍成立'}。重复动作预算已用尽，转人工排查持续性原因。`
+  }
+  const history = recurrences > 0
+    ? `${recurrences} verified recoveries recurred within ${windowHours || 24} hours`
+    : 'the same fault recurred after remediation'
+  return `Recurrence escalation: ${history}; ${currentSentence || 'the fault remains present'}. The repeat-action budget is exhausted and persistent-cause investigation is assigned to an operator.`
+}
+
+function resolvedSummary(
+  subject: string,
+  resolved: Record<string, unknown> | undefined,
+  remediated: Record<string, unknown> | undefined,
+  zh: boolean,
+): string {
+  const readback = String(resolved?.note ?? remediated?.detail ?? '').trim()
+  if (zh) {
+    return `${subject} 已完成处置与现场回读${readback ? `：${readback}` : '，恢复状态已验证'}。`
+  }
+  return `${subject} completed remediation and live readback${readback ? `: ${readback}` : '; recovery is verified'}.`
+}
+
+function theaterEvent(
+  subject: string,
+  row: Omit<Row, 'theater'>,
+  chain: Record<string, unknown>[],
+  suggestion?: SituationSuggestion,
+): TheaterEvent {
+  const timeline = suggestion?.timeline?.map((step) => ({ kind: String(step.kind ?? '') }))
+    ?? chain.map((step) => ({ kind: String(step.kind ?? '') }))
+  return {
+    kind: 'suggestion',
+    id: String(suggestion?.id ?? `sentinel-live-${subject}-${row.at}`),
+    ts: String(suggestion?.ts ?? row.at),
+    device: String(suggestion?.deviceKey ?? suggestion?.device ?? subject),
+    deviceLabel: String(suggestion?.device ?? subject),
+    severity: String(suggestion?.severity ?? row.severity),
+    priority: suggestion?.priority,
+    summary: row.summary,
+    scope: String(suggestion?.scope ?? 'sentinel'),
+    anchorIp: suggestion?.anchorIp ?? undefined,
+    originIp: suggestion?.originIp ?? undefined,
+    blastScope: suggestion?.impactLevel,
+    blastSummary: suggestion?.stageTelemetry?.find((stage) => stage.stageId === 'preflight')?.detail,
+    stageIds: sentinelStageIds(timeline),
+  }
+}
+
+function summarise(events: Record<string, unknown>[], suggestions: SituationSuggestion[], zh: boolean): Row[] {
   const bySubject = new Map<string, Record<string, unknown>[]>()
   for (const event of events) {
     const kind = String(event.kind ?? '')
@@ -92,16 +171,23 @@ function summarise(events: Record<string, unknown>[], zh: boolean): Row[] {
     else if (kinds.includes('preflight')) phase = 'watching'
 
     const detection = [...chain].reverse().find((e) => e.kind === 'detected')
-    rows.push({
+    const resolved = [...chain].reverse().find((e) => e.kind === 'resolved')
+    const base: Omit<Row, 'theater'> = {
       subject,
       severity: String(detection?.severity ?? 'high'),
       summary: phase === 'reported'
         ? reportSummary(subject, noAction, zh)
+        : phase === 'escalated'
+          ? escalationSummary(detection, escalated, zh)
+          : phase === 'resolved'
+            ? resolvedSummary(subject, resolved, remediated, zh)
         : String(detection?.summary ?? ''),
       at,
       phase,
       action: (detection?.action as string | null) ?? null,
-    })
+    }
+    const suggestion = suggestions.find((item) => item.deviceKey === subject || item.device === subject)
+    rows.push({ ...base, theater: theaterEvent(subject, base, chain, suggestion) })
   }
   // Operator-owned and active records sort ahead of closed records.
   const order: Record<Row['phase'], number> = {
@@ -112,7 +198,17 @@ function summarise(events: Record<string, unknown>[], zh: boolean): Row[] {
   return rows
 }
 
-export function LiveAlerts({ lang, onOpen }: { lang: Lang; onOpen: (subject: string) => void }) {
+export function LiveAlerts({
+  lang,
+  onOpen,
+  theaterActive = false,
+  activeSubject,
+}: {
+  lang: Lang
+  onOpen: (subject: string, theater: TheaterEvent) => void
+  theaterActive?: boolean
+  activeSubject?: string
+}) {
   const zh = lang === 'zh'
   const [rows, setRows] = useState<Row[]>([])
   const inFlight = useRef(false)
@@ -123,7 +219,16 @@ export function LiveAlerts({ lang, onOpen }: { lang: Lang; onOpen: (subject: str
     try {
       const response = await fetch('/api/rca/sentinel/timeline?limit=400')
       const body = (await response.json()) as { events?: Record<string, unknown>[] }
-      setRows(summarise(body.events ?? [], zh))
+      let suggestions: SituationSuggestion[] = []
+      try {
+        const situationResponse = await fetch(`/api/rca/live-situation?lang=${zh ? 'zh' : 'en'}`)
+        const situation = (await situationResponse.json()) as { suggestions?: SituationSuggestion[] }
+        suggestions = situation.suggestions ?? []
+      } catch {
+        // The append-only timeline still provides a complete switch target while
+        // the richer projection is briefly unavailable.
+      }
+      setRows(summarise(body.events ?? [], suggestions, zh))
     } catch {
       // A dead endpoint must not blank the page underneath; keep the last view.
     } finally {
@@ -155,12 +260,21 @@ export function LiveAlerts({ lang, onOpen }: { lang: Lang; onOpen: (subject: str
         <span className="la-count">
           {counts.length ? counts.join(' · ') : (zh ? '当前记录均已闭环' : 'all current records closed')}
         </span>
-        <span className="la-hint">{zh ? '选择记录查看证据与决策链 ▸' : 'select a record for evidence and decision chain ▸'}</span>
+        <span className="la-hint">
+          {theaterActive
+            ? (zh ? '选择记录切换当前剧场 ▸' : 'select a record to switch the current theater ▸')
+            : (zh ? '选择记录查看证据与决策链 ▸' : 'select a record for evidence and decision chain ▸')}
+        </span>
       </div>
       <ul className="la-rows">
         {rows.slice(0, 6).map((row) => (
           <li key={row.subject}>
-            <button type="button" className={`la-row p-${row.phase} sv-${row.severity}`} onClick={() => onOpen(row.subject)}>
+            <button
+              type="button"
+              className={`la-row p-${row.phase} sv-${row.severity}${activeSubject === row.subject ? ' is-active' : ''}`}
+              aria-current={activeSubject === row.subject ? 'true' : undefined}
+              onClick={() => onOpen(row.subject, row.theater)}
+            >
               <span className="la-phase">{PHASE_LABEL[row.phase][zh ? 0 : 1]}</span>
               <span className="la-subject">{row.subject}</span>
               <span className="la-summary">{row.summary}</span>

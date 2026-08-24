@@ -586,7 +586,7 @@ export function TheaterStage({
                 <div className="th-inc-h">
                   <span className="th-inc-k">
                     {escalated
-                      ? (zh ? '已升级 · 需要人工' : 'ESCALATED — NEEDS A PERSON')
+                      ? (zh ? '复发升级 · 人工排查' : 'RECURRENCE ESCALATION · OPERATOR INVESTIGATION')
                       : theater.originIp
                         ? (zh ? '被攻击的是这台' : 'THIS HOST IS THE TARGET')
                         : (zh ? '故障就在这台' : 'FAULT IS HERE')}
@@ -619,7 +619,7 @@ export function TheaterStage({
                     {cycles.length ? (
                       <div className="th-inc-cite">
                         <div className="th-inc-cite-k">
-                          {zh ? '凭什么不修了' : 'WHY IT REFUSED'}
+                          {zh ? '停止重复处置的依据' : 'BASIS FOR STOPPING REPEAT ACTIONS'}
                         </div>
                         {cycles.map((cycle, i) => {
                           const key = citationKey(cycle, i)
@@ -634,8 +634,8 @@ export function TheaterStage({
                               >
                                 <span>
                                   {zh
-                                    ? `修好于 ${cycle.at.slice(11, 19)} → 又复发`
-                                    : `fixed ${cycle.at.slice(11, 19)} → came back`}
+                                    ? `回读通过 ${cycle.at.slice(11, 19)} · 后续复发`
+                                    : `readback passed ${cycle.at.slice(11, 19)} · later recurred`}
                                 </span>
                                 <span className="th-inc-cite-open">
                                   {expanded ? (zh ? '收起' : 'CLOSE') : (zh ? '查看记忆' : 'MEMORY')}
@@ -959,14 +959,14 @@ export function TheaterStage({
       {/* Live response for the device on stage. Anchored bottom-left so it sits
           clear of the banner, and only drawn once the sentinel has something to
           say about this subject. */}
-      <foreignObject x={20} y={556} width={620} height={reportClosed ? 210 : 126} className="th-rp-fo">
+      <foreignObject x={20} y={556} width={620} height={escalated ? 260 : reportClosed ? 210 : 126} className="th-rp-fo">
         <RemediationProgress subject={theater.device} lang={lang} />
       </foreignObject>
 
       {/* the transcript, under the progress rail: what it did, not just how far
           along it is. Open by default — see ExecutionLog. */}
       {isSentinel && chain?.commands.length ? (
-        <foreignObject x={20} y={690} width={620} height={210} className="th-xl-fo">
+        <foreignObject x={20} y={escalated ? 824 : 690} width={620} height={210} className="th-xl-fo">
           <ExecutionLog steps={chain.steps} commands={chain.commands} lang={lang} />
         </foreignObject>
       ) : null}

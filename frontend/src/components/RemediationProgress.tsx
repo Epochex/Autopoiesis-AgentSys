@@ -124,6 +124,42 @@ function withheldWrite(steps: Step[], zh: boolean): {
   }
 }
 
+function recurrenceContext(steps: Step[], zh: boolean): {
+  current: string
+  evidence: string
+  history: string
+  decision: string
+  next: string
+} | null {
+  const escalation = [...steps].reverse().find((step) => step.kind === 'escalated')
+  if (!escalation) return null
+  const detection = [...steps].reverse().find((step) => step.kind === 'detected')
+  const cycles = escalation.prior_cycles ?? []
+  const recurrences = escalation.recurrences ?? cycles.length
+  const windowHours = escalation.window_hours ?? 24
+  const samples = cycles.reduce((total, cycle) => total + (cycle.samples ?? 0), 0)
+  const evidenceLine = String(detection?.evidence?.line ?? '').trim()
+  const current = String(detection?.summary ?? '').trim()
+  const passed = cycles.filter((cycle) => cycle.outcome === 'passed').length
+  return zh ? {
+    current: `现场状态 · ${current || `${detection?.subject ?? escalation.subject ?? '目标'} 的故障检测仍成立。`}`,
+    evidence: evidenceLine
+      ? `检测证据 · ${evidenceLine}`
+      : '检测证据 · 当前轮已通过连续检测确认，未执行新的重启动作。',
+    history: `已完成排查 · ${windowHours} 小时内记录 ${recurrences} 次复发；此前 ${passed} 轮处置通过回读，共采集 ${samples} 次健康样本。`,
+    decision: `处置结论 · 同一动作在 ${windowHours} 小时内已 ${recurrences} 次通过回读后复发，达到复发预算；本轮未再次重启，已升级人工排查持续性原因。`,
+    next: `人工检查项 · 核对 ${detection?.subject ?? escalation.subject ?? '该服务'} 的退出码与 journal，检查依赖服务、配置和启动参数在历次恢复后的变化；修复持续性原因并通过回读后解除升级状态。`,
+  } : {
+    current: `CURRENT STATE · ${current || `The fault remains present on ${detection?.subject ?? escalation.subject ?? 'the target'}.`}`,
+    evidence: evidenceLine
+      ? `DETECTION EVIDENCE · ${evidenceLine}`
+      : 'DETECTION EVIDENCE · The current round passed consecutive detection; no new restart was executed.',
+    history: `COMPLETED CHECKS · ${recurrences} recurrences were recorded within ${windowHours} hours; ${passed} earlier actions passed readback across ${samples} health samples.`,
+    decision: `RESPONSE DECISION · The same action passed readback and later recurred ${recurrences} times within ${windowHours} hours, exhausting the recurrence budget. This round did not restart the service and is escalated for persistent-cause investigation.`,
+    next: `OPERATOR CHECKS · Inspect the exit code and journal for ${detection?.subject ?? escalation.subject ?? 'the service'}, then compare dependency, configuration, and launch-parameter changes after each recovery. Clear escalation after the persistent cause is fixed and readback passes.`,
+  }
+}
+
 export function RemediationProgress({ subject, lang }: { subject: string; lang: Lang }) {
   const zh = lang === 'zh'
   const steps = useSentinelChain(subject)?.steps ?? null
@@ -139,6 +175,7 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
   const running = !view.terminal
   const phases: readonly Phase[] = view.terminal === 'no_safe_action' ? REPORT_PHASES : ACTION_PHASES
   const withheld = view.terminal === 'no_safe_action' ? withheldWrite(round, zh) : null
+  const recurrence = view.terminal === 'escalated' ? recurrenceContext(round, zh) : null
 
   return (
     <div className={`rp${running ? ' is-running' : ''}`}>
@@ -181,6 +218,17 @@ export function RemediationProgress({ subject, lang }: { subject: string; lang: 
           <span>{withheld.gate}</span>
           <span>{withheld.result}</span>
           <span>{withheld.owner}</span>
+        </div>
+      ) : null}
+
+      {recurrence ? (
+        <div className="rp-recurrence">
+          <strong>{zh ? '故障上下文与排查结论' : 'FAULT CONTEXT & INVESTIGATION FINDINGS'}</strong>
+          <span>{recurrence.current}</span>
+          <span>{recurrence.evidence}</span>
+          <span>{recurrence.history}</span>
+          <span>{recurrence.decision}</span>
+          <span className="rp-next">{recurrence.next}</span>
         </div>
       ) : null}
 

@@ -19,6 +19,8 @@
   background:none; text-align:left; cursor:pointer; font-family:inherit; }
 .la-row:hover { background:var(--paper-2, #efeee9); }
 .la-row:focus-visible { outline:2px solid var(--ink, #0d0d0d); outline-offset:-2px; }
+.la-row.is-active { outline:2px solid var(--ink, #0d0d0d); outline-offset:-2px;
+  box-shadow:inset 5px 0 0 var(--acid, #ccff00); }
 /* Escalated and needs_human both ask for a person and both read red. The deeper
    red is the only thing separating them at a glance, and it belongs on the one
    the system has given up on. */

@@ -63,7 +63,8 @@ PRIOR_CYCLES = [
 ]
 
 ESCALATION_REASON = (
-    "同一处置在 24 小时内已经生效过 3 次又复发。重启治不好它——反复被弄坏说明另有原因，转人工。"
+    "同一处置在 24 小时内已有 3 次通过回读，随后同一故障再次出现；"
+    "已达到复发预算，停止重复执行并转人工排查持续性原因。"
 )
 
 # One full successful cycle still in the window, then the detection the system
@@ -187,7 +188,7 @@ def test_the_escalation_is_a_stage_of_its_own(tmp_path, monkeypatch):
     assert card["timeline"][-1]["kind"] == "escalated"
     # deliberately not the same words as `needs_human`: that one means a revert
     # could not be verified, this one means the system chose to stop repairing
-    assert card["timeline"][-1]["label"] == "不再自动修，转人工"
+    assert card["timeline"][-1]["label"] == "复发预算已用尽，升级人工处置"
 
 
 def test_the_refusal_sticks_while_the_detector_keeps_firing(tmp_path, monkeypatch):

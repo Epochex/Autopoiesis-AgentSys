@@ -401,7 +401,13 @@ function App() {
           {scenario === 'live' ? (
             <LiveAlerts
               lang={lang}
-              onOpen={(subject) => { setTraceSubject(subject); setView('trajectory') }}
+              theaterActive={Boolean(theater)}
+              activeSubject={theater?.device}
+              onOpen={(subject, event) => {
+                setTraceSubject(subject)
+                if (theater) openTheater(event)
+                else setView('trajectory')
+              }}
             />
           ) : null}
           <section className={`canvas-wrap ${show3D ? 'full3d' : threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>

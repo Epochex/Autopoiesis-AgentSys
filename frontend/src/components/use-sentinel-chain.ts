@@ -25,6 +25,7 @@ export interface ChainStep {
   need?: number
   note?: string
   summary?: string
+  evidence?: Record<string, unknown>
   needs_human?: boolean
   blast_radius?: { scope: string; summary: string } | null
   baseline?: Record<string, boolean> | null

@@ -284,6 +284,6 @@ def window_label(window_sec: float = WINDOW_SEC) -> str:
 
 def escalation_note(history: History, *, window_sec: float = WINDOW_SEC) -> str:
     return (
-        f"同一处置在 {window_label(window_sec)}内已经生效过 {history.recurrences} 次又复发。"
-        "重启治不好它——反复被弄坏说明另有原因，转人工。"
+        f"同一处置在 {window_label(window_sec)}内已有 {history.recurrences} 次通过回读，随后同一故障再次出现；"
+        "已达到复发预算，停止重复执行并转人工排查持续性原因。"
     )

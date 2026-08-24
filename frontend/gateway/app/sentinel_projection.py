@@ -62,7 +62,7 @@ _STEP_LABEL: dict[str, tuple[str, str]] = {
     "no_safe_action": ("自动执行条件未满足，转人工处置", "automatic controls not satisfied — operator queued"),
     "declined": ("前置条件不通过，拒绝执行", "preconditions failed — declined"),
     "cooldown": ("冷却中", "cooling down"),
-    "escalated": ("不再自动修，转人工", "STOPPED — HANDED TO A PERSON"),
+    "escalated": ("复发预算已用尽，升级人工处置", "RECURRENCE BUDGET EXHAUSTED, ESCALATED"),
     "escalation_cleared": ("目标恢复，升级解除", "TARGET RECOVERED, ESCALATION LIFTED"),
 }
 
