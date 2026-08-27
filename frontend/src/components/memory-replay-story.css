@@ -19,8 +19,7 @@
 .mrs-stage h3,
 .mrs-ledger-proof,
 .mrs-pass,
-.mrs-run,
-.mrs-narration span {
+.mrs-run {
   font-family: var(--font-mono);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -170,9 +169,6 @@
 .mrs-write-list i { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 7.5px var(--font-mono); }
 .mrs-write-list b { font-weight: 500; }
 .mrs-write-list i { color: var(--gray); font-style: normal; }
-.mrs-narration { margin: 0; padding: 9px 14px; border-top: 1px solid var(--ink); font: 11px/1.45 var(--font-display); }
-.mrs-narration span { margin-right: 10px; padding: 2px 5px; background: var(--ink); color: var(--paper); font-size: 8px; }
-
 @media (max-width: 1180px) {
   .mrs-head { grid-template-columns: 1fr; }
   .mrs-ledger-proof { padding-left: 0; border-left: 0; }

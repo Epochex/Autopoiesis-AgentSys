@@ -35,13 +35,6 @@ const assetLabel = (value: string, zh: boolean) => value === 'DAHUA_FORTIGATE'
   ? (zh ? 'FortiGate 设备' : 'FortiGate appliance')
   : value
 
-function pluralOps(events: MemEvent[], zh: boolean): string {
-  const counts = countMemoryOps(events)
-  return Object.entries(counts)
-    .map(([op, count]) => `${text(OP_LABEL[op as MemOp], zh)} ${count}`)
-    .join(zh ? '，' : ', ')
-}
-
 export function MemoryReplayStory({
   obs,
   cases,
@@ -89,24 +82,12 @@ export function MemoryReplayStory({
     { key: 'eviction', label: zh ? '容量淘汰' : 'CAPACITY EVICTION' },
   ].filter(({ key }) => status[key] && !status[key].fired)
 
-  const narration = recall.resolved
-    ? (zh
-      ? `本轮读取 ${retrievedCount} 条旧记录，采用 ${included.size} 条。旧案例给出候选根因，新执行的 ${recall.probes} 个探针完成确认，随后账本记录 ${pluralOps(active.events, true)}。`
-      : `This run retrieved ${retrievedCount} records and used ${included.size}. A prior case proposed the root cause, ${recall.probes} fresh probes confirmed it, and the ledger recorded ${pluralOps(active.events, false)}.`)
-    : retrievedCount === 0
-      ? (zh
-        ? `本轮从空库开始，执行 ${recall.probes} 个探针完成核查，并首次写入 ${pluralOps(active.events, true)}。这一步建立后续轮次可读取的案例、规律和方法。`
-        : `This run starts from an empty store, verifies the case with ${recall.probes} probes, and writes ${pluralOps(active.events, false)}. These records become available to later runs.`)
-      : (zh
-        ? `本轮读取 ${retrievedCount} 条旧记录并采用 ${included.size} 条，继续执行 ${recall.probes} 个探针完成核查，随后写入 ${pluralOps(active.events, true)}。`
-        : `This run retrieved ${retrievedCount} records, used ${included.size}, verified the case with ${recall.probes} probes, and wrote ${pluralOps(active.events, false)}.`)
-
   return (
     <section className="mrs" aria-label={zh ? '一次记忆回放的完整过程' : 'Complete memory replay story'}>
       <header className="mrs-head">
         <div>
-          <span className="mrs-kicker">{zh ? '演示主线 · 每一格是一轮完整调查' : 'DEMO SPINE · EACH CELL IS ONE COMPLETE INVESTIGATION'}</span>
-          <h2>{zh ? '旧经验如何进入新调查，再变成可复用记忆' : 'HOW PRIOR EXPERIENCE ENTERS A NEW CHECK AND BECOMES REUSABLE MEMORY'}</h2>
+          <span className="mrs-kicker">{zh ? '固定留出集 · 四轮离线对照记录' : 'FIXED HELD-OUT SET · FOUR-PASS OFFLINE RECORD'}</span>
+          <h2>{zh ? '当前运行的检索、核查与记忆变化' : 'RETRIEVAL, VERIFICATION, AND MEMORY CHANGES IN THE CURRENT RUN'}</h2>
         </div>
         <div className="mrs-ledger-proof">
           <span>{zh ? `生命周期账本 ${obs.events.length} 条` : `${obs.events.length} LIFECYCLE EVENTS`}</span>
@@ -137,7 +118,7 @@ export function MemoryReplayStory({
                 >
                   <span>{String(caseIndex + 1).padStart(2, '0')}</span>
                   <b>{shortId(item.rootCause)}</b>
-                  <em>{story.recall.resolved ? (zh ? '旧例已确认' : 'MEMORY CONFIRMED') : (zh ? '新例核查' : 'FRESH CHECK')}</em>
+                  <em>{story.recall.resolved ? (zh ? '根因一致' : 'ROOT MATCH') : (zh ? '独立核查' : 'FRESH CHECK')}</em>
                 </button>
               )
             })}
@@ -179,7 +160,7 @@ export function MemoryReplayStory({
           <article className="mrs-stage">
             <span className="mrs-stage-no">03</span>
             <h3>{zh ? '组装调查上下文' : 'ASSEMBLE CONTEXT'}</h3>
-            <div className="mrs-big"><b>{included.size}</b><span>{zh ? '条交给推理' : 'USED BY REASONING'}</span></div>
+            <div className="mrs-big"><b>{included.size}</b><span>{zh ? '条被编译器纳入' : 'INCLUDED BY COMPILER'}</span></div>
             <div className="mrs-tier-counts">
               {Object.entries(includedTiers).map(([tier, count]) => (
                 <span key={tier}><b>{count}</b>{text(TIER_LABEL[tier] ?? [tier, tier], zh)}</span>
@@ -195,8 +176,8 @@ export function MemoryReplayStory({
             <div className="mrs-big"><b>{recall.probes}</b><span>{zh ? '个探针' : 'PROBES'}</span></div>
             <p className="mrs-result">
               {recall.resolved
-                ? (zh ? '旧记忆提出的根因已由本轮探针确认' : 'THE RECALLED ROOT CAUSE WAS CONFIRMED BY THIS RUN')
-                : (zh ? '本轮完成独立核查并形成新案例' : 'THIS RUN COMPLETED A FRESH CHECK')}
+                ? (zh ? '记忆中的根因与本轮新证据结论一致' : 'THE STORED ROOT MATCHES THE FRESH-EVIDENCE RESULT')
+                : (zh ? '本轮没有产生记忆根因一致事件' : 'NO MEMORY ROOT-MATCH EVENT IN THIS RUN')}
             </p>
             <dl><dt>{zh ? '方法记忆减少探针' : 'PROCEDURAL SHORTCUT'}</dt><dd>{recall.shortcut ? (zh ? '已触发' : 'FIRED') : (zh ? '未触发' : 'DID NOT FIRE')}</dd></dl>
           </article>
@@ -218,7 +199,6 @@ export function MemoryReplayStory({
           </article>
         </div>
 
-        <p className="mrs-narration"><span>{zh ? '现场讲解句' : 'DEMO LINE'}</span>{narration}</p>
       </div>
     </section>
   )

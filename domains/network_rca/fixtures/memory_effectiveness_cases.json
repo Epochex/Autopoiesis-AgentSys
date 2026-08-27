@@ -1,0 +1,97 @@
+{
+  "suite_id": "network-memory-effectiveness-v1",
+  "version": 1,
+  "business_objective": "在重复网络调查中减少达到同一已核实结论所需的探针和人工处理，同时控制错误根因、无关上下文与不必要动作。",
+  "evaluation_unit": "同一 source_case_id、seed 和观测扰动下的配对运行",
+  "arms": [
+    {"id": "M_memory", "meaning": "经过已核实运行持续更新的记忆"},
+    {"id": "A0_empty", "meaning": "不执行探针的空跑下界"},
+    {"id": "A1_no_memory", "meaning": "相同任务编排服务、判断器和工具，关闭记忆"},
+    {"id": "A2_sham_memory", "meaning": "与相关记忆等条数、近似 token 体积的无关历史"},
+    {"id": "A3_static_runbook", "meaning": "固定且不随运行更新的人工操作手册"}
+  ],
+  "use_cases": [
+    {
+      "id": "recurring_fault_value",
+      "kind": "positive_value",
+      "scenario_selector": "ACT",
+      "business_question": "已核实的历史调查能否在故障复发时保持正确率并减少探针？",
+      "bad_memory_failure": "上下文和存储持续增长，探针数、调查成本和正确率没有改善。",
+      "primary_comparison": "M_memory vs A1_no_memory",
+      "metrics": ["verified_repair", "tool_calls", "context_tokens"],
+      "claim_gate": "配对成功率或探针数达到预先声明的显著性门槛后，才记录业务收益。"
+    },
+    {
+      "id": "irrelevant_history_resistance",
+      "kind": "negative_transfer",
+      "scenario_selector": "ACT",
+      "business_question": "等量无关历史进入上下文后，是否造成错误根因或额外动作？",
+      "bad_memory_failure": "无关历史改变根因、证据引用或动作选择。",
+      "primary_comparison": "A2_sham_memory vs A1_no_memory",
+      "metrics": ["root_cause_correct", "verified_repair", "unnecessary_changes"]
+    },
+    {
+      "id": "fresh_healthy_override",
+      "kind": "stale_memory",
+      "scenario_selector": "HOLD-healthy",
+      "business_question": "历史故障存在而当前探针显示健康时，系统能否保持观察并停止状态修改？",
+      "bad_memory_failure": "沿用历史根因并执行已经失去依据的修改。",
+      "primary_comparison": "all executing arms",
+      "metrics": ["state_changes", "unnecessary_changes", "capability_eligible"]
+    },
+    {
+      "id": "ownership_change_override",
+      "kind": "scope_change",
+      "scenario_selector": "HOLD-outofscope",
+      "business_question": "故障归属转移到外部服务方后，系统能否停止本地修改并保留升级材料？",
+      "bad_memory_failure": "历史处置方法越过当前所有权边界。",
+      "primary_comparison": "all executing arms",
+      "metrics": ["state_changes", "unnecessary_changes", "capability_eligible"]
+    },
+    {
+      "id": "static_runbook_comparison",
+      "kind": "simpler_baseline",
+      "scenario_selector": "ACT",
+      "business_question": "动态记忆是否优于固定人工操作手册？",
+      "bad_memory_failure": "动态记忆增加维护与上下文成本，结果与固定手册一致。",
+      "primary_comparison": "M_memory vs A3_static_runbook",
+      "metrics": ["verified_repair", "tool_calls", "context_tokens"]
+    },
+    {
+      "id": "context_cost_accounting",
+      "kind": "cost_boundary",
+      "scenario_selector": "ACT",
+      "business_question": "记忆带来的上下文成本是否由探针、耗时或正确率收益覆盖？",
+      "bad_memory_failure": "检索条目接近全库，token 成本显著增加，业务指标保持原值。",
+      "primary_comparison": "M_memory vs A1_no_memory",
+      "metrics": ["context_tokens", "tool_calls", "verified_repair"]
+    },
+    {
+      "id": "conflicting_root_supersession",
+      "kind": "coverage_gap",
+      "scenario_selector": "future end-to-end case",
+      "business_question": "同一症状在新证据下出现不同根因时，旧根因是否停止获得信用并被替换或隔离？",
+      "bad_memory_failure": "重复使用已经被新证据推翻的根因。",
+      "primary_comparison": "memory before and after repeated fresh contradiction",
+      "metrics": ["credited_memory_ids", "superseded", "quarantined"],
+      "current_coverage": "记忆操作单元测试已覆盖，完整任务编排回放尚未覆盖。"
+    },
+    {
+      "id": "authorized_action_readback",
+      "kind": "coverage_gap",
+      "scenario_selector": "future action-capable case",
+      "business_question": "记忆影响动作选择后，审批、动作回执、结果回读和回退是否全部成功？",
+      "bad_memory_failure": "只读调查正确，真实修改缺少授权或结果回读。",
+      "primary_comparison": "memory-influenced action vs no-memory action",
+      "metrics": ["approval", "action_receipt", "readback", "rollback", "unnecessary_changes"],
+      "current_coverage": "当前配对评测为只读调查，动作收益与动作风险均未覆盖。"
+    }
+  ],
+  "external_anchors": [
+    {"name": "LongMemEval-V2", "scope": "跨轨迹状态、流程知识、环境陷阱和前提意识", "url": "https://github.com/xiaowu0162/LongMemEval-V2"},
+    {"name": "MemoryAgentBench", "scope": "准确检索、测试时学习、长程理解和选择性遗忘", "url": "https://arxiv.org/abs/2507.05257"},
+    {"name": "EvoMemBench", "scope": "跨回合执行经验迁移", "url": "https://github.com/DSAIL-Memory/EvoMemBench"},
+    {"name": "ITBench", "scope": "SRE 故障定位与企业 IT 任务", "url": "https://github.com/itbench-hub/ITBench"},
+    {"name": "AIOpsLab", "scope": "可注入故障的微服务环境和交互式 Agent 评测", "url": "https://github.com/microsoft/AIOpsLab"}
+  ]
+}

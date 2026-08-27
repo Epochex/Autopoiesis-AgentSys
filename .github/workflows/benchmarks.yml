@@ -28,4 +28,9 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Deterministic benchmark run (seed / synthetic fixtures)
-        run: python3 examples/benchmarks.py
+        run: |
+          python3 examples/benchmarks.py
+          python3 -m core.eval.memory_effectiveness_suite
+
+      - name: Memory effectiveness contract
+        run: python3 -m pytest -q tests_py/test_memory_ablation.py tests_py/test_memory_effectiveness_suite.py

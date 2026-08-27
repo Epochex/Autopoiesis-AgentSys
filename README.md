@@ -390,7 +390,10 @@ M 相对 A2 平均少 0.25 条探针，95% bootstrap CI 为 0.00 至 0.75，配�
 ~~~bash
 python3 -m core.eval.memory_ablation
 python3 -m core.eval.memory_contribution
+python3 -m core.eval.memory_effectiveness_suite
 ~~~
+
+业务目标、五臂判定口径、正反用例、当前覆盖缺口与公开 benchmark 对接计划见 [记忆有效性测试](./docs/MEMORY_EFFECTIVENESS.md)。
 
 ### 3. R230 六案例组件消融
 
