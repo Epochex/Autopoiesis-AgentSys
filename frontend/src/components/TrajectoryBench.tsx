@@ -2,6 +2,7 @@ import './trajectory-bench.css'
 import './trajectory.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
+import { rc } from '../i18n'
 import type { Observatory, TheaterEvent } from '../types'
 import { MemoryObservatory } from './MemoryObservatory'
 import { LiveSituation } from './LiveSituation'
@@ -19,6 +20,7 @@ type CaseRow = { id: string; query: string; root_cause_key: string; assets: stri
 type Summary = { passes: number; n_cases: number; accuracy_warm: number; accuracy_cold: number; memory_grown: number; probes_warm: number; probes_cold: number; probes_saved_pct: number; insights: number }
 type Resp = {
   ok: boolean; live: boolean; topic: string; topic_events: number | null
+  dataMode?: string; onlineMemory?: boolean
   streamed?: { ok: boolean; produced: number; degraded: boolean; note?: string } | null
   cases: CaseRow[]; per_event: PerEvent[]; summary: Summary
   observatory?: Observatory | null
@@ -185,7 +187,22 @@ export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (
            restyled copy. .traj-page's own rule is just `gap:0`, so no layout leaks. */
         <div className="traj-page tb-reuse">
           <div className="tp-seam" role="separator"><span>{tx.seam}</span></div>
-          <MemoryObservatory obs={d.observatory} zh={zh} caseRoots={Object.fromEntries(d.cases.map((x) => [x.id, x.root_cause_key]))} />
+          <MemoryObservatory
+            obs={d.observatory}
+            zh={zh}
+            cases={d.cases.map((item) => ({
+              id: item.id,
+              query: item.query,
+              rootCause: rc(item.root_cause_key, lang),
+              assets: item.assets,
+            }))}
+            source={{
+              dataMode: d.dataMode,
+              onlineMemory: d.onlineMemory,
+              caseCount: d.cases.length,
+              passes: d.summary.passes,
+            }}
+          />
         </div>
       ) : null}
     </div>

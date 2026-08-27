@@ -574,6 +574,24 @@ export interface Observatory {
   capability_status?: Record<string, RuntimeCapabilityStatus>
 }
 
+/** Public case metadata used to connect one replay run to the question it
+ * answers. This stays separate from RcaCase because the two replay endpoints
+ * expose different diagnosis envelopes. */
+export interface MemoryReplayCase {
+  id: string
+  query: string
+  rootCause: string
+  assets: string[]
+}
+
+/** Provenance that qualifies the complete offline replay surface. */
+export interface MemoryReplaySource {
+  dataMode?: string
+  onlineMemory?: boolean
+  caseCount: number
+  passes: number
+}
+
 /* ── /api/rca/evolution ────────────────────────────────────────────────────
  * Cold-vs-warm recurrence result: one self replayed over a recurring real
  * incident stream. Consumed by TrajectoryPage, which reads `ready` and hands
@@ -603,6 +621,9 @@ export interface EvoData {
   cold: { by_pass: EvoByPass[] }
   memory?: MemHealth
   observatory?: Observatory
+  dataMode?: string
+  onlineMemory?: boolean
+  benchmark?: { caseCount?: number; passes?: number }
 }
 
 export interface RcaSnapshot {

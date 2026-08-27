@@ -86,7 +86,22 @@ export function TrajectoryPage({
       {/* the memory the run learns from, replayed from empty */}
       <section className="fx-first">
         {evo?.ready && evo.observatory
-          ? <MemoryObservatory obs={evo.observatory} zh={zh} caseRoots={Object.fromEntries(cases.map((x) => [x.id, x.diagnosis.rootCauseKey]))} />
+          ? <MemoryObservatory
+              obs={evo.observatory}
+              zh={zh}
+              cases={cases.map((item) => ({
+                id: item.id,
+                query: item.query,
+                rootCause: rc(item.diagnosis.rootCauseKey, lang),
+                assets: item.assets,
+              }))}
+              source={{
+                dataMode: evo.dataMode,
+                onlineMemory: evo.onlineMemory,
+                caseCount: evo.benchmark?.caseCount ?? cases.length,
+                passes: evo.benchmark?.passes ?? evo.passes,
+              }}
+            />
           : <div className="fx-first-wait">{zh ? '正在计算离线基准回放…' : 'RUNNING OFFLINE BENCHMARK REPLAY…'}</div>}
       </section>
 

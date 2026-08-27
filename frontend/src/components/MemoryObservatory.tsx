@@ -6,16 +6,23 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { prefersReducedMotion } from '../reduced-motion'
-import type { MemEvent, MemRecall, Observatory } from '../types'
+import type {
+  MemEvent,
+  MemRecall,
+  MemoryReplayCase,
+  MemoryReplaySource,
+  Observatory,
+} from '../types'
 import { MemoryGraph } from './MemoryGraph'
 import { MemoryInspector } from './MemoryInspector'
 import { ContextPacket } from './ContextPacket'
 import { RouteRuler } from './RouteRuler'
+import { MemoryReplayStory } from './MemoryReplayStory'
 import { MemoryTimeline } from './MemoryTimeline'
 import './memory-observatory.css'
 
-/** One real event per tick: 257 events ≈ 15s, the length of a demo beat. */
-const TICK_MS = 60
+/** One real event per tick: the current 185-event ledger plays in about 33s. */
+const TICK_MS = 180
 
 /* Read at mount, not subscribed to: playback intent is a decision taken once,
  * when the viewer arrives. Flipping a running replay because the OS setting
@@ -23,20 +30,16 @@ const TICK_MS = 60
  * is why this reads the plain function and not the subscribing hook. */
 const reducedMotion = prefersReducedMotion
 
-type MemorySource = {
-  dataMode?: string
-  onlineMemory?: boolean
-  benchmark?: { caseCount?: number; passes?: number }
-}
-
 export function MemoryObservatory({
   obs,
   zh,
-  caseRoots,
+  cases,
+  source,
 }: {
   obs: Observatory
   zh: boolean
-  caseRoots?: Record<string, string>
+  cases: MemoryReplayCase[]
+  source: MemoryReplaySource
 }) {
   const last = obs.events.length - 1
   const rootRef = useRef<HTMLElement | null>(null)
@@ -51,19 +54,6 @@ export function MemoryObservatory({
    * that can never start. */
   const [onScreen, setOnScreen] = useState(() => typeof IntersectionObserver !== 'function')
   const [pinned, setPinned] = useState<string | null>(null)
-  const [source, setSource] = useState<MemorySource | null>(null)
-
-  /* The parent receives only `observatory`, while provenance lives at the
-   * evolution response's top level. Read those fields here so this screen does
-   * not infer its source from record ids or from benchmark-looking content. */
-  useEffect(() => {
-    let alive = true
-    fetch('/api/rca/evolution?passes=4', { headers: { Accept: 'application/json' } })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: MemorySource) => { if (alive) setSource(data) })
-      .catch(() => { if (alive) setSource(null) })
-    return () => { alive = false }
-  }, [])
 
   /* The replay is the argument this screen makes, and it only makes it if the
    * viewer watches memory fill from empty. Mounting is not watching: the
@@ -189,18 +179,14 @@ export function MemoryObservatory({
     [obs.events],
   )
 
-  const offlineReplay = source?.dataMode === 'offline_benchmark_replay'
+  const offlineReplay = source.dataMode === 'offline_benchmark_replay'
   const scope = [
-    typeof source?.benchmark?.caseCount === 'number'
-      ? `${source.benchmark.caseCount} ${zh ? '案例' : 'cases'}`
-      : null,
-    typeof source?.benchmark?.passes === 'number'
-      ? `${source.benchmark.passes} ${zh ? '轮' : 'passes'}`
-      : null,
+    `${source.caseCount} ${zh ? '案例' : 'cases'}`,
+    `${source.passes} ${zh ? '轮' : 'passes'}`,
   ].filter((part): part is string => part !== null).join(' × ')
   const modeText = offlineReplay
     ? (zh ? '离线基准重放' : 'Offline benchmark replay')
-    : source?.dataMode
+    : source.dataMode
       ? (zh ? `记忆数据 · ${source.dataMode}` : `Memory data · ${source.dataMode}`)
       : (zh ? '记忆数据 · 数据模式未标明' : 'Memory data · mode not specified')
   const sourceText = [
@@ -208,19 +194,22 @@ export function MemoryObservatory({
     scope ? `${zh ? '留出集 ' : 'Held-out set '}${scope}` : null,
     offlineReplay ? (zh ? '记忆从空开始' : 'Memory starts empty') : null,
   ].filter((part): part is string => part !== null).join(' · ')
-  const onlineText = source?.onlineMemory === false
+  const onlineText = source.onlineMemory === false
     ? (zh ? '计算范围：独立临时目录；本机在线库保持原值' : "Scope: isolated temporary directory; the host's online store remains unchanged")
-    : source?.onlineMemory === true
+    : source.onlineMemory === true
       ? (zh ? '当前数据是本机记忆' : "This is this host's memory")
       : (zh ? '本机记忆状态未标明' : "This host's memory status is not specified")
+  const caseRoot = currentRecall
+    ? cases.find((item) => item.id === currentRecall.case_id)?.rootCause
+    : undefined
 
   return (
     <section className="mo" ref={rootRef} aria-label={zh ? '离线记忆算法回放' : 'Offline memory algorithm replay'}>
       <header className="mo-head">
         <span className="mo-head-t">{zh ? '02 · 离线记忆算法回放' : '02 · OFFLINE MEMORY ALGORITHM REPLAY'}</span>
         <p className="mo-head-s">{zh
-          ? '6 个留出案例 × 4 轮，在独立临时目录中从空库计算，展示晋升、强化、冲突、衰减和隔离。'
-          : '6 held-out cases × 4 passes, computed from an empty store in an isolated directory to show promotion, reinforcement, conflict, decay, and quarantine.'}</p>
+          ? `${source.caseCount} 个留出案例 × ${source.passes} 轮，从空库重放；界面按运行标识连接检索、核查、写入和证据。`
+          : `${source.caseCount} held-out cases × ${source.passes} passes from an empty store; run ids connect retrieval, verification, writes, and evidence.`}</p>
         <div className="mo-source" aria-label={zh ? '记忆数据源' : 'Memory data source'} aria-live="polite">
           <span className="mo-source-main">{sourceText}</span>
           <span className="mo-source-online">
@@ -229,6 +218,36 @@ export function MemoryObservatory({
           </span>
         </div>
       </header>
+
+      <MemoryReplayStory
+        obs={obs}
+        cases={cases}
+        cursorSeq={cursor}
+        currentEvent={atCursor}
+        onCursor={scrub}
+        onSelectMemory={(memoryId) => setPinned(memoryId)}
+        zh={zh}
+      />
+
+      <div className="mo-detail-head">
+        <span>02–03</span>
+        <b>{zh ? '展开检索排名与实际采用的上下文' : 'EXPAND RETRIEVAL RANKING AND THE CONTEXT ACTUALLY USED'}</b>
+        <em>{zh ? '对应上方第 02、03 步' : 'SUPPORTS STEPS 02 AND 03 ABOVE'}</em>
+      </div>
+      <ContextPacket
+        recall={currentRecall}
+        prevRecall={prevRecall}
+        records={obs.records}
+        capabilities={obs.capabilities}
+        caseRoot={caseRoot}
+        zh={zh}
+      />
+
+      <div className="mo-detail-head">
+        <span>05</span>
+        <b>{zh ? '查看写回后形成的三类记忆和单条证据' : 'INSPECT THE THREE MEMORY TYPES AND RECORD-LEVEL EVIDENCE'}</b>
+        <em>{zh ? '酸绿色只表示当前账本步骤发生了变化' : 'ACID MARKS ONLY WHAT CHANGED AT THE CURRENT LEDGER STEP'}</em>
+      </div>
       <div className="mo-body">
         <div className="mo-space">
           <MemoryGraph
@@ -255,17 +274,12 @@ export function MemoryObservatory({
           />
         </aside>
       </div>
-      {/* the assembled context handed to the reasoner — follows the cursor and
-          shows content + growth + why each memory earned its place */}
-      <ContextPacket
-        recall={currentRecall}
-        prevRecall={prevRecall}
-        records={obs.records}
-        capabilities={obs.capabilities}
-        caseRoot={currentRecall ? caseRoots?.[currentRecall.case_id] : undefined}
-        zh={zh}
-      />
 
+      <div className="mo-detail-head">
+        <span>{zh ? '账本' : 'LEDGER'}</span>
+        <b>{zh ? '按真实先后顺序逐项回放生命周期变化' : 'REPLAY LIFECYCLE CHANGES IN THEIR RECORDED ORDER'}</b>
+        <em>{zh ? '播放、暂停、拖动或跳到稀有事件' : 'PLAY, PAUSE, SCRUB, OR STEP TO A RARE EVENT'}</em>
+      </div>
       <MemoryTimeline
         events={obs.events}
         cursorSeq={cursor}
