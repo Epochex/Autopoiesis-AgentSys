@@ -7,6 +7,7 @@
 import './memory-inspector.css'
 import type { ReactNode } from 'react'
 import type { MemCapabilities, MemEvent, MemRecall, MemRecord, MemSnapshot, MemTier } from '../types'
+import { buildRelationRows } from './memory-relations'
 
 /* ── i18n · EN is uppercased by CSS on label classes, so EN labels stay short.
       Prose notes use .mi-note, which deliberately does NOT uppercase. ── */
@@ -134,6 +135,34 @@ function Chips({ items, cap }: { items: string[]; cap?: string }) {
   return (
     <span className="mi-chips">
       {items.map((x) => <i key={x} className={cap ? `mi-chip ${cap}` : 'mi-chip'}>{x}</i>)}
+    </span>
+  )
+}
+
+function RelationList({ rows, zh }: { rows: ReturnType<typeof buildRelationRows>; zh: boolean }) {
+  if (!rows.length) return <span className="mi-nil">—</span>
+  return (
+    <span className="mi-rel-list" role="list">
+      {rows.map((row) => (
+        <span className="mi-rel" role="listitem" key={row.targetId}>
+          <span className="mi-rel-target" title={row.targetId}>{row.targetId}</span>
+          <span className="mi-rel-meta">
+            {row.relations.length ? row.relations.map((relation, index) => (
+              <span
+                className="mi-rel-kind"
+                key={`${relation.relation_type}-${index}`}
+                title={relation.evidence_ids.length
+                  ? `${relation.relation_type} · confidence ${f2(relation.confidence)} · evidence ${relation.evidence_ids.join(', ')}`
+                  : `${relation.relation_type} · confidence ${f2(relation.confidence)}`}
+              >
+                {relation.relation_type} <span aria-hidden="true">·</span> <b>{f2(relation.confidence)}</b>
+              </span>
+            )) : (
+              <span className="mi-rel-kind generic">{zh ? '关联' : 'linked'}</span>
+            )}
+          </span>
+        </span>
+      ))}
     </span>
   )
 }
@@ -298,6 +327,10 @@ export function MemoryInspector({
 
   // LINK carries no snapshot, so fold its real targets in on top of the last snapshot.
   const linkedAt = uniq([...(st?.links ?? []), ...past.filter((e) => e.op === 'LINK' && e.target_id).map((e) => e.target_id as string)])
+  // Never leak final-store relation metadata backwards while the replay cursor
+  // is still before this record (or before its relation-bearing snapshot).
+  const relationsAt = st?.relations ?? (events.length === 0 ? record.relations ?? [] : [])
+  const relationRows = buildRelationRows(linkedAt, relationsAt)
 
   const inCtx = recall?.included_memory_ids.includes(id) ?? false
   const wasDropped = recall?.dropped_memory_ids.includes(id) ?? false
@@ -420,7 +453,7 @@ export function MemoryInspector({
           <h4 className="mi-h">{t('prov', zh)}<em className="mi-h-sub">{t('atCur', zh)}</em></h4>
           <Row k={t('tags', zh)}><Chips items={st?.tags ?? []} /></Row>
           <Row k={t('assets', zh)}><Chips items={st?.asset_ids ?? []} /></Row>
-          <Row k={t('links', zh)}><Chips items={linkedAt} cap="id" /></Row>
+          <Row k={t('links', zh)}><RelationList rows={relationRows} zh={zh} /></Row>
 
           <h4 className="mi-h thin">{t('recFields', zh)}</h4>
           <Row k={t('evid', zh)}><Chips items={record.evidence_ids} cap="id" /></Row>

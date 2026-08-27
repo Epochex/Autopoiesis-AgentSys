@@ -400,7 +400,15 @@ export interface MemRecord {
   quarantine_reason: string | null
   source_trace_ids: string[]
   links: string[]
+  relations: MemoryRelation[]
   evidence_snapshot: { evidence_id?: string; source?: string; summary?: string }[]
+}
+
+export interface MemoryRelation {
+  target_id: string
+  relation_type: string
+  confidence: number
+  evidence_ids: string[]
 }
 
 /* Current durable production memory from GET /api/rca/memory. The collection
@@ -463,12 +471,7 @@ export interface LiveMemoryEventsResponse {
   events: LiveMemoryEvent[]
 }
 
-export interface LiveMemoryRelation {
-  target_id: string
-  relation_type: string
-  confidence: number
-  evidence_ids: string[]
-}
+export type LiveMemoryRelation = MemoryRelation
 
 export interface LiveMemoryDetailRecord
   extends Omit<LiveMemoryListRecord, 'source_trace_ids'> {
@@ -495,6 +498,7 @@ export interface MemSnapshot {
   tags: string[]
   asset_ids: string[]
   links: string[]
+  relations?: MemoryRelation[]
 }
 
 export interface MemEvent {

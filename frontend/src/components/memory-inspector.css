@@ -127,6 +127,27 @@
 .traj-page .mi-chip { font-style: normal; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.01em; color: var(--ink); border: 1px solid var(--rule); background: var(--paper-2); padding: 1px 5px; overflow-wrap: anywhere; }
 .traj-page .mi-chip.id { border-color: var(--ink); background: var(--paper); }
 
+/* Typed memory relations. One target owns one row; multiple relation types stay
+   together on the right and wrap below the id when the inspector narrows. */
+.traj-page .mi-rel-list { display: grid; gap: 4px; min-width: 0; }
+.traj-page .mi-rel {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px;
+  align-items: start; min-width: 0; padding: 4px 5px;
+  border: 1px solid var(--ink); background: var(--paper);
+}
+.traj-page .mi-rel-target {
+  min-width: 0; font-family: var(--font-mono); font-size: 9.25px; line-height: 1.35;
+  color: var(--ink); overflow-wrap: anywhere; word-break: break-word;
+}
+.traj-page .mi-rel-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; min-width: 0; }
+.traj-page .mi-rel-kind {
+  white-space: nowrap; border-left: 2px solid var(--ink); background: var(--paper-3);
+  padding: 2px 4px; font-family: var(--font-mono); font-size: 8px; line-height: 1.25;
+  letter-spacing: 0.02em; color: var(--ink);
+}
+.traj-page .mi-rel-kind b { font-weight: 500; font-variant-numeric: tabular-nums; }
+.traj-page .mi-rel-kind.generic { border-left-color: var(--gray); color: var(--gray); }
+
 /* ── state @ cursor · scalars. --acid ONLY when it moved at this step ─────── */
 .traj-page .mi-scal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .traj-page .mi-sc { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border: 1.5px solid var(--rule); background: var(--paper-2); }
@@ -270,4 +291,6 @@
   .traj-page .mi-sc.dead { grid-column: 1 / -1; flex-direction: row; align-items: baseline; gap: 8px; }
   .traj-page .mi-row, .traj-page .mi-init { grid-template-columns: 76px 1fr; }
   .traj-page .mi-d { grid-template-columns: 76px 1fr auto 1fr; }
+  .traj-page .mi-rel { grid-template-columns: minmax(0, 1fr); }
+  .traj-page .mi-rel-meta { justify-content: flex-start; }
 }
