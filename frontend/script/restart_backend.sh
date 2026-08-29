@@ -11,6 +11,7 @@ BACKEND_CMD=(
   "--app-dir" "${ROOT_DIR}"
   "--host" "${BACKEND_HOST}"
   "--port" "${BACKEND_PORT}"
+  "--loop" "asyncio"
 )
 LOG_PATH="${BACKEND_LOG_PATH:-/tmp/contexthelix-console-backend.log}"
 PID_PATH="${BACKEND_PID_PATH:-/tmp/contexthelix-console-backend.pid}"

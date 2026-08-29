@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 from threading import RLock
@@ -64,6 +65,38 @@ def _validate_identity(kind: str, record_id: str) -> tuple[OperationalKind, str]
     return kind, normalized_id  # type: ignore[return-value]
 
 
+def _event_payload(
+    kind: OperationalKind,
+    document: dict[str, Any],
+    encoded: str | None = None,
+) -> dict[str, Any]:
+    """Return a bounded audit receipt for a materialized aggregate commit."""
+    if kind == "incident_dossier":
+        return document
+    if encoded is None:
+        encoded = json.dumps(
+            document,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    collection_names = (
+        ("patterns",)
+        if kind == "risk_pattern"
+        else ("features", "observations", "decisions")
+    )
+    return {
+        "schema_version": 1,
+        "event_kind": "aggregate_snapshot_commit",
+        "snapshot_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        "snapshot_bytes": len(encoded.encode("utf-8")),
+        "counts": {
+            name: len(document.get(name) or ())
+            for name in collection_names
+        },
+    }
+
+
 class InMemoryOperationalRepository:
     """Thread-safe deterministic repository used by offline and degraded modes."""
 
@@ -109,7 +142,7 @@ class InMemoryOperationalRepository:
                 kind=snapshot.kind,
                 record_id=snapshot.record_id,
                 version=snapshot.version,
-                payload=snapshot.payload,
+                payload=_event_payload(kind, document),
                 updated_at=snapshot.updated_at,
                 event_offset=len(self._events) + 1,
             ))
@@ -119,6 +152,21 @@ class InMemoryOperationalRepository:
         kind, record_id = _validate_identity(kind, record_id)
         with self._lock:
             return self._records.get((kind, record_id))
+
+    def payload_size(self, kind: OperationalKind, record_id: str) -> int | None:
+        kind, record_id = _validate_identity(kind, record_id)
+        with self._lock:
+            snapshot = self._records.get((kind, record_id))
+        if snapshot is None:
+            return None
+        return len(
+            json.dumps(
+                snapshot.payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
 
     def load(self, kind: OperationalKind) -> list[OperationalSnapshot]:
         kind, _ = _validate_identity(kind, "load")
@@ -219,10 +267,16 @@ class PostgresOperationalRepository:
                     (kind, record_id, version, encoded),
                 )
                 updated_at = cursor.fetchone()[0]
+                event_encoded = json.dumps(
+                    _event_payload(kind, document, encoded),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
                 cursor.execute(
                     "INSERT INTO operational_memory_events(kind, record_id, version, payload) "
                     "VALUES (%s, %s, %s, %s::jsonb)",
-                    (kind, record_id, version, encoded),
+                    (kind, record_id, version, event_encoded),
                 )
                 return OperationalSnapshot(kind, record_id, version, document, updated_at)
 
@@ -240,6 +294,18 @@ class PostgresOperationalRepository:
             return None
         payload = json.loads(row[1]) if isinstance(row[1], str) else dict(row[1])
         return OperationalSnapshot(kind, record_id, int(row[0]), payload, row[2])
+
+    def payload_size(self, kind: OperationalKind, record_id: str) -> int | None:
+        kind, record_id = _validate_identity(kind, record_id)
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_column_size(payload) FROM operational_memory_records "
+                    "WHERE kind=%s AND record_id=%s",
+                    (kind, record_id),
+                )
+                row = cursor.fetchone()
+        return int(row[0]) if row is not None else None
 
     def load(self, kind: OperationalKind) -> list[OperationalSnapshot]:
         kind, _ = _validate_identity(kind, "load")

@@ -232,9 +232,12 @@ function buildEventSteps(input: LiveMemoryEvent[]): LiveStep[] {
   return steps
 }
 
-async function readMemoryEvents(signal: AbortSignal): Promise<LiveMemoryEvent[] | null> {
+type MemoryEventPage = { events: LiveMemoryEvent[]; highWater: number }
+
+async function readMemoryEvents(signal: AbortSignal, startAfter = 0): Promise<MemoryEventPage | null> {
   const events: LiveMemoryEvent[] = []
-  let after = 0
+  let after = startAfter
+  let highWater = startAfter
   while (!signal.aborted) {
     const response = await fetch(`/api/rca/memory/events?after=${after}&limit=2000`, {
       headers: { Accept: 'application/json' },
@@ -244,7 +247,8 @@ async function readMemoryEvents(signal: AbortSignal): Promise<LiveMemoryEvent[] 
     const payload = await response.json() as LiveMemoryEventsResponse
     if (!payload.ok || !payload.durable) return null
     events.push(...payload.events)
-    if (payload.next_offset == null) return events
+    highWater = Math.max(highWater, payload.high_water ?? after, ...payload.events.map((event) => event.offset))
+    if (payload.next_offset == null) return { events, highWater }
     if (payload.next_offset <= after) return null
     after = payload.next_offset
   }
@@ -467,6 +471,7 @@ function Timeline({
 export function LiveMemory({ lang }: { lang: Lang }) {
   const zh = lang === 'zh'
   const rootRef = useRef<HTMLElement | null>(null)
+  const ledgerOffset = useRef(0)
   const [data, setData] = useState<LiveMemoryListResponse | null>(null)
   const [ledgerEvents, setLedgerEvents] = useState<LiveMemoryEvent[] | null>(null)
   const [selectedDetail, setSelectedDetail] = useState<LiveMemoryDetailRecord | null>(null)
@@ -512,6 +517,7 @@ export function LiveMemory({ lang }: { lang: Lang }) {
   useEffect(() => {
     const controller = new AbortController()
     let timer: number | undefined
+    const keepRefreshing = expanded && onScreen
     const load = () => {
       fetch('/api/rca/memory?limit=1000&include_quarantined=true', {
         headers: { Accept: 'application/json' }, signal: controller.signal,
@@ -526,20 +532,28 @@ export function LiveMemory({ lang }: { lang: Lang }) {
           setError(zh ? `线上记忆读取失败：${String(reason)}` : `Failed to read live memory: ${String(reason)}`)
         })
         .finally(() => {
-          if (!controller.signal.aborted) timer = window.setTimeout(load, 5000)
+          if (!controller.signal.aborted && keepRefreshing) timer = window.setTimeout(load, 30000)
         })
     }
     load()
     return () => { controller.abort(); if (timer !== undefined) window.clearTimeout(timer) }
-  }, [zh])
+  }, [expanded, onScreen, zh])
 
   useEffect(() => {
+    if (!expanded || !onScreen) return
     const controller = new AbortController()
     let timer: number | undefined
     const load = () => {
-      readMemoryEvents(controller.signal)
-        .then((events) => {
-          if (!controller.signal.aborted) setLedgerEvents(events)
+      readMemoryEvents(controller.signal, ledgerOffset.current)
+        .then((page) => {
+          if (controller.signal.aborted || page === null) return
+          ledgerOffset.current = page.highWater
+          setLedgerEvents((current) => {
+            if (!page.events.length) return current ?? []
+            const merged = new Map((current ?? []).map((event) => [event.offset, event]))
+            for (const event of page.events) merged.set(event.offset, event)
+            return [...merged.values()].sort((left, right) => left.offset - right.offset)
+          })
         })
         .catch(() => {
           if (!controller.signal.aborted) setLedgerEvents((current) => current ?? null)
@@ -550,7 +564,7 @@ export function LiveMemory({ lang }: { lang: Lang }) {
     }
     load()
     return () => { controller.abort(); if (timer !== undefined) window.clearTimeout(timer) }
-  }, [])
+  }, [expanded, onScreen])
 
   useEffect(() => {
     const root = rootRef.current

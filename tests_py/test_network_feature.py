@@ -271,6 +271,38 @@ def test_native_real_risk_pattern_updates_engine_without_invented_verification_f
     assert feature.state == "candidate"
 
 
+def test_native_risk_updates_keep_one_stable_feature_identity():
+    risk_store = RiskPatternStore()
+    first = risk_store.ingest(
+        RiskEvent(
+            event_id="event-1",
+            observed_at=T0,
+            risk_type="credential_attack",
+            scope_key="account:mike",
+            target_asset="vpn-gateway",
+            source_ip="203.0.113.8",
+        )
+    )
+    assert first is not None
+    first_observation = observations_from_risk_pattern(first)[0]
+    second = risk_store.ingest(
+        RiskEvent(
+            event_id="event-2",
+            observed_at=T0 + timedelta(hours=3),
+            risk_type="credential_attack",
+            scope_key="account:mike",
+            target_asset="vpn-gateway",
+            source_ip="203.0.113.9",
+        )
+    )
+    assert second is not None
+    second_observation = observations_from_risk_pattern(second)[0]
+
+    assert first_observation.feature_id == second_observation.feature_id
+    assert first_observation.observation_id == second_observation.observation_id
+    assert second_observation.metric_window.duration_seconds == 90 * 24 * 60 * 60
+
+
 def test_native_replay_risk_is_not_allowed_to_train_production_feature():
     risk_store = RiskPatternStore()
     pattern = risk_store.ingest(

@@ -39,6 +39,24 @@ def test_load_is_partitioned_and_stably_sorted() -> None:
     assert [row.record_id for row in repo.load("incident_dossier")] == ["a", "b"]
 
 
+def test_aggregate_event_is_a_bounded_verifiable_receipt() -> None:
+    repo = InMemoryOperationalRepository()
+    payload = {
+        "version": 1,
+        "patterns": [{"pattern_id": f"risk-{index}", "body": "x" * 1000} for index in range(20)],
+    }
+
+    snapshot = repo.upsert("risk_pattern", "risk-pattern-store-v1", payload)
+    event = repo.read_events()[0]
+
+    assert snapshot.payload == payload
+    assert event.payload["event_kind"] == "aggregate_snapshot_commit"
+    assert event.payload["counts"] == {"patterns": 20}
+    assert event.payload["snapshot_bytes"] > 20_000
+    assert len(event.payload["snapshot_sha256"]) == 64
+    assert "patterns" not in event.payload
+
+
 def test_postgres_schema_declares_all_business_objects_and_append_only_events() -> None:
     sql = PostgresOperationalRepository.schema_sql()
     assert "incident_dossier" in sql

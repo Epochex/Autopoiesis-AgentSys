@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from threading import Lock, RLock
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
@@ -49,6 +50,9 @@ _INCIDENT_RISK_TYPES = frozenset({
     "management_exposure",
 })
 _INCIDENT_RISK_THRESHOLD = 20
+_MAX_AGGREGATE_RESTORE_BYTES = int(
+    os.getenv("AUTOPOIESIS_OPERATIONAL_RESTORE_MAX_BYTES", str(8 * 1024 * 1024))
+)
 
 
 class OperationalRepository(Protocol):
@@ -59,6 +63,7 @@ class OperationalRepository(Protocol):
     ) -> Any: ...
     def get(self, kind: OperationalKind, record_id: str) -> Any: ...
     def load(self, kind: OperationalKind) -> list[Any]: ...
+    def payload_size(self, kind: OperationalKind, record_id: str) -> int | None: ...
 
 
 def _now() -> datetime:
@@ -93,7 +98,12 @@ class OperationalMemoryService:
         self._refresh_lock = Lock()
         self.last_refresh: datetime | None = None
         self.source_status: dict[str, str] = {}
-        self.risks = RiskPatternStore()
+        self.risks = RiskPatternStore(
+            max_patterns=512,
+            max_dimension_values=512,
+            max_evidence_refs=64,
+            max_event_ids_per_pattern=2_000,
+        )
         self.features = NetworkFeatureEngine()
         self.dossiers = InMemoryDossierStore()
         self._restore()
@@ -105,10 +115,31 @@ class OperationalMemoryService:
                 dossier = IncidentDossier.model_validate(snapshot.payload)
                 self.dossiers.ingest(dossier)
                 restored_dossiers.append(dossier)
-        risk = self.repository.get("risk_pattern", _RISK_STORE_ID)
+        payload_size = getattr(self.repository, "payload_size", None)
+
+        def within_restore_budget(kind: OperationalKind, record_id: str) -> bool:
+            if not callable(payload_size):
+                return True
+            size = payload_size(kind, record_id)
+            if size is None or size <= _MAX_AGGREGATE_RESTORE_BYTES:
+                return True
+            self.source_status[f"restore.{kind}"] = (
+                f"skipped_oversize:{size}>{_MAX_AGGREGATE_RESTORE_BYTES}"
+            )
+            return False
+
+        risk = (
+            self.repository.get("risk_pattern", _RISK_STORE_ID)
+            if within_restore_budget("risk_pattern", _RISK_STORE_ID)
+            else None
+        )
         if risk is not None:
             self.risks = RiskPatternStore.from_snapshot(risk.payload)
-        feature = self.repository.get("network_feature", _FEATURE_STORE_ID)
+        feature = (
+            self.repository.get("network_feature", _FEATURE_STORE_ID)
+            if within_restore_budget("network_feature", _FEATURE_STORE_ID)
+            else None
+        )
         if feature is not None:
             self.features = NetworkFeatureEngine(FeatureStore.from_dict(feature.payload))
         before = self.features.store.dumps()

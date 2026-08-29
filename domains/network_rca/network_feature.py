@@ -24,6 +24,7 @@ from typing import Any, Iterable, Literal, Mapping, Sequence
 FeatureState = Literal["candidate", "promoted", "revoked"]
 FeatureSignal = Literal["fault_pattern", "remediation_effect", "risk_pattern"]
 EvidenceVerdict = Literal["support", "counterexample"]
+_RISK_AGGREGATION_WINDOW_SECONDS = 90 * 24 * 60 * 60
 
 
 def _utc(value: datetime, *, field_name: str) -> datetime:
@@ -1071,9 +1072,8 @@ def observations_from_risk_pattern(source: Any) -> tuple[FeatureObservation, ...
     if is_native_aggregate:
         provenance = str(row.get("provenance") or "").lower()
         verified = provenance == "real" and int(row.get("event_count") or 0) > 0
-        start_at = _parse_time(row.get("first_seen"), field_name="first_seen")
-        end_at = _parse_time(row.get("last_seen"), field_name="last_seen")
-        duration = max(1, int((end_at - start_at).total_seconds()))
+        _parse_time(row.get("first_seen"), field_name="first_seen")
+        _parse_time(row.get("last_seen"), field_name="last_seen")
         refs: list[str] = []
         for query_range in row.get("evidence_query_ranges") or ():
             if isinstance(query_range, Mapping):
@@ -1089,7 +1089,10 @@ def observations_from_risk_pattern(source: Any) -> tuple[FeatureObservation, ...
                 "metric_window": {
                     "metric": "risk_event_count",
                     "aggregation": "count",
-                    "duration_seconds": duration,
+                    # The source query is a fixed 90-day window. Using the
+                    # changing first-to-last duration in the feature identity
+                    # created a new feature for every refresh of one pattern.
+                    "duration_seconds": _RISK_AGGREGATION_WINDOW_SECONDS,
                 },
                 "pattern_type": row.get("risk_type"),
                 "evidence_refs": refs,

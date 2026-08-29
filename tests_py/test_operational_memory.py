@@ -240,3 +240,23 @@ def test_health_view_reports_stored_objects_without_refreshing_sources():
         "network_features": 0,
         "sources": {},
     }
+
+
+def test_oversize_aggregate_snapshots_are_rebuilt_instead_of_restored():
+    class OversizeRepository(InMemoryOperationalRepository):
+        def payload_size(self, kind, record_id):
+            if kind in {"risk_pattern", "network_feature"}:
+                return 9 * 1024 * 1024
+            return super().payload_size(kind, record_id)
+
+        def get(self, kind, record_id):
+            if kind in {"risk_pattern", "network_feature"}:
+                raise AssertionError("oversize aggregate payload must not be decoded")
+            return super().get(kind, record_id)
+
+    service = OperationalMemoryService(OversizeRepository(), durable=False)
+
+    assert service.health_view()["sources"] == {
+        "restore.network_feature": "skipped_oversize:9437184>8388608",
+        "restore.risk_pattern": "skipped_oversize:9437184>8388608",
+    }

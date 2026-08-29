@@ -468,6 +468,7 @@ export interface LiveMemoryEventsResponse {
   durable: boolean
   total: number
   next_offset?: number | null
+  high_water?: number
   events: LiveMemoryEvent[]
 }
 

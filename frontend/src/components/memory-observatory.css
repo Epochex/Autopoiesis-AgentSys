@@ -100,23 +100,6 @@
 
 /* Narrative hand-off labels bind each dense audit surface to the numbered
    demonstration step above it. They are section indexes, not decorative bands. */
-.mo-detail-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 8px;
-  margin-top: 4px;
-  padding: 6px 8px;
-  border: 1px solid var(--rule);
-  font-family: var(--font-mono);
-  font-size: 8.5px;
-  letter-spacing: 0.045em;
-  text-transform: uppercase;
-}
-.mo-detail-head span { padding: 2px 5px; background: var(--ink); color: var(--paper); }
-.mo-detail-head b { font-weight: 500; }
-.mo-detail-head em { color: var(--gray); font-style: normal; text-align: right; }
-
 /* The three-tier space takes the room; the inspector holds a fixed column. */
 .mo-body {
   display: grid;
@@ -178,6 +161,4 @@
     padding-left: 0;
     border-left: 0;
   }
-  .mo-detail-head { grid-template-columns: auto minmax(0, 1fr); }
-  .mo-detail-head em { grid-column: 2; text-align: left; }
 }

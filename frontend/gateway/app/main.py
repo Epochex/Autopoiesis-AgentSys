@@ -27,7 +27,11 @@ from domains.network_rca.incidents import (
 )
 
 settings = Settings.from_env()
-_CACHE_TTL_SEC = 5.0
+# The snapshot reruns the held-out cases and component baselines. Those inputs
+# are static between explicit refreshes, while live topology and event rates
+# have dedicated endpoints. A short cache caused every newly opened console
+# tab to repeat the same expensive replay.
+_CACHE_TTL_SEC = 300.0
 _cache_lock = asyncio.Lock()
 _cache_payload: dict[str, Any] | None = None
 _cache_loaded_at = 0.0
@@ -1097,7 +1101,13 @@ async def rca_memory_events(
     repository = getattr(memory, "repository", None)
     read_events = getattr(repository, "read_events", None)
     if not callable(read_events):
-        return {"ok": True, "durable": False, "events": [], "total": 0}
+        return {
+            "ok": True,
+            "durable": False,
+            "events": [],
+            "total": 0,
+            "high_water": after,
+        }
 
     # The repository owns ordering and decoding. Keeping the blocking database
     # call off the event loop lets this read-only view coexist with live requests.
@@ -1112,11 +1122,15 @@ async def rca_memory_events(
     # audit surface and may be introduced by the repository independently.
     page = [event for event in raw_page if event.event_type in {"UPSERT", "QUARANTINE"}]
     next_offset = raw_page[-1].event_offset if len(raw_page) == limit else None
+    high_water = raw_page[-1].event_offset if raw_page else after
     return {
         "ok": True,
         "durable": True,
         "total": len(page),
         "next_offset": next_offset,
+        # The client retains this cursor across polls. It advances even when a
+        # page contains only event types that this read-only view does not show.
+        "high_water": high_water,
         "events": [_memory_event(event) for event in page],
     }
 

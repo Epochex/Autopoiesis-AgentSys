@@ -17,7 +17,6 @@ import { MemoryGraph } from './MemoryGraph'
 import { MemoryInspector } from './MemoryInspector'
 import { ContextPacket } from './ContextPacket'
 import { RouteRuler } from './RouteRuler'
-import { MemoryReplayStory } from './MemoryReplayStory'
 import { MemoryTimeline } from './MemoryTimeline'
 import './memory-observatory.css'
 
@@ -57,7 +56,7 @@ export function MemoryObservatory({
 
   /* The replay is the argument this screen makes, and it only makes it if the
    * viewer watches memory fill from empty. Mounting is not watching: the
-   * observatory leads a scrollable page, and at 60ms/event a mount-time start
+   * observatory leads a scrollable page, and a mount-time start
    * had burned ~27 real events before the page even settled. Gate on visibility
    * — start on entry, hold on exit, keep the viewer's own play/pause intent. */
   useEffect(() => {
@@ -219,35 +218,6 @@ export function MemoryObservatory({
         </div>
       </header>
 
-      <MemoryReplayStory
-        obs={obs}
-        cases={cases}
-        cursorSeq={cursor}
-        currentEvent={atCursor}
-        onCursor={scrub}
-        onSelectMemory={(memoryId) => setPinned(memoryId)}
-        zh={zh}
-      />
-
-      <div className="mo-detail-head">
-        <span>02–03</span>
-        <b>{zh ? '展开检索排名与实际采用的上下文' : 'EXPAND RETRIEVAL RANKING AND THE CONTEXT ACTUALLY USED'}</b>
-        <em>{zh ? '对应上方第 02、03 步' : 'SUPPORTS STEPS 02 AND 03 ABOVE'}</em>
-      </div>
-      <ContextPacket
-        recall={currentRecall}
-        prevRecall={prevRecall}
-        records={obs.records}
-        capabilities={obs.capabilities}
-        caseRoot={caseRoot}
-        zh={zh}
-      />
-
-      <div className="mo-detail-head">
-        <span>05</span>
-        <b>{zh ? '查看写回后形成的三类记忆和单条证据' : 'INSPECT THE THREE MEMORY TYPES AND RECORD-LEVEL EVIDENCE'}</b>
-        <em>{zh ? '酸绿色只表示当前账本步骤发生了变化' : 'ACID MARKS ONLY WHAT CHANGED AT THE CURRENT LEDGER STEP'}</em>
-      </div>
       <div className="mo-body">
         <div className="mo-space">
           <MemoryGraph
@@ -275,11 +245,15 @@ export function MemoryObservatory({
         </aside>
       </div>
 
-      <div className="mo-detail-head">
-        <span>{zh ? '账本' : 'LEDGER'}</span>
-        <b>{zh ? '按真实先后顺序逐项回放生命周期变化' : 'REPLAY LIFECYCLE CHANGES IN THEIR RECORDED ORDER'}</b>
-        <em>{zh ? '播放、暂停、拖动或跳到稀有事件' : 'PLAY, PAUSE, SCRUB, OR STEP TO A RARE EVENT'}</em>
-      </div>
+      <ContextPacket
+        recall={currentRecall}
+        prevRecall={prevRecall}
+        records={obs.records}
+        capabilities={obs.capabilities}
+        caseRoot={caseRoot}
+        zh={zh}
+      />
+
       <MemoryTimeline
         events={obs.events}
         cursorSeq={cursor}

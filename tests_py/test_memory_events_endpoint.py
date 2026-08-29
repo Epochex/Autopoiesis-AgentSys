@@ -80,6 +80,7 @@ def test_empty_durable_ledger_returns_an_empty_page(monkeypatch, inline_thread):
         "durable": True,
         "total": 0,
         "next_offset": None,
+        "high_water": 0,
         "events": [],
     }
     assert repository.reads == [(0, 500)]
@@ -94,9 +95,11 @@ def test_pages_by_exclusive_event_offset(monkeypatch, inline_thread):
     assert [event["offset"] for event in first["events"]] == [1, 2]
     assert first["total"] == 2
     assert first["next_offset"] == 2
+    assert first["high_water"] == 2
     assert [event["offset"] for event in second["events"]] == [3]
     assert second["total"] == 1
     assert second["next_offset"] is None
+    assert second["high_water"] == 3
     assert repository.reads == [(0, 2), (2, 2)]
 
 
@@ -109,7 +112,23 @@ def test_missing_durable_repository_is_a_successful_fallback(monkeypatch, inline
 
     response = _read()
 
-    assert response == {"ok": True, "durable": False, "events": [], "total": 0}
+    assert response == {
+        "ok": True,
+        "durable": False,
+        "events": [],
+        "total": 0,
+        "high_water": 0,
+    }
+
+
+def test_high_water_advances_past_hidden_administrative_events(monkeypatch, inline_thread):
+    _install(monkeypatch, [_event(7, event_type="DELETE")])
+
+    response = _read(after=3)
+
+    assert response["events"] == []
+    assert response["next_offset"] is None
+    assert response["high_water"] == 7
 
 
 def test_quarantine_reason_and_bounded_text_come_from_event_version(monkeypatch, inline_thread):
