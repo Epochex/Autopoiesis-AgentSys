@@ -1,19 +1,19 @@
 """FortiGate syslog → ClickHouse facts and security-event ingest.
 
-Feeds the situational-awareness console's HISTORICAL device portraits. The raw
+Feeds the situational-awareness console's historical queries and continuous
+event path. The raw
 FortiGate logs live on R230 (`/data/fortigate-runtime/input/`): the live file
 plus ~2.5 months of rotated `.gz`. This reads them over SSH, parses each traffic
 line into a flat fact row, normalizes selected authentication and management-
-plane signals into `netops.security_events`, and batch-inserts both streams
-into ClickHouse (reachable from node 27 at the netops-core cluster IP).
+plane signals into `netops.security_events`, batch-inserts both stores into
+ClickHouse, and publishes the live event envelope to Redpanda through its HTTP
+proxy. Failed Redpanda batches remain in a bounded disk outbox and are retried
+in order; historical backfills never enter the production topic.
 
 Two modes:
   backfill  — replay every rotated .gz (oldest→newest) + the current file once.
   security-backfill — replay only system/local signals into security_events.
   live      — `tail -F` the current file, inserting new flows continuously.
-
-The live path currently has one sink: ClickHouse. Redpanda publication is not
-implemented here, so the correlator requires a separate producer integration.
 
 Config via env (falls back to `/etc/selfevo-console.env` values):
   R230_SSH, R230_PASS, R230_LOG            — SSH target + live log path
@@ -22,6 +22,11 @@ Config via env (falls back to `/etc/selfevo-console.env` values):
   FACTS_LIVE_FLUSH_SECONDS                  — default 5
   FACTS_STATUS_FILE                         — default /run/netops-facts-ingest/status.json
   SECURITY_EVENTS_PROVENANCE                — real (default), replay, or drill
+  REDPANDA_PUBLISH_ENABLED                  — publish live envelopes when true
+  REDPANDA_PROXY_URL                        — HTTP proxy base URL
+  REDPANDA_TOPIC_RAW                        — default netops.facts.raw.v1
+  REDPANDA_OUTBOX_DIR                       — durable retry directory
+  REDPANDA_OUTBOX_MAX_BYTES                 — default 512 MiB
 """
 from __future__ import annotations
 
@@ -85,6 +90,19 @@ BATCH = int(_env("FACTS_BATCH", "5000"))
 LIVE_FLUSH_SECONDS = float(_env("FACTS_LIVE_FLUSH_SECONDS", "5"))
 STATUS_FILE = Path(_env("FACTS_STATUS_FILE", "/run/netops-facts-ingest/status.json"))
 
+REDPANDA_PUBLISH_ENABLED = _env("REDPANDA_PUBLISH_ENABLED", "0").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+REDPANDA_PROXY_URL = _env("REDPANDA_PROXY_URL").rstrip("/")
+REDPANDA_TOPIC_RAW = _env("REDPANDA_TOPIC_RAW", "netops.facts.raw.v1")
+REDPANDA_OUTBOX_DIR = Path(
+    _env("REDPANDA_OUTBOX_DIR", "/var/lib/netops-facts-ingest/outbox")
+)
+REDPANDA_OUTBOX_MAX_BYTES = int(
+    _env("REDPANDA_OUTBOX_MAX_BYTES", str(512 * 1024 * 1024))
+)
+REDPANDA_HTTP_TIMEOUT_SECONDS = float(_env("REDPANDA_HTTP_TIMEOUT_SECONDS", "15"))
+
 # FortiGate syslog is space-separated key=value; values may be "quoted".
 _KV = re.compile(r'(\w+)=(?:"([^"]*)"|(\S+))')
 _COLS = [
@@ -147,6 +165,197 @@ def parse_line(line: str) -> list | None:
         d.get("srcname", ""),
         int(d.get("sentbyte") or 0), int(d.get("rcvdbyte") or 0),
     ]
+
+
+def _int_field(value: str | None) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_stream_event(line: str, source_kind: str = "real") -> dict[str, object] | None:
+    """Build the production ``facts.raw`` envelope from one observed FortiOS line.
+
+    The event id is stable across collector retries.  The envelope intentionally
+    carries more fields than the narrow ClickHouse fact row because the correlator
+    needs identity, interface, policy, byte and provenance context.  Historical
+    replay uses a separate topic and never calls this live publisher.
+    """
+    d = _kv(line)
+    ts = _ts(d)
+    event_type = d.get("type", "").strip().lower()
+    subtype = d.get("subtype", "").strip().lower()
+    if not ts or not event_type or not subtype:
+        return None
+
+    raw_log = line.rstrip("\r\n")
+    event_id = hashlib.sha256(
+        f"{source_kind}\0{ts}\0{raw_log}".encode("utf-8", errors="replace")
+    ).hexdigest()
+    srcip = d.get("srcip", "")
+    sentbyte = _int_field(d.get("sentbyte"))
+    rcvdbyte = _int_field(d.get("rcvdbyte"))
+    sentpkt = _int_field(d.get("sentpkt"))
+    rcvdpkt = _int_field(d.get("rcvdpkt"))
+    device_key = d.get("devid") or d.get("devname") or "fortigate"
+    src_device_key = (
+        d.get("srcmac") or d.get("mastersrcmac") or srcip or device_key
+    )
+    return {
+        "schema_version": 1,
+        "event_id": event_id,
+        "event_ts": ts.replace(" ", "T") + "Z",
+        "parse_status": "ok",
+        "source_kind": source_kind,
+        "replay": False,
+        "device_key": device_key,
+        "src_device_key": src_device_key,
+        "type": event_type,
+        "subtype": subtype,
+        "level": d.get("level", ""),
+        "devname": d.get("devname", ""),
+        "devid": d.get("devid", ""),
+        "vd": d.get("vd", ""),
+        "action": d.get("action", ""),
+        "policyid": _int_field(d.get("policyid")),
+        "policytype": d.get("policytype", ""),
+        "sessionid": _int_field(d.get("sessionid")),
+        "proto": _int_field(d.get("proto")),
+        "service": d.get("service", ""),
+        "app": d.get("app", ""),
+        "appcat": d.get("appcat", ""),
+        "srcip": srcip,
+        "srcport": _int_field(d.get("srcport") or d.get("src_port")),
+        "srcintf": d.get("srcintf", ""),
+        "srcintfrole": d.get("srcintfrole", ""),
+        "dstip": d.get("dstip", ""),
+        "dstport": _uint16(d.get("dstport") or d.get("dst_port")),
+        "dstintf": d.get("dstintf", ""),
+        "dstintfrole": d.get("dstintfrole", ""),
+        "srcname": d.get("srcname", ""),
+        "srcmac": d.get("srcmac", ""),
+        "mastersrcmac": d.get("mastersrcmac", ""),
+        "srchwvendor": d.get("srchwvendor", ""),
+        "devtype": d.get("devtype", ""),
+        "srcfamily": d.get("srcfamily", ""),
+        "srchwversion": d.get("srchwversion", ""),
+        "sentbyte": sentbyte,
+        "rcvdbyte": rcvdbyte,
+        "sentpkt": sentpkt,
+        "rcvdpkt": rcvdpkt,
+        "bytes_total": sentbyte + rcvdbyte,
+        "pkts_total": sentpkt + rcvdpkt,
+        "logid": d.get("logid", ""),
+        "logdesc": d.get("logdesc", ""),
+        "user": d.get("user", ""),
+        "method": d.get("method", ""),
+        # ``status`` is reserved by the correlator for explicit benchmark labels.
+        # FortiOS protocol/session status remains evidence under a distinct name.
+        "event_status": d.get("status", ""),
+        "reason": d.get("reason", ""),
+        "msg": d.get("msg", ""),
+        "crscore": _int_field(d.get("crscore")) if d.get("crscore") else None,
+        "craction": d.get("craction", ""),
+        "crlevel": d.get("crlevel", ""),
+        "source": {"path": R230_LOG},
+    }
+
+
+class RedpandaOutbox:
+    """Ordered at-least-once delivery for live events through Pandaproxy."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = REDPANDA_PUBLISH_ENABLED,
+        proxy_url: str = REDPANDA_PROXY_URL,
+        topic: str = REDPANDA_TOPIC_RAW,
+        directory: Path = REDPANDA_OUTBOX_DIR,
+        max_bytes: int = REDPANDA_OUTBOX_MAX_BYTES,
+        timeout: float = REDPANDA_HTTP_TIMEOUT_SECONDS,
+    ) -> None:
+        self.enabled = enabled
+        self.proxy_url = proxy_url.rstrip("/")
+        self.topic = topic
+        self.directory = Path(directory)
+        self.max_bytes = max_bytes
+        self.timeout = timeout
+        self._sequence = 0
+        if self.enabled:
+            if not self.proxy_url:
+                raise ValueError("REDPANDA_PROXY_URL is required when publishing is enabled")
+            self.directory.mkdir(parents=True, exist_ok=True)
+
+    def pending(self) -> tuple[int, int]:
+        if not self.enabled or not self.directory.exists():
+            return 0, 0
+        paths = list(self.directory.glob("*.jsonl"))
+        return len(paths), sum(path.stat().st_size for path in paths)
+
+    def enqueue(self, events: list[dict[str, object]]) -> None:
+        if not self.enabled or not events:
+            return
+        payload = "".join(
+            json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+            for event in events
+        ).encode("utf-8")
+        _, pending_bytes = self.pending()
+        if pending_bytes + len(payload) > self.max_bytes:
+            raise RuntimeError(
+                f"Redpanda outbox limit exceeded: {pending_bytes + len(payload)} > {self.max_bytes}"
+            )
+        self._sequence += 1
+        stem = f"{time.time_ns():020d}-{os.getpid()}-{self._sequence:08d}"
+        tmp = self.directory / f".{stem}.tmp"
+        final = self.directory / f"{stem}.jsonl"
+        with tmp.open("wb") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, final)
+
+    def drain(self) -> int:
+        if not self.enabled:
+            return 0
+        published = 0
+        for path in sorted(self.directory.glob("*.jsonl")):
+            events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+            if not events:
+                path.unlink()
+                continue
+            self._publish(events)
+            path.unlink()
+            published += len(events)
+        return published
+
+    def _publish(self, events: list[dict[str, object]]) -> None:
+        records = [
+            {"key": str(event["event_id"]), "value": event}
+            for event in events
+        ]
+        body = json.dumps({"records": records}, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        request = urllib.request.Request(
+            f"{self.proxy_url}/topics/{urllib.parse.quote(self.topic, safe='')}",
+            data=body,
+            headers={
+                "Accept": "application/vnd.kafka.v2+json",
+                "Content-Type": "application/vnd.kafka.json.v2+json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        offsets = result.get("offsets") if isinstance(result, dict) else None
+        # Redpanda Pandaproxy acknowledges a batch with one base offset per
+        # destination partition, not one offset per input record.
+        if not isinstance(offsets, list) or not offsets:
+            raise RuntimeError("Redpanda proxy returned an incomplete acknowledgement")
+        errors = [row for row in offsets if row.get("error_code") not in (None, 0)]
+        if errors:
+            raise RuntimeError("Redpanda proxy rejected one or more records")
 
 
 def _uint16(value: str | None) -> int:
@@ -436,6 +645,7 @@ def _stream(
     on_security_rows=None,
     security_provenance: str = "real",
     parse_facts: bool = True,
+    on_batch=None,
 ) -> int:
     """Run a remote command and batch-insert parsed rows.
 
@@ -456,21 +666,27 @@ def _stream(
         on_process(proc)
     batch: list[list] = []
     security_batch: list[list] = []
+    stream_batch: list[dict[str, object]] = []
     n = 0
     t0 = time.time()
     last_flush_at = clock() if live_mode else None
 
     def flush(pulse_at=None) -> None:
-        nonlocal batch, security_batch, n, last_flush_at
-        if not batch and not security_batch:
+        nonlocal batch, security_batch, stream_batch, n, last_flush_at
+        if not batch and not security_batch and not stream_batch:
             return
-        if batch and on_row is not None:
-            on_row(batch)
+        if on_batch is not None:
+            on_batch(batch, security_batch, stream_batch)
             n += len(batch)
-        if security_batch and on_security_rows is not None:
-            on_security_rows(security_batch)
+        else:
+            if batch and on_row is not None:
+                on_row(batch)
+                n += len(batch)
+            if security_batch and on_security_rows is not None:
+                on_security_rows(security_batch)
         batch = []
         security_batch = []
+        stream_batch = []
         if live_mode:
             last_flush_at = pulse_at if pulse_at is not None else clock()
 
@@ -481,14 +697,22 @@ def _stream(
                 row = parse_line(line)
                 if row is not None:
                     batch.append(row)
-            if on_security_rows is not None:
+            if on_security_rows is not None or on_batch is not None:
                 security_row = parse_security_event(line, security_provenance)
                 if security_row is not None:
                     security_batch.append(security_row)
-            if not batch and not security_batch:
+            if on_batch is not None:
+                stream_event = parse_stream_event(line, "real")
+                if stream_event is not None:
+                    stream_batch.append(stream_event)
+            if not batch and not security_batch and not stream_batch:
                 continue
             pulse_at = clock() if live_mode else None
-            size_due = len(batch) >= BATCH or len(security_batch) >= BATCH
+            size_due = (
+                len(batch) >= BATCH
+                or len(security_batch) >= BATCH
+                or len(stream_batch) >= BATCH
+            )
             time_due = live_mode and pulse_at - last_flush_at >= LIVE_FLUSH_SECONDS
             if size_due or time_due:
                 flush(pulse_at)
@@ -627,57 +851,86 @@ def security_backfill() -> None:
 
 
 def live() -> None:
-    """tail -F the current log; insert new flows continuously."""
+    """Tail the current log into ClickHouse and the production event topic."""
     create_security_events_table()
     provenance = _env("SECURITY_EVENTS_PROVENANCE", "real")
+    outbox = RedpandaOutbox()
     print(f"[live] tailing {R230_LOG}", flush=True)
     cmd = (
         f"tail -n0 -F -- {shlex.quote(R230_LOG)} | "
-        "grep --line-buffered -aE 'type=\"traffic\"|subtype=\"voip\"|subtype=\"system\"'"
+        "grep --line-buffered -aE 'type=\"traffic\"|type=\"event\"|type=\"utm\"|subtype=\"voip\"'"
     )
     started_at = datetime.now(timezone.utc).isoformat()
     rows_since_start = 0
     security_rows_since_start = 0
+    stream_rows_since_start = 0
     reconnect_count = 0
+    queued_batches, queued_bytes = outbox.pending()
     _write_status(
         mode="live",
         pid=os.getpid(),
         started_at=started_at,
         rows_inserted_since_start=0,
         security_rows_inserted_since_start=0,
+        stream_rows_published_since_start=0,
+        stream_publish_enabled=outbox.enabled,
+        stream_topic=outbox.topic if outbox.enabled else None,
+        stream_queued_batches=queued_batches,
+        stream_queued_bytes=queued_bytes,
         reconnect_count=0,
         ssh_connection="connecting",
         ssh_pid=None,
         last_error_type=None,
     )
 
-    def insert_live(rows: list[list]) -> None:
-        nonlocal rows_since_start
-        ch_insert(rows)
-        rows_since_start += len(rows)
+    def commit_live_batch(
+        fact_rows: list[list],
+        security_rows: list[list],
+        stream_events: list[dict[str, object]],
+    ) -> None:
+        nonlocal rows_since_start, security_rows_since_start, stream_rows_since_start
+        # The disk outbox is committed first. A collector crash can therefore
+        # duplicate a stream event, which its stable event_id makes detectable,
+        # while it cannot silently erase an observed event between the two sinks.
+        outbox.enqueue(stream_events)
+        if fact_rows:
+            ch_insert(fact_rows)
+            rows_since_start += len(fact_rows)
+        if security_rows:
+            ch_insert_security(security_rows)
+            security_rows_since_start += len(security_rows)
+
+        publish_error = None
+        published = 0
+        try:
+            published = outbox.drain()
+            stream_rows_since_start += published
+        except Exception as exc:
+            publish_error = type(exc).__name__
+            print(
+                f"[live] Redpanda publish deferred ({publish_error}); batch remains in outbox",
+                file=sys.stderr,
+                flush=True,
+            )
+        queued_batches, queued_bytes = outbox.pending()
+        now = datetime.now(timezone.utc).isoformat()
         _write_status(
             rows_inserted_since_start=rows_since_start,
-            last_insert_at=datetime.now(timezone.utc).isoformat(),
-            last_batch_rows=len(rows),
-        )
-        print(
-            f"[live] inserted {len(rows):,} facts "
-            f"(total since start {rows_since_start:,})",
-            flush=True,
-        )
-
-    def insert_security_live(rows: list[list]) -> None:
-        nonlocal security_rows_since_start
-        ch_insert_security(rows)
-        security_rows_since_start += len(rows)
-        _write_status(
+            last_insert_at=now if fact_rows else None,
+            last_batch_rows=len(fact_rows),
             security_rows_inserted_since_start=security_rows_since_start,
-            security_last_insert_at=datetime.now(timezone.utc).isoformat(),
-            security_last_batch_rows=len(rows),
+            security_last_insert_at=now if security_rows else None,
+            security_last_batch_rows=len(security_rows),
+            stream_rows_published_since_start=stream_rows_since_start,
+            stream_last_publish_at=now if published else None,
+            stream_last_batch_rows=published,
+            stream_last_error_type=publish_error,
+            stream_queued_batches=queued_batches,
+            stream_queued_bytes=queued_bytes,
         )
         print(
-            f"[live] inserted {len(rows):,} security events "
-            f"(total since start {security_rows_since_start:,})",
+            f"[live] batch facts={len(fact_rows):,} security={len(security_rows):,} "
+            f"streamed={published:,} queued={queued_batches:,}",
             flush=True,
         )
 
@@ -695,12 +948,12 @@ def live() -> None:
 
             _stream(
                 cmd,
-                insert_live,
+                None,
                 "live",
                 stream_started,
                 live_mode=True,
-                on_security_rows=insert_security_live,
                 security_provenance=provenance,
+                on_batch=commit_live_batch,
             )
         except RecoverableSSHError as exc:
             reconnect_count += 1

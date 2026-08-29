@@ -12,6 +12,8 @@ EnvironmentFile=/etc/selfevo-console.env
 Environment=PYTHONUNBUFFERED=1
 RuntimeDirectory=netops-facts-ingest
 RuntimeDirectoryMode=0750
+StateDirectory=netops-facts-ingest
+StateDirectoryMode=0750
 ExecStart=/usr/bin/python3 /data/Autopoiesis-AgentSys/frontend/gateway/ingest/facts_ingest.py live
 Restart=on-failure
 RestartSec=10s

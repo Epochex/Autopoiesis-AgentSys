@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +10,7 @@ from frontend.gateway.ingest import facts_ingest
 
 def _traffic_line(src: str) -> bytes:
     return (
-        f'date=2026-08-23 time=12:00:00 type="traffic" srcip={src} '
+        f'date=2026-08-23 time=12:00:00 type="traffic" subtype="forward" srcip={src} '
         'dstip=192.0.2.10 dstport=443 sentbyte=1 rcvdbyte=2\n'
     ).encode()
 
@@ -100,6 +101,108 @@ def test_parse_security_event_rejects_unrelated_and_unknown_provenance():
     ) is None
     with pytest.raises(ValueError, match="unsupported security-event provenance"):
         facts_ingest.parse_security_event(_ADMIN_FAILED, "synthetic")
+
+
+def test_parse_stream_event_builds_stable_real_envelope():
+    line = (
+        'date=2026-08-23 time=12:00:00 devname="FGT" devid="FG-1" '
+        'type="traffic" subtype="forward" level="notice" srcip=192.0.2.10 '
+        'srcport=51000 srcmac="aa:bb:cc:dd:ee:ff" srcintf="port5" '
+        'srcintfrole="lan" dstip=198.51.100.20 dstport=443 dstintf="wan1" '
+        'dstintfrole="wan" policyid=7 policytype="policy" sessionid=99 proto=6 '
+        'action="accept" service="HTTPS" sentbyte=100 rcvdbyte=250 sentpkt=2 rcvdpkt=3'
+    )
+
+    first = facts_ingest.parse_stream_event(line)
+    second = facts_ingest.parse_stream_event(line)
+
+    assert first is not None
+    assert first == second
+    assert len(str(first["event_id"])) == 64
+    assert first["event_ts"] == "2026-08-23T12:00:00.000Z"
+    assert first["source_kind"] == "real"
+    assert first["replay"] is False
+    assert first["device_key"] == "FG-1"
+    assert first["src_device_key"] == "aa:bb:cc:dd:ee:ff"
+    assert first["bytes_total"] == 350
+    assert first["pkts_total"] == 5
+    assert first["parse_status"] == "ok"
+    assert "status" not in first
+    assert first["event_status"] == ""
+
+
+def test_redpanda_outbox_retains_then_deletes_acknowledged_batches(tmp_path, monkeypatch):
+    outbox = facts_ingest.RedpandaOutbox(
+        enabled=True,
+        proxy_url="http://redpanda.invalid:8082",
+        directory=tmp_path,
+        max_bytes=1_000_000,
+    )
+    events = [
+        {"event_id": "event-1", "event_ts": "2026-08-23T12:00:00Z", "type": "traffic", "subtype": "forward"},
+        {"event_id": "event-2", "event_ts": "2026-08-23T12:00:01Z", "type": "event", "subtype": "vpn"},
+    ]
+    sent: list[list[dict[str, object]]] = []
+    monkeypatch.setattr(outbox, "_publish", lambda rows: sent.append(rows))
+
+    outbox.enqueue(events)
+    assert outbox.pending()[0] == 1
+    stored = next(tmp_path.glob("*.jsonl"))
+    assert [json.loads(line)["event_id"] for line in stored.read_text().splitlines()] == [
+        "event-1",
+        "event-2",
+    ]
+
+    assert outbox.drain() == 2
+    assert sent == [events]
+    assert outbox.pending() == (0, 0)
+
+
+def test_redpanda_outbox_keeps_batch_when_publish_fails(tmp_path, monkeypatch):
+    outbox = facts_ingest.RedpandaOutbox(
+        enabled=True,
+        proxy_url="http://redpanda.invalid:8082",
+        directory=tmp_path,
+        max_bytes=1_000_000,
+    )
+    outbox.enqueue([
+        {"event_id": "event-1", "event_ts": "2026-08-23T12:00:00Z", "type": "traffic", "subtype": "forward"}
+    ])
+    monkeypatch.setattr(
+        outbox,
+        "_publish",
+        lambda rows: (_ for _ in ()).throw(TimeoutError("proxy unavailable")),
+    )
+
+    with pytest.raises(TimeoutError, match="proxy unavailable"):
+        outbox.drain()
+    assert outbox.pending()[0] == 1
+
+
+def test_redpanda_proxy_accepts_partition_level_batch_ack(tmp_path, monkeypatch):
+    outbox = facts_ingest.RedpandaOutbox(
+        enabled=True,
+        proxy_url="http://redpanda.invalid:8082",
+        directory=tmp_path,
+        max_bytes=1_000_000,
+    )
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"offsets":[{"partition":0,"offset":123}]}'
+
+    monkeypatch.setattr(facts_ingest.urllib.request, "urlopen", lambda *args, **kwargs: _Response())
+    outbox._publish([
+        {"event_id": "event-1"},
+        {"event_id": "event-2"},
+        {"event_id": "event-3"},
+    ])
 
 
 def test_create_and_insert_security_events_use_independent_table(monkeypatch):
@@ -228,6 +331,30 @@ def test_stream_batches_facts_and_security_events_to_separate_sinks(monkeypatch)
     assert security_batches[0][0][18] == "replay"
 
 
+def test_live_batch_contains_all_real_event_types_for_redpanda(monkeypatch):
+    vpn = (
+        'date=2026-08-23 time=12:05:00 devid="FG-1" type="event" subtype="vpn" '
+        'level="information" logdesc="SSL VPN new connection" action="ssl-new-con"\n'
+    ).encode()
+    _install_process(monkeypatch, [_traffic_line("192.0.2.4"), vpn])
+    batches: list[tuple[list[list], list[list], list[dict[str, object]]]] = []
+
+    inserted = facts_ingest._stream(
+        "unused",
+        None,
+        "stream-batch-test",
+        on_batch=lambda facts, security, events: batches.append(
+            (list(facts), list(security), list(events))
+        ),
+    )
+
+    assert inserted == 1
+    assert len(batches) == 1
+    assert len(batches[0][0]) == 1
+    assert batches[0][1] == []
+    assert [event["subtype"] for event in batches[0][2]] == ["forward", "vpn"]
+
+
 def test_stream_stops_ssh_child_when_insert_fails(monkeypatch):
     proc, _ = _install_process(monkeypatch, [_traffic_line("192.0.2.6")])
 
@@ -254,9 +381,11 @@ def test_live_disconnect_records_reconnect_and_keeps_running(monkeypatch, capsys
         clock=None,
         on_security_rows=None,
         security_provenance="real",
+        on_batch=None,
     ):
         assert live_mode is True
-        assert callable(on_security_rows)
+        assert on_security_rows is None
+        assert callable(on_batch)
         assert security_provenance == "real"
         if on_process is not None:
             on_process(SimpleNamespace(pid=4321))
@@ -391,3 +520,16 @@ def test_systemd_unit_routes_standard_streams_and_restarts_only_on_failure():
     assert "StandardOutput=journal" in unit
     assert "StandardError=journal" in unit
     assert "Restart=on-failure" in unit
+    assert "StateDirectory=netops-facts-ingest" in unit
+
+
+def test_redpanda_http_service_targets_the_brokers():
+    manifest = (
+        facts_ingest.Path(__file__).parents[1]
+        / "frontend/deployments/11-redpanda-http-proxy-service.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "name: netops-redpanda-http" in manifest
+    assert "port: 8082" in manifest
+    assert "targetPort: 8082" in manifest
+    assert "app.kubernetes.io/component: redpanda-statefulset" in manifest

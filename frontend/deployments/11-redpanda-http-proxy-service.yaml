@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: netops-redpanda-http
+  namespace: netops-core
+  labels:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/instance: netops-redpanda
+    app.kubernetes.io/component: http-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/instance: netops-redpanda
+    app.kubernetes.io/component: redpanda-statefulset
+  ports:
+    - name: pandaproxy
+      protocol: TCP
+      port: 8082
+      targetPort: 8082
