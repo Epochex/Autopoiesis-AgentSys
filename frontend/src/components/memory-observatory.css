@@ -20,9 +20,8 @@
      graph's own aspect ratio (width-driven), not squeezed to fit a viewport
      budget. On very tall screens the leftover space simply trails after the
      route band instead of being forced into the board. */
-  grid-auto-rows: auto;
+  grid-template-rows: auto auto auto;
   grid-template-columns: minmax(0, 1fr);
-  align-content: start;
   gap: 10px;
   /* Both zeros are load-bearing. As a grid item .mo defaults to min-width/height
      auto, i.e. "never shrink below my content" — which let the side column push
@@ -99,43 +98,24 @@
 .mo-source a:hover,
 .mo-source a:focus-visible { border-bottom-width: 2px; }
 
-/* Deep evidence is mounted only after a trace node asks for it. One surface is
-   visible at a time, keeping the first read perceptual and the audit layer
-   available without turning the page into a permanently expanded wall. */
-.mo-drill {
-  min-width: 0;
-  scroll-margin-top: 18px;
-  border: 1.5px solid var(--ink);
-  background: var(--paper-2);
-}
-.mo-drill-head {
+/* Narrative hand-off labels bind each dense audit surface to the numbered
+   demonstration step above it. They are section indexes, not decorative bands. */
+.mo-detail-head {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: stretch;
-  min-height: 34px;
-  border-bottom: 1px solid var(--ink);
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 8.5px;
   letter-spacing: 0.045em;
   text-transform: uppercase;
 }
-.mo-drill-head > span { display: grid; place-items: center; padding: 0 10px; background: var(--ink); color: var(--paper); }
-.mo-drill-head nav { display: flex; min-width: 0; }
-.mo-drill-head nav button {
-  padding: 0 12px;
-  border: 0;
-  border-right: 1px solid var(--rule);
-  background: transparent;
-  color: var(--gray);
-  font: inherit;
-  letter-spacing: inherit;
-  cursor: pointer;
-}
-.mo-drill-head nav button:hover,
-.mo-drill-head nav button:focus-visible { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
-.mo-drill-head nav button.active { color: var(--ink); box-shadow: inset 0 -3px 0 var(--ink); }
-.mo-drill-close { width: 34px; border: 0; border-left: 1px solid var(--ink); background: transparent; color: var(--ink); font: 18px var(--font-mono); cursor: pointer; }
-.mo-ledger-view { min-width: 0; padding: 10px; }
+.mo-detail-head span { padding: 2px 5px; background: var(--ink); color: var(--paper); }
+.mo-detail-head b { font-weight: 500; }
+.mo-detail-head em { color: var(--gray); font-style: normal; text-align: right; }
 
 /* The three-tier space takes the room; the inspector holds a fixed column. */
 .mo-body {
@@ -198,8 +178,6 @@
     padding-left: 0;
     border-left: 0;
   }
-  .mo-drill-head { grid-template-columns: minmax(0, 1fr) auto; }
-  .mo-drill-head > span { display: none; }
-  .mo-drill-head nav { overflow-x: auto; }
-  .mo-drill-head nav button { min-height: 34px; white-space: nowrap; }
+  .mo-detail-head { grid-template-columns: auto minmax(0, 1fr); }
+  .mo-detail-head em { grid-column: 2; text-align: left; }
 }
