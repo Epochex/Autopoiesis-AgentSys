@@ -15,12 +15,12 @@ type St = { s: 'load' } | { s: 'ok'; d: BenchmarkResp; fixture: boolean }
 type K = '1' | '3' | '5' | '10'
 
 const T = (zh: boolean) => ({
-  kicker: zh ? '基准场景 · 覆盖全系统能力' : 'BENCHMARK · WHOLE-SYSTEM COVERAGE',
+  kicker: zh ? '评测边界 · 每个数字只回答一个问题' : 'EVALUATION BOUNDARIES · ONE QUESTION PER METRIC',
   loading: zh ? '拉取基准…' : 'FETCHING…',
   fixture: zh ? '内置 fixture · 网关离线' : 'BUILT-IN FIXTURE · GATEWAY OFFLINE',
   gateway: zh ? '网关结果文件' : 'GATEWAY RESULT FILES',
-  cover: zh ? '哪些功能有测试结果' : 'FEATURES WITH TEST RESULTS',
-  covered: zh ? '已覆盖' : 'COVERED', gap: zh ? '无公开基准' : 'NO PUBLIC BENCHMARK',
+  cover: zh ? '哪些能力有本地结果' : 'CAPABILITIES WITH LOCAL RESULTS',
+  covered: zh ? '有局部结果' : 'LOCAL RESULT', gap: zh ? '尚无本地结果' : 'NO LOCAL RESULT',
   lme: zh ? 'LongMemEval-500 · 查找已有记录' : 'LongMemEval-500 · FIND SAVED RECORDS',
   ref: zh ? '公开基线' : 'PUBLISHED REF',
   atk: zh ? '前 k 条命中率 · k=' : 'HIT RATE IN TOP k · k=', mine: zh ? '本仓库' : 'THIS REPO',
@@ -37,7 +37,6 @@ export function BenchmarkPage({ lang }: { lang: Lang }) {
   const [st, setSt] = useState<St>({ s: 'load' })
   const [k, setK] = useState<K>('5')
   const [sel, setSel] = useState<string | null>(null)
-  const [rep, setRep] = useState<{ heal: number; mem: number } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -46,11 +45,6 @@ export function BenchmarkPage({ lang }: { lang: Lang }) {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http'))))
       .then((d: BenchmarkResp) => { if (alive) setSt(d && d.ok ? { s: 'ok', d, fixture: false } : { s: 'ok', d: BENCHMARK_FIXTURE, fixture: true }) })
       .catch(() => { if (alive) setSt({ s: 'ok', d: BENCHMARK_FIXTURE, fixture: true }) })
-    // Best-effort numbers from the six-case offline network-RCA replay.
-    fetch('/api/rca/replay?lang=' + lang + '&passes=4', { headers: { Accept: 'application/json' } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (alive && j && j.ok) setRep({ heal: j.self_heal?.heal_rate ?? j.summary?.accuracy_warm ?? 0, mem: j.summary?.memory_grown ?? 0 }) })
-      .catch(() => {})
     return () => { alive = false }
   }, [lang])
 
@@ -72,7 +66,7 @@ export function BenchmarkPage({ lang }: { lang: Lang }) {
       {/* capability → benchmark → source-labelled metric map */}
       <section className="bm-sec">
         <div className="bm-sec-k">{zh ? '功能、测试集和结果来源' : 'FEATURE, TEST SET, AND RESULT SOURCE'}</div>
-        <div className="bm-topowrap"><BenchTopology bench={d} replay={rep} fixture={st.fixture} zh={zh} /></div>
+        <div className="bm-topowrap"><BenchTopology bench={d} fixture={st.fixture} zh={zh} /></div>
       </section>
 
       {/* coverage map */}

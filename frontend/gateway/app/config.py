@@ -30,6 +30,8 @@ class Settings:
     cors_origins: tuple[str, ...]
     trace_ledger_path: Path
     incident_disposition_ledger_path: Path
+    investigation_case_store_path: Path
+    investigation_session_store_dir: Path
     knowledge_corpus_path: Path | None
     # Read-only mount of the NetOps real-time subsystem's landed output (alerts +
     # AIOps suggestion JSONL sinks + cluster-state.json). The gateway TAILS these
@@ -56,6 +58,18 @@ class Settings:
                 "/data/autopoiesis-runtime/incidents/disposition.jsonl",
             )
         ).resolve()
+        investigation_case_store_path = Path(
+            autopoiesis_env(
+                "INVESTIGATION_CASE_STORE_PATH",
+                "/data/autopoiesis-runtime/investigations/cases.sqlite3",
+            )
+        ).resolve()
+        investigation_session_store_dir = Path(
+            autopoiesis_env(
+                "INVESTIGATION_SESSION_STORE_DIR",
+                "/data/autopoiesis-runtime/investigations/sessions",
+            )
+        ).resolve()
         knowledge_corpus_value = autopoiesis_env("KNOWLEDGE_CORPUS_PATH")
         knowledge_corpus_path = (
             Path(knowledge_corpus_value).resolve()
@@ -71,6 +85,8 @@ class Settings:
             cors_origins=cors_origins,
             trace_ledger_path=trace_ledger_path,
             incident_disposition_ledger_path=incident_disposition_ledger_path,
+            investigation_case_store_path=investigation_case_store_path,
+            investigation_session_store_dir=investigation_session_store_dir,
             knowledge_corpus_path=knowledge_corpus_path,
             netops_runtime_dir=netops_runtime_dir,
         )

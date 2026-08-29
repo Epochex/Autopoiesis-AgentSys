@@ -210,7 +210,7 @@ const T = (zh: boolean) => ({
   archived: zh ? '已写入长期故障档案' : 'SAVED TO LONG-TERM DOSSIER',
 })
 
-export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?: string; subject?: string }) {
+export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang; family?: string; subject?: string; caseId?: string }) {
   const zh = lang === 'zh'
   const tx = useMemo(() => T(zh), [zh])
   const uid = useId()
@@ -260,7 +260,12 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
     setRootDraft('')
     setArchived(null)
     try {
-      const d = await post<StartResp>('/api/rca/investigate/start', { question: q, family, subject })
+      const d = await post<StartResp>('/api/rca/investigate/start', {
+        question: q,
+        family,
+        subject,
+        case_id: caseId,
+      })
       if (!aliveRef.current) return
       setSessionId(d.session_id)
       setSummary(d.summary ?? '')
@@ -279,19 +284,19 @@ export function InvestigateChat({ lang, family, subject }: { lang: Lang; family?
       busyRef.current = false
       if (aliveRef.current) setBusy(null)
     }
-  }, [family, subject])
+  }, [caseId, family, subject])
 
   // One session per fault. A language switch re-labels the panel; it must not
   // throw away the transcript, so the seed key ignores it.
   const seededRef = useRef<string | null>(null)
   useEffect(() => {
-    const key = `${family ?? ''}|${subject ?? ''}`
+    const key = `${caseId ?? ''}|${family ?? ''}|${subject ?? ''}`
     if (seededRef.current === key) return
     seededRef.current = key
     const q = seedQuestion(zh, family, subject)
     setQuestion(q)
     void begin(q)
-  }, [begin, family, subject, zh])
+  }, [begin, caseId, family, subject, zh])
 
   const analyze = useCallback(async () => {
     if (busyRef.current || !sessionId) return

@@ -90,6 +90,7 @@
 .ls-detail-empty { display: grid; place-items: center; color: var(--gray); font-family: var(--font-mono); font-size: 10px; }
 .ls-d-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ls-d-dev { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--ink); }
+.ls-d-case { font-family: var(--font-mono); font-size: 9px; color: var(--gray); letter-spacing: 0.04em; }
 .ls-d-svc { font-family: var(--font-mono); font-size: 10px; color: var(--gray); }
 .ls-d-mode { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.04em; color: var(--ink); border: 1px solid var(--rule); padding: 1px 6px; }
 /* jump: play this incident across the full page-1 topology */

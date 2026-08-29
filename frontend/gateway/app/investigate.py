@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -320,6 +321,7 @@ class Session:
     question: str
     family: str | None
     subject: str | None
+    case_id: str | None = None
     evidence: list[dict[str, Any]] = field(default_factory=list)
     turns: list[dict[str, Any]] = field(default_factory=list)
     runbook: list[dict[str, Any]] = field(default_factory=list)
@@ -330,6 +332,10 @@ class Session:
     probe_prior: dict[str, Any] = field(default_factory=dict)
     historical_context: dict[str, Any] = field(default_factory=dict)
     knowledge_context: list[dict[str, Any]] = field(default_factory=list)
+    # One normalized receipt across indexed memories, operational history and
+    # reference knowledge.  The raw source-shaped fields above remain for the
+    # existing UI, while this list is what the model and trace ledger consume.
+    retrieval_results: list[dict[str, Any]] = field(default_factory=list)
     trace_events: list[dict[str, Any]] = field(default_factory=list)
     diagnosis: str = ""
     root_cause: str = ""
@@ -351,6 +357,7 @@ class Session:
         item = execution.as_evidence(self.next_evidence_id())
         item["at"] = datetime.now(timezone.utc).isoformat()
         self.evidence.append(item)
+        _after_evidence(self, item)
         return item
 
     def collect_observation(
@@ -369,6 +376,7 @@ class Session:
             "source": "read_only_adapter",
         }
         self.evidence.append(item)
+        _after_evidence(self, item)
         return item
 
     def as_dict(self) -> dict[str, Any]:
@@ -377,6 +385,7 @@ class Session:
             "question": self.question,
             "family": self.family,
             "subject": self.subject,
+            "case_id": self.case_id,
             "evidence": self.evidence,
             "turns": self.turns,
             "runbook": self.runbook,
@@ -384,6 +393,7 @@ class Session:
             "probe_prior": self.probe_prior,
             "historical_context": self.historical_context,
             "knowledge_context": self.knowledge_context,
+            "retrieval_results": self.retrieval_results,
             "trace_events": self.trace_events,
             "diagnosis": self.diagnosis,
             "root_cause": self.root_cause,
@@ -391,8 +401,88 @@ class Session:
             "opened_at": self.opened_at,
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "Session":
+        return cls(
+            session_id=str(value["session_id"]),
+            question=str(value.get("question") or ""),
+            family=value.get("family"),
+            subject=value.get("subject"),
+            case_id=value.get("case_id"),
+            evidence=list(value.get("evidence") or ()),
+            turns=list(value.get("turns") or ()),
+            runbook=list(value.get("runbook") or ()),
+            probe_candidates=list(value.get("probe_candidates") or ()),
+            probe_prior=dict(value.get("probe_prior") or {}),
+            historical_context=dict(value.get("historical_context") or {}),
+            knowledge_context=list(value.get("knowledge_context") or ()),
+            retrieval_results=list(value.get("retrieval_results") or ()),
+            trace_events=list(value.get("trace_events") or ()),
+            diagnosis=str(value.get("diagnosis") or ""),
+            root_cause=str(value.get("root_cause") or ""),
+            analysis_citations=list(value.get("analysis_citations") or ()),
+            opened_at=str(value.get("opened_at") or datetime.now(timezone.utc).isoformat()),
+        )
+
 
 _SESSIONS: dict[str, Session] = {}
+
+
+def _session_store():
+    from .config import Settings
+    from .investigation_session_store import InvestigationSessionStore
+
+    return InvestigationSessionStore(Settings.from_env().investigation_session_store_dir)
+
+
+def _persist_session(session: Session) -> None:
+    _session_store().save(session.as_dict())
+
+
+def _append_case_event(
+    session: Session,
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    event_id: str,
+    status: str | None = None,
+) -> None:
+    if not session.case_id:
+        return
+    try:
+        from . import main
+
+        main._case_repository().append_event(
+            session.case_id,
+            kind=kind,
+            payload=payload,
+            event_id=event_id,
+            status=status,
+        )
+    except Exception as error:  # case history degradation stays visible in the session
+        session.trace_events.append({
+            "kind": "case_history_write_failed",
+            "at": datetime.now(timezone.utc).isoformat(),
+            "payload": {"event": kind, "error": f"{type(error).__name__}: {error}"[:240]},
+        })
+
+
+def _after_evidence(session: Session, item: dict[str, Any]) -> None:
+    evidence_id = str(item.get("evidence_id") or "")
+    if evidence_id:
+        _append_case_event(
+            session,
+            "evidence_collected",
+            {
+                "sessionId": session.session_id,
+                "evidenceId": evidence_id,
+                "probe": str(item.get("command") or "")[:240],
+                "ok": bool(item.get("ok")),
+            },
+            event_id=f"{session.session_id}:evidence:{evidence_id}",
+            status="investigating",
+        )
+    _persist_session(session)
 
 
 def _live_memory_store() -> TieredMemoryStore | None:
@@ -472,6 +562,7 @@ def _probe_prior(
         "root_key": None,
         "procedural_confidence": 0.0,
         "considered": [],
+        "retrieval_results": [],
         "strictly_narrowed": False,
     }
     if memory is None:
@@ -480,10 +571,71 @@ def _probe_prior(
     terms = _query_terms(question, family, subject)
     assets = [subject] if subject else []
     recalled = memory.retrieve(terms, assets, limit_per_tier=8, graph_depth=1)
+    diagnostics = {
+        str(item.get("memory_id")): item
+        for item in memory.retrieval_diagnostics()
+        if item.get("memory_id")
+    }
+    retrieval_results: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for tier, records in recalled.items():
+        for source_rank, record in enumerate(records, start=1):
+            if record.memory_id in seen_ids:
+                continue
+            seen_ids.add(record.memory_id)
+            detail = dict(diagnostics.get(record.memory_id) or {})
+            searchable = tokenize(" ".join([record.text, *record.tags, *record.asset_ids]))
+            matched_terms = sorted(set(terms).intersection(searchable))
+            matched_on: list[str] = []
+            if matched_terms:
+                matched_on.append("query_terms")
+            if subject and subject in record.asset_ids:
+                matched_on.append("subject")
+            if family and any(family == tag or family in tag for tag in record.tags):
+                matched_on.append("family")
+            if int(detail.get("graph_hop") or 0) > 0:
+                matched_on.append("relation_graph")
+            routes = [
+                name
+                for name, active in (
+                    ("bm25", float(detail.get("lexical_score") or 0.0) > 0.0),
+                    ("asset_exact", int(detail.get("asset_hits") or 0) > 0),
+                    ("entity_exact", bool(detail.get("entity_hits"))),
+                    ("vector", float(detail.get("vector_score") or 0.0) > 0.0),
+                    ("relation_graph", int(detail.get("graph_hop") or 0) > 0),
+                )
+                if active
+            ]
+            retrieval_results.append({
+                "kind": "indexed_memory",
+                "item_id": record.memory_id,
+                "tier": tier,
+                "summary": record.text[:800],
+                "source": "tiered_memory_store",
+                "locator": f"memory:{record.memory_id}",
+                "route": routes or ["memory_index"],
+                "score": float(detail.get("final_score") or 0.0),
+                "score_type": "memory_hybrid_final",
+                "score_components": {
+                    key: detail.get(key)
+                    for key in (
+                        "lexical_score", "asset_hits", "entity_hits", "entity_score",
+                        "vector_score", "graph_hop", "graph_parent_id",
+                        "structural_prior", "final_score",
+                    )
+                    if key in detail
+                },
+                "source_rank": source_rank,
+                "matched_terms": matched_terms,
+                "matched_on": matched_on,
+                "source_trace_ids": list(record.source_trace_ids),
+                "historical_only": True,
+                "selected_for_context": True,
+            })
     procedural = list(recalled.get("procedural", []))
     semantic = list(recalled.get("semantic", []))
     if not procedural and not semantic:
-        return empty
+        return {**empty, "retrieval_results": retrieval_results}
 
     # Import at use time because the freshness contract is evolving independently;
     # the hot path calls the shared function whenever it is present in the checkout.
@@ -532,7 +684,11 @@ def _probe_prior(
                 "procedural_confidence": proc_weight,
             })
     if not hypotheses:
-        return {**empty, "considered": considered}
+        return {
+            **empty,
+            "considered": considered,
+            "retrieval_results": retrieval_results,
+        }
 
     hypotheses.sort(key=lambda item: (-item["score"], item["root_key"]))
     best_root = hypotheses[0]["root_key"]
@@ -552,7 +708,11 @@ def _probe_prior(
     # emit no shortcut attribution in that case; claiming savings would be fiction.
     strictly_narrowed = bool(preferred) and set(preferred) < set(TRIAGE_PROBES)
     if not strictly_narrowed:
-        return {**empty, "considered": considered}
+        return {
+            **empty,
+            "considered": considered,
+            "retrieval_results": retrieval_results,
+        }
     ordered = preferred + [command for command in TRIAGE_PROBES if command not in preferred]
     attributed = [*procedures, *semantics]
     for item in considered:
@@ -567,6 +727,7 @@ def _probe_prior(
             item["procedural_confidence"] for item in same_root
         ), 3),
         "considered": considered,
+        "retrieval_results": retrieval_results,
         "strictly_narrowed": True,
     }
 
@@ -656,10 +817,14 @@ def _confirmed_root_keys(evidence: list[dict[str, Any]], subject: str | None) ->
     return confirmed
 
 
-def _persist_shortcut_trace(session: Session, payload: dict[str, Any]) -> None:
-    """Keep an offline-visible trace and append to the service ledger when live."""
+def _persist_session_trace(
+    session: Session,
+    kind: str,
+    payload: dict[str, Any],
+) -> None:
+    """Keep an offline-visible receipt and append it to the service ledger."""
     row = {
-        "kind": "memory_shortcut",
+        "kind": kind,
         "at": datetime.now(timezone.utc).isoformat(),
         "payload": payload,
     }
@@ -674,22 +839,231 @@ def _persist_shortcut_trace(session: Session, payload: dict[str, Any]) -> None:
             ledger.append(TraceEvent(
                 run_id=session.session_id,
                 case_id=f"investigate:{session.session_id}",
-                kind="memory_shortcut",
+                kind=kind,
                 payload=payload,
             ))
     except Exception as error:  # noqa: BLE001 - evidence collection must survive trace degradation
         row["persistence_error"] = f"{type(error).__name__}: {error}"[:240]
 
 
-def start(question: str, family: str | None = None, subject: str | None = None) -> dict[str, Any]:
+def _persist_shortcut_trace(session: Session, payload: dict[str, Any]) -> None:
+    """Record a measured probe-order or early-stop effect from recalled memory."""
+    _persist_session_trace(session, "memory_shortcut", payload)
+
+
+def _retrieval_relation(
+    session: Session,
+    *,
+    matched_on: list[str] | tuple[str, ...] = (),
+    matched_terms: list[str] | tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Attach every hit to the investigation that requested it."""
+    return {
+        "investigation_id": session.session_id,
+        "subject": session.subject,
+        "family": session.family,
+        "matched_on": list(matched_on),
+        "matched_terms": list(matched_terms),
+    }
+
+
+def _operational_retrieval_results(
+    session: Session,
+    context: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Normalize source-ranked dossiers, risks and promoted features."""
+    results: list[dict[str, Any]] = []
+    for key, kind in (
+        ("dossiers", "incident_dossier"),
+        ("risks", "risk_pattern"),
+        ("features", "network_feature"),
+    ):
+        rows = context.get(key) or ()
+        if not isinstance(rows, (list, tuple)):
+            continue
+        for source_rank, raw in enumerate(rows, start=1):
+            if not isinstance(raw, Mapping):
+                continue
+            row = dict(raw)
+            matched_on = [str(item) for item in row.get("matched_on") or ()]
+            feature = dict(row.get("feature") or {}) if kind == "network_feature" else row
+            if session.subject:
+                searchable_subjects = {
+                    str(item)
+                    for item in (
+                        feature.get("subject"), feature.get("asset"), feature.get("scope_key"),
+                        *(feature.get("asset_ids") or ()), *(feature.get("affected_assets") or ()),
+                        *(feature.get("target_assets") or ()),
+                    )
+                    if item
+                }
+                scope = feature.get("scope")
+                if isinstance(scope, Mapping):
+                    searchable_subjects.update(str(item) for item in scope.get("asset_ids") or ())
+                if session.subject in searchable_subjects and "subject" not in matched_on:
+                    matched_on.append("subject")
+            scope = feature.get("scope")
+            scope_family = scope.get("fault_family") if isinstance(scope, Mapping) else None
+            family_value = str(
+                feature.get("family") or feature.get("fault_family") or scope_family or ""
+            )
+            if session.family and family_value == session.family and "family" not in matched_on:
+                matched_on.append("family")
+            item_id = str(
+                feature.get("dossier_id") or feature.get("incident_id")
+                or feature.get("pattern_id") or feature.get("feature_id")
+                or feature.get("id") or f"{kind}:{source_rank}"
+            )
+            summary = str(
+                feature.get("fault_summary") or feature.get("summary")
+                or feature.get("statement") or feature.get("risk_type")
+                or feature.get("root_cause") or item_id
+            )
+            native_score = row.get("score") if kind == "network_feature" else None
+            score = float(native_score) if isinstance(native_score, (int, float)) else 1.0 / source_rank
+            score_type = (
+                "feature_confidence_plus_scope_specificity"
+                if native_score is not None
+                else "source_rank_reciprocal"
+            )
+            source = str(
+                feature.get("source_mode") or feature.get("provenance")
+                or feature.get("source") or "operational_memory"
+            )
+            results.append({
+                "kind": kind,
+                "item_id": item_id,
+                "summary": summary[:800],
+                "source": source,
+                "locator": f"operational-memory:{kind}:{item_id}",
+                "route": "scope_and_recency_rank",
+                "score": round(score, 12),
+                "score_type": score_type,
+                "source_rank": source_rank,
+                "matched_on": matched_on,
+                "matched_terms": [],
+                "historical_only": True,
+                "selected_for_context": True,
+                "relation_to_current": _retrieval_relation(
+                    session,
+                    matched_on=matched_on,
+                ),
+            })
+    return results
+
+
+def _knowledge_retrieval_results(
+    session: Session,
+    documents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize scored knowledge passages without promoting them to telemetry."""
+    results: list[dict[str, Any]] = []
+    for source_rank, item in enumerate(documents, start=1):
+        matched_terms = [str(term) for term in item.get("matched_terms") or ()]
+        results.append({
+            "kind": "knowledge_document",
+            "item_id": str(item.get("document_id") or f"knowledge:{source_rank}"),
+            "summary": str(item.get("text") or "")[:800],
+            "title": str(item.get("title") or item.get("document_id") or "knowledge"),
+            "source": str(item.get("source") or "operations_knowledge_base"),
+            "locator": str(item.get("locator") or item.get("document_id") or ""),
+            "route": str(item.get("route") or "bm25"),
+            "score": float(item.get("score") or 0.0),
+            "score_type": str(item.get("route") or "bm25"),
+            "source_rank": source_rank,
+            "matched_on": ["query_terms"] if matched_terms else [],
+            "matched_terms": matched_terms,
+            "reference_only": True,
+            "selected_for_context": True,
+            "relation_to_current": _retrieval_relation(
+                session,
+                matched_on=["query_terms"] if matched_terms else [],
+                matched_terms=matched_terms,
+            ),
+        })
+    return results
+
+
+def _build_retrieval_results(
+    session: Session,
+    memory_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build the one auditable retrieval payload consumed by reasoning."""
+    normalized_memory: list[dict[str, Any]] = []
+    for raw in memory_results:
+        item = dict(raw)
+        item["relation_to_current"] = _retrieval_relation(
+            session,
+            matched_on=item.get("matched_on") or (),
+            matched_terms=item.get("matched_terms") or (),
+        )
+        normalized_memory.append(item)
+    results = [
+        *normalized_memory,
+        *_operational_retrieval_results(session, session.historical_context),
+        *_knowledge_retrieval_results(session, session.knowledge_context),
+    ]
+    # Keep every hit in the receipt, then mark a bounded, source-balanced subset
+    # for the model context. Scores from different indexes are not comparable, so
+    # selection is per tier/kind instead of sorting all sources into one fake scale.
+    selected_per_group: dict[str, int] = {}
+    for item in results:
+        kind = str(item.get("kind") or "unknown")
+        group = f"{kind}:{item.get('tier') or ''}"
+        limit = 2 if kind in {
+            "indexed_memory", "incident_dossier", "risk_pattern", "network_feature",
+        } else 4
+        selected = selected_per_group.get(group, 0) < limit
+        item["selected_for_context"] = selected
+        if selected:
+            selected_per_group[group] = selected_per_group.get(group, 0) + 1
+    return results
+
+
+def _retrieval_context(session: Session) -> list[dict[str, Any]]:
+    """Detached bounded retrieval payload supplied to each model call."""
+    return [
+        dict(item)
+        for item in session.retrieval_results
+        if item.get("selected_for_context")
+    ]
+
+
+def start(
+    question: str,
+    family: str | None = None,
+    subject: str | None = None,
+    case_id: str | None = None,
+) -> dict[str, Any]:
     """Open a session and run its opening probes before anything reasons."""
+    if case_id:
+        from . import main
+
+        case = main._case_repository().get(case_id)
+        if case is None:
+            raise ValueError("unknown investigation case")
+        subject = subject or case.subject or None
     session = Session(
         session_id=uuid.uuid4().hex[:12],
         question=question.strip(),
         family=family,
         subject=subject,
+        case_id=case_id,
     )
     _SESSIONS[session.session_id] = session
+    _append_case_event(
+        session,
+        "investigation_session_started",
+        {
+            "sessionId": session.session_id,
+            "question": session.question,
+            "subject": session.subject,
+            "family": session.family,
+        },
+        event_id=f"{session.session_id}:started",
+        status="investigating",
+    )
+    _persist_session(session)
     session.historical_context = _operational_context(subject, family)
     if any(session.historical_context.get(key) for key in ("dossiers", "risks", "features")):
         session.trace_events.append({
@@ -727,9 +1101,14 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
     # triage sweep, because "what is wrong here" has no smaller honest answer.
     extra = FAMILY_PROBES.get(family or "") or TRIAGE_PROBES
     uses_triage = extra is TRIAGE_PROBES
-    prior = _probe_prior(question, family, subject, _live_memory_store()) if uses_triage else {
+    # Retrieval applies to every investigation.  A named fault family keeps its
+    # fixed probe set, yet relevant histories still enter the context and receipt.
+    memory_prior = _probe_prior(question, family, subject, _live_memory_store())
+    prior = memory_prior if uses_triage else {
         "ordered": list(extra), "preferred": [], "skills": [], "memory_ids": [],
-        "root_key": None, "procedural_confidence": 0.0, "considered": [],
+        "root_key": None, "procedural_confidence": 0.0,
+        "considered": list(memory_prior.get("considered") or ()),
+        "retrieval_results": list(memory_prior.get("retrieval_results") or ()),
         "strictly_narrowed": False,
     }
     ordered_extra = list(prior["ordered"])
@@ -757,7 +1136,15 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
     if profile_anomalies:
         prior["profile_anomalies"] = profile_anomalies
         prior["profile_preferred"] = profile_preferred
-    session.probe_prior = {key: value for key, value in prior.items() if key != "ordered"}
+    session.probe_prior = {
+        key: value
+        for key, value in prior.items()
+        if key not in {"ordered", "retrieval_results"}
+    }
+    session.retrieval_results = _build_retrieval_results(
+        session,
+        list(memory_prior.get("retrieval_results") or ()),
+    )
 
     subject_probes: list[str] = []
     unit_subject = bool(
@@ -785,6 +1172,30 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
                 payload={"error": f"{type(error).__name__}: {error}"[:240]},
                 ok=False,
             )
+
+        # Production receives the router credentials through the service
+        # environment. Unit tests and developer shells without them do not make
+        # a surprise network call or add synthetic evidence.
+        configured = bool(
+            (os.environ.get("AUTOPOIESIS_FGT_USER") or os.environ.get("FGT_USER"))
+            and (os.environ.get("AUTOPOIESIS_FGT_PASS") or os.environ.get("FGT_PASS"))
+        )
+        if configured:
+            try:
+                from .investigation_tools import collect_fortigate_context
+
+                router_context = collect_fortigate_context(subject)
+                session.collect_observation(
+                    label=f"fortigate:network_context {subject}",
+                    payload=router_context,
+                    ok=not bool(router_context.get("degraded")),
+                )
+            except Exception as error:
+                session.collect_observation(
+                    label=f"fortigate:network_context {subject}",
+                    payload={"error": f"{type(error).__name__}: {error}"[:240]},
+                    ok=False,
+                )
 
     planned = list(BASELINE_PROBES)
     for command in [*ordered_extra, *subject_probes]:
@@ -843,16 +1254,58 @@ def start(question: str, family: str | None = None, subject: str | None = None) 
         }
         _persist_shortcut_trace(session, payload)
 
+    kinds: dict[str, int] = {}
+    for item in session.retrieval_results:
+        kind = str(item.get("kind") or "unknown")
+        kinds[kind] = kinds.get(kind, 0) + 1
+    # The session response keeps bounded summaries for reasoning and drill-down.
+    # The durable ledger stores identities, ranks and provenance only, avoiding a
+    # second copy of every recalled passage in the append-only trace file.
+    trace_results = [
+        {
+            key: value
+            for key, value in item.items()
+            if key not in {"summary", "source_trace_ids"}
+        }
+        for item in session.retrieval_results
+    ]
+    _persist_session_trace(session, "memory_candidates_ranked", {
+        "scope": "interactive_investigation",
+        "investigation_id": session.session_id,
+        "question": session.question,
+        "subject": session.subject,
+        "family": session.family,
+        "query_terms": query_terms,
+        "returned_count": len(session.retrieval_results),
+        "counts_by_kind": kinds,
+        "results": trace_results,
+    })
+    _append_case_event(
+        session,
+        "retrieval_completed",
+        {
+            "sessionId": session.session_id,
+            "returnedCount": len(session.retrieval_results),
+            "countsByKind": kinds,
+            "evidenceCount": len(session.evidence),
+        },
+        event_id=f"{session.session_id}:retrieval",
+        status="investigating",
+    )
+    _persist_session(session)
+
     return {
         "session_id": session.session_id,
         "question": session.question,
         "family": family,
         "subject": subject,
+        "case_id": case_id,
         "evidence": session.evidence,
         "probe_candidates": session.probe_candidates,
         "probe_prior": session.probe_prior,
         "historical_context": session.historical_context,
         "knowledge_context": session.knowledge_context,
+        "retrieval_results": session.retrieval_results,
         "trace_events": session.trace_events,
         "summary": _summarise(session),
     }
@@ -869,8 +1322,130 @@ def _summarise(session: Session) -> str:
 def get(session_id: str) -> Session:
     session = _SESSIONS.get(session_id)
     if session is None:
-        raise KeyError(f"unknown session {session_id!r}")
+        snapshot = _session_store().load(session_id)
+        if snapshot is None:
+            raise KeyError(f"unknown session {session_id!r}")
+        session = Session.from_dict(snapshot)
+        _SESSIONS[session_id] = session
     return session
+
+
+def live_retrieval_trace(query: str | None = None, limit: int = 12) -> dict[str, Any]:
+    """Project actual investigation retrieval receipts into the retrieval-page contract."""
+    snapshots = _session_store().recent(limit=max(limit * 2, 20))
+    seen = {str(item.get("session_id")) for item in snapshots}
+    snapshots = [
+        *[session.as_dict() for session in reversed(list(_SESSIONS.values())) if session.session_id not in seen],
+        *snapshots,
+    ]
+    needle = (query or "").strip().lower()
+    cases: list[dict[str, Any]] = []
+    for snapshot in snapshots:
+        results = list(snapshot.get("retrieval_results") or ())
+        if not results:
+            continue
+        haystack = " ".join(str(snapshot.get(key) or "") for key in ("question", "subject", "family")).lower()
+        if needle and needle not in haystack:
+            continue
+        documents: dict[str, dict[str, Any]] = {}
+        grouped: dict[str, list[dict[str, Any]]] = {
+            "asset_profile": [], "procedural": [], "episodic": [], "semantic": [],
+        }
+        selected: list[dict[str, Any]] = []
+        for result in results:
+            item_id = str(result.get("item_id") or result.get("locator") or "")
+            if not item_id:
+                continue
+            kind = str(result.get("kind") or "")
+            raw_tier = str(result.get("tier") or "")
+            tier = raw_tier if raw_tier in grouped else (
+                "asset_profile" if kind == "network_feature"
+                else "procedural" if kind in {"procedural_memory", "operations_knowledge"}
+                else "episodic" if kind == "incident_dossier"
+                else "semantic"
+            )
+            summary = str(result.get("summary") or item_id)
+            source = str(result.get("source") or "unknown")
+            matched = [str(value) for value in result.get("matched_terms") or ()]
+            raw_route = result.get("route")
+            routes = [str(value) for value in raw_route] if isinstance(raw_route, (list, tuple)) else [str(raw_route or "")]
+            via = ["lexical"] if any(
+                value in {"bm25", "scope_and_recency_rank", "asset_exact", "exact_asset"}
+                for value in routes
+            ) else []
+            relation = result.get("relation_to_current")
+            if isinstance(relation, Mapping) and relation.get("matched_on"):
+                via.append("graph")
+            hit = {
+                "doc_id": item_id,
+                "rank": len(grouped[tier]) + 1,
+                "score": float(result.get("score") or 0.0),
+                "title": summary[:120],
+                "snippet": summary[:220],
+                "text": summary,
+                "matched": matched,
+                "via": via or ["lexical"],
+            }
+            grouped[tier].append(hit)
+            documents[item_id] = {
+                "title": hit["title"],
+                "text": summary,
+                "tags": [kind, raw_tier, *routes],
+                "source": f"{source} · {result.get('locator') or item_id}",
+            }
+            if result.get("selected_for_context"):
+                selected.append({
+                    "doc_id": item_id,
+                    "title": hit["title"],
+                    "tokens": len(tokenize(summary)),
+                    "reason": "selected_for_context receipt",
+                    "text": summary,
+                })
+        session_id = str(snapshot.get("session_id") or "")
+        question_text = str(snapshot.get("question") or "")
+        cases.append({
+            "id": f"investigate:{session_id}",
+            "flow": "memory_recall",
+            "label": {"zh": question_text[:80], "en": question_text[:80]},
+            "query": question_text,
+            "intent": {
+                "tier": "live_investigation",
+                "zh": "当前调查的统一检索回执",
+                "en": "Unified retrieval receipt from a live investigation",
+            },
+            "corpus": {"size": len(documents), "source": "investigation retrieval receipt"},
+            "triggers": {
+                "count": 1,
+                "live": True,
+                "source": f"investigation-session:{session_id}",
+                "note": {
+                    "zh": f"案件 {snapshot.get('case_id') or '临时调查'} 的真实检索调用",
+                    "en": f"Actual retrieval call for case {snapshot.get('case_id') or 'ad-hoc investigation'}",
+                },
+            },
+            "tiers": [
+                {
+                    "id": tier,
+                    "kind": tier,
+                    "label": {
+                        "zh": {"asset_profile": "设备资料", "procedural": "处理办法", "episodic": "历史事件", "semantic": "归纳与知识"}[tier],
+                        "en": {"asset_profile": "ASSET INFO", "procedural": "HOW-TO", "episodic": "PAST INCIDENTS", "semantic": "PATTERNS AND KNOWLEDGE"}[tier],
+                    },
+                    "hits": hits,
+                }
+                for tier, hits in grouped.items()
+            ],
+            "graph": {"hops": 0, "expanded": []},
+            "context": {
+                "budget_tokens": sum(item["tokens"] for item in selected),
+                "total_tokens": sum(item["tokens"] for item in selected),
+                "selected": selected,
+            },
+            "docs": documents,
+        })
+        if len(cases) >= limit:
+            break
+    return {"ok": True, "dataMode": "live_investigation_receipts", "cases": cases}
 
 
 def _excerpt(text: str, head: int, tail: int) -> str:
@@ -1021,10 +1596,10 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
                     f"问题：{session.question}\n"
                     f"故障族：{session.family or '未指定'}\n"
                     f"对象：{session.subject or '未指定'}\n\n"
-                    "历史档案只用于提出和排序假设，根因结论必须引用本次会话的新鲜证据。\n"
-                    f"历史档案：{json.dumps(session.historical_context, ensure_ascii=False)}\n\n"
-                    "知识库片段用于解释命令语义和操作约束，不是当前状态证据，也不授权动作。\n"
-                    f"知识库片段：{json.dumps(session.knowledge_context, ensure_ascii=False)}\n\n"
+                    "以下检索结果来自历史事件、记忆索引和参考知识，用于提出与排序假设。"
+                    "每条结果都携带来源、分数和与本次调查的匹配关系。"
+                    "现场状态和根因结论仍须引用本次会话的新鲜证据。\n"
+                    f"检索结果：{json.dumps(_retrieval_context(session), ensure_ascii=False)}\n\n"
                     f"已采集的真实命令输出：\n{_evidence_block(session)}\n\n"
                     + ("这是最后一轮，必须基于现有证据给出结论；need_commands 请留空。\n\n"
                        if round_index == MAX_ANALYZE_ROUNDS - 1 else "")
@@ -1054,6 +1629,19 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
     citations = _verified_citations(session, payload.get("citations") or [])
     session.root_cause = root_cause
     session.analysis_citations = citations
+    _append_case_event(
+        session,
+        "hypothesis_updated",
+        {
+            "sessionId": session.session_id,
+            "rootCause": root_cause or "inconclusive",
+            "citations": citations,
+            "evidenceTotal": len(session.evidence),
+        },
+        event_id=f"{session.session_id}:analysis:{len(session.turns)}:{len(session.evidence)}",
+        status="waiting",
+    )
+    _persist_session(session)
     return {
         "diagnosis": session.diagnosis,
         "root_cause": root_cause,
@@ -1194,6 +1782,22 @@ def close(
         "at": now.isoformat(),
         "payload": {"dossier_id": dossier.dossier_id, "resolution": resolution},
     })
+    final_status = "escalated" if resolution == "inconclusive" else "resolved"
+    _append_case_event(
+        session,
+        "investigation_disposition_recorded",
+        {
+            "sessionId": session.session_id,
+            "dossierId": dossier.dossier_id,
+            "resolution": resolution,
+            "rootCause": root_cause,
+            "citations": selected,
+            "confirmedBy": confirmed_by,
+        },
+        event_id=f"{session.session_id}:disposition",
+        status=final_status,
+    )
+    _persist_session(session)
     return {"dossier": payload, "resolution": resolution}
 
 
@@ -1256,6 +1860,8 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
             "role": "user",
             "content": (
                 f"原始问题：{session.question}\n"
+                + "\n本次调查检索结果（历史线索与参考知识）：\n"
+                + f"{json.dumps(_retrieval_context(session), ensure_ascii=False)}\n"
                 + (f"\n此前对话：\n{history}\n" if history else "")
                 + f"\n已采集证据（最近 {FOLLOW_UP_FULL} 条为全文，更早的为摘要）：\n"
                 + f"{_evidence_block(session, full_ids=recent_ids)}\n\n"
@@ -1288,6 +1894,20 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
     citations = _verified_citations(session, payload.get("citations") or [])
     session.turns.append({"question": question, "answer": answer, "citations": citations,
                           "at": datetime.now(timezone.utc).isoformat()})
+    turn_number = len(session.turns)
+    _append_case_event(
+        session,
+        "investigation_turn_completed",
+        {
+            "sessionId": session.session_id,
+            "turn": turn_number,
+            "citations": citations,
+            "freshEvidenceIds": [item.get("evidence_id") for item in fresh if item.get("evidence_id")],
+        },
+        event_id=f"{session.session_id}:turn:{turn_number}",
+        status="investigating",
+    )
+    _persist_session(session)
     return {"answer": answer, "citations": citations, "evidence": fresh, "degraded": False}
 
 

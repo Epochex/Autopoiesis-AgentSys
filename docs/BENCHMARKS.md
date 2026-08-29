@@ -1,106 +1,33 @@
-# Benchmarks & Reproducibility
+# Benchmarks and evaluation boundaries
 
-The single design rule of this project is **honesty**: every number below is produced
-by the Python code in `core/` + `domains/`, on the real Dahua FortiGate → R230 syslog
-held-out set, and is reproducible with the commands given. Nothing here is a mock, a
-projection, or a hand-tuned figure. Where a result is illustrative or synthetic it is
-labelled as such in the same sentence.
+Every result in this document is a local measurement with a named analysis unit.  Test
+counts, fixed-case pass rates, retrieval recall, index latency and controlled concurrency
+measure different objects.  None of them is a proxy for an integrated investigation
+service.
 
-> Scope note. The **headline evidence is the real R230 held-out stream** (below).
-> **LongMemEval is the external conformance anchor** — a harness you run yourself on
-> the public dataset. (An earlier TypeScript `src/` prototype and its `npm` workflow have
-> been **removed**; the measured system is Python-only.)
+The release-level evaluation target is a temporal investigation case.  A qualifying trace
+starts from a live event cluster, persists evidence and hypotheses across steps, waits for
+delayed evidence, revises a contradicted hypothesis, restores from a checkpoint after a
+service restart, and closes on independently labelled evidence.  Paired traces compare
+``no_memory`` and ``with_memory`` under the same event stream and tool budget.  The executable
+scorer is `core/eval/temporal_case_evaluation.py`.  The repository currently contains its
+contract tests; a production-trace result has not been committed.
 
----
-
-## 1. Self-evolution — the agent gets cheaper on a recurring stream, for free
-
-One agent processes a stream of real incidents over several passes (StreamBench-style
-online protocol). The first encounter is investigated normally; every recurrence is
-matched against provenance-linked episodic memory, then re-probed against current
-state. Historical snapshots are never admitted as current evidence.
-
-| metric | cold (no learning) | warm (self-evolving) | Δ |
+| evaluation | measured object | valid conclusion | excluded conclusion |
 |---|---|---|---|
-| read-only probes / tool calls | 32 | **32** | **0.0%** |
-| tool cost | 32.0 | **32.0** | **0.0%** |
-| root-cause accuracy | 1.00 | **1.00** | 0 |
-| citation-verify pass rate | 1.00 | **1.00** | 0 |
-| learned in-process memories | 0 | **19** | +19 |
+| temporal case trace | persisted multi-step case | continuity, revision, restart recovery, closing quality and paired memory cost | model generalization until real labelled traces are supplied |
+| memory-effectiveness harness | five fixed source cases and deterministic variants | mechanism execution, observed cost and failure boundaries in that harness | production benefit and action safety |
+| LongMemEval | answer-bearing session retrieval | recall at k for saved-record lookup | diagnosis or remediation success |
+| IODA, SciFact, FortiOS retrieval | ranked document candidates | retrieval-stage relevance | whole-system accuracy |
+| multi-agent concurrency microbenchmark | four controlled I/O handlers | scheduling overlap and latency | diagnosis quality, model quality or business completion |
+| vector and BM25 index benchmarks | synthetic vectors or documents | index recall, latency, churn and recovery | natural-language relevance or live workload capacity |
+| Python and frontend tests | code contracts | regression status for covered branches | an end-to-end business result |
+| ITBench references | published third-party results | external task definitions | a local project score |
 
-*Real R230 FortiGate held-out set, 6 cases × 4 passes, rule reasoner, engine-independent.*
+`examples/benchmarks.py` remains a developer diagnostic for fixed fixtures.  Its output must
+not appear in a release claim, resume metric or whole-system completion statement.
 
-Passes 2–4 confirm all six recalled incidents using fresh current-run evidence. The
-earlier `−75%` result came from replaying each historical `evidence_snapshot` and skipping
-current probes; it has been removed because that verifies an old incident, not current state.
-On this held-out corpus the cold router already selects the minimal required checks, so safe
-memory confirmation does not reduce tool cost. Efficiency requires a separate measured case
-where procedural memory safely removes unnecessary cold-path checks.
-
-Reproduce (one command — prefers the real held-out, falls back to seed cases and says so):
-```bash
-python3 examples/benchmarks.py          # prints §1, §2 and §3 on the real R230 set
-# also served live at:  GET /api/rca/evolution?passes=4
-```
-
----
-
-## 2. Ablation — which component is load-bearing
-
-Turn each component off and re-measure root-cause accuracy on the held-out set:
-
-| configuration | memory | compress | skill-ctl | root-cause acc |
-|---|:--:|:--:|:--:|---|
-| Autopoiesis full path | on | on | on | **100%** |
-| − evidence compression | on | off | on | 100% |
-| − tiered memory | off | on | on | 100% |
-| **− skill scheduling** | on | on | **off** | **16.7%** |
-
-*6-case real held-out, rule reasoner.* Removing **skill scheduling** collapses accuracy
-100% → 16.7% (1/6) — it is the load-bearing lever. Compression and memory are **Δ0 on
-accuracy** on this set: their honest value is *efficiency and robustness* (fewer
-tokens/probes, graceful degradation), **not** an accuracy lift. The resume must say so.
-
-> **Read the 100% honestly.** With N=6 and a deterministic rule reasoner, the 100% is the
-> pipeline correctly classifying six curated real-log incident types — evidence of correct
-> wiring and permission-gated evidence routing, **not** learned accuracy or generalization.
-> The collapse *mechanism* (a dominant signal swamping minority cases without gating) is
-> real and independently reproduced on synthetic stats; the exact *magnitude* (1/6) is a
-> small-N + first-match-reasoner property.
-
-> Caveat (honesty): this collapse is a property of the **real** held-out set. On the mock
-> seed cases every configuration scores 100% — skill scheduling only becomes load-bearing
-> once the agent must pick the right probe among real distractors. `examples/benchmarks.py`
-> prints which dataset produced the table.
-
-Reproduce: `python3 examples/benchmarks.py` (§2 of its output).
-
----
-
-## 3. Memory layer — managed, not just appended (Phase B)
-
-Between events the warm in-process store is *curated* by four rule-based mechanisms, each
-drawn from the recent agent-memory literature and each derived from real run signals:
-
-| mechanism | paper | what it does | live number |
-|---|---|---|---|
-| write router (ADD/UPDATE/NOOP) | Mem0 (Chhikara et al., 2025) | reinforce a variant instead of duplicating | 19 active, deduped |
-| associative links | A-MEM (Xu et al., 2025) | connect same-family memories for transfer | 14 links |
-| reflection | Generative Agents (Park et al., 2023) | abstract a salient family into a higher-level insight | 1 insight |
-| decay + forgetting | Ebbinghaus (1885) | unused memories fade; reused ones stay warm | 0 forgotten (all recur) |
-
-19 memories = 6 episodic / 7 semantic / 6 procedural. `forgotten=0` is honest: on a
-fully-recurring stream every memory is reused each pass, so nothing goes stale — the
-decay mechanism is proven in isolation by `tests_py/test_memory_ops.py`.
-
-Reproduce:
-```bash
-python3 -m pytest tests_py/test_memory_ops.py -q     # 9 mechanism property tests
-```
-
----
-
-## 4. LongMemEval — external conformance anchor
+## 1. LongMemEval: saved-record retrieval
 
 [LongMemEval](https://github.com/xiaowu0162/LongMemEval) (Wu et al., ICLR 2025 —
 arXiv:2410.10813) is the authoritative long-term-memory benchmark: 500 questions over

@@ -36,6 +36,7 @@ function App() {
   // Set when a live-situation row asks to see its response chain; the
   // diagnose page opens focused on that subject instead of everything.
   const [traceSubject, setTraceSubject] = useState<string | null>(null)
+  const [traceCaseId, setTraceCaseId] = useState<string | null>(null)
   const [scenario, setScenario] = useState<Scenario>('live')
   const [provider, setProvider] = useState('rule')
   const [st, setSt] = useState<State>({ s: 'load' })
@@ -380,7 +381,12 @@ function App() {
       ) : view === 'retrieval' ? (
         <RetrievalPage lang={lang} scenario={scenario} />
       ) : view === 'diagnose' ? (
-        <DiagnosePage lang={lang} scenario={scenario} focusSubject={traceSubject ?? undefined} />
+        <DiagnosePage
+          lang={lang}
+          scenario={scenario}
+          focusSubject={traceSubject ?? undefined}
+          focusCaseId={traceCaseId ?? undefined}
+        />
       ) : view === 'console' && scenario === 'bench' ? (
         <BenchConsole lang={lang} />
       ) : view === 'trajectory' && scenario === 'bench' ? (
@@ -393,7 +399,11 @@ function App() {
           activeId={active}
           onPick={setActive}
           onTheater={openTheater}
-          onTrace={(subject) => { setTraceSubject(subject); setView('diagnose') }}
+          onTrace={(subject, caseId) => {
+            setTraceSubject(subject)
+            setTraceCaseId(caseId ?? null)
+            setView('diagnose')
+          }}
           focusSubject={traceSubject ?? undefined}
         />
       ) : d.datasetReady && s && c ? (
@@ -405,6 +415,7 @@ function App() {
               activeSubject={theater?.device}
               onOpen={(subject, event) => {
                 setTraceSubject(subject)
+                setTraceCaseId(null)
                 if (theater) openTheater(event)
                 else setView('trajectory')
               }}

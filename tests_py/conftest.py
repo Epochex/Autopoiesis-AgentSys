@@ -28,6 +28,8 @@ _PATH_ENV = {
     "AUTOPOIESIS_SENTINEL_TIMELINE": _TEST_ROOT / "sentinel-timeline.jsonl",
     "AUTOPOIESIS_TRACE_LEDGER_PATH": _TEST_ROOT / "network-rca-trace.jsonl",
     "AUTOPOIESIS_INCIDENT_DISPOSITION_LEDGER_PATH": _TEST_ROOT / "incidents" / "disposition.jsonl",
+    "AUTOPOIESIS_INVESTIGATION_CASE_STORE_PATH": _TEST_ROOT / "investigations" / "cases.sqlite3",
+    "AUTOPOIESIS_INVESTIGATION_SESSION_STORE_DIR": _TEST_ROOT / "investigations" / "sessions",
     "AUTOPOIESIS_LLM_CACHE_DIR": _TEST_ROOT / "llm-cache",
     "AUTOPOIESIS_ARP_SNAPSHOT_PATH": _TEST_ROOT / "arp-snapshot.txt",
     "AUTOPOIESIS_L2_LEDGER_PATH": _TEST_ROOT / "l2-identity-history.jsonl",

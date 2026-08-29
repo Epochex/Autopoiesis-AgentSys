@@ -15,7 +15,7 @@ export function TrajectoryPage({
   cases: RcaCase[]; lang: Lang; activeId: string; onPick: (id: string) => void
   onTheater?: (e: TheaterEvent) => void
   /** Jump to this subject's response chain on the diagnose page. */
-  onTrace?: (subject: string) => void
+  onTrace?: (subject: string, caseId?: string) => void
   focusSubject?: string
 }) {
   const zh = lang === 'zh'
@@ -57,12 +57,12 @@ export function TrajectoryPage({
 
       {/* Explicit source boundary: disk-sink records above, temp-dir benchmark below. */}
       <div className="tp-seam" role="separator">
-        <span>{zh ? '02 · 离线记忆算法回放 · 六案例 × 四轮' : '02 · OFFLINE MEMORY ALGORITHM REPLAY · SIX CASES × FOUR PASSES'}</span>
+        <span>{zh ? '02 · 固定案例记忆机制调试 · 不作为业务效果' : '02 · FIXED-CASE MEMORY DIAGNOSTIC · EXCLUDED FROM BUSINESS RESULTS'}</span>
       </div>
 
       <header className="fx-mast">
         <div className="fx-mast-l">
-          <span className="fx-mast-kick">{zh ? '固定留出案例 · 长线记忆状态机演化' : 'FIXED HELD-OUT CASES · LONG-RUN MEMORY STATE EVOLUTION'}</span>
+          <span className="fx-mast-kick">{zh ? '开发者调试集 · 检查检索与写入事件' : 'DEVELOPER FIXTURE · INSPECT RETRIEVAL AND WRITE EVENTS'}</span>
           <h1 className="fx-mast-title">{zh ? <>离线<mark>记忆算法回放</mark></> : <>OFFLINE <mark>MEMORY ALGORITHM REPLAY</mark></>}</h1>
           <div className="fx-mast-mission">
             <span className="fx-mast-q" title={c.query}>{clip(c.query, 62)}</span>
@@ -71,7 +71,7 @@ export function TrajectoryPage({
           </div>
         </div>
         <div className="fx-mast-r">
-          <span className="fx-mast-real">R230 · {zh ? '内网留出集' : 'HELD-OUT'}</span>
+          <span className="fx-mast-real">R230 · {zh ? '历史固定案例' : 'HISTORICAL FIXED CASES'}</span>
           <div className="fx-mast-cases">
             <span className="fx-mast-cases-lab">{zh ? '事件' : 'CASE'}</span>
             {cases.map((x, i) => (
@@ -102,7 +102,7 @@ export function TrajectoryPage({
                 passes: evo.benchmark?.passes ?? evo.passes,
               }}
             />
-          : <div className="fx-first-wait">{zh ? '正在计算离线基准回放…' : 'RUNNING OFFLINE BENCHMARK REPLAY…'}</div>}
+          : <div className="fx-first-wait">{zh ? '正在计算固定案例调试回放…' : 'RUNNING FIXED-CASE DIAGNOSTIC REPLAY…'}</div>}
       </section>
 
       <div className="tp-seam online" role="separator">

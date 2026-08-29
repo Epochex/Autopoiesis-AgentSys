@@ -7,13 +7,9 @@ import type { Observatory, TheaterEvent } from '../types'
 import { MemoryObservatory } from './MemoryObservatory'
 import { LiveSituation } from './LiveSituation'
 
-/* ── SCENARIO 2 · 长轨迹-bench — 网络 RCA 流式注故障 · 自愈/自演化基准(可回放)──────
- * GET /api/rca/replay drives the REAL network-RCA orchestrator over a stream of
- * real fault cases (reasoner=rule, offline), scoring each diagnosis vs
- * ground-truth and evolving memory. The trajectory REPLAYS event-by-event
- * (play/pause/step): watch each fault get detected→diagnosed→healed and memory
- * accumulate across recurrences. "注入故障" streams the same events through the
- * real isolated Redpanda topic. Every number is real; nothing fabricated. */
+/* Fixed-case replay for developer diagnostics. It checks deterministic routing,
+ * retrieval and memory events. It does not measure a live incident lifecycle,
+ * action safety, diagnosis generalization, or business effectiveness. */
 
 type PerEvent = { i: number; pass: number; case: string; correct: number; passed: number; probes: number; retrieved: number; shortcut: boolean; memory: number }
 type CaseRow = { id: string; query: string; root_cause_key: string; assets: string[] }
@@ -30,22 +26,22 @@ const prefersReduced = () => typeof window !== 'undefined' && window.matchMedia?
 const STEP_MS = 360
 
 const T = (zh: boolean) => ({
-  kicker: zh ? '多轮故障回放 · 注入网络故障并检查自动处置结果' : 'MULTI-RUN FAULT REPLAY · INJECT FAULTS AND CHECK AUTOMATED ACTIONS',
-  loading: zh ? '正在运行多轮真实故障回放…' : 'RUNNING REAL MULTI-RUN FAULT REPLAY…',
+  kicker: zh ? '固定案例调试 · 检查调度、检索与写入事件' : 'FIXED-CASE DIAGNOSTIC · ROUTING, RETRIEVAL, AND WRITE EVENTS',
+  loading: zh ? '正在运行固定案例调试回放…' : 'RUNNING FIXED-CASE DIAGNOSTIC REPLAY…',
   err: zh ? '回放端点不可达' : 'REPLAY ENDPOINT UNREACHABLE',
-  inject: zh ? '注入故障 → Redpanda' : 'INJECT FAULT → REDPANDA', injecting: zh ? '注入中…' : 'INJECTING…',
+  inject: zh ? '发送固定事件 → Redpanda' : 'SEND FIXED EVENT → REDPANDA', injecting: zh ? '发送中…' : 'SENDING…',
   play: zh ? '回放' : 'PLAY', pause: zh ? '暂停' : 'PAUSE', replay: zh ? '重放' : 'REPLAY',
-  acc: zh ? '诊断准确率' : 'ACCURACY', mem: zh ? '已有记录（回放中）' : 'RECORDS (DURING REPLAY)', ncase: zh ? '故障用例' : 'FAULT CASES', passes: zh ? '重复轮次' : 'PASSES',
+  acc: zh ? '固定标签匹配率' : 'FIXTURE-LABEL MATCH', mem: zh ? '已有记录（回放中）' : 'RECORDS (DURING REPLAY)', ncase: zh ? '固定用例' : 'FIXED CASES', passes: zh ? '重复轮次' : 'PASSES',
   saved: zh ? '少做的检查' : 'CHECKS SAVED', ins: zh ? '归纳出的总结' : 'SUMMARIES',
   topic: zh ? '流 topic' : 'STREAM TOPIC', ev: zh ? '事件' : 'events',
-  offline: zh ? '离线规则判断 · 使用真实任务编排与结果核对代码' : 'offline rules · real task orchestration and result checker',
+  offline: zh ? '离线规则固定集 · 只做开发者契约检查' : 'offline rule fixture · developer contract check only',
   ev_n: zh ? '事件' : 'event', round: zh ? '轮' : 'pass',
-  note0: zh ? '这 6 个案例没有减少检查次数；目前只看到诊断准确率和记录数量的变化，更大的案例集才能判断是否省时。' : 'These 6 cases saved no checks. The run only shows changes in accuracy and record count; a larger set is needed to judge time savings.',
+  note0: zh ? '这组固定输入只显示机制事件，不给出省时、准确率或业务完成度结论。' : 'This fixed input exposes mechanism events only; it does not score time saved, accuracy, or business readiness.',
   gridk: zh ? '重复故障的处理结果 · 每列一轮 · ✓=诊断正确 · 数字=当时已有记录数' : 'REPEATED-FAULT RESULTS · one pass per column · ✓=correct · number=records at that point',
-  streamed: zh ? '已注入' : 'streamed', degraded: zh ? '(网关无 rpk,轨迹仍真实离线)' : '(no rpk; trajectory still real offline)',
-  cite: zh ? '用例与根因均来自真实数据集;评分用现有 verifier;流经真实 Redpanda(隔离 topic,不动生产 facts.raw)。' : 'Real dataset + verifier; streamed through real Redpanda (isolated topic; prod facts.raw untouched).',
+  streamed: zh ? '已发送' : 'streamed', degraded: zh ? '(网关无 rpk，仅本地回放)' : '(no rpk; local replay only)',
+  cite: zh ? '源案例取自历史日志，回放使用固定标签和规则判断；结果不作为线上调查、动作安全或记忆收益证据。' : 'Source cases come from historical logs; replay uses fixed labels and rules. Results are excluded from live investigation, action-safety, and memory-benefit claims.',
   seam: zh ? '↓ 本轮采用了哪些旧记录，又写入了什么新记录' : '↓ WHICH OLD RECORDS THIS RUN USED AND WHAT IT WROTE',
-  liveh: zh ? '自动处置回放 · 独立旁路进程接收注入故障并产出诊断，不影响生产数据' : 'AUTOMATED-ACTION REPLAY · isolated side processes consume injected faults and produce diagnoses without touching production data',
+  liveh: zh ? '隔离事件投影 · 只展示固定案例的旁路输出' : 'ISOLATED EVENT PROJECTION · DISPLAYS FIXED-CASE SIDE-PATH OUTPUT ONLY',
 })
 
 export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (e: TheaterEvent) => void }) {
@@ -107,7 +103,7 @@ export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (
     <div className="tb">
       <header className="tb-head">
         <div className="tb-code">{tx.kicker}</div>
-        <h1 className="tb-title">{zh ? <>多轮<mark>故障回放</mark></> : <>MULTI-RUN <mark>FAULT REPLAY</mark></>}</h1>
+        <h1 className="tb-title">{zh ? <>固定案例<mark>调试回放</mark></> : <>FIXED-CASE <mark>DIAGNOSTIC REPLAY</mark></>}</h1>
       </header>
 
       <div className="tb-metrics">

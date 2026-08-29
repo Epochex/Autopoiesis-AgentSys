@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Reproduce every headline number in docs/BENCHMARKS.md in one run.
+"""Run fixed-case developer diagnostics for routing and memory contracts.
 
     python3 examples/benchmarks.py
 
-Prefers the REAL R230 FortiGate held-out set (via the dataset manifest); if that is
-not present it falls back to the in-repo seed cases and says so loudly. The ablation
-collapse (skill-scheduling → 16.7%) is a property of the REAL held-out set — the mock
-seed cases do NOT exhibit it, and the output labels which set produced the table.
+The result is fixture-scoped.  It is excluded from business-readiness, model-quality,
+generalization, and memory-benefit claims.
 """
 from __future__ import annotations
 
@@ -48,7 +46,7 @@ def main() -> int:
 
     print(f"# dataset: {label}  ({len(cases)} cases, rule reasoner)\n")
 
-    print("## 1. Self-evolution (cold vs warm, passes=4)")
+    print("## 1. Fixed-case cold/warm contract (passes=4; diagnostic only)")
     res = compare_cold_vs_warm(cases, gt, passes=4, **kwargs)
     d = res["delta"]
     print(f"   probes   : {d['probes_cold']} -> {d['probes_warm']}  (-{d['probes_saved_pct']}%)")
@@ -56,9 +54,9 @@ def main() -> int:
     print(f"   accuracy : warm {d['accuracy_warm']} / cold {d['accuracy_cold']}  (must be equal)")
     print(f"   memory   : 0 -> {d['memory_grown']}\n")
 
-    print("## 2. Ablation (per-component, root-cause accuracy)")
+    print("## 2. Fixed-case component sensitivity (diagnostic only)")
     for r in compare_baselines(cases, gt, reasoner_mode="rule", **kwargs):
-        tag = "  <-- load-bearing" if r.root_cause_accuracy < 0.5 else ""
+        tag = "  <-- fixture divergence" if r.root_cause_accuracy < 0.5 else ""
         print(f"   {r.name:24s} acc={r.root_cause_accuracy:.3f}{tag}")
     if not kwargs:
         print("   (note: the skill-scheduling collapse only appears on the REAL held-out set)")

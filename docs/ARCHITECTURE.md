@@ -151,16 +151,19 @@ read-only gate at every layer.
 > agent online" is a configuration the console uses, not an architectural guarantee of the
 > whole repo.
 
-## Evaluation — `core/eval` + `domains/*/eval*.py`
+## Evaluation scope: `core/eval` + `domains/*/eval*.py`
 
-- **Replay ablation** over four configs (full · − compression · − memory · − skill
-  scheduling) on the real held-out set.
-- **Real FortiGate held-out** (6 curated real-log incident types) with a deterministic
-  rule reasoner — an engine-independent baseline that rules out an LLM confound.
-- **LongMemEval-style** LLM-free recall@k harness ([`core/eval/longmemeval.py`](../core/eval/longmemeval.py)).
-- **Domains**: `network_rca` (real Dahua FortiGate syslog — the headline), `active_recon`
-  (self-pentest over a labeled RFC-5737 **mock** target), `enterprise_ops` (contract-checked
-  anomaly **simulation** on synthetic data).
+- **Temporal case traces** score cross-step continuity, delayed evidence, contradiction
+  revision, checkpoint recovery and paired memory cost.  The scorer has contract tests;
+  production traces have not been connected yet.
+- **Fixed-case replay** is a developer diagnostic for deterministic routing and component
+  contracts.  Its pass rate is excluded from business-completion claims.
+- **LongMemEval** measures saved-record retrieval recall at k.  It does not measure
+  diagnosis or remediation outcomes.
+- **Index and concurrency microbenchmarks** measure local engines and I/O overlap.  They
+  do not measure model quality or whole-system effectiveness.
+- **Domain simulations** cover isolated contracts in `active_recon` and `enterprise_ops`.
+  Their results remain simulation-scoped.
 
 The default, FAISS-enabled and PostgreSQL 17 suites are run separately; current counts are
 recorded in the repository claim bank after each release rather than frozen in this document.

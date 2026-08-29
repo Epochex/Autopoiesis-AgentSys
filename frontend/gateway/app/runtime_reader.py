@@ -400,12 +400,28 @@ def _review_verdict(raw: dict[str, Any]) -> dict[str, Any]:
 def _map_suggestion(raw: dict[str, Any], lang: str) -> dict[str, Any]:
     ctx = raw.get("context") or {}
     adaptive = raw.get("adaptive_analysis") or {}
+    evidence_bundle = raw.get("evidence_bundle") or {}
+    dataset_context = evidence_bundle.get("dataset_context") or {}
+    rule_metrics = ((evidence_bundle.get("rule_context") or {}).get("metrics") or {})
+    data_classification = (
+        "controlled_test"
+        if rule_metrics.get("label_field") == "controlled_test"
+        else "observed"
+    )
     device_key = ctx.get("src_device_key", "")
     en = lang == "en"
+    source_alert_ids = list(ctx.get("cluster_sample_alert_ids") or [])
+    direct_alert_id = str(raw.get("alert_id") or "").strip()
+    if direct_alert_id and direct_alert_id not in source_alert_ids:
+        source_alert_ids.append(direct_alert_id)
     return {
         "id": raw.get("suggestion_id", ""),
         "ts": raw.get("suggestion_ts", ""),
         "scope": raw.get("suggestion_scope", ""),
+        "ruleId": raw.get("rule_id", ""),
+        "sourceAlertIds": source_alert_ids,
+        "dataClassification": data_classification,
+        "datasetRunId": dataset_context.get("run_id", ""),
         "severity": raw.get("severity", ""),
         "priority": raw.get("priority", ""),
         "summary": _english_summary(raw) if en else raw.get("summary", ""),
@@ -477,14 +493,26 @@ def load_runtime_snapshot(
     feed: list[dict[str, Any]] = []
     for a in alerts:
         device_key = a.get("src_device_key", "")
+        event_excerpt = a.get("event_excerpt") or {}
+        metrics = a.get("metrics") or {}
         feed.append({
             "id": f"feed-alert-{a.get('alert_id', '')}",
+            "sourceId": a.get("alert_id", ""),
             "kind": "alert",
             "ts": a.get("alert_ts", ""),
             "severity": a.get("severity", ""),
             "device": _english_device(device_key) if lang == "en" else device_key,
             "deviceKey": device_key,
             "ruleId": a.get("rule_id", ""),
+            "service": event_excerpt.get("service", ""),
+            "sourceEventId": a.get("source_event_id", ""),
+            "sourcePath": event_excerpt.get("source_path", ""),
+            "datasetRunId": (a.get("dataset_context") or {}).get("run_id", ""),
+            "dataClassification": (
+                "controlled_test"
+                if metrics.get("label_field") == "controlled_test"
+                else "observed"
+            ),
             "scenario": (a.get("dimensions") or {}).get("fault_scenario", ""),
         })
     for s in suggestions:

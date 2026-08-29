@@ -2,7 +2,7 @@ import './retrieval.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import type { Case, RetrievalResp } from './retrieval-data'
-import { retrievalFixture, stepsOf } from './retrieval-data'
+import { stepsOf } from './retrieval-data'
 import { CaseRecord } from './retrieval-record'
 
 /* ── PAGE 4 · 混合检索 / RETRIEVAL — interactive case record ────────────────────
@@ -13,7 +13,7 @@ import { CaseRecord } from './retrieval-record'
  * (memory-recall vs KB hybrid); the record adapts. Falls back to a flagged
  * sample if the gateway is down. */
 
-type St = { s: 'load' } | { s: 'err'; m: string } | { s: 'ok'; d: RetrievalResp; fixture: boolean }
+type St = { s: 'load' } | { s: 'err'; m: string } | { s: 'ok'; d: RetrievalResp }
 const prefersReduced = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 const STEP_MS = 1500
 
@@ -21,7 +21,7 @@ const T = (zh: boolean) => ({
   kicker: zh ? '查资料过程 · 真实案例实录' : 'HOW RECORDS WERE FOUND · REAL CASE',
   loading: zh ? '正在读取查找记录…' : 'FETCHING LOOKUP RECORD…',
   offline: zh ? '查找接口不可达' : 'LOOKUP ENDPOINT UNREACHABLE',
-  sample: zh ? '样例数据 · 网关离线' : 'SAMPLE DATA · GATEWAY OFFLINE',
+  empty: zh ? '还没有真实调查检索回执。请从实时事件打开调查，完成首次检索后再查看。' : 'No live investigation retrieval receipt yet. Open an investigation from a live event first.',
   refetch: zh ? '重取' : 'REFETCH', play: zh ? '播放' : 'PLAY', pause: zh ? '暂停' : 'PAUSE', replay: zh ? '重放' : 'REPLAY',
   hint: zh ? '点击任一文档可查看全文和每一步处理记录，点击阶段名称可直接跳转' : 'Click any document for its full text and processing steps; click a stage to jump',
 })
@@ -58,9 +58,11 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
       const r = await fetch(`/api/rca/retrieval?lang=${lang}&scenario=${scenario}`, { headers: { Accept: 'application/json' } })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const j = (await r.json()) as RetrievalResp
-      if (!j || !j.ok || !Array.isArray(j.cases) || !j.cases.length) throw new Error('NO DATA')
-      setSt({ s: 'ok', d: j, fixture: false })
-    } catch { setSt({ s: 'ok', d: retrievalFixture(lang === 'zh'), fixture: true }) }
+      if (!j || !j.ok || !Array.isArray(j.cases)) throw new Error('INVALID DATA')
+      setSt({ s: 'ok', d: j })
+    } catch (error) {
+      setSt({ s: 'err', m: error instanceof Error ? error.message : 'REQUEST FAILED' })
+    }
   }, [lang, scenario])
 
   useEffect(() => { void load() }, [load])
@@ -80,7 +82,6 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
       <header className="rt-head">
         <div className="rt-head-l">
           <div className="rt-head-code">
-            {st.s === 'ok' && st.fixture ? <span className="rt-sample">{tx.sample}</span> : null}
             <span>{tx.kicker}</span>
           </div>
           <h1 className="rt-head-title">{zh ? <>怎么<mark>找到资料</mark></> : <>HOW RECORDS WERE <mark>FOUND</mark></>}</h1>
@@ -121,7 +122,7 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
             </div>
             <div className="rt-hint">{tx.hint}</div>
           </>
-        ) : null}
+        ) : st.s === 'ok' ? <div className="rt-state">{tx.empty}</div> : null}
     </div>
   )
 }

@@ -16,7 +16,6 @@ core/eval/demo_detection.py
 core/eval/dense_retrieval.py
 core/eval/fortigate_corpus_retrieval.py
 core/eval/fortios_corpus.py
-core/eval/grounded_rca_benchmark.py
 core/eval/hybrid_diagnosis.py
 core/eval/index_lifecycle_benchmark.py
 core/eval/ioda_retrieval.py
@@ -28,6 +27,7 @@ core/eval/replay.py
 core/eval/reranker.py
 core/eval/retrieval_precision.py
 core/eval/skill_retrieval.py
+core/eval/temporal_case_evaluation.py
 core/eval/vector_index_benchmark.py
 core/eval/vector_lifecycle_benchmark.py
 core/evolve/__init__.py

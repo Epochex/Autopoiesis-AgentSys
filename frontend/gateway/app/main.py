@@ -52,6 +52,24 @@ _environment_loaded_at = 0.0
 _incident_repository = IncidentRepository(
     ledger_path=settings.incident_disposition_ledger_path
 )
+_investigation_case_repository = None
+_case_sync_health: dict[str, Any] = {
+    "lastSyncAt": None,
+    "lastError": None,
+    "caseCount": 0,
+}
+
+
+def _case_repository():
+    """Lazily open the durable case store so imports stay side-effect light."""
+    global _investigation_case_repository
+    if _investigation_case_repository is None:
+        from domains.network_rca.investigation_case import InvestigationCaseRepository
+
+        _investigation_case_repository = InvestigationCaseRepository(
+            settings.investigation_case_store_path
+        )
+    return _investigation_case_repository
 
 
 def _configure_production_memory_budget() -> None:
@@ -312,7 +330,34 @@ async def _lifespan(app: FastAPI):
             _operational_memory.refresh()
             stop_event.wait(interval)
 
+    def sync_live_investigation_cases() -> None:
+        """Create cases from landed stream output without depending on a browser poll."""
+        from datetime import datetime, timezone
+
+        from .investigation_cases import sync_snapshot_cases
+        from .runtime_reader import load_runtime_snapshot
+        from .sentinel_projection import merge_into_snapshot
+
+        interval = max(2.0, float(os.getenv("AUTOPOIESIS_CASE_SYNC_INTERVAL", "5")))
+        while not stop_event.is_set():
+            try:
+                snapshot = load_runtime_snapshot(settings, "zh")
+                snapshot = merge_into_snapshot(snapshot, "zh")
+                sync_snapshot_cases(snapshot, _case_repository())
+                _case_sync_health.update({
+                    "lastSyncAt": datetime.now(timezone.utc).isoformat(),
+                    "lastError": None,
+                    "caseCount": len(_case_repository().list(limit=500)),
+                })
+            except Exception as error:
+                _case_sync_health.update({
+                    "lastSyncAt": datetime.now(timezone.utc).isoformat(),
+                    "lastError": f"{type(error).__name__}: {error}"[:300],
+                })
+            stop_event.wait(interval)
+
     threading.Thread(target=refresh_operational_memory, daemon=True).start()
+    threading.Thread(target=sync_live_investigation_cases, daemon=True).start()
     start_background()
     try:
         yield
@@ -375,6 +420,7 @@ def healthz() -> dict[str, Any]:
                 _operational_memory.health_view()
                 if _operational_memory is not None else None
             ),
+            "investigationCases": dict(_case_sync_health),
         },
     }
 
@@ -1797,6 +1843,10 @@ async def rca_retrieval(
     # scenario="bench" shows ONLY the corpus/KB hybrid pipeline (BM25 + optional dense
     # + structured-tag routes, RRF fusion, CRAG gate, optional rerank, context
     # compilation). Optional stages degrade to enabled:false honestly; never fabricated.
+    if scenario == "live":
+        from .investigate import live_retrieval_trace
+
+        return await asyncio.to_thread(live_retrieval_trace, q)
     from core.memory.retrieval_trace import build_retrieval_trace
     return await asyncio.to_thread(build_retrieval_trace, lang, q, scenario)
 
@@ -1818,12 +1868,46 @@ async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
     # when the runtime dir is absent, so the panel reports no landed records.
     from .runtime_reader import load_runtime_snapshot
     from .sentinel_projection import merge_into_snapshot
+    from .investigation_cases import sync_snapshot_cases
 
     snapshot = await asyncio.to_thread(load_runtime_snapshot, settings, lang)
     # The sentinel is a separate subsystem writing a separate file. Folding its
     # chains in here is what makes a fault it just found show up on the page the
     # operator is actually looking at, instead of only in the audit trail.
-    return await asyncio.to_thread(merge_into_snapshot, snapshot, lang)
+    snapshot = await asyncio.to_thread(merge_into_snapshot, snapshot, lang)
+    # Every landed alert/suggestion becomes a durable case before it is returned.
+    # Source ids provide stable deduplication across the page's repeated polls.
+    return await asyncio.to_thread(sync_snapshot_cases, snapshot, _case_repository())
+
+
+@app.get("/api/rca/investigation-cases")
+async def rca_investigation_cases(
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    cases = await asyncio.to_thread(
+        _case_repository().list, status=status, limit=limit
+    )
+    return {"ok": True, "count": len(cases), "cases": [case.as_dict() for case in cases]}
+
+
+@app.get("/api/rca/investigation-cases/{case_id}")
+async def rca_investigation_case(case_id: str) -> dict[str, Any]:
+    case = await asyncio.to_thread(_case_repository().get, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="investigation case not found")
+    return {"ok": True, "case": case.as_dict()}
+
+
+@app.post("/api/rca/investigation-cases/{case_id}/open")
+async def rca_open_investigation_case(
+    case_id: str,
+    actor: str = Query(default="operator", min_length=1, max_length=120),
+) -> dict[str, Any]:
+    case = await asyncio.to_thread(_case_repository().open, case_id, actor=actor)
+    if case is None:
+        raise HTTPException(status_code=404, detail="investigation case not found")
+    return {"ok": True, "case": case.as_dict()}
 
 
 @app.get("/api/rca/bench-live-situation")
@@ -1848,6 +1932,7 @@ class RemediationRequest(BaseModel):
     action: str = Field(min_length=1, max_length=64)
     target: str = Field(min_length=1, max_length=128)
     dossier_id: str | None = Field(default=None, min_length=1, max_length=160)
+    case_id: str | None = Field(default=None, min_length=1, max_length=64)
     failure_domain: str | None = Field(default=None, min_length=1, max_length=160)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=160)
 
@@ -1933,6 +2018,9 @@ async def remediation_execute(request: RemediationRequest) -> dict[str, Any]:
     """
     from .remediation import execute
 
+    if request.case_id and _case_repository().get(request.case_id) is None:
+        raise HTTPException(status_code=404, detail="unknown investigation case")
+
     result = await asyncio.to_thread(
         execute,
         request.action,
@@ -1957,6 +2045,30 @@ async def remediation_execute(request: RemediationRequest) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="unknown incident dossier") from None
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from None
+    if request.case_id:
+        execution_id = str(result.get("execution_id") or request.idempotency_key or "")
+        event_id = (
+            f"remediation:{execution_id}"
+            if execution_id
+            else f"remediation:{request.action}:{request.target}:{result.get('at') or ''}"
+        )
+        case = await asyncio.to_thread(
+            _case_repository().append_event,
+            request.case_id,
+            kind="remediation_completed",
+            payload={
+                "action": request.action,
+                "target": request.target,
+                "executionId": execution_id or None,
+                "outcome": result.get("outcome"),
+                "needsHuman": bool(result.get("needs_human")),
+                "dossierId": request.dossier_id,
+            },
+            status="escalated" if result.get("needs_human") else "waiting",
+            event_id=event_id,
+        )
+        if case is None:
+            raise HTTPException(status_code=409, detail="investigation case disappeared")
     return {"ok": True, **result, "dossier": dossier}
 
 
@@ -1973,6 +2085,7 @@ class InvestigateStart(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     family: str | None = Field(default=None, max_length=64)
     subject: str | None = Field(default=None, max_length=64)
+    case_id: str | None = Field(default=None, min_length=1, max_length=64)
     lang: Literal["zh", "en"] = "zh"
 
 
@@ -2010,7 +2123,12 @@ async def investigate_start(request: InvestigateStart) -> dict[str, Any]:
     """
     from .investigate import start
 
-    result = await asyncio.to_thread(start, request.question, request.family, request.subject)
+    try:
+        result = await asyncio.to_thread(
+            start, request.question, request.family, request.subject, request.case_id
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from None
     return {"ok": True, **result}
 
 

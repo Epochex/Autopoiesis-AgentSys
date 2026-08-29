@@ -1,6 +1,5 @@
-/* ── 基准态势 · 拓扑图 — capability → benchmark → metric source ───────────────
- * Each benchmark node labels whether its number came from the offline replay,
- * gateway result files, the built-in fixture, or a published reference. */
+/* Evaluation boundary topology: capability -> benchmark -> metric source.
+ * Fixed-case replay is excluded because it is a developer diagnostic. */
 import { useState } from 'react'
 import type { BenchmarkResp } from './benchmark-data'
 
@@ -8,15 +7,13 @@ type Metric = { tone: 'ref' | 'defs'; status: string; big: string; sub: string }
 type BNode = { id: string; label: string; metric: Metric }
 type CNode = { id: string; label: string; covered: boolean; benches: string[] }
 
-export function BenchTopology({ bench, replay, fixture, zh }: { bench: BenchmarkResp; replay: { heal: number; mem: number } | null; fixture: boolean; zh: boolean }) {
+export function BenchTopology({ bench, fixture, zh }: { bench: BenchmarkResp; fixture: boolean; zh: boolean }) {
   const [sel, setSel] = useState<string | null>(null)
   const lme = bench.longmemeval
   const tiered = lme.systems.find((s) => s.self)
   const best = Math.max(...lme.systems.map((s) => s.recall['5']))
   const sre = bench.itbench.groups.find((g) => g.id === 'sre')
   const ciso = bench.itbench.groups.find((g) => g.id === 'ciso')
-  const healPct = replay ? `${Math.round(replay.heal * 100)}%` : '—'
-  const memG = replay ? `+${replay.mem}` : '—'
 
   const L = {
     root: 'AUTOPOIESIS',
@@ -24,20 +21,19 @@ export function BenchTopology({ bench, replay, fixture, zh }: { bench: Benchmark
       rca: zh ? '内网根因分析' : 'NETWORK RCA', sec: zh ? '自我渗透 / 安全' : 'SELF-PENTEST',
       mem: zh ? '长期保留记录 / 查找记录' : 'SAVED RECORDS / LOOKUP', evo: zh ? '复用旧记录 / 归纳处理办法' : 'REUSE RECORDS / BUILD HOW-TOS',
     },
-    replay: zh ? '离线回放' : 'OFFLINE REPLAY', file: zh ? '结果文件' : 'RESULT FILES',
-    fixture: zh ? '内置 FIXTURE' : 'BUILT-IN FIXTURE', unavailable: zh ? '回放不可达' : 'REPLAY UNAVAILABLE',
+    file: zh ? '结果文件' : 'RESULT FILES',
+    fixture: zh ? '内置 FIXTURE' : 'BUILT-IN FIXTURE',
     ref: zh ? '公开参照' : 'PUBLISHED', defs: zh ? '定义 · 待跑' : 'DEFS · PENDING',
-    heal: zh ? '自动处置' : 'auto actions', memL: zh ? '记录' : 'records', scen: zh ? '场景' : 'scen',
+    scen: zh ? '场景' : 'scen',
   }
 
   const caps: CNode[] = [
-    { id: 'rca', label: L.caps.rca, covered: true, benches: ['replay', 'sre'] },
-    { id: 'sec', label: L.caps.sec, covered: true, benches: ['ciso'] },
+    { id: 'rca', label: L.caps.rca, covered: false, benches: ['sre'] },
+    { id: 'sec', label: L.caps.sec, covered: false, benches: ['ciso'] },
     { id: 'mem', label: L.caps.mem, covered: true, benches: ['lme'] },
-    { id: 'evo', label: L.caps.evo, covered: false, benches: ['replay'] },
+    { id: 'evo', label: L.caps.evo, covered: false, benches: [] },
   ]
   const benches: BNode[] = [
-    { id: 'replay', label: zh ? '网络根因分析与自动处置回放' : 'NETWORK RCA AND AUTOMATED-ACTION REPLAY', metric: { tone: replay ? 'ref' : 'defs', status: replay ? L.replay : L.unavailable, big: `${L.heal} ${healPct}`, sub: `${L.memL} ${memG} · ${zh ? '6 案例临时目录计算' : '6-CASE TEMP-DIR RUN'}` } },
     { id: 'sre', label: 'ITBench · SRE', metric: { tone: 'ref', status: L.ref, big: `SOTA ${sre?.sota_pct ?? '—'}%`, sub: zh ? '公开基线' : 'baseline' } },
     { id: 'ciso', label: 'ITBench · CISO', metric: { tone: 'defs', status: L.defs, big: `SOTA ${ciso?.sota_pct ?? '—'}%`, sub: `4 ${L.scen} · ${zh ? '基准定义' : 'benchmark defs'}` } },
     { id: 'lme', label: 'LongMemEval-500', metric: { tone: 'ref', status: fixture ? L.fixture : L.file, big: `${(best * 100).toFixed(0)}% · ${((tiered?.recall['5'] ?? 0) * 100).toFixed(1)}`, sub: `recall@5 · ${zh ? '本仓库' : 'ours'}/best` } },

@@ -179,6 +179,56 @@ def test_redpanda_outbox_keeps_batch_when_publish_fails(tmp_path, monkeypatch):
     assert outbox.pending()[0] == 1
 
 
+def test_live_batch_reaches_stream_before_clickhouse_archive():
+    order: list[str] = []
+
+    class _Outbox:
+        def enqueue(self, events):
+            order.append("outbox")
+
+        def drain(self):
+            order.append("redpanda")
+            return 1
+
+    published, error = facts_ingest.commit_live_batch_sinks(
+        [["fact"]],
+        [["security"]],
+        [{"event_id": "event-1"}],
+        outbox=_Outbox(),
+        fact_sink=lambda rows: order.append("clickhouse-facts"),
+        security_sink=lambda rows: order.append("clickhouse-security"),
+    )
+
+    assert order == ["outbox", "redpanda", "clickhouse-facts", "clickhouse-security"]
+    assert published == 1
+    assert error is None
+
+
+def test_live_batch_archives_while_broker_batch_stays_queued(capsys):
+    order: list[str] = []
+
+    class _Outbox:
+        def enqueue(self, events):
+            order.append("outbox")
+
+        def drain(self):
+            order.append("redpanda")
+            raise TimeoutError("broker unavailable")
+
+    published, error = facts_ingest.commit_live_batch_sinks(
+        [["fact"]],
+        [],
+        [{"event_id": "event-1"}],
+        outbox=_Outbox(),
+        fact_sink=lambda rows: order.append("clickhouse-facts"),
+    )
+
+    assert order == ["outbox", "redpanda", "clickhouse-facts"]
+    assert published == 0
+    assert error == "TimeoutError"
+    assert "publish deferred" in capsys.readouterr().err
+
+
 def test_redpanda_proxy_accepts_partition_level_batch_ack(tmp_path, monkeypatch):
     outbox = facts_ingest.RedpandaOutbox(
         enabled=True,

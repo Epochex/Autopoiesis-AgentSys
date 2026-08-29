@@ -1,6 +1,6 @@
 # 实时 FortiGate facts 采集服务
 
-`netops-facts-ingest.service` 常驻执行现有的 `facts_ingest.py live` 管线。它通过 SSH 在 R230 上只读执行 `tail -n0 -F`，解析 FortiOS KV 日志，批量写入 ClickHouse，并把同一批真实事件发布到 Redpanda `netops.facts.raw.v1`。服务日志只进入 journald。
+`netops-facts-ingest.service` 常驻执行 `facts_ingest.py live` 管线。它通过 SSH 在 R230 上只读执行 `tail -n0 -F`，解析 FortiOS KV 日志，先把批次写入本地持久发送箱并发布到 Redpanda `netops.facts.raw.v1`，随后批量归档到 ClickHouse。Redpanda 暂时不可用时批次保留并重试，ClickHouse 继续接收历史事实。服务日志只进入 journald。
 
 ClickHouse 保存按设备和时间查询的事实历史；Redpanda 把新事件立即交给关联、告警和调查建议服务。离线回填只写 ClickHouse，回放只写隔离话题，两者都不会进入生产事实话题。
 

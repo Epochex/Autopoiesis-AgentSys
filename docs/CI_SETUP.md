@@ -24,7 +24,8 @@ Runs on pushes/PRs that touch `frontend/**`, and manual dispatch.
 
 Manual dispatch + weekly cron (Mon 06:00 UTC).
 
-- `python3 examples/benchmarks.py` — deterministic benchmark smoke on seed / synthetic fixtures (retrieval §1–§3, skill-attention ablation, memory health). No network, no real data.
+- `python3 examples/benchmarks.py` — deterministic developer diagnostic on seed or fixed fixtures. It checks routing and memory contracts and produces no business-readiness score.
+- `tests_py/test_temporal_case_evaluation.py` — contract tests for temporal-case metrics: delayed evidence, contradiction revision, checkpoint recovery and paired memory cost. Production trace export is still required before reporting these metrics.
 
 ---
 

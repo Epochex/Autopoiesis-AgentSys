@@ -184,7 +184,7 @@ export function MemoryObservatory({
     `${source.passes} ${zh ? '轮' : 'passes'}`,
   ].filter((part): part is string => part !== null).join(' × ')
   const modeText = offlineReplay
-    ? (zh ? '离线基准重放' : 'Offline benchmark replay')
+    ? (zh ? '固定案例调试重放' : 'Fixed-case diagnostic replay')
     : source.dataMode
       ? (zh ? `记忆数据 · ${source.dataMode}` : `Memory data · ${source.dataMode}`)
       : (zh ? '记忆数据 · 数据模式未标明' : 'Memory data · mode not specified')
@@ -205,10 +205,10 @@ export function MemoryObservatory({
   return (
     <section className="mo" ref={rootRef} aria-label={zh ? '离线记忆算法回放' : 'Offline memory algorithm replay'}>
       <header className="mo-head">
-        <span className="mo-head-t">{zh ? '02 · 离线记忆算法回放' : '02 · OFFLINE MEMORY ALGORITHM REPLAY'}</span>
+        <span className="mo-head-t">{zh ? '02 · 固定案例记忆机制调试' : '02 · FIXED-CASE MEMORY DIAGNOSTIC'}</span>
         <p className="mo-head-s">{zh
-          ? `${source.caseCount} 个留出案例 × ${source.passes} 轮，从空库重放；界面按运行标识连接检索、核查、写入和证据。`
-          : `${source.caseCount} held-out cases × ${source.passes} passes from an empty store; run ids connect retrieval, verification, writes, and evidence.`}</p>
+          ? `${source.caseCount} 个固定案例 × ${source.passes} 轮，从空库重放；它用于调试检索、核查和写入事件，不计入业务效果。`
+          : `${source.caseCount} fixed cases × ${source.passes} passes from an empty store; this view debugs retrieval, verification, and writes and is excluded from business results.`}</p>
         <div className="mo-source" aria-label={zh ? '记忆数据源' : 'Memory data source'} aria-live="polite">
           <span className="mo-source-main">{sourceText}</span>
           <span className="mo-source-online">

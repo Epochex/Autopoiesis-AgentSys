@@ -6,12 +6,20 @@ import base64
 import json
 import os
 import ssl
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
+from http.cookiejar import CookieJar
 from typing import Any, Protocol
-from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.parse import unquote, urlencode, urlsplit
+from urllib.request import (
+    HTTPSHandler,
+    HTTPCookieProcessor,
+    Request,
+    build_opener,
+    urlopen,
+)
 
 from core.env import autopoiesis_env
 
@@ -53,9 +61,97 @@ class UrlLibReadonlyHttpClient:
         context = ssl.create_default_context() if verify_tls else ssl._create_unverified_context()
         with urlopen(request, timeout=timeout, context=context) as response:
             payload = json.loads(response.read().decode("utf-8"))
+        if isinstance(payload, list):
+            return {"status": "success", "results": payload}
         if not isinstance(payload, Mapping):
             raise ValueError("FortiGate response is not a JSON object")
         return payload
+
+
+class FortiOSCookieReadonlyHttpClient:
+    """FortiOS web-session transport whose data operations remain GET-only.
+
+    Older FortiOS releases used in the local network reject HTTP Basic auth on
+    API endpoints while accepting the same account through ``/logincheck``.
+    Keeping that authentication detail in the transport lets the domain client
+    expose one consistent read contract instead of silently returning empty
+    topology, policy and change data on those releases.
+    """
+
+    def __init__(self, base_url: str, username: str, password: str) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._username = username
+        self._password = password
+        self._lock = threading.Lock()
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        timeout: float,
+        verify_tls: bool,
+    ) -> Mapping[str, Any]:
+        parsed_base = urlsplit(self._base_url)
+        parsed_url = urlsplit(url)
+        if (
+            parsed_url.scheme != "https"
+            or parsed_url.netloc != parsed_base.netloc
+            or not parsed_url.path.startswith("/api/v2/")
+        ):
+            raise ValueError("FortiGate read URL is outside the configured API origin")
+
+        context = ssl.create_default_context() if verify_tls else ssl._create_unverified_context()
+        jar = CookieJar()
+        opener = build_opener(
+            HTTPSHandler(context=context),
+            HTTPCookieProcessor(jar),
+        )
+        # Serialising login/logout avoids invalidating a cookie while another
+        # request made by the same account is still reading its response.
+        with self._lock:
+            csrf = ""
+            try:
+                body = urlencode(
+                    {"username": self._username, "secretkey": self._password}
+                ).encode("utf-8")
+                login = Request(f"{self._base_url}/logincheck", data=body, method="POST")
+                with opener.open(login, timeout=timeout) as response:
+                    if response.status != 200:
+                        raise PermissionError("FortiGate login was rejected")
+                for cookie in jar:
+                    if cookie.name.startswith("ccsrftoken") and cookie.value:
+                        csrf = unquote(cookie.value).strip('"')
+                        break
+                if not csrf:
+                    raise PermissionError("FortiGate login returned no CSRF token")
+
+                read_headers = {
+                    key: value
+                    for key, value in headers.items()
+                    if key.lower() != "authorization"
+                }
+                read_headers["X-CSRFTOKEN"] = csrf
+                request = Request(url, headers=read_headers, method="GET")
+                with opener.open(request, timeout=timeout) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if isinstance(payload, list):
+                    return {"status": "success", "results": payload}
+                if not isinstance(payload, Mapping):
+                    raise ValueError("FortiGate response is not a JSON object")
+                return payload
+            finally:
+                if csrf:
+                    try:
+                        logout = Request(
+                            f"{self._base_url}/logout",
+                            data=b"",
+                            headers={"X-CSRFTOKEN": csrf},
+                            method="POST",
+                        )
+                        opener.open(logout, timeout=min(timeout, 4.0)).close()
+                    except Exception:
+                        pass
 
 
 class FortiGateReadonlyAPI:
@@ -67,7 +163,12 @@ class FortiGateReadonlyAPI:
 
     _INTERFACES_PATH = "/api/v2/cmdb/system/interface?vdom=*"
     _DHCP_PATH = "/api/v2/monitor/system/dhcp?scope=global"
-    _DEVICES_PATH = "/api/v2/monitor/user/device/query?vdom=*"
+    _DEVICES_PATHS = (
+        "/api/v2/monitor/user/device/select",
+        "/api/v2/monitor/user/device/query?number=2000",
+        "/api/v2/monitor/user/device/query?vdom=*",
+        "/api/v2/monitor/user/detected-device",
+    )
     _POLICIES_PATH = "/api/v2/cmdb/firewall/policy?vdom=*"
     _CHANGES_PATH = "/api/v2/monitor/system/config-revision?scope=global"
 
@@ -114,11 +215,17 @@ class FortiGateReadonlyAPI:
     @classmethod
     def from_env(cls, **options: Any) -> "FortiGateReadonlyAPI":
         """从统一环境入口读取凭据，并兼容部署文件现有的裸 ``FGT_*`` 名称。"""
-
+        base_url = autopoiesis_env("FGT_BASE", os.environ.get("FGT_BASE"))
+        username = autopoiesis_env("FGT_USER", os.environ.get("FGT_USER"))
+        password = autopoiesis_env("FGT_PASS", os.environ.get("FGT_PASS"))
+        if "http_client" not in options and base_url and username and password:
+            options["http_client"] = FortiOSCookieReadonlyHttpClient(
+                base_url, username, password
+            )
         return cls(
-            autopoiesis_env("FGT_BASE", os.environ.get("FGT_BASE")),
-            autopoiesis_env("FGT_USER", os.environ.get("FGT_USER")),
-            autopoiesis_env("FGT_PASS", os.environ.get("FGT_PASS")),
+            base_url,
+            username,
+            password,
             **options,
         )
 
@@ -144,13 +251,13 @@ class FortiGateReadonlyAPI:
         """合并租约和已知设备，给 syslog 中只出现 IP 的事件补上设备身份。"""
 
         sources = (
-            ("dhcp_leases", self._DHCP_PATH, "dhcp_lease"),
-            ("known_devices", self._DEVICES_PATH, "known_device"),
+            ("dhcp_leases", (self._DHCP_PATH,), "dhcp_lease"),
+            ("known_devices", self._DEVICES_PATHS, "known_device"),
         )
         merged: dict[tuple[str | None, str | None], dict[str, Any]] = {}
         missing: list[dict[str, str]] = []
-        for item_name, path, source in sources:
-            payload, reason = self._read_remote(path)
+        for item_name, paths, source in sources:
+            payload, reason = self._read_first(paths)
             if payload is None:
                 missing.append({"item": item_name, "reason": reason})
                 continue
@@ -258,6 +365,17 @@ class FortiGateReadonlyAPI:
                 if attempt < self._retries:
                     self._sleeper(self._retry_delay * (2**attempt))
         return None, f"FortiGate request failed after {self._retries + 1} attempt(s)"
+
+    def _read_first(
+        self, paths: Sequence[str]
+    ) -> tuple[Mapping[str, Any] | None, str]:
+        """Read the first endpoint supported by this FortiOS release."""
+        reason = "FortiGate reported that this item is unavailable"
+        for path in paths:
+            payload, reason = self._read_remote(path)
+            if payload is not None:
+                return payload, ""
+        return None, reason
 
     def _available_result(self, kind: str, items: list[dict[str, Any]]) -> dict[str, Any]:
         return self._result(kind, available=True, degraded=False, items=items, missing=[])
@@ -410,4 +528,9 @@ def _missing_fields(item: Mapping[str, Any], fields: Sequence[str]) -> list[str]
     return [field for field in fields if item.get(field) in (None, "", [])]
 
 
-__all__ = ["FortiGateReadonlyAPI", "ReadonlyHttpClient", "UrlLibReadonlyHttpClient"]
+__all__ = [
+    "FortiGateReadonlyAPI",
+    "FortiOSCookieReadonlyHttpClient",
+    "ReadonlyHttpClient",
+    "UrlLibReadonlyHttpClient",
+]

@@ -105,7 +105,6 @@ const PURPOSE: Record<string, [string, string]> = {
   mesh_model: ['网络关系建模', 'MESH MODEL'],
   posture: ['安全状态判断', 'SECURITY POSTURE'],
   JudgeResponse_v1: ['结果评审', 'JUDGE'],
-  grounded_rca_benchmark_v1: ['跑基准测试', 'BENCHMARK RUN'],
   diag: ['测试调用', 'TEST CALL'],
 }
 

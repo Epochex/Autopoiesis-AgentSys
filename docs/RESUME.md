@@ -1,73 +1,23 @@
-# Résumé bullets: Autopoiesis-AgentSys
+# Autopoiesis-AgentSys 项目叙事草稿
 
-Every number here is reproduced by `python3 examples/benchmarks.py` and
-`python3 -m pytest tests_py/ -q` (404 passed, 9 skipped). Persistence coverage consists
-of 2 opt-in PostgreSQL 17 container integration tests and 12 event-stream/projector logic
-unit tests; 2 scale regressions are also opt-in. Full method + citations in
-[docs/BENCHMARKS.md](./BENCHMARKS.md). Use these bullets verbatim; do not round up and do
-not drop the measurement scope.
+公开简历以 `/data/cv_jianke/AgentDev_v5.tex` 为主，本文件只记录能够由当前代码和部署状态支撑的项目事实，不保存固定小样本分数。
 
----
+## 中文
 
-## English (impact-first)
+面向混合设备私有网络构建持续事件调查系统。采集端把安全事件和网络事实写入 Redpanda 与 ClickHouse，检测结果聚合为可持久化案件；调查服务在同一案件内联合召回历史故障档案、资产画像、执行记忆和厂商知识，并调用主机、ClickHouse 与 FortiGate 只读工具补充现场证据。每轮检索、探针、引用、假设修正和人工处置均写回案件时间线，会话快照支持服务重启后的继续调查。
 
-**Self-Evolving Long-Horizon Agent Kernel**, a business-decoupled agent runtime;
-first domain: internal-network root-cause analysis over operational evidence.
+- 统一检索来自执行记忆、历史事件档案、风险模式、网络画像和知识文档的候选，保存来源、定位符、分数组成、匹配字段及是否进入模型上下文。
+- 将实时告警和关联建议按稳定来源标识合并为案件，避免轮询和重复投递产生重复工单，并把交互调查绑定到同一案件标识。
+- 对模型请求的命令执行只读白名单校验，对证据引用执行存在性校验；缺失现场证据时继续采集或保留未决结论。
+- 通过 FortiGate Cookie 认证读取接口、设备、策略和配置变更元数据；凭据只存在于服务环境，调查证据不包含账号与密码。
+- 业务评测采用跨时间案件轨迹，比较完整系统、关闭记忆、等量无关历史和固定操作手册，测量稳定根因、反证修正、重启恢复、重复探针、人工升级与动作回读。
 
-- Built a **freshness-gated self-evolution loop** spanning online diagnosis and offline trace
-  consolidation: episodic recall proposes a root-cause candidate, current-run probes collect
-  evidence, and memory confirmation requires both citation verification and agreement with
-  the remembered root. The six-case held-out stream completed 32 current-state probes with
-  100% root-cause accuracy and citation verification.
-- **Ablation-identified the load-bearing component**: on the real held-out set, removing
-  attention-based skill scheduling lets a dominant high-volume signal swamp the minority
-  cases and root-cause accuracy falls from **100% to 16.7%**. The experiment uses six
-  curated real-log incident types and a deterministic rule reasoner; the same relevance
-  gate is independently reproduced on synthetic statistics.
-- Engineered a **managed 3-tier memory** with ADD/UPDATE/NOOP write routing,
-  incremental segmented BM25, an optional Flat-base/Flat-delta semantic route gated off by default,
-  bounded two-hop relation expansion, typed event histories, explicit reuse credit,
-  utility eviction, and atomic index-generation compaction.
-- Hardened the online path: **CJK-aware context compilation into both rule and LLM reasoning**,
-  a **3-layer hard read-only skill gate**, a **citation verifier** (every cited fact must
-  satisfy its root-cause evidence contract), a **contract verifier** (pre/post/invariant + grounded read-back),
-  and a **replayable typed trace ledger** enabling per-component replay ablation.
-- Added breadth on the *same* kernel: **trace-driven skill-candidate capture** with a replay
-  gate, an **opt-in read-only escalation** path (planner/executor/critic + intent
-  router), and two more domains — **self-pentest** (real recon pipeline, approval-gated
-  intrusive probes, mock documentation-net target) and **contract-checked anomaly
-  detection** (synthetic simulation).
-- Conforms to **LongMemEval** (ICLR'25, the external long-term-memory benchmark) via an
-  **LLM-free recall@k harness**, reproducible with one command and no API key.
-- 404 passing automated tests, 2 opt-in PostgreSQL 17 container integration tests and 12 event-stream/projector logic unit tests, plus 2 opt-in scale regressions; one-command benchmark reproducer; live FastAPI console visualizing
-  the real cold-vs-warm evolution curve, ablation, and per-case diagnosis traces.
+## English
 
-## 中文（可直接粘贴）
+Built a persistent incident-investigation system for heterogeneous private networks. The ingestion path writes security events and network facts to Redpanda and ClickHouse, correlated detections become durable cases, and each investigation recalls operational history, indexed memory, asset context, and vendor documentation before collecting fresh read-only evidence from hosts, ClickHouse, and FortiGate. Retrieval receipts, probes, citations, hypothesis revisions, and operator dispositions remain attached to one case, while durable session snapshots allow an investigation to continue after a service restart.
 
-**自演化长周期智能体内核**，业务解耦运行时；首落地场景为真实网络日志的内网根因分析。
-
-- 实现**鲜证据门控的自演化闭环**，贯通在线诊断与离线轨迹固化。情景记忆生成根因候选，
-  当前任务重新取证，引用核验与历史根因一致性共同决定记忆确认；6 案例留出流完成 32 次
-  当前状态探测，根因准确率与引用核验率均为 100%。
-- **消融定位承重组件**：在真实留出集上移除注意力式技能调度，主导的高频信号淹没少数派案例，
-  根因准确率**从 100% 降至 16.7%**。实验使用 6 类精选真实日志故障和确定性规则推理器，
-  同一相关性门控机制已在合成统计数据上独立复现。
-- 构建**受管理的三层记忆**（情景、语义、程序），包含 ADD/UPDATE/NOOP 写入路由、
-  增量分段 BM25、默认关闭并按配置启用的 Flat 基础层与 Flat 增量层、两跳关系展开、类型化事件历史、
-  显式复用归因、效用驱逐及索引代际原子压缩。
-- 加固在线路径：**中文感知且同时接入规则与大模型推理的结构化上下文**、**三层只读技能硬门控**、**根因证据契约核验器**、
-  **契约核验器**（前置、后置、不变量与落地回读）、**可回放类型化轨迹账本**（支撑逐组件回放消融）。
-- 同一内核上做广度：**轨迹驱动的技能归纳**（回放晋升门）、**可选只读升级**路径（规划、执行、评判与意图路由），
-  以及两个新域：**自渗透**（真实侦察管线、侵入探针审批门控、文档网段模拟靶）与
-  **契约式异常检测**（合成仿真）。
-- 对齐外部权威记忆基准 **LongMemEval**（ICLR'25）：提供**无需 LLM 的 recall@k 评测脚手架**，
-  一条命令可复现、无需密钥。
-- 404 项自动化测试、2 项可选 PostgreSQL 17 容器集成测试、12 项事件流与投影逻辑单测及 2 项十万、百万级性能回归；一键基准复现脚本；FastAPI 控制台实时可视化真实冷热态演化曲线、消融与逐案诊断轨迹。
-
-## Citations
-
-CoALA (Sumers+ 2023, 2309.02427) · Mem0 (Chhikara+ 2025, 2504.19413) ·
-A-MEM (Xu+ 2025, 2502.12110) · Generative Agents (Park+ 2023, 2304.03442) ·
-Voyager (Wang+ 2023, 2305.16291) · StreamBench (Wu+ 2024, 2406.08747) ·
-LongMemEval (Wu+ ICLR'25, 2410.10813) · GRPO/DeepSeekMath (Shao+ 2024, 2402.03300) ·
-Ebbinghaus 1885.
+- Unified retrieval across indexed memory, incident dossiers, risk patterns, network features, and reference documents with source locators, component scores, matched fields, and context-selection receipts.
+- Merged repeated alert deliveries and later correlation suggestions into stable incident cases using source-level idempotency.
+- Enforced a read-only command allowlist and verified that cited evidence identifiers exist in the active investigation.
+- Added FortiGate cookie-authenticated read adapters for interfaces, devices, policies, and configuration-change metadata without placing credentials in evidence records.
+- Defined business evaluation over temporal case traces, comparing full memory, no memory, irrelevant history, and static runbooks on root-cause stability, contradiction revision, restart recovery, repeated probes, escalation, and action read-back.

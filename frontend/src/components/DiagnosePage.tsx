@@ -108,11 +108,12 @@ const joinCatalog = (
   return rows
 }
 
-export function DiagnosePage({ lang, scenario = 'live', focusSubject }: {
+export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseId }: {
   lang: Lang
   scenario?: 'live' | 'bench'
   /** Arrived here from a live-situation row: open focused on that subject. */
   focusSubject?: string
+  focusCaseId?: string
 }) {
   const zh = lang === 'zh'
   const tx = T(zh)
@@ -128,12 +129,13 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject }: {
   // A second jump from the live-situation list must move the focus, not be
   // swallowed by the state initialiser having already run once.
   useEffect(() => {
-    if (focusSubject) setFocusIp(focusSubject)
+    if (!focusSubject) return
+    const timer = window.setTimeout(() => setFocusIp(focusSubject), 0)
+    return () => window.clearTimeout(timer)
   }, [focusSubject])
 
   useEffect(() => {
     let alive = true
-    setSt({ s: 'load' })
     fetch(`/api/rca/pentest?lang=${lang}&scenario=${scenario}`)
       .then((r) => r.json())
       .then((d: ScanResp) => { if (alive) setSt(d && d.ok ? { s: 'ok', d } : { s: 'err', m: 'NO DATA' }) })
@@ -277,7 +279,12 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject }: {
               ? '正在对告警中选定的对象执行只读调查。下方回执直接列出命中的历史记忆、调整后的探针顺序、实际执行数量和知识检索结果。'
               : 'Read-only investigation is running for the selected alert subject. The receipt below shows recalled memory, the reordered probe plan, actual execution count, and retrieved knowledge.'}
           </p>
-          <InvestigateChat key={focusSubject} lang={lang} subject={focusSubject} />
+          <InvestigateChat
+            key={`${focusCaseId ?? 'adhoc'}:${focusSubject}`}
+            lang={lang}
+            subject={focusSubject}
+            caseId={focusCaseId}
+          />
         </section>
       ) : null}
 

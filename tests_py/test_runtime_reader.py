@@ -44,6 +44,8 @@ def test_load_runtime_snapshot_emits_timeline_and_stage_telemetry_for_suggestion
     assert first.get("hypothesisSet")
     assert first.get("runbookDraft")
     assert first.get("reviewVerdict")
+    assert first.get("sourceAlertIds")
+    assert first.get("dataClassification") in {"observed", "controlled_test"}
     assert first["reviewVerdict"]["checks"]["overreachRisk"]["status"]
     assert first["runbookDraft"]["approvalBoundary"]["approvalRequired"] is True
 

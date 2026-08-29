@@ -134,7 +134,9 @@ def test_without_relevant_memory_order_and_count_are_exactly_unchanged(monkeypat
     assert called == expected
     assert opened["probe_candidates"] == expected
     assert len(opened["evidence"]) == len(expected)
-    assert opened["trace_events"] == []
+    assert not any(row["kind"] == "memory_shortcut" for row in opened["trace_events"])
+    retrieval = next(row for row in opened["trace_events"] if row["kind"] == "memory_candidates_ranked")
+    assert retrieval["payload"]["returned_count"] == 0
 
 
 def test_memory_reorders_triage_without_changing_its_candidate_set(monkeypatch):
@@ -222,7 +224,8 @@ def test_memory_naming_the_entire_sweep_claims_no_shortcut(monkeypatch):
     opened = investigate.start("disk pressure on this host")
 
     assert called == [*investigate.BASELINE_PROBES, *investigate.TRIAGE_PROBES]
-    assert opened["trace_events"] == []
+    assert not any(row["kind"] == "memory_shortcut" for row in opened["trace_events"])
+    assert any(row["kind"] == "memory_candidates_ranked" for row in opened["trace_events"])
     assert opened["probe_prior"]["strictly_narrowed"] is False
 
 
@@ -245,7 +248,8 @@ def test_fully_stale_memory_stays_visible_but_cannot_reorder(monkeypatch):
     }
     assert all(item["staleness"] == 1.0 for item in considered)
     assert all(item["effective_confidence"] == 0.0 for item in considered)
-    assert opened["trace_events"] == []
+    assert not any(row["kind"] == "memory_shortcut" for row in opened["trace_events"])
+    assert any(row["kind"] == "memory_candidates_ranked" for row in opened["trace_events"])
 
 
 def test_probe_prior_path_never_builds_or_calls_an_llm(monkeypatch):
@@ -258,3 +262,85 @@ def test_probe_prior_path_never_builds_or_calls_an_llm(monkeypatch):
     )
 
     assert investigate.start("disk pressure on this host")["evidence"]
+
+
+def test_investigation_saves_scored_cross_source_retrieval_receipt(monkeypatch):
+    _fake_commands(monkeypatch)
+    monkeypatch.setattr(investigate, "_live_memory_store", _failed_service_memory)
+    monkeypatch.setattr(
+        investigate,
+        "_operational_context",
+        lambda subject, family: {
+            "historical_only": True,
+            "dossiers": [{
+                "dossier_id": "incident-service-001",
+                "source_mode": "live",
+                "fault_summary": "collector service stopped after dependency failure",
+                "asset_ids": [subject],
+                "fault_family": family,
+            }],
+            "risks": [],
+            "features": [],
+        },
+    )
+
+    opened = investigate.start(
+        "demo-collector.service 服务失败",
+        family="fam-perception-selfheal",
+        subject="demo-collector.service",
+    )
+
+    results = opened["retrieval_results"]
+    memory = next(item for item in results if item["item_id"] == "proc-sentinel.failed_units")
+    dossier = next(item for item in results if item["item_id"] == "incident-service-001")
+    knowledge = next(item for item in results if item["kind"] == "knowledge_document")
+
+    assert memory["score"] > 0
+    assert memory["score_components"]["asset_hits"] == 1
+    assert memory["source"] == "tiered_memory_store"
+    assert memory["relation_to_current"]["investigation_id"] == opened["session_id"]
+    assert "subject" in memory["relation_to_current"]["matched_on"]
+    assert dossier["score_type"] == "source_rank_reciprocal"
+    assert dossier["relation_to_current"]["family"] == "fam-perception-selfheal"
+    assert knowledge["score_type"] == "bm25"
+    assert knowledge["locator"]
+
+    receipt = next(
+        row for row in opened["trace_events"] if row["kind"] == "memory_candidates_ranked"
+    )
+    assert "persistence_error" not in receipt
+    assert receipt["payload"]["returned_count"] == len(results)
+    assert receipt["payload"]["counts_by_kind"] == {
+        "incident_dossier": 1,
+        "indexed_memory": 2,
+        "knowledge_document": len(opened["knowledge_context"]),
+    }
+
+
+def test_analyze_and_followup_receive_the_saved_retrieval_results(monkeypatch):
+    _fake_commands(monkeypatch)
+    monkeypatch.setattr(investigate, "_live_memory_store", _failed_service_memory)
+    monkeypatch.setattr(investigate, "_operational_context", lambda *_args: {})
+    opened = investigate.start(
+        "demo-collector.service 服务失败",
+        family="fam-perception-selfheal",
+        subject="demo-collector.service",
+    )
+    client = type("Client", (), {
+        "seen": [],
+        "complete_json": lambda self, messages, schema_name: (
+            self.seen.append(messages)
+            or ({"diagnosis": "d", "root_cause": "x", "citations": [],
+                 "need_commands": [], "runbook": []}
+                if schema_name == "rca_analysis"
+                else {"answer": "a", "citations": [], "need_commands": []})
+        ),
+    })()
+    monkeypatch.setattr(investigate, "_client", lambda: client)
+
+    investigate.analyze(opened["session_id"])
+    investigate.ask(opened["session_id"], "历史线索是什么")
+
+    assert "proc-sentinel.failed_units" in client.seen[0][-1]["content"]
+    assert "tiered_memory_store" in client.seen[0][-1]["content"]
+    assert "proc-sentinel.failed_units" in client.seen[1][-1]["content"]

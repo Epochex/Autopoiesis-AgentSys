@@ -154,7 +154,12 @@ def test_investigate_portrait_changes_order_without_early_stop(monkeypatch) -> N
     ]
     assert set(triage) == set(investigate.TRIAGE_PROBES)
     assert len(called) == len(investigate.BASELINE_PROBES) + len(investigate.TRIAGE_PROBES) + 2
-    assert opened["trace_events"] == []
+    receipts = [
+        event for event in opened["trace_events"]
+        if event["kind"] == "memory_candidates_ranked"
+    ]
+    assert len(receipts) == 1
+    assert receipts[0]["payload"]["returned_count"] == 0
 
 
 def test_investigate_rebuilds_the_latest_profile_decision_from_facts(monkeypatch) -> None:

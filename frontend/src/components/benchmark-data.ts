@@ -79,9 +79,9 @@ export const BENCHMARK_FIXTURE: BenchmarkResp = {
     },
   },
   coverage: [
-    { cap: { zh: '内网根因分析', en: 'network RCA' }, benchmark: 'ITBench · SRE', covered: true },
-    { cap: { zh: '自我渗透 / 安全', en: 'self-pentest / security' }, benchmark: 'ITBench · CISO', covered: true },
+    { cap: { zh: '内网根因分析', en: 'network RCA' }, benchmark: { zh: 'ITBench · SRE 仅公开参照', en: 'ITBench · SRE published reference only' }, covered: false },
+    { cap: { zh: '自我渗透 / 安全', en: 'self-pentest / security' }, benchmark: { zh: 'ITBench · CISO 仅公开参照', en: 'ITBench · CISO published reference only' }, covered: false },
     { cap: { zh: '长期保留记录 / 查找记录', en: 'save records / find records' }, benchmark: 'LongMemEval-500', covered: true },
-    { cap: { zh: '复用旧记录 / 归纳处理办法', en: 'reuse records / build how-tos' }, benchmark: { zh: '暂无公开测试集', en: 'no public benchmark yet' }, covered: false },
+    { cap: { zh: '复用旧记录 / 归纳处理办法', en: 'reuse records / build how-tos' }, benchmark: { zh: '时间序列案件待接入', en: 'temporal case traces pending' }, covered: false },
   ],
 }

@@ -850,6 +850,45 @@ def security_backfill() -> None:
     print(f"[security-backfill] DONE — {total:,} security events", flush=True)
 
 
+def commit_live_batch_sinks(
+    fact_rows: list[list],
+    security_rows: list[list],
+    stream_events: list[dict[str, object]],
+    *,
+    outbox: RedpandaOutbox,
+    fact_sink=None,
+    security_sink=None,
+) -> tuple[int, str | None]:
+    """Commit the live path with the event stream as the first delivery target.
+
+    The durable outbox is written before either remote system. When Redpanda is
+    reachable, consumers receive the batch before ClickHouse archival starts.
+    A broker outage leaves the batch queued while ClickHouse still receives the
+    facts; an archive outage propagates after the stream acknowledgement so live
+    detection can continue from the already published event. The retained R230
+    source logs remain the repair source for an archive gap.
+    """
+    fact_sink = fact_sink or ch_insert
+    security_sink = security_sink or ch_insert_security
+    outbox.enqueue(stream_events)
+    published = 0
+    publish_error = None
+    try:
+        published = outbox.drain()
+    except Exception as exc:
+        publish_error = type(exc).__name__
+        print(
+            f"[live] Redpanda publish deferred ({publish_error}); batch remains in outbox",
+            file=sys.stderr,
+            flush=True,
+        )
+    if fact_rows:
+        fact_sink(fact_rows)
+    if security_rows:
+        security_sink(security_rows)
+    return published, publish_error
+
+
 def live() -> None:
     """Tail the current log into ClickHouse and the production event topic."""
     create_security_events_table()
@@ -889,29 +928,15 @@ def live() -> None:
         stream_events: list[dict[str, object]],
     ) -> None:
         nonlocal rows_since_start, security_rows_since_start, stream_rows_since_start
-        # The disk outbox is committed first. A collector crash can therefore
-        # duplicate a stream event, which its stable event_id makes detectable,
-        # while it cannot silently erase an observed event between the two sinks.
-        outbox.enqueue(stream_events)
-        if fact_rows:
-            ch_insert(fact_rows)
-            rows_since_start += len(fact_rows)
-        if security_rows:
-            ch_insert_security(security_rows)
-            security_rows_since_start += len(security_rows)
-
-        publish_error = None
-        published = 0
-        try:
-            published = outbox.drain()
-            stream_rows_since_start += published
-        except Exception as exc:
-            publish_error = type(exc).__name__
-            print(
-                f"[live] Redpanda publish deferred ({publish_error}); batch remains in outbox",
-                file=sys.stderr,
-                flush=True,
-            )
+        published, publish_error = commit_live_batch_sinks(
+            fact_rows,
+            security_rows,
+            stream_events,
+            outbox=outbox,
+        )
+        rows_since_start += len(fact_rows)
+        security_rows_since_start += len(security_rows)
+        stream_rows_since_start += published
         queued_batches, queued_bytes = outbox.pending()
         now = datetime.now(timezone.utc).isoformat()
         _write_status(

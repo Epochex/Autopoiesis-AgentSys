@@ -1,5 +1,9 @@
 # Benchmark result artifacts
 
+These files are component microbenchmarks.  They are excluded from claims about
+investigation accuracy, durable case continuity, memory benefit, remediation safety, or
+whole-system readiness.
+
 - `vector_index_100k.json`: 100,000 vectors, cold Flat/HNSW build and `efSearch` 32 to 256.
 - `vector_index_1m.json`: 1,000,000 vectors, cold Flat/HNSW build and `efSearch` 32 to 1024.
 - `index_lifecycle_100k.json`: 100,000 sparse documents followed by 10,000 updates and
@@ -7,6 +11,9 @@
   physical reclamation, snapshot load, and exact BM25 equivalence.
 - `vector_lifecycle_100k.json`: 100,000 vectors followed by the same 20% churn; measures
   pre/post-compaction latency, throughput, Recall@10, physical reclamation, and restart.
+- `multiagent_parallel_fair.json`: deterministic I/O overlap for four handlers.  The
+  handlers sleep and return fixed evidence; this artifact contains no model-quality or
+  diagnosis-quality measurement.
 
 The large `.faiss` indexes are reproducible caches and are intentionally ignored. See
 [`docs/HNSW_SCALE_BENCHMARK.md`](../docs/HNSW_SCALE_BENCHMARK.md) for methodology,

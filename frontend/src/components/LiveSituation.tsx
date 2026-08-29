@@ -17,6 +17,7 @@ interface TPt { ts: string; label: string; kind: string }
 interface Hypo { id: string; rank: number; statement: string; confidence: number; confidenceLabel: string; evidenceRefs: string[] }
 interface Suggestion {
   id: string; ts: string; scope: string; severity: string; priority: string; summary: string
+  caseId?: string | null
   incidentRef?: string; detectedAt?: string
   service: string; device: string; deviceKey: string; clusterSize: number; adaptiveMode: string
   triggerReasons: string[]; impactLevel: string
@@ -35,6 +36,7 @@ interface Suggestion {
 }
 interface FeedItem {
   id: string; kind: string; scope?: string; ts: string; severity?: string
+  caseId?: string | null
   priority?: string; device?: string; deviceKey?: string; summary?: string; ruleId?: string; scenario?: string
 }
 interface ClusterWatch { key: string; severity: string; ruleId: string; progress: number; target: number; lastEmitTs: string }
@@ -91,7 +93,7 @@ const suggestionEvent = (s: Suggestion): TheaterEvent => ({
       : ['aiops-agent', 'suggestions-topic', 'remediation'],
 })
 
-export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focusSubject }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; onTrace?: (subject: string) => void; scenario?: 'disk' | 'bench'; focusSubject?: string }) {
+export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focusSubject }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; onTrace?: (subject: string, caseId?: string) => void; scenario?: 'disk' | 'bench'; focusSubject?: string }) {
   const [snap, setSnap] = useState<SituationSnapshot | null>(null)
   const [state, setState] = useState<'load' | 'ok' | 'empty' | 'err'>('load')
   // A manual pick remembers which focus request it was made under, so arriving
@@ -142,6 +144,17 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
   const hot = useMemo(() => hotStages(selected), [selected])
   const rail = useMemo(() => railFor(selected?.scope, selected?.timeline), [selected])
   const reportOnly = selected?.reviewVerdict.verdictStatus === 'reported'
+
+  const openCase = (suggestion: Suggestion) => {
+    const jump = () => onTrace?.(
+      suggestion.deviceKey || suggestion.device || suggestion.id,
+      suggestion.caseId ?? undefined,
+    )
+    if (!suggestion.caseId || scenario === 'bench') { jump(); return }
+    fetch(`/api/rca/investigation-cases/${encodeURIComponent(suggestion.caseId)}/open`, {
+      method: 'POST',
+    }).finally(jump)
+  }
 
   /* Arriving from the situational page's alert strip: bring the panel into view.
    * Which card is selected is derived above, not set here. */
@@ -244,12 +257,13 @@ export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focus
               <span className="ls-d-dev">{selected.device}</span>
               <span className="ls-d-svc">{selected.service}</span>
               <span className="ls-d-mode">{selected.adaptiveMode} · {selected.impactLevel}</span>
+              {selected.caseId ? <span className="ls-d-case">CASE · {selected.caseId}</span> : null}
               {onTrace ? (
                 <button
                   className="ls-theater-cta"
-                  onClick={() => onTrace(selected.deviceKey || selected.device || selected.id)}
+                  onClick={() => openCase(selected)}
                 >
-                  {zh ? '看处置链路 ▸' : 'RESPONSE CHAIN ▸'}
+                  {zh ? '打开调查案件 ▸' : 'OPEN INVESTIGATION ▸'}
                 </button>
               ) : null}
               {onTheater ? (

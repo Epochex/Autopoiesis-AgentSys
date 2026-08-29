@@ -211,8 +211,8 @@ export const FAULT_CATALOG: FaultFamily[] = [
     faultClasses: ['l2_loop_macflap', 'resolver_failure'],
     confirm: ['哪些流量被拒了 + 和平时比', 'WHAT GOT DENIED, COMPARED WITH A NORMAL DAY'],
     rationale: [
-      '防火墙策略、VLAN、fortilink、LACP 是所有网段共用的一套东西,改错一条全网都受影响,而且没有撤销键,所以这一族永远由人来动。另外先别急着改:留出集里那条"策略拒绝"的正确答案其实是"本来就该拒",137/138 那些 NetBIOS 噪声是策略在正常工作。',
-      'Policies, VLANs, fortilink and LACP are shared by every subnet: one wrong line hits everything and there is no undo, so a person always makes the change. And check before changing — the held-out deny case turned out to be "denied by design", with the 137/138 NetBIOS noise being the policy working correctly.',
+      '防火墙策略、VLAN、fortilink、LACP 由多个网段共享，改错会扩大影响范围，而且当前执行端没有可靠撤销能力，所以这一族由人审批。137/138 等广播噪声需要先与业务流量基线比较，确认是正常拒绝还是误伤。',
+      'Firewall policies, VLANs, FortiLink, and LACP are shared across subnets. A bad change widens the blast radius, and the current executor has no reliable rollback, so a person approves it. Compare broadcast noise such as ports 137 and 138 with the traffic baseline before deciding whether a denial is expected or harmful.',
     ],
     protectedNote: [
       '改任何策略前先确认:UDP 41641 出网和 DERP(443) 必须还通 —— 否则远程就进不来了。',
@@ -253,8 +253,8 @@ export const FAULT_CATALOG: FaultFamily[] = [
     reconKinds: ['info'],
     confirm: ['读数都在正常范围内', 'ALL READINGS WITHIN THE NORMAL RANGE'],
     rationale: [
-      '留出集 6 个案例里有 3 个的正确答案就是"没坏":会话冲突在正常范围内、DHCP 是健康的、安全状态是最新的。带着证据把单关掉本身就是处置 —— 不关,误报堆多了会把真告警淹掉。',
-      'Three of the six held-out cases resolve to "nothing is broken". Closing them with the evidence attached is itself the fix — leave them open and the false positives bury the real ones.',
+      '当会话冲突处于历史正常范围、DHCP 健康且安全状态最新时，系统应附上证据并关闭误报。持续积压误报会挤占真实事件的调查容量。',
+      'When session conflicts remain within their historical range, DHCP is healthy, and security posture is current, the system should attach the evidence and close the false positive. Accumulated false positives consume investigation capacity needed by real incidents.',
     ],
     playbook: [
       { risk: 'readonly', what: ['会话冲突次数是不是在历史正常范围内', 'Is the session-clash count within its historical range'], command: 'skill: check_event_log' },
