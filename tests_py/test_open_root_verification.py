@@ -37,7 +37,7 @@ def _payload() -> dict:
     }
 
 
-def test_open_root_is_published_only_after_two_frozen_checks(monkeypatch) -> None:
+def test_generic_safe_reads_cannot_publish_an_open_root(monkeypatch) -> None:
     _isolate(monkeypatch)
     monkeypatch.setattr(
         investigate,
@@ -52,13 +52,14 @@ def test_open_root_is_published_only_after_two_frozen_checks(monkeypatch) -> Non
 
     result = investigate.analyze(opened["session_id"])
 
-    assert result["root_cause"] == "container namespace detached"
+    assert result["root_cause"] == "inconclusive"
     candidate = next(item for item in result["hypothesis_state"]["hypotheses"] if item["origin"] == "model")
-    assert candidate["status"] == "confirmed"
-    assert len(candidate["supporting_evidence_ids"]) == 2
+    assert candidate["status"] == "proposed"
+    assert candidate["supporting_evidence_ids"] == []
+    assert not any(item["command"] in {"date", "uptime"} for item in result["follow_up_evidence"])
 
 
-def test_one_failed_frozen_check_keeps_the_case_investigating(monkeypatch) -> None:
+def test_invalid_verification_plan_does_not_manufacture_opposing_evidence(monkeypatch) -> None:
     _isolate(monkeypatch)
     monkeypatch.setattr(investigate, "run", lambda command: _execution(command, "UTC"))
     monkeypatch.setattr(investigate, "_client", lambda: _Client(_payload(), _payload()))
@@ -68,5 +69,5 @@ def test_one_failed_frozen_check_keeps_the_case_investigating(monkeypatch) -> No
 
     assert result["root_cause"] == "inconclusive"
     candidate = next(item for item in result["hypothesis_state"]["hypotheses"] if item["origin"] == "model")
-    assert candidate["status"] == "rejected"
-    assert candidate["opposing_evidence_ids"]
+    assert candidate["status"] == "proposed"
+    assert candidate["opposing_evidence_ids"] == []

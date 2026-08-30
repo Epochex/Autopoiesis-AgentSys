@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from core.investigate.safe_exec import Execution
 from frontend.gateway.app import investigate
 
 
@@ -118,16 +119,14 @@ def test_malformed_runbook_entries_are_dropped_not_crashed_on(monkeypatch, sessi
 
 
 def test_invented_citations_are_dropped(monkeypatch, session_id):
-    """A hallucinated reading has no id to point at. That is the whole check."""
+    """An existing but unrelated id cannot decorate an unsupported conclusion."""
     _use(monkeypatch, FakeClient({
         "diagnosis": "根据 [ev-999] 判断",
         "citations": ["ev-001", "ev-999", "ev-abc"],
         "runbook": [],
     }))
     citations = investigate.analyze(session_id)["citations"]
-    assert "ev-001" in citations
-    assert "ev-999" not in citations
-    assert "ev-abc" not in citations
+    assert citations == []
 
 
 # ── running steps ────────────────────────────────────────────────────────────
@@ -311,3 +310,85 @@ def test_the_model_is_told_what_is_normal_here():
     assert "docker0" in prompt
     assert "NO-CARRIER" in prompt
     assert "root cause" in prompt
+
+
+def test_open_root_is_published_only_after_two_independent_frozen_checks(monkeypatch):
+    outputs = {
+        "systemctl --failed --no-legend": "",
+        "df -h": "Filesystem Size Used Avail Use% Mounted on\n/dev/sda 10G 1G 9G 10% /",
+        "free -m": "Mem: 1000 100 100 0 0 900",
+        "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "200",
+        "ss -tulpn": "LISTEN 0 128 127.0.0.1:9000 0.0.0.0:*",
+        "journalctl -u collector.service -n 40 --no-pager": "dependency timeout on clickhouse",
+    }
+    monkeypatch.setattr(
+        investigate,
+        "run",
+        lambda command: Execution(
+            command=command,
+            argv=command.split(),
+            ran=True,
+            output=outputs.get(command, "ok"),
+            exit_code=0,
+        ),
+    )
+    monkeypatch.setattr(investigate, "_live_memory_store", lambda: None)
+    root = "collector listener remains present while its data dependency times out"
+    proposal = {
+        "diagnosis": "two current signals support the dependency failure",
+        "root_cause": root,
+        "root_hypothesis_id": "",
+        "citations": [],
+        "need_commands": [],
+        "verification": [
+            {"command": "ss -tulpn", "operator": "contains", "value": "127.0.0.1:9000"},
+            {
+                "command": "journalctl -u collector.service -n 40 --no-pager",
+                "operator": "contains",
+                "value": "dependency timeout",
+            },
+        ],
+        "runbook": [],
+    }
+    _use(monkeypatch, FakeClient(proposal, proposal))
+    opened = investigate.start("collector output stopped", family="fam-perception-selfheal")
+
+    result = investigate.analyze(opened["session_id"])
+
+    assert result["root_cause"] == root
+    assert len(result["citations"]) == 2
+    supporting = [
+        item for item in investigate.get(opened["session_id"]).evidence
+        if item.get("evidence_id") in result["citations"]
+    ]
+    assert {item["claim_support"]["signalFamily"] for item in supporting} == {
+        "listener_state", "service_logs",
+    }
+    assert all(item["claim_support"]["frozenBeforeProbe"] for item in supporting)
+
+
+def test_safe_but_unrelated_reads_cannot_confirm_an_open_root(monkeypatch):
+    monkeypatch.setattr(investigate, "_live_memory_store", lambda: None)
+    proposal = {
+        "diagnosis": "invented",
+        "root_cause": "the switch fabric is corrupt",
+        "citations": ["ev-001"],
+        "need_commands": [],
+        "verification": [
+            {"command": "date", "operator": "contains", "value": "2026"},
+            {"command": "uptime", "operator": "contains", "value": "load"},
+        ],
+        "runbook": [],
+    }
+    _use(monkeypatch, FakeClient(proposal, proposal))
+    opened = investigate.start("unknown fault", family="fam-perception-selfheal")
+
+    result = investigate.analyze(opened["session_id"])
+
+    assert result["root_cause"] == "inconclusive"
+    assert result["citations"] == []
+    model_root = next(
+        item for item in result["hypothesis_state"]["hypotheses"]
+        if item["origin"] == "model"
+    )
+    assert model_root["status"] == "proposed"

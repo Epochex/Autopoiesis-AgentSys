@@ -26,6 +26,26 @@ def compare_investigation_pair(
     no_extra_unscoped_context = int(treatment.get("unscoped_context_count") or 0) <= int(
         control.get("unscoped_context_count") or 0
     )
+    control_outputs = dict(control.get("probe_output_fingerprints") or {})
+    treatment_outputs = dict(treatment.get("probe_output_fingerprints") or {})
+    common_commands = set(control_outputs).intersection(treatment_outputs)
+    comparable_inputs = bool(common_commands) and all(
+        control_outputs[command] == treatment_outputs[command]
+        for command in common_commands
+    )
+    if not control_outputs and not treatment_outputs:
+        # Backward-compatible unit inputs still exercise the comparison rule.
+        # Production metrics always carry fingerprints.
+        comparable_inputs = True
+    memory_influenced = bool(treatment.get("memory_influenced_order"))
+    proven = bool(
+        same_root
+        and same_coverage
+        and faster
+        and no_extra_unscoped_context
+        and comparable_inputs
+        and memory_influenced
+    )
     return {
         "same_confirmed_root": same_root,
         "same_probe_coverage": same_coverage,
@@ -36,14 +56,18 @@ def compare_investigation_pair(
             else None
         ),
         "no_extra_unscoped_context": no_extra_unscoped_context,
-        "memory_influenced_order": bool(treatment.get("memory_influenced_order")),
-        "business_value_proven": bool(
-            same_root and same_coverage and faster and no_extra_unscoped_context
-        ),
+        "comparable_probe_outputs": comparable_inputs,
+        "compared_probe_count": len(common_commands),
+        "memory_influenced_order": memory_influenced,
+        "business_value_proven": proven,
         "failure_reason": (
             None
-            if same_root and same_coverage and faster and no_extra_unscoped_context
-            else "memory did not confirm the same root earlier under equal probe coverage"
+            if proven
+            else (
+                "probe outputs changed between executions"
+                if not comparable_inputs
+                else "memory did not confirm the same root earlier under equal probe coverage"
+            )
         ),
     }
 

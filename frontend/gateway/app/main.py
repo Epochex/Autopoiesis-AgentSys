@@ -2212,6 +2212,17 @@ async def investigate_evaluate_pair(request: InvestigatePairRequest) -> dict[str
     return {"ok": True, **result}
 
 
+@app.get("/api/rca/investigate/business-value")
+async def investigate_business_value() -> dict[str, Any]:
+    """Report only business claims demonstrated by durable executed cases."""
+    from core.eval.business_value_acceptance import evaluate_business_value
+    from .investigate import _session_store
+
+    cases = [case.as_dict() for case in _case_repository().list(limit=500)]
+    sessions = await asyncio.to_thread(_session_store().recent, 500)
+    return {"ok": True, **evaluate_business_value(cases, sessions)}
+
+
 @app.post("/api/rca/investigate/ask")
 async def investigate_ask(request: InvestigateAsk) -> dict[str, Any]:
     """One follow-up turn, with every earlier reading and turn still in view."""

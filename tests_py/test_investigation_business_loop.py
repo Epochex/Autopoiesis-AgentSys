@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from domains.network_rca.investigation_case import (
     CaseObservation,
@@ -174,6 +174,100 @@ def test_confirmed_failed_unit_maps_to_action_and_records_readback(monkeypatch) 
     assert result["readback_evidence"]["source"] == "action_readback"
 
 
+def test_auto_case_executes_only_exact_target_and_closes_from_readback(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch)
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    now = datetime.now(timezone.utc).isoformat()
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "collector-failed-now"),
+        occurred_at=now,
+        severity="high",
+        subject="collector.service",
+        service="service-health",
+        rule_id="service-failed",
+        summary="collector service entered failed state",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "observedAt": now,
+            },
+        },
+    ))
+    monkeypatch.setattr(main, "_investigation_case_repository", repository)
+    outputs = {
+        "systemctl --failed --no-legend": "collector.service loaded failed failed",
+        "df -h": "Filesystem Size Used Avail Use% Mounted on\n/dev/sda 10G 1G 9G 10% /",
+        "free -m": "Mem: 1000 100 100 0 0 900",
+        "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "200",
+    }
+    monkeypatch.setattr(
+        investigate,
+        "run",
+        lambda command: _execution(command, outputs.get(command, "ok")),
+    )
+    monkeypatch.setattr(
+        remediation,
+        "preflight",
+        lambda action, target, *_args: {
+            "eligible": True,
+            "action": action,
+            "target": target,
+            "policy": {"auto_execute": True},
+        },
+    )
+    monkeypatch.setattr(
+        remediation,
+        "execute",
+        lambda action, target, **_kwargs: {
+            "ran": True,
+            "action": action,
+            "target": target,
+            "outcome": "passed",
+            "needs_human": False,
+            "execution_id": "exec-auto-1",
+            "at": now,
+        },
+    )
+
+    result = investigation_cases.auto_start_pending_cases(repository)[0]
+    stored = repository.get(case.case_id)
+
+    assert result["decision"]["state"] == "resolved"
+    assert result["decision"]["readback"]["outcome"] == "passed"
+    assert stored is not None and stored.status == "resolved"
+    assert any(item["kind"] == "remediation_started" for item in stored.timeline)
+    assert any(item["kind"] == "remediation_completed" for item in stored.timeline)
+
+
+def test_action_exception_becomes_failed_readback_and_escalation(monkeypatch) -> None:
+    _isolate(monkeypatch)
+    outputs = {
+        "systemctl --failed --no-legend": "collector.service loaded failed failed",
+        "df -h": "Filesystem Size Used Avail Use% Mounted on\n/dev/sda 10G 1G 9G 10% /",
+        "free -m": "Mem: 1000 100 100 0 0 900",
+        "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "200",
+    }
+    monkeypatch.setattr(investigate, "run", lambda command: _execution(command, outputs.get(command, "ok")))
+    monkeypatch.setattr(
+        remediation,
+        "preflight",
+        lambda action, target, *_args: {"eligible": True, "action": action, "target": target},
+    )
+    opened = investigate.start(
+        "collector failed", family="fam-perception-selfheal", subject="collector.service"
+    )
+
+    result = investigate.remediate(
+        opened["session_id"],
+        executor=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("transport lost")),
+    )
+
+    assert result["decision"]["state"] == "escalated"
+    assert result["decision"]["readback"]["outcome"] == "failed"
+    assert result["readback_evidence"]["ok"] is False
+
+
 def test_pair_gate_requires_same_root_and_earlier_confirmation() -> None:
     control = {
         "confirmed_roots": ["service_failed"],
@@ -255,6 +349,12 @@ def test_real_pair_runner_proves_earlier_confirmation_without_changing_root(tmp_
         lambda command: _execution(command, outputs.get(command, "ok")),
     )
 
+    live = investigate.start(
+        "host degradation detected",
+        family="fam-perception-selfheal",
+        subject="collector.service",
+        case_id=case.case_id,
+    )
     report = investigate.paired_evaluate_case(case.case_id)
 
     assert report["control"]["confirmed_roots"] == ["memory_pressure"]
@@ -262,3 +362,84 @@ def test_real_pair_runner_proves_earlier_confirmation_without_changing_root(tmp_
     assert report["control"]["steps_to_first_confirmation"] > 1
     assert report["treatment"]["steps_to_first_confirmation"] < report["control"]["steps_to_first_confirmation"]
     assert report["acceptance"]["business_value_proven"] is True
+    assert report["control"]["session_id"] != live["session_id"]
+    assert report["treatment"]["session_id"] != live["session_id"]
+    assert report["fixed_script"]["strategy"] == "fixed_script"
+    measured = repository.get(case.case_id)
+    assert measured is not None
+    assert any(item["kind"] == "investigation_pair_measured" for item in measured.timeline)
+
+
+def test_second_real_case_automatically_records_memory_savings(tmp_path, monkeypatch) -> None:
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    memory = TieredMemoryStore(enabled=True)
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(main, "_investigation_case_repository", repository)
+    monkeypatch.setattr(investigate, "_live_memory_store", lambda: memory)
+    monkeypatch.setattr(investigate, "_operational_context", lambda *_args: {})
+    monkeypatch.setattr(investigate, "_device_profile_anomaly_types", lambda *_args: [])
+    monkeypatch.setattr(investigate, "_persist_session", lambda *_args: None)
+    monkeypatch.setattr(investigate, "_pair_log_path", lambda: tmp_path / "pairs.jsonl")
+    outputs = {
+        "systemctl --failed --no-legend": "",
+        "df -h": "Filesystem Size Used Avail Use% Mounted on\n/dev/sda 10G 1G 9G 10% /",
+        "free -m": "Mem: 1000 900 0 0 0 50",
+        "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "200",
+    }
+    monkeypatch.setattr(
+        investigate,
+        "run",
+        lambda command: _execution(command, outputs.get(command, "ok")),
+    )
+
+    first = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "memory-first"),
+        occurred_at=(now - timedelta(seconds=30)).isoformat(),
+        severity="high",
+        subject="host-a",
+        service="host-health",
+        rule_id="resource-alert",
+        summary="host degraded",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {"observedAt": (now - timedelta(seconds=30)).isoformat()},
+        },
+    ))
+    first_opened = investigate.start(
+        "host degraded", "fam-perception-selfheal", "host-a", first.case_id,
+        auto_started=True,
+    )
+    first_done = investigate.complete(first_opened["session_id"])
+    assert first_done["decision"]["classification"] == "memory_pressure"
+    repository.append_event(
+        first.case_id,
+        kind="test_resolution",
+        payload={},
+        status="resolved",
+    )
+
+    # This is a recurrence only if it starts after the first case has been
+    # confirmed and its procedure memory is available. Giving both cases the
+    # same observedAt would ask the evaluator to use future knowledge.
+    recurrence_at = datetime.now(timezone.utc)
+    second = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "memory-second"),
+        occurred_at=recurrence_at.isoformat(),
+        severity="high",
+        subject="host-a",
+        service="host-health",
+        rule_id="resource-alert",
+        summary="host degraded again",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {"observedAt": recurrence_at.isoformat()},
+        },
+    ))
+
+    result = investigation_cases.auto_start_pending_cases(repository)[0]
+    stored = repository.get(second.case_id)
+
+    assert result["memory_evaluation"]["recurrence_value_proven"] is True, result["memory_evaluation"]
+    assert result["memory_evaluation"]["recurrence"]["probe_delta"] > 0
+    assert stored is not None
+    assert any(item["kind"] == "memory_value_measured" for item in stored.timeline)

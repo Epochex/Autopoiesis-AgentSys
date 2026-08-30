@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import os
 import re
-import ipaddress
-from datetime import datetime, timedelta, timezone
+import hashlib
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -31,14 +31,6 @@ def _managed_gateway() -> str:
     return urlparse(raw).hostname or "192.168.1.1"
 
 
-def _is_unmanaged_internet_ip(value: str | None) -> bool:
-    try:
-        address = ipaddress.ip_address(value or "")
-    except ValueError:
-        return False
-    return not (address.is_private or address.is_loopback or address.is_link_local)
-
-
 def _case_family(rule_id: str, service: str, summary: str) -> str | None:
     text = " ".join((rule_id, service, summary)).casefold()
     if any(marker in text for marker in ("deny", "policy", "firewall", "拒绝", "策略")):
@@ -54,42 +46,73 @@ def _case_family(rule_id: str, service: str, summary: str) -> str | None:
 
 def derive_investigation_scope(case: Any) -> dict[str, Any]:
     """Translate one durable case into the exact scope used by retrieval and probes."""
+    from domains.network_rca.incident_scope import derive_incident_scope
+
     payload_text = str(case.source_payload)
     identifiers = [
-        case.subject,
         *_IP.findall(" ".join((case.summary, payload_text))),
         *_MAC.findall(" ".join((case.summary, payload_text))),
     ]
-    asset_ids = list(dict.fromkeys(value for value in identifiers if value))[:32]
     family = _case_family(case.rule_id, case.service, case.summary)
-    subject = case.subject or None
-    # Internet senders in a deny burst are evidence subjects, not managed probe
-    # targets. The current firewall is the managed entity whose policy and
-    # interface state can be inspected safely.
-    if family == "fam-policy-reachability" and (
-        not subject
-        or subject.casefold() in {"r230", "fortigate", "gateway"}
-        or _is_unmanaged_internet_ip(subject)
-    ):
-        subject = _managed_gateway()
-    if subject and subject not in asset_ids:
-        asset_ids.insert(0, subject)
-    first = _at(case.first_seen_at) - timedelta(minutes=10)
-    last = _at(case.last_seen_at) + timedelta(minutes=10)
+    try:
+        from .rca_reader import _load_topology
+
+        topology = _load_topology() or {}
+    except Exception:
+        topology = {}
+    incident_facts = dict(case.source_payload.get("incidentFacts") or {})
+    bounded = derive_incident_scope(
+        subject=case.subject or None,
+        service=case.service or None,
+        first_seen_at=case.first_seen_at,
+        last_seen_at=case.last_seen_at,
+        facts=incident_facts,
+        managed_gateway=_managed_gateway(),
+        fault_family=family,
+        topology=topology,
+        textual_identifiers=identifiers,
+    )
     question = case.summary.strip() or case.title.strip() or "调查这起网络事件的根因"
     return {
         "question": question,
         "family": family,
-        "subject": subject,
-        "asset_ids": asset_ids,
-        "incident_start": first.isoformat(),
-        "incident_end": last.isoformat(),
+        **bounded.as_dict(),
         "source_refs": [
             {"kind": ref.kind, "source_id": ref.source_id}
             for ref in case.sources
         ],
-        "incident_facts": dict(case.source_payload.get("incidentFacts") or {}),
+        "incident_facts": incident_facts,
     }
+
+
+def recurrence_signature(case: Any) -> str:
+    """Stable cohort key for separate incidents with the same investigation scope."""
+    scope = derive_investigation_scope(case)
+    identity = "\0".join((
+        str(scope.get("family") or "unknown"),
+        str(scope.get("fault_domain") or "unresolved"),
+        str(case.service or ""),
+        *sorted(str(value) for value in scope.get("asset_ids") or ()),
+    ))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+
+
+def _prior_recurrence(
+    repository: InvestigationCaseRepository,
+    current: Any,
+) -> Any | None:
+    signature = recurrence_signature(current)
+    return next(
+        (
+            candidate
+            for candidate in repository.list(limit=500)
+            if candidate.case_id != current.case_id
+            and candidate.status in {"resolved", "escalated"}
+            and recurrence_signature(candidate) == signature
+            and candidate.latest_event("investigation_session_started") is not None
+        ),
+        None,
+    )
 
 
 def auto_start_pending_cases(
@@ -97,8 +120,8 @@ def auto_start_pending_cases(
     *,
     limit: int = 4,
 ) -> list[dict[str, Any]]:
-    """Complete a bounded business investigation for each fresh actionable case."""
-    from .investigate import complete, start
+    """Drive each fresh case through scope, investigation, action and readback."""
+    from .investigate import analyze, complete, remediate, start
 
     started: list[dict[str, Any]] = []
     from domains.network_rca.business_decision import is_terminal_local_in_deny
@@ -125,7 +148,19 @@ def auto_start_pending_cases(
         deterministic_backfill = is_terminal_local_in_deny(
             dict(scope.get("incident_facts") or {})
         )
-        if case.status == "investigating" and not deterministic_backfill:
+        latest_decision_event = case.latest_event("business_decision_recorded") or {}
+        latest_classification = str(
+            dict(latest_decision_event.get("decision") or {}).get("classification") or ""
+        )
+        scope_became_actionable = bool(
+            latest_classification == "incident_scope_unresolved"
+            and scope.get("scope_quality") != "unresolved"
+        )
+        if (
+            case.status == "investigating"
+            and not deterministic_backfill
+            and not scope_became_actionable
+        ):
             continue
         incomplete_policy_backfill = bool(
             scope.get("family") == "fam-policy-reachability"
@@ -152,6 +187,100 @@ def auto_start_pending_cases(
             auto_started=True,
         )
         finished = complete(str(opened["session_id"]))
+        decision = dict(finished.get("decision") or {})
+        if (
+            decision.get("classification") == "open_root_required"
+            and os.getenv("AUTOPOIESIS_AUTO_OPEN_INVESTIGATION", "1") != "0"
+        ):
+            finished = analyze(str(opened["session_id"]))
+            decision = dict(finished.get("decision") or decision)
+        candidate = dict(finished.get("action_candidate") or {})
+        current_case = repository.get(case.case_id)
+        prior_case = _prior_recurrence(repository, current_case) if current_case else None
+        if (
+            prior_case is not None
+            and os.getenv("AUTOPOIESIS_AUTO_EVALUATE_RECURRENCE", "1") != "0"
+        ):
+            try:
+                from .investigate import (
+                    get as get_session,
+                    investigation_metrics,
+                    paired_evaluate_case,
+                )
+
+                report = paired_evaluate_case(case.case_id)
+                prior_event = prior_case.latest_event("investigation_session_started") or {}
+                prior_session_id = str(prior_event.get("sessionId") or "")
+                prior_metrics = (
+                    investigation_metrics(get_session(prior_session_id))
+                    if prior_session_id else None
+                )
+                current_metrics = investigation_metrics(get_session(str(opened["session_id"])))
+                observed_same_root = bool(
+                    prior_metrics
+                    and prior_metrics.get("confirmed_roots")
+                    == current_metrics.get("confirmed_roots")
+                )
+                prior_steps = (prior_metrics or {}).get("steps_to_first_confirmation")
+                current_steps = current_metrics.get("steps_to_first_confirmation")
+                observed_faster = bool(
+                    isinstance(prior_steps, int)
+                    and isinstance(current_steps, int)
+                    and current_steps < prior_steps
+                )
+                report["recurrence"] = {
+                    "signature": recurrence_signature(case),
+                    "prior_case_id": prior_case.case_id,
+                    "current_case_id": case.case_id,
+                    "prior": prior_metrics,
+                    "current": current_metrics,
+                    "same_confirmed_root": observed_same_root,
+                    "fewer_probes_than_first_incident": observed_faster,
+                    "probe_delta": (
+                        prior_steps - current_steps
+                        if isinstance(prior_steps, int) and isinstance(current_steps, int)
+                        else None
+                    ),
+                }
+                report["recurrence_value_proven"] = bool(
+                    report.get("acceptance", {}).get("business_value_proven")
+                    and observed_same_root
+                    and observed_faster
+                )
+                repository.append_event(
+                    case.case_id,
+                    kind="memory_value_measured",
+                    payload={"report": report},
+                    event_id=f"{opened['session_id']}:memory-value",
+                )
+                finished["memory_evaluation"] = report
+            except (KeyError, ValueError) as error:
+                report = {
+                    "evaluation_id": f"pair-ineligible-{opened['session_id']}",
+                    "case_id": case.case_id,
+                    "evaluated_at": datetime.now(timezone.utc).isoformat(),
+                    "eligible": False,
+                    "reason": str(error),
+                    "recurrence": {
+                        "signature": recurrence_signature(case),
+                        "prior_case_id": prior_case.case_id,
+                        "current_case_id": case.case_id,
+                    },
+                    "recurrence_value_proven": False,
+                }
+                repository.append_event(
+                    case.case_id,
+                    kind="memory_value_measured",
+                    payload={"report": report},
+                    event_id=f"{opened['session_id']}:memory-value-ineligible",
+                )
+                finished["memory_evaluation"] = report
+        if (
+            decision.get("state") == "action_ready"
+            and candidate.get("auto_execute_allowed") is True
+            and os.getenv("AUTOPOIESIS_AUTO_REMEDIATE", "1") != "0"
+        ):
+            finished = remediate(str(opened["session_id"]))
         started.append({**opened, **finished})
         if len(started) >= limit:
             break
