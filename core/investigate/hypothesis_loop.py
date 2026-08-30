@@ -18,6 +18,8 @@ from typing import Literal, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from core.investigate.observation_predicate import ObservationPredicate
+
 
 HypothesisStatus = Literal["proposed", "testing", "rejected", "confirmed"]
 ProbeStatus = Literal["available", "selected", "completed", "failed"]
@@ -80,6 +82,9 @@ class RootCauseHypothesis(_StrictModel):
     opposing_evidence_ids: tuple[str, ...] = ()
     updated_at: datetime
     updated_in_version: int = Field(default=0, ge=0)
+    required_decisive_supports: int = Field(default=1, ge=1, le=8)
+    origin: Literal["catalog", "model"] = "catalog"
+    archive_eligible: bool = False
 
     _clean = field_validator("hypothesis_id", "statement", "entity_id")(_non_empty)
     _utc = field_validator("valid_from", "valid_to", "updated_at")(_aware_utc)
@@ -108,6 +113,7 @@ class ProbeCandidate(_StrictModel):
     estimated_cost: float = Field(default=1.0, ge=0.0)
     status: ProbeStatus = "available"
     selected_in_version: int | None = Field(default=None, ge=1)
+    observation_predicate: ObservationPredicate | None = None
 
     _clean = field_validator("probe_id", "description", "target_entity_id")(_non_empty)
 
@@ -283,7 +289,10 @@ def _status_from_observations(
     unresolved = [item for item in current if item.evidence_id not in resolved_ids]
     supports = [item for item in unresolved if item.polarity == "supports"]
     opposition = [item for item in unresolved if item.polarity == "opposes"]
-    has_decisive_support = any(item.decisive for item in supports)
+    has_decisive_support = (
+        sum(item.decisive for item in supports)
+        >= hypothesis.required_decisive_supports
+    )
     has_decisive_opposition = any(item.decisive for item in opposition)
 
     # Any unresolved opposition keeps a supported candidate open.  If both

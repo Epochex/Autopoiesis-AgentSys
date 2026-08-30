@@ -334,7 +334,7 @@ async def _lifespan(app: FastAPI):
         """Create cases from landed stream output without depending on a browser poll."""
         from datetime import datetime, timezone
 
-        from .investigation_cases import sync_snapshot_cases
+        from .investigation_cases import auto_start_pending_cases, sync_snapshot_cases
         from .runtime_reader import load_runtime_snapshot
         from .sentinel_projection import merge_into_snapshot
 
@@ -344,10 +344,14 @@ async def _lifespan(app: FastAPI):
                 snapshot = load_runtime_snapshot(settings, "zh")
                 snapshot = merge_into_snapshot(snapshot, "zh")
                 sync_snapshot_cases(snapshot, _case_repository())
+                auto_started = []
+                if os.getenv("AUTOPOIESIS_AUTO_INVESTIGATE", "1") != "0":
+                    auto_started = auto_start_pending_cases(_case_repository(), limit=4)
                 _case_sync_health.update({
                     "lastSyncAt": datetime.now(timezone.utc).isoformat(),
                     "lastError": None,
                     "caseCount": len(_case_repository().list(limit=500)),
+                    "autoStarted": len(auto_started),
                 })
             except Exception as error:
                 _case_sync_health.update({
@@ -2105,6 +2109,10 @@ class InvestigateSession(BaseModel):
     lang: Literal["zh", "en"] = "zh"
 
 
+class InvestigatePairRequest(BaseModel):
+    case_id: str = Field(min_length=1, max_length=64)
+
+
 class InvestigateClose(BaseModel):
     session_id: str = Field(min_length=1, max_length=64)
     resolution: Literal["confirmed", "inconclusive", "refuted"]
@@ -2141,6 +2149,30 @@ async def investigate_analyze(request: InvestigateSession) -> dict[str, Any]:
         result = await asyncio.to_thread(analyze, request.session_id, request.lang)
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/investigate/remediate")
+async def investigate_remediate(request: InvestigateSession) -> dict[str, Any]:
+    """Run the single action derived from a fully settled investigation root."""
+    from .investigate import remediate
+
+    try:
+        result = await asyncio.to_thread(remediate, request.session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/investigate/evaluate-pair")
+async def investigate_evaluate_pair(request: InvestigatePairRequest) -> dict[str, Any]:
+    """Run a real no-memory/full-memory comparison for one durable case."""
+    from .investigate import paired_evaluate_case
+
+    try:
+        result = await asyncio.to_thread(paired_evaluate_case, request.case_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from None
     return {"ok": True, **result}
 
 

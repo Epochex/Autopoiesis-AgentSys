@@ -8,6 +8,10 @@ from core.investigate.hypothesis_loop import (
     ProbeCandidate,
     RootCauseHypothesis,
 )
+from core.investigate.observation_predicate import (
+    ObservationPredicate,
+    evaluate_observation,
+)
 from core.investigate.safe_exec import Execution, Refused, check, is_safe, run
 
 __all__ = [
@@ -16,10 +20,12 @@ __all__ = [
     "Execution",
     "HypothesisLoop",
     "HypothesisLoopState",
+    "ObservationPredicate",
     "ProbeCandidate",
     "Refused",
     "RootCauseHypothesis",
     "check",
+    "evaluate_observation",
     "is_safe",
     "run",
 ]

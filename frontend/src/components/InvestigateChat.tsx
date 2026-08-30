@@ -69,6 +69,27 @@ interface AnalyzeResp {
   hypothesis_state?: HypothesisView
   probe_rounds?: ProbeRound[]
   memory_commit?: { committed: boolean; dossier_id?: string; reason?: string }
+  action_candidate?: ActionCandidate
+}
+
+interface ActionCandidate {
+  eligible: boolean
+  reason?: string
+  action?: string
+  target?: string
+  root_hypothesis_id?: string
+  root_statement?: string
+  supporting_evidence_ids?: string[]
+}
+
+interface RemediateResp {
+  ok: boolean
+  ran: boolean
+  outcome?: string
+  case_status?: string
+  reason?: string
+  readback_evidence?: Evidence
+  candidate?: ActionCandidate
 }
 
 interface CloseResp { ok: boolean; resolution: 'confirmed' | 'inconclusive' | 'refuted'; dossier: { dossier_id: string } }
@@ -108,7 +129,7 @@ interface RunAllResp {
   stopped_at: number | null
 }
 
-type Busy = 'start' | 'analyze' | 'ask' | 'step' | 'all' | 'close' | null
+type Busy = 'start' | 'analyze' | 'ask' | 'step' | 'all' | 'close' | 'remediate' | null
 
 type StepOut = { state: 'run' | 'done' | 'err'; text: string; note?: string }
 
@@ -250,6 +271,8 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
   const [operatorId, setOperatorId] = useState('')
   const [operatorNote, setOperatorNote] = useState('')
   const [archived, setArchived] = useState<string | null>(null)
+  const [actionCandidate, setActionCandidate] = useState<ActionCandidate | null>(null)
+  const [actionResult, setActionResult] = useState<RemediateResp | null>(null)
 
   // One request at a time: the session accumulates evidence server-side, so two
   // in flight would interleave into a context neither answer was written from.
@@ -278,6 +301,8 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
     setTurns([])
     setRootDraft('')
     setArchived(null)
+    setActionCandidate(null)
+    setActionResult(null)
     try {
       const d = await post<StartResp>('/api/rca/investigate/start', {
         question: q,
@@ -338,6 +363,8 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
       if (d.memory_commit?.committed && d.memory_commit.dossier_id) {
         setArchived(d.memory_commit.dossier_id)
       }
+      setActionCandidate(d.action_candidate ?? null)
+      setActionResult(null)
       setRootDraft(d.root_cause ?? '')
       setStepOut({})
       setStop(null)
@@ -348,6 +375,24 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
       if (aliveRef.current) setBusy(null)
     }
   }, [sessionId])
+
+  const runRemediation = useCallback(async () => {
+    if (busyRef.current || !sessionId || !actionCandidate?.eligible) return
+    busyRef.current = true
+    setBusy('remediate')
+    setErr(null)
+    try {
+      const d = await post<RemediateResp>('/api/rca/investigate/remediate', { session_id: sessionId })
+      if (!aliveRef.current) return
+      setActionResult(d)
+      if (d.readback_evidence) setEvidence((cur) => merge(cur, [d.readback_evidence as Evidence]))
+    } catch (e) {
+      if (aliveRef.current) setErr(errText(e))
+    } finally {
+      busyRef.current = false
+      if (aliveRef.current) setBusy(null)
+    }
+  }, [actionCandidate, sessionId])
 
   const archive = useCallback(async (resolution: 'confirmed' | 'inconclusive' | 'refuted') => {
     if (busyRef.current || !sessionId || !verdict || !rootDraft.trim() || !operatorId.trim()) return
@@ -601,8 +646,31 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
             {chips(verdict.citations)}
           </div>
 
-          <div className="dx-iv-k"><h3 className="dx-iv-k-t">{tx.disposition}</h3></div>
-          <div className="dx-iv-sec dx-iv-disposition">
+          {actionCandidate ? (
+            <div className="dx-action-rail" aria-label={zh ? '根因到结果回读' : 'Root to readback'}>
+              <div><span>01</span><small>{zh ? '已确认根因' : 'CONFIRMED ROOT'}</small><b>{actionCandidate.root_hypothesis_id ?? verdict.rootCause}</b></div>
+              <div><span>02</span><small>{zh ? '允许动作' : 'ALLOWLISTED ACTION'}</small><b>{actionCandidate.action ?? (zh ? '无可执行动作' : 'NO ACTION')}</b></div>
+              <div><span>03</span><small>{zh ? '目标' : 'TARGET'}</small><b>{actionCandidate.target ?? '—'}</b></div>
+              <div className={actionResult?.outcome === 'passed' ? 'is-passed' : ''}>
+                <span>04</span><small>{zh ? '结果回读' : 'READBACK'}</small>
+                <b>{actionResult?.outcome ?? (actionCandidate.eligible ? (zh ? '等待执行' : 'READY') : actionCandidate.reason ?? '—')}</b>
+              </div>
+              {actionCandidate.eligible && !actionResult ? (
+                <button type="button" onClick={() => void runRemediation()} disabled={!idle}>
+                  {busy === 'remediate' ? (zh ? '观察中…' : 'OBSERVING…') : (zh ? '执行并观察' : 'EXECUTE + OBSERVE')}
+                </button>
+              ) : null}
+              {actionResult?.readback_evidence ? (
+                <details><summary>{zh ? '查看动作回执与回读' : 'ACTION RECEIPT + READBACK'}</summary>
+                  <pre>{actionResult.readback_evidence.output}</pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+
+          <details className="dx-manual-disposition">
+            <summary>{tx.disposition}</summary>
+            <div className="dx-iv-sec dx-iv-disposition">
             <label className="dx-iv-lab" htmlFor={`${uid}-root`}>{tx.root}</label>
             <textarea id={`${uid}-root`} className="dx-iv-in" value={rootDraft}
               onChange={(e) => setRootDraft(e.target.value)} disabled={Boolean(archived)} />
@@ -624,7 +692,8 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
                   disabled={!idle || !rootDraft.trim() || !operatorId.trim()}>{tx.inconclusive}</button>
               </div>
             )}
-          </div>
+            </div>
+          </details>
 
           <div className="dx-iv-k">
             <h3 className="dx-iv-k-t">{tx.runbook}</h3>

@@ -215,6 +215,7 @@ def test_open_ended_model_root_is_persisted_as_unconfirmed_candidate(monkeypatch
         if item["hypothesis_id"].startswith("model:")
     )
     assert candidate["statement"] == "container network namespace was detached"
-    assert candidate["status"] == "testing"
+    assert candidate["status"] == "proposed"
+    assert candidate["archive_eligible"] is True
     assert candidate["supporting_evidence_ids"] == []
     assert result["memory_commit"]["committed"] is False

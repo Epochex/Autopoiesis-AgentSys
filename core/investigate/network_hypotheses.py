@@ -140,6 +140,8 @@ def create_network_hypothesis_loop(
             valid_from=opened_at,
             valid_to=opened_at + timedelta(days=30),
             updated_at=opened_at,
+            origin="catalog",
+            archive_eligible=spec.auto_archivable,
         ))
         overlap = len(terms.intersection(spec.terms))
         loop.add_probe(ProbeCandidate(

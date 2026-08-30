@@ -278,7 +278,7 @@ def test_analyze_runs_the_commands_the_model_asks_for(monkeypatch, session_id):
     result = investigate.analyze(session_id)
     assert len(result["follow_up_evidence"]) == 2
     assert len(investigate.get(session_id).evidence) == before + 2
-    assert result["root_cause"] == "确定的根因"
+    assert result["root_cause"] == "inconclusive"
     assert len(client.seen) == 2, "it must reason again after collecting"
 
 
