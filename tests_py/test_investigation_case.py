@@ -145,6 +145,14 @@ def test_snapshot_projection_joins_alerts_and_suggestion_to_one_case(tmp_path) -
                 "id": "feed-alert-alert-1", "sourceId": "alert-1", "kind": "alert",
                 "ts": "2026-08-29T10:00:00+00:00", "deviceKey": "r230",
                 "severity": "high", "ruleId": "deny-burst", "service": "https",
+                "dataClassification": "observed",
+                "incidentFacts": {
+                    "dataClassification": "observed", "sourceIp": "8.8.8.8",
+                    "destinationIp": "192.0.2.10", "service": "https",
+                    "action": "deny", "trafficSubtype": "local",
+                    "policyType": "local-in-policy", "policyId": 0,
+                    "sourceInterface": "wan1", "sourceInterfaceRole": "wan",
+                },
             },
             {
                 "id": "feed-suggestion-suggestion-1", "kind": "suggestion",
@@ -156,7 +164,8 @@ def test_snapshot_projection_joins_alerts_and_suggestion_to_one_case(tmp_path) -
                 "id": "suggestion-1", "ts": "2026-08-29T10:01:00+00:00",
                 "scope": "cluster", "deviceKey": "r230", "severity": "high",
                 "ruleId": "deny-burst", "service": "https", "summary": "clustered",
-                "sourceAlertIds": ["alert-1"], "hypothesisSet": {}, "timeline": [],
+                "dataClassification": "observed", "sourceAlertIds": ["alert-1"],
+                "incidentFacts": {"sourceIp": "8.8.8.8", "service": "https"},
             }
         ],
     }
@@ -168,6 +177,79 @@ def test_snapshot_projection_joins_alerts_and_suggestion_to_one_case(tmp_path) -
     assert alert_case == suggestion_case
     assert projected["feed"][1]["caseId"] == suggestion_case
     assert len(repository.list()) == 1
+    stored = repository.get(suggestion_case)
+    assert stored is not None
+    assert stored.source_payload["incidentFacts"]["trafficSubtype"] == "local"
+    assert stored.hypotheses == {}
+
+
+def test_legacy_model_projection_is_removed_without_deleting_sources(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("suggestion", "legacy-draft"),
+        occurred_at="2026-08-29T10:01:00+00:00",
+        subject="r230",
+        hypotheses={"items": [{"statement": "unsupported draft"}]},
+        timeline=(
+            {"kind": "inference", "ts": "2026-08-29T10:01:00+00:00"},
+            {"kind": "runbook", "ts": "2026-08-29T10:01:01+00:00"},
+        ),
+        payload={"dataClassification": "observed", "raw": "retained"},
+    ))
+
+    removed = repository.remove_legacy_reasoning_projection()
+    cleaned = repository.get(case.case_id)
+
+    assert removed == 3
+    assert cleaned is not None
+    assert cleaned.hypotheses == {}
+    assert cleaned.timeline == ()
+    assert cleaned.source_payload["raw"] == "retained"
+    assert cleaned.sources == (SourceReference("suggestion", "legacy-draft"),)
+
+
+def test_legacy_suggestion_projection_is_rebuilt_from_exact_alert_facts(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    alert = SourceReference("alert", "alert-with-facts")
+    repository.ingest(CaseObservation(
+        source=alert,
+        occurred_at="2026-08-29T10:00:00+00:00",
+        summary="old alert summary",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "sourceIp": "8.8.8.8",
+                "destinationIp": "192.0.2.10",
+                "service": "tcp/5555",
+                "action": "deny",
+                "denyCount": 200,
+                "windowSeconds": 60,
+            },
+        },
+    ))
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("suggestion", "legacy-suggestion"),
+        related_sources=(alert,),
+        occurred_at="2026-08-29T10:00:01+00:00",
+        summary="policy miss or interface mismatch",
+        payload={
+            "dataClassification": "observed",
+            "stageTelemetry": [{"stageId": "aiops-agent"}],
+            "hypothesisSet": {"items": [{"statement": "unsupported"}]},
+            "runbookDraft": {"actions": ["create an allow rule"]},
+            "reviewVerdict": {"verdictStatus": "needs_evidence"},
+        },
+    ))
+
+    repository.remove_legacy_reasoning_projection()
+    cleaned = repository.get(case.case_id)
+
+    assert cleaned is not None
+    assert cleaned.source_payload["incidentFacts"]["sourceIp"] == "8.8.8.8"
+    assert cleaned.summary == "8.8.8.8 -> 192.0.2.10 · tcp/5555 · deny · 200 次/60 秒"
+    for field in ("stageTelemetry", "hypothesisSet", "runbookDraft", "reviewVerdict"):
+        assert field not in cleaned.source_payload
 
 
 def test_case_query_and_open_http_api(tmp_path, monkeypatch) -> None:

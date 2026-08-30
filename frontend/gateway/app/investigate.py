@@ -89,9 +89,8 @@ FAMILY_PROBES: dict[str, list[str]] = {
         "ip -br addr show",
     ],
     "fam-policy-reachability": [
-        "ip route show",
-        "ip -br link show",
-        "ss -tulpn",
+        "adapter:case_flow_window",
+        "adapter:fortigate_context",
     ],
 }
 
@@ -344,6 +343,7 @@ MAX_FOLLOWUP_CHARS = 12_000
 
 _READONLY_ADAPTER_PROBES = frozenset({
     "adapter:fortigate_context",
+    "adapter:case_flow_window",
     "adapter:device_history",
     "adapter:live_flows",
 })
@@ -364,6 +364,15 @@ def _execute_readonly_probe(session: "Session", command: str) -> dict[str, Any]:
 
             payload = collect_fortigate_context(session.subject)
             ok = not bool(payload.get("degraded"))
+        elif command == "adapter:case_flow_window":
+            from .investigation_tools import collect_case_flow_window
+
+            payload = collect_case_flow_window(
+                session.incident_facts,
+                session.incident_start,
+                session.incident_end,
+            )
+            ok = bool(payload.get("available"))
         elif command == "adapter:device_history":
             from .history import device_history
 
@@ -407,6 +416,7 @@ class Session:
     device_versions: list[str] = field(default_factory=list)
     asset_versions: dict[str, str] = field(default_factory=dict)
     source_refs: list[dict[str, str]] = field(default_factory=list)
+    incident_facts: dict[str, Any] = field(default_factory=dict)
     auto_started: bool = False
     memory_enabled: bool = True
     evaluation_source_case_id: str | None = None
@@ -432,6 +442,7 @@ class Session:
     diagnosis: str = ""
     root_cause: str = ""
     analysis_citations: list[str] = field(default_factory=list)
+    decision: dict[str, Any] = field(default_factory=dict)
     opened_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def next_evidence_id(self) -> str:
@@ -492,6 +503,7 @@ class Session:
             "device_versions": self.device_versions,
             "asset_versions": self.asset_versions,
             "source_refs": self.source_refs,
+            "incident_facts": self.incident_facts,
             "auto_started": self.auto_started,
             "memory_enabled": self.memory_enabled,
             "evaluation_source_case_id": self.evaluation_source_case_id,
@@ -509,6 +521,7 @@ class Session:
             "diagnosis": self.diagnosis,
             "root_cause": self.root_cause,
             "analysis_citations": self.analysis_citations,
+            "decision": self.decision,
             "opened_at": self.opened_at,
         }
 
@@ -527,6 +540,7 @@ class Session:
             device_versions=list(value.get("device_versions") or ()),
             asset_versions=dict(value.get("asset_versions") or {}),
             source_refs=list(value.get("source_refs") or ()),
+            incident_facts=dict(value.get("incident_facts") or {}),
             auto_started=bool(value.get("auto_started", False)),
             memory_enabled=bool(value.get("memory_enabled", True)),
             evaluation_source_case_id=value.get("evaluation_source_case_id"),
@@ -544,6 +558,7 @@ class Session:
             diagnosis=str(value.get("diagnosis") or ""),
             root_cause=str(value.get("root_cause") or ""),
             analysis_citations=list(value.get("analysis_citations") or ()),
+            decision=dict(value.get("decision") or {}),
             opened_at=str(value.get("opened_at") or datetime.now(timezone.utc).isoformat()),
         )
 
@@ -1645,6 +1660,35 @@ def _retrieval_context(session: Session) -> list[dict[str, Any]]:
     ]
 
 
+def _session_open_response(session: Session) -> dict[str, Any]:
+    return {
+        "session_id": session.session_id,
+        "question": session.question,
+        "family": session.family,
+        "subject": session.subject,
+        "case_id": session.case_id,
+        "auto_started": session.auto_started,
+        "incident_scope": {
+            "asset_ids": session.asset_ids,
+            "start": session.incident_start,
+            "end": session.incident_end,
+            "source_refs": session.source_refs,
+        },
+        "incident_facts": session.incident_facts,
+        "evidence": session.evidence,
+        "probe_candidates": session.probe_candidates,
+        "probe_prior": session.probe_prior,
+        "historical_context": session.historical_context,
+        "knowledge_context": session.knowledge_context,
+        "retrieval_results": session.retrieval_results,
+        "hypothesis_state": _hypothesis_view(session),
+        "probe_rounds": session.probe_rounds,
+        "trace_events": session.trace_events,
+        "decision": session.decision or None,
+        "summary": _summarise(session),
+    }
+
+
 def start(
     question: str,
     family: str | None = None,
@@ -1669,6 +1713,22 @@ def start(
         question = question.strip() or str(case_scope["question"])
         family = family or case_scope.get("family")
         subject = subject or case_scope.get("subject")
+        latest = case.latest_event("investigation_session_started")
+        existing_id = str((latest or {}).get("sessionId") or "")
+        if existing_id:
+            try:
+                existing = get(existing_id)
+                refreshed_facts = dict(case_scope.get("incident_facts") or {})
+                if refreshed_facts and refreshed_facts != existing.incident_facts:
+                    existing.incident_facts = refreshed_facts
+                    existing.asset_ids = list(case_scope.get("asset_ids") or existing.asset_ids)
+                    existing.incident_start = case_scope.get("incident_start")
+                    existing.incident_end = case_scope.get("incident_end")
+                    existing.source_refs = list(case_scope.get("source_refs") or existing.source_refs)
+                    _persist_session(existing)
+                return _session_open_response(existing)
+            except KeyError:
+                pass
     session = Session(
         session_id=uuid.uuid4().hex[:12],
         question=question.strip(),
@@ -1679,6 +1739,7 @@ def start(
         incident_start=case_scope.get("incident_start"),
         incident_end=case_scope.get("incident_end"),
         source_refs=list(case_scope.get("source_refs") or ()),
+        incident_facts=dict(case_scope.get("incident_facts") or {}),
         auto_started=auto_started,
         memory_enabled=memory_enabled,
         evaluation_source_case_id=case_id if evaluation_only else None,
@@ -1708,14 +1769,24 @@ def start(
                 "service": case.service,
                 "scope": case.scope,
                 "occurrence_count": case.occurrence_count,
-                "hypotheses": case.hypotheses,
+                "incident_facts": session.incident_facts,
                 "source_refs": session.source_refs,
             },
             observed_at=case.last_seen_at,
             source="telemetry",
         )
+    from domains.network_rca.business_decision import is_terminal_local_in_deny
+
+    terminal_case = bool(
+        case is not None
+        and family == "fam-policy-reachability"
+        and is_terminal_local_in_deny(session.incident_facts)
+    )
+    case_driven_policy = bool(case is not None and family == "fam-policy-reachability")
     session.historical_context = (
-        _operational_context(subject, family) if memory_enabled else {}
+        _operational_context(subject, family)
+        if memory_enabled and not terminal_case and not case_driven_policy
+        else {}
     )
     if any(session.historical_context.get(key) for key in ("dossiers", "risks", "features")):
         session.trace_events.append({
@@ -1732,7 +1803,7 @@ def start(
     query_terms = _query_terms(question, family, subject)
     session.knowledge_context = (
         retrieve_ops_knowledge(question, query_terms=query_terms, limit=4)
-        if memory_enabled
+        if memory_enabled and not terminal_case and not case_driven_policy
         else []
     )
     if session.knowledge_context:
@@ -1751,15 +1822,23 @@ def start(
 
     # A named family gets its targeted checks; an open question gets the full
     # triage sweep, because "what is wrong here" has no smaller honest answer.
-    extra = FAMILY_PROBES.get(family or "") or TRIAGE_PROBES
+    extra = (
+        []
+        if terminal_case
+        else FAMILY_PROBES.get(family or "") or TRIAGE_PROBES
+    )
     uses_triage = extra is TRIAGE_PROBES
-    # Retrieval applies to every investigation.  A named fault family keeps its
-    # fixed probe set, yet relevant histories still enter the context and receipt.
+    # Policy cases establish the exact flow window and current device state first.
+    # Other investigations may use verified history to reorder their fixed probes.
     memory_prior = _probe_prior(
         question,
         family,
         subject,
-        _live_memory_store() if memory_enabled else None,
+        (
+            _live_memory_store()
+            if memory_enabled and not terminal_case and not case_driven_policy
+            else None
+        ),
         as_of=(
             datetime.fromisoformat(session.incident_end.replace("Z", "+00:00"))
             if session.incident_end else None
@@ -1827,12 +1906,21 @@ def start(
     unit_subject = bool(
         subject and subject.endswith((".service", ".target", ".socket", ".timer"))
     )
-    if subject and not unit_subject and re.fullmatch(r"[\w.:-]{1,64}", subject):
+    if (
+        not case_driven_policy
+        and subject
+        and not unit_subject
+        and re.fullmatch(r"[\w.:-]{1,64}", subject)
+    ):
         for template in (f"ping -c 2 -W 2 {subject}", f"ip neigh show {subject}"):
             if is_safe(template):
                 subject_probes.append(template)
 
-    if subject and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", subject):
+    if (
+        not case_driven_policy
+        and subject
+        and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", subject)
+    ):
         try:
             from .history import device_history
 
@@ -1874,14 +1962,16 @@ def start(
                     ok=False,
                 )
 
-    planned = list(BASELINE_PROBES)
+    baseline_probes = [] if case_driven_policy else list(BASELINE_PROBES)
+    planned = list(baseline_probes)
     for command in [*ordered_extra, *subject_probes]:
         if command not in planned:
             planned.append(command)
     session.probe_candidates = planned
-    _initialise_hypothesis_loop(session, ordered_extra)
+    if not case_driven_policy:
+        _initialise_hypothesis_loop(session, ordered_extra)
 
-    for command in BASELINE_PROBES:
+    for command in baseline_probes:
         session.collect(command)
 
     # Named fault families keep their bounded diagnostic contract.  Open-ended
@@ -1954,70 +2044,47 @@ def start(
         }
         _persist_shortcut_trace(session, payload)
 
-    kinds: dict[str, int] = {}
-    for item in session.retrieval_results:
-        kind = str(item.get("kind") or "unknown")
-        kinds[kind] = kinds.get(kind, 0) + 1
-    # The session response keeps bounded summaries for reasoning and drill-down.
-    # The durable ledger stores identities, ranks and provenance only, avoiding a
-    # second copy of every recalled passage in the append-only trace file.
-    trace_results = [
-        {
-            key: value
-            for key, value in item.items()
-            if key not in {"summary", "source_trace_ids"}
-        }
-        for item in session.retrieval_results
-    ]
-    _persist_session_trace(session, "memory_candidates_ranked", {
-        "scope": "interactive_investigation",
-        "investigation_id": session.session_id,
-        "question": session.question,
-        "subject": session.subject,
-        "family": session.family,
-        "query_terms": query_terms,
-        "returned_count": len(session.retrieval_results),
-        "counts_by_kind": kinds,
-        "results": trace_results,
-    })
-    _append_case_event(
-        session,
-        "retrieval_completed",
-        {
-            "sessionId": session.session_id,
-            "returnedCount": len(session.retrieval_results),
-            "countsByKind": kinds,
-            "evidenceCount": len(session.evidence),
-        },
-        event_id=f"{session.session_id}:retrieval",
-        status="investigating",
-    )
+    if not terminal_case and not case_driven_policy:
+        kinds: dict[str, int] = {}
+        for item in session.retrieval_results:
+            kind = str(item.get("kind") or "unknown")
+            kinds[kind] = kinds.get(kind, 0) + 1
+        # Persist retrieval only when it can affect the decision. A deterministic
+        # local-in deny needs no empty memory receipt or zero-result case event.
+        trace_results = [
+            {
+                key: value
+                for key, value in item.items()
+                if key not in {"summary", "source_trace_ids"}
+            }
+            for item in session.retrieval_results
+        ]
+        _persist_session_trace(session, "memory_candidates_ranked", {
+            "scope": "interactive_investigation",
+            "investigation_id": session.session_id,
+            "question": session.question,
+            "subject": session.subject,
+            "family": session.family,
+            "query_terms": query_terms,
+            "returned_count": len(session.retrieval_results),
+            "counts_by_kind": kinds,
+            "results": trace_results,
+        })
+        _append_case_event(
+            session,
+            "retrieval_completed",
+            {
+                "sessionId": session.session_id,
+                "returnedCount": len(session.retrieval_results),
+                "countsByKind": kinds,
+                "evidenceCount": len(session.evidence),
+            },
+            event_id=f"{session.session_id}:retrieval",
+            status="investigating",
+        )
     _persist_session(session)
 
-    return {
-        "session_id": session.session_id,
-        "question": session.question,
-        "family": family,
-        "subject": subject,
-        "case_id": case_id,
-        "auto_started": session.auto_started,
-        "incident_scope": {
-            "asset_ids": session.asset_ids,
-            "start": session.incident_start,
-            "end": session.incident_end,
-            "source_refs": session.source_refs,
-        },
-        "evidence": session.evidence,
-        "probe_candidates": session.probe_candidates,
-        "probe_prior": session.probe_prior,
-        "historical_context": session.historical_context,
-        "knowledge_context": session.knowledge_context,
-        "retrieval_results": session.retrieval_results,
-        "hypothesis_state": _hypothesis_view(session),
-        "probe_rounds": session.probe_rounds,
-        "trace_events": session.trace_events,
-        "summary": _summarise(session),
-    }
+    return _session_open_response(session)
 
 
 def investigation_metrics(session: Session) -> dict[str, Any]:
@@ -2119,11 +2186,17 @@ def paired_evaluate_case(case_id: str) -> dict[str, Any]:
 
 
 def _summarise(session: Session) -> str:
-    """Recomputed from the session, never cached — later turns add evidence."""
-    ran = sum(1 for item in session.evidence if item.get("ok"))
-    failed = len(session.evidence) - ran
-    text = f"已跑 {len(session.evidence)} 条只读检查，{ran} 条有结果"
-    return text + (f"，{failed} 条无结果或被拒绝" if failed else "")
+    """Return the current decision state using live observations."""
+    if session.decision:
+        return str(session.decision.get("headline") or session.decision.get("summary") or "")
+    failed = [item for item in session.evidence if not item.get("ok")]
+    if failed:
+        return f"{len(failed)} 个所需数据源读取失败，案件保留当前 {len(session.evidence)} 条观察并继续调查。"
+    if session.case_id:
+        return f"案件已有 {len(session.evidence)} 条当前观察，正在形成关闭、处置或升级决定。"
+    view = _hypothesis_view(session)
+    active_count = len(view.get("active_root_keys") or ())
+    return f"已取得 {len(session.evidence)} 条当前观察，仍有 {active_count} 个候选原因等待区分。"
 
 
 def get(session_id: str) -> Session:
@@ -2599,6 +2672,242 @@ def action_candidate(session_id: str) -> dict[str, Any]:
     }
 
 
+def _record_business_decision(session: Session, decision: Any) -> dict[str, Any]:
+    """Persist the one operator-facing result for this investigation state."""
+    payload = decision.as_dict()
+    session.decision = payload
+    state = str(payload.get("state") or "investigating")
+    case_status = {
+        "resolved": "resolved",
+        "escalated": "escalated",
+        "action_ready": "waiting",
+        "observing": "waiting",
+    }.get(state, "investigating")
+    identity = json.dumps(
+        {
+            "state": state,
+            "classification": payload.get("classification"),
+            "action": payload.get("action"),
+            "readback": payload.get("readback"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    event_digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    _append_case_event(
+        session,
+        "business_decision_recorded",
+        {"sessionId": session.session_id, "decision": payload},
+        event_id=f"{session.session_id}:decision:{event_digest}",
+        status=case_status,
+    )
+    _persist_session_trace(session, "business_decision_recorded", {
+        "session_id": session.session_id,
+        "case_id": session.case_id,
+        "state": state,
+        "classification": payload.get("classification"),
+        "evidence_ids": [
+            item.get("evidenceId") for item in payload.get("evidence") or ()
+        ],
+        "next_probe": payload.get("nextProbe"),
+        "case_status": case_status,
+    })
+    _persist_session(session)
+    return {"decision": payload, "case_status": case_status}
+
+
+def _evidence_for_root(
+    session: Session,
+    evidence_ids: list[str] | tuple[str, ...],
+) -> tuple[Any, ...]:
+    from domains.network_rca.business_decision import DecisionEvidence
+
+    selected = set(str(value) for value in evidence_ids)
+    return tuple(
+        DecisionEvidence(
+            evidence_id=str(item.get("evidence_id") or ""),
+            label=str(item.get("command") or "observation"),
+            value=_excerpt(str(item.get("output") or ""), 180, 80),
+            source=str(item.get("source") or "live_tool"),
+            observed_at=str(item.get("at") or "") or None,
+        )
+        for item in session.evidence
+        if item.get("evidence_id") in selected
+    )
+
+
+def complete(session_id: str) -> dict[str, Any]:
+    """Advance a session until it has a business decision or an exact next probe."""
+    from domains.network_rca.business_decision import (
+        BusinessDecision,
+        DecisionEvidence,
+        MissingObservation,
+        is_terminal_local_in_deny,
+        local_in_deny_decision,
+        pending_policy_decision,
+    )
+
+    session = get(session_id)
+    case_evidence = next(
+        (
+            item for item in session.evidence
+            if str(item.get("command") or "").startswith("case:")
+        ),
+        session.evidence[0] if session.evidence else None,
+    )
+    case_evidence_id = str((case_evidence or {}).get("evidence_id") or "")
+    if session.case_id and session.family == "fam-policy-reachability":
+        if is_terminal_local_in_deny(session.incident_facts):
+            session.historical_context = {}
+            session.knowledge_context = []
+            session.retrieval_results = []
+            session.probe_prior = {}
+            session.trace_events = [
+                event for event in session.trace_events
+                if event.get("kind") not in {
+                    "operational_memory_recalled",
+                    "knowledge_retrieved",
+                    "memory_candidates_ranked",
+                    "retrieval_candidates_filtered",
+                }
+            ]
+            decision = local_in_deny_decision(
+                case_id=session.case_id,
+                session_id=session.session_id,
+                facts=session.incident_facts,
+                evidence_id=case_evidence_id,
+                managed_gateway=session.subject or "192.168.1.1",
+            )
+        else:
+            completed = [
+                str(item.get("command") or "")
+                for item in session.evidence
+                if item.get("ok")
+                and str(item.get("command") or "").startswith("adapter:")
+            ]
+            decision = pending_policy_decision(
+                case_id=session.case_id,
+                session_id=session.session_id,
+                facts=session.incident_facts,
+                evidence_id=case_evidence_id,
+                managed_gateway=session.subject or "192.168.1.1",
+                completed_probes=completed,
+            )
+        return {
+            **_record_business_decision(session, decision),
+            "evidence_total": len(session.evidence),
+            "hypothesis_state": _hypothesis_view(session),
+            "probe_rounds": session.probe_rounds,
+            "action_candidate": action_candidate(session.session_id),
+        }
+
+    loop = _loop_for(session)
+    if loop is not None:
+        _advance_active_hypotheses(session, budget=len(loop.state.probes))
+    view = _hypothesis_view(session)
+    active = list(view.get("active_root_keys") or ())
+    confirmed = [
+        item for item in view.get("hypotheses") or ()
+        if item.get("status") == "confirmed"
+    ]
+    case_key = session.case_id or f"adhoc:{session.session_id}"
+    if active:
+        available = next(
+            (
+                item for item in view.get("probes") or ()
+                if item.get("status") == "available"
+            ),
+            None,
+        )
+        next_probe = str((available or {}).get("description") or "") or None
+        decision = BusinessDecision(
+            case_id=case_key,
+            session_id=session.session_id,
+            state="investigating",
+            classification="root_cause_unresolved",
+            headline="调查仍缺少能够区分候选原因的当前观察",
+            summary=f"还有 {len(active)} 个候选原因未完成检查，案件保持调查中。",
+            disposition="继续执行下一项只读探针；探针失败时保留案件并报告数据源故障。",
+            action="当前不执行变更。",
+            impacted_assets=tuple(session.asset_ids),
+            missing_observations=tuple(
+                MissingObservation(
+                    code=f"hypothesis:{root_id}",
+                    question=f"候选原因 {root_id} 在当前对象上是否成立？",
+                    probe=next_probe,
+                )
+                for root_id in active[:4]
+            ),
+            next_probe=next_probe,
+        )
+    elif len(confirmed) == 1:
+        root = confirmed[0]
+        supports = list(root.get("supporting_evidence_ids") or ())
+        candidate = action_candidate(session.session_id)
+        eligible = bool(candidate.get("eligible"))
+        decision = BusinessDecision(
+            case_id=case_key,
+            session_id=session.session_id,
+            state="action_ready" if eligible else "escalated",
+            classification=str(root.get("hypothesis_id") or "confirmed_root"),
+            headline=f"已确认：{root.get('statement') or root.get('hypothesis_id')}",
+            summary="当前只读观察已排除竞争原因，并确认一个根因。",
+            disposition=(
+                "允许执行已通过前置检查的单一动作，完成后必须回读原系统。"
+                if eligible
+                else "根因已确认，当前动作白名单没有适用操作，案件升级到明确责任人。"
+            ),
+            action=(
+                f"{candidate.get('action')} {candidate.get('target')}"
+                if eligible else "不执行自动动作"
+            ),
+            impacted_assets=tuple(session.asset_ids),
+            evidence=_evidence_for_root(session, supports),
+        )
+    elif len(confirmed) > 1:
+        ids = [str(item.get("hypothesis_id") or "") for item in confirmed]
+        decision = BusinessDecision(
+            case_id=case_key,
+            session_id=session.session_id,
+            state="investigating",
+            classification="multiple_confirmed_conditions",
+            headline="多个故障条件同时成立",
+            summary="当前观察确认了多个独立故障条件，需要按影响面分别处置。",
+            disposition="拆分动作并逐项回读，任何一项失败都保留原案件。",
+            action="等待按故障条件生成独立动作",
+            impacted_assets=tuple(session.asset_ids),
+            evidence=tuple(
+                DecisionEvidence(
+                    evidence_id=f"root:{root_id}",
+                    label="已确认故障条件",
+                    value=root_id,
+                    source="deterministic hypothesis loop",
+                )
+                for root_id in ids
+            ),
+        )
+    else:
+        decision = BusinessDecision(
+            case_id=case_key,
+            session_id=session.session_id,
+            state="resolved",
+            classification="checked_conditions_not_present",
+            headline="已检查的故障条件当前均不成立",
+            summary="本次只读检查没有发现链路、路由、服务、磁盘或内存条件中的已定义故障。",
+            disposition="关闭当前检查范围；出现新告警或新证据时创建新案件。",
+            action="无需执行变更。",
+            impacted_assets=tuple(session.asset_ids),
+        )
+    return {
+        **_record_business_decision(session, decision),
+        "evidence_total": len(session.evidence),
+        "hypothesis_state": _hypothesis_view(session),
+        "probe_rounds": session.probe_rounds,
+        "action_candidate": action_candidate(session.session_id),
+    }
+
+
 def remediate(
     session_id: str,
     *,
@@ -2657,18 +2966,84 @@ def remediate(
         "evidence_id": receipt.get("evidence_id"),
         "case_status": case_status,
     })
+    from domains.network_rca.business_decision import BusinessDecision, DecisionEvidence
+
+    previous = dict(session.decision or {})
+    previous_evidence = tuple(
+        DecisionEvidence(
+            evidence_id=str(item.get("evidenceId") or ""),
+            label=str(item.get("label") or "observation"),
+            value=str(item.get("value") or ""),
+            source=str(item.get("source") or "live_tool"),
+            observed_at=item.get("observedAt"),
+        )
+        for item in previous.get("evidence") or ()
+        if item.get("evidenceId")
+    )
+    readback_evidence = DecisionEvidence(
+        evidence_id=str(receipt.get("evidence_id") or ""),
+        label="动作结果回读",
+        value=f"{action} {target} -> {result.get('outcome') or 'unknown'}",
+        source="action_readback",
+        observed_at=str(receipt.get("at") or "") or None,
+    )
+    final_decision = BusinessDecision(
+        case_id=session.case_id or f"adhoc:{session.session_id}",
+        session_id=session.session_id,
+        state="resolved" if passed else "escalated",
+        classification=str(previous.get("classification") or root_id),
+        headline=(
+            "动作完成且结果回读通过"
+            if passed else "动作未通过结果回读，案件已升级"
+        ),
+        summary=(
+            f"{action} {target} 已执行，观察结果为 {result.get('outcome') or 'unknown'}。"
+        ),
+        disposition=(
+            "关闭案件；同一故障复发时按复发预算重新开案。"
+            if passed else "停止继续变更，保留现场并调查动作失败原因。"
+        ),
+        action=f"{action} {target}",
+        impacted_assets=tuple(session.asset_ids or ([target] if target else [])),
+        evidence=(*previous_evidence, readback_evidence),
+        readback={
+            "outcome": result.get("outcome"),
+            "needsHuman": needs_human,
+            "executionId": result.get("execution_id"),
+            "evidenceId": receipt.get("evidence_id"),
+        },
+    )
+    business = _record_business_decision(session, final_decision)
     _persist_session(session)
     return {
         **result,
         "candidate": candidate,
         "readback_evidence": receipt,
-        "case_status": case_status,
+        "case_status": business["case_status"],
+        "decision": business["decision"],
     }
 
 
 def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
     """Turn collected evidence into a diagnosis and a graded runbook."""
     session = get(session_id)
+    if session.case_id:
+        completed = complete(session_id)
+        decision = dict(completed.get("decision") or {})
+        return {
+            **completed,
+            "diagnosis": str(decision.get("summary") or ""),
+            "root_cause": str(decision.get("classification") or ""),
+            "citations": [
+                str(item.get("evidenceId") or "")
+                for item in decision.get("evidence") or ()
+                if item.get("evidenceId")
+            ],
+            "runbook": [],
+            "follow_up_evidence": [],
+            "action_candidate": action_candidate(session_id),
+            "degraded": False,
+        }
     client = _client()
     if client is None:
         # Deterministic evidence collection remains useful when a paid model is

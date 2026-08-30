@@ -84,3 +84,43 @@ def test_nonexistent_runtime_dir_degrades_without_raising(tmp_path):
     assert snapshot["ready"] is False
     assert snapshot["feed"] == []
     assert snapshot["suggestions"] == []
+
+
+def test_recent_rotated_sink_files_remain_visible_to_case_sync(tmp_path):
+    override = tmp_path / "netops-runtime-replay"
+    _seed_runtime(override)
+    _write_jsonl(
+        override / "alerts" / "alerts-20260101-01.jsonl",
+        {
+            "alert_id": "alert-override-2",
+            "alert_ts": "2026-01-01T01:00:05+00:00",
+            "severity": "warning",
+            "src_device_key": "wan-source",
+            "rule_id": "deny_burst_v1",
+            "event_excerpt": {
+                "srcip": "8.8.8.8", "dstip": "192.0.2.10", "service": "tcp/5555",
+                "action": "deny", "subtype": "local", "policytype": "local-in-policy",
+                "policyid": 0, "srcintf": "wan1", "srcintfrole": "wan",
+            },
+        },
+    )
+    _write_jsonl(
+        override / "aiops" / "suggestions-20260101-01.jsonl",
+        {
+            "suggestion_id": "sugg-override-2",
+            "suggestion_ts": "2026-01-01T01:00:10+00:00",
+            "suggestion_scope": "cluster",
+            "alert_id": "alert-override-2",
+            "rule_id": "deny_burst_v1",
+            "severity": "warning",
+            "priority": "P2",
+            "context": {"service": "tcp/5555", "src_device_key": "wan-source"},
+        },
+    )
+
+    snapshot = load_runtime_snapshot(Settings.from_env(), "zh", runtime_dir=override)
+
+    assert {item["id"] for item in snapshot["suggestions"]} == {
+        "sugg-override-1", "sugg-override-2",
+    }
+    assert snapshot["defaultSuggestionId"] == "sugg-override-2"

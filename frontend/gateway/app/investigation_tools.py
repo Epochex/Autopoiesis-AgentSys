@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from domains.network_rca.fortigate_api import FortiGateReadonlyAPI
@@ -69,4 +70,78 @@ def collect_fortigate_context(
     return result
 
 
-__all__ = ["collect_fortigate_context"]
+def collect_case_flow_window(
+    facts: dict[str, Any],
+    incident_start: str | None,
+    incident_end: str | None,
+) -> dict[str, Any]:
+    """Return the exact ClickHouse slice around one triggering flow tuple."""
+    from .history import _CH_DB, _q
+
+    source = str(facts.get("sourceIp") or "")
+    destination = str(facts.get("destinationIp") or "")
+    if not _is_ip(source) or not _is_ip(destination):
+        return {"available": False, "reason": "source_and_destination_ip_required"}
+    try:
+        start = datetime.fromisoformat(str(incident_start or "").replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(incident_end or "").replace("Z", "+00:00"))
+    except ValueError:
+        return {"available": False, "reason": "incident_window_required"}
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    start_text = start.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    end_text = end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    conditions = [
+        f"srcip='{source}'",
+        f"dstip='{destination}'",
+        f"event_ts >= toDateTime64('{start_text}',3)",
+        f"event_ts <= toDateTime64('{end_text}',3)",
+    ]
+    destination_port = facts.get("destinationPort")
+    try:
+        port = int(destination_port) if destination_port not in (None, "") else 0
+    except (TypeError, ValueError):
+        port = 0
+    if 0 < port <= 65535:
+        conditions.append(f"dstport={port}")
+    protocol = facts.get("protocol")
+    try:
+        protocol_number = int(protocol) if protocol not in (None, "") else 0
+    except (TypeError, ValueError):
+        protocol_number = 0
+    if protocol_number > 0:
+        conditions.append(f"proto='{protocol_number}'")
+    where = " AND ".join(conditions)
+    rows = _q(
+        "SELECT count() AS flows, countIf(action='deny') AS denied, "
+        "countIf(action='accept') AS accepted, groupUniqArray(8)(action) AS actions, "
+        "groupUniqArray(8)(srcintf) AS source_interfaces, "
+        "groupUniqArray(8)(dstintf) AS destination_interfaces, "
+        "min(event_ts) AS first_seen, max(event_ts) AS last_seen "
+        f"FROM {_CH_DB}.facts WHERE {where}"
+    )
+    row = rows[0] if rows else {}
+    return {
+        "available": True,
+        "queryScope": {
+            "sourceIp": source,
+            "destinationIp": destination,
+            "destinationPort": port or None,
+            "protocol": protocol_number or None,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        },
+        "flows": int(row.get("flows") or 0),
+        "denied": int(row.get("denied") or 0),
+        "accepted": int(row.get("accepted") or 0),
+        "actions": list(row.get("actions") or ()),
+        "sourceInterfaces": list(row.get("source_interfaces") or ()),
+        "destinationInterfaces": list(row.get("destination_interfaces") or ()),
+        "firstSeen": row.get("first_seen"),
+        "lastSeen": row.get("last_seen"),
+    }
+
+
+__all__ = ["collect_case_flow_window", "collect_fortigate_context"]

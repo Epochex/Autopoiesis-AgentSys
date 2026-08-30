@@ -1,387 +1,333 @@
-/* Landed situation records from the event-processing audit files.
+/* Operator-facing live case ledger.
  *
- * Sits above the separate offline trajectory replay. These two panels have
- * independent data sources and timestamps.
- *
- * GET /api/rca/live-situation supplies alerts, response suggestions, correlation
- * state, and the timestamp of the newest landed record.
+ * This view consumes only detection facts and the durable business decision
+ * attached to the same case id.  Draft hypotheses, provider names, confidence
+ * bars and generated runbooks stay outside the primary incident surface.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TheaterEvent } from '../types'
-import { IncidentMemoryReceipt } from './IncidentMemoryReceipt'
-import { railFor, sentinelStageIds } from './netops-pipeline'
 import './live-situation.css'
 
-interface Stage { stageId: string; label: string; provider: string; ts: string; detail: string }
-interface TPt { ts: string; label: string; kind: string }
-interface Hypo { id: string; rank: number; statement: string; confidence: number; confidenceLabel: string; evidenceRefs: string[] }
+interface IncidentFacts {
+  dataClassification?: string
+  alertId?: string
+  observedAt?: string
+  sourceIp?: string
+  sourcePort?: number | string
+  destinationIp?: string
+  destinationPort?: number | string
+  protocol?: number | string
+  service?: string
+  action?: string
+  trafficSubtype?: string
+  policyId?: number | string
+  policyType?: string
+  sourceInterface?: string
+  sourceInterfaceRole?: string
+  destinationInterface?: string
+  destinationInterfaceRole?: string
+  denyCount?: number
+  threshold?: number
+  windowSeconds?: number
+  recentSimilar1h?: number
+  clusterSize?: number
+}
+
+interface DecisionEvidence {
+  evidenceId: string
+  label: string
+  value: string
+  source: string
+  observedAt?: string | null
+}
+
+interface MissingObservation { code: string; question: string; probe?: string | null }
+
+interface BusinessDecision {
+  caseId: string
+  sessionId: string
+  state: 'investigating' | 'action_ready' | 'observing' | 'resolved' | 'escalated'
+  classification: string
+  headline: string
+  summary: string
+  disposition: string
+  action: string
+  service: string
+  impactedAssets: string[]
+  evidence: DecisionEvidence[]
+  missingObservations: MissingObservation[]
+  nextProbe?: string | null
+  readback?: Record<string, unknown> | null
+  generatedAt: string
+}
+
 interface Suggestion {
-  id: string; ts: string; scope: string; severity: string; priority: string; summary: string
+  id: string
+  ts: string
+  scope: string
+  severity: string
+  priority: string
+  summary: string
   caseId?: string | null
-  incidentRef?: string; detectedAt?: string
-  service: string; device: string; deviceKey: string; clusterSize: number; adaptiveMode: string
-  triggerReasons: string[]; impactLevel: string
-  anchorIp?: string | null; originIp?: string | null
-  timeline: TPt[]; stageTelemetry: Stage[]
-  hypothesisSet: { setId: string; primaryHypothesisId: string; items: Hypo[]; summary: Record<string, number> }
-  runbookDraft: {
-    planId: string; title: string; planStatus: string; actions: string[]
-    applicability: Record<string, string>
-    approvalBoundary: { approvalRequired: boolean; disposition: string; reviewerApprovalFlag: boolean }
-  }
-  reviewVerdict: {
-    verdictId: string; verdictStatus: string; recommendedDisposition: string
-    checks: { overreachRisk: { status: string; approvalRequired: boolean } }
-  }
+  service: string
+  device: string
+  deviceKey: string
+  clusterSize: number
+  incidentFacts?: IncidentFacts
+  caseDecision?: BusinessDecision | null
 }
+
 interface FeedItem {
-  id: string; kind: string; scope?: string; ts: string; severity?: string
+  id: string
+  kind: string
+  ts: string
+  severity?: string
   caseId?: string | null
-  priority?: string; device?: string; deviceKey?: string; summary?: string; ruleId?: string; scenario?: string
+  device?: string
+  deviceKey?: string
+  summary?: string
+  incidentFacts?: IncidentFacts
 }
-interface ClusterWatch { key: string; severity: string; ruleId: string; progress: number; target: number; lastEmitTs: string }
+
 export interface SituationSnapshot {
-  ready: boolean; feed: FeedItem[]; clusterWatch: ClusterWatch[]; suggestions: Suggestion[]
+  ready: boolean
+  feed: FeedItem[]
+  suggestions: Suggestion[]
   runtime: { latestAlertTs: string; latestSuggestionTs: string; windowSec: number }
   defaultSuggestionId: string
 }
 
-/** ISO → HH:MM:SS, in whatever zone the stamp carries. n/a stays n/a. */
-const hms = (iso: string): string => {
-  if (!iso || iso === 'n/a') return 'N/A'
-  const m = iso.match(/T(\d{2}):(\d{2}):(\d{2})/)
-  return m ? `${m[1]}:${m[2]}:${m[3]}` : iso
-}
-const ymd = (iso: string): string => {
-  if (!iso || iso === 'n/a') return 'N/A'
-  const m = iso.match(/(\d{4})-(\d{2})-(\d{2})/)
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : iso
-}
-/* Severity is carried by weight and structure. */
-const sevRank = (s: string | undefined): number =>
-  s === 'critical' ? 3 : s === 'major' || s === 'high' ? 2 : s === 'warning' || s === 'minor' ? 1 : 0
-
-/** Which stages the selected incident actually lit, on whichever rail it ran. */
-const hotStages = (s: Suggestion | null): Set<string> => {
-  if (!s) return new Set()
-  // A sentinel chain reports its own steps, so read them off the record rather
-  // than inferring from scope the way the NetOps cards have to.
-  if (s.scope === 'sentinel') return new Set(sentinelStageIds(s.timeline))
-  return s.scope === 'cluster'
-    ? new Set(['cluster-window', 'aiops-agent', 'suggestions-topic', 'remediation'])
-    : new Set(['aiops-agent', 'suggestions-topic', 'remediation'])
+const hms = (iso?: string | null): string => {
+  if (!iso) return 'N/A'
+  const match = iso.match(/T(\d{2}):(\d{2}):(\d{2})/)
+  return match ? `${match[1]}:${match[2]}:${match[3]}` : iso
 }
 
-/* feed item / selected suggestion → the theater event page 1 will play out */
-const alertEvent = (f: FeedItem): TheaterEvent => ({
-  kind: 'alert', id: f.id, ts: f.ts, device: f.deviceKey || f.device || '', deviceLabel: f.device,
-  severity: f.severity,
-  scenario: f.scenario, stageIds: ['correlator', 'alerts-topic', 'cluster-window'],
-})
-const suggestionEvent = (s: Suggestion): TheaterEvent => ({
-  kind: 'suggestion', id: s.id, ts: s.ts, device: s.deviceKey || s.device, deviceLabel: s.device,
-  severity: s.severity,
-  priority: s.priority, summary: s.summary, scope: s.scope,
-  anchorIp: s.anchorIp ?? undefined,
-  originIp: s.originIp ?? undefined,
-  blastScope: s.impactLevel,
-  blastSummary: s.stageTelemetry.find((t) => t.stageId === 'preflight')?.detail,
-  stageIds: s.scope === 'sentinel'
-    ? sentinelStageIds(s.timeline)
-    : s.scope === 'cluster'
-      ? ['correlator', 'alerts-topic', 'cluster-window', 'aiops-agent', 'suggestions-topic', 'remediation']
-      : ['aiops-agent', 'suggestions-topic', 'remediation'],
+const ymd = (iso?: string | null): string => {
+  if (!iso) return 'N/A'
+  const match = iso.match(/(\d{4})-(\d{2})-(\d{2})/)
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : iso
+}
+
+const stateLabel = (state: BusinessDecision['state'] | undefined, zh: boolean): string => {
+  const labels: Record<string, [string, string]> = {
+    investigating: ['调查中', 'INVESTIGATING'],
+    action_ready: ['动作就绪', 'ACTION READY'],
+    observing: ['结果观察中', 'OBSERVING'],
+    resolved: ['已形成结论', 'DECIDED'],
+    escalated: ['需要升级', 'ESCALATED'],
+  }
+  const pair = labels[state ?? 'investigating'] ?? labels.investigating
+  return zh ? pair[0] : pair[1]
+}
+
+const stateStep = (state?: BusinessDecision['state']): number => {
+  if (state === 'resolved') return 4
+  if (state === 'observing') return 4
+  if (state === 'action_ready' || state === 'escalated') return 3
+  return 2
+}
+
+const eventFor = (suggestion: Suggestion): TheaterEvent => ({
+  kind: 'suggestion',
+  id: suggestion.id,
+  ts: suggestion.ts,
+  device: suggestion.deviceKey || suggestion.device,
+  deviceLabel: suggestion.device,
+  severity: suggestion.severity,
+  priority: suggestion.priority,
+  summary: suggestion.caseDecision?.headline || suggestion.summary,
+  scope: suggestion.scope,
+  stageIds: ['correlator', 'alerts-topic', 'cluster-window'],
 })
 
-export function LiveSituation({ zh, onTheater, onTrace, scenario = 'disk', focusSubject }: { zh: boolean; onTheater?: (e: TheaterEvent) => void; onTrace?: (subject: string, caseId?: string) => void; scenario?: 'disk' | 'bench'; focusSubject?: string }) {
-  const [snap, setSnap] = useState<SituationSnapshot | null>(null)
+export function LiveSituation({
+  zh,
+  onTheater,
+  onTrace,
+  scenario = 'disk',
+  focusSubject,
+}: {
+  zh: boolean
+  onTheater?: (event: TheaterEvent) => void
+  onTrace?: (subject: string, caseId?: string) => void
+  scenario?: 'disk' | 'bench'
+  focusSubject?: string
+}) {
+  const [snapshot, setSnapshot] = useState<SituationSnapshot | null>(null)
   const [state, setState] = useState<'load' | 'ok' | 'empty' | 'err'>('load')
-  // A manual pick remembers which focus request it was made under, so arriving
-  // from a new alert supersedes it while a click made after arriving stays put.
-  const [pick, setPick] = useState<{ id: string; under: string | null } | null>(null)
+  const [pickedId, setPickedId] = useState<string | null>(null)
   const timer = useRef<number | undefined>(undefined)
 
-  /* Poll the landed files for additions. A restarting
-   * backend is survived by simply keeping the last good snapshot on error. */
   useEffect(() => {
-    let gone = false
+    let disposed = false
     const load = () => {
       fetch(`/api/rca/${scenario === 'bench' ? 'bench-live-situation' : 'live-situation'}?lang=${zh ? 'zh' : 'en'}`)
-        .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-        .then((d: SituationSnapshot) => {
-          if (gone) return
-          setSnap(d)
-          setState(d && d.ready ? 'ok' : 'empty')
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          return response.json()
         })
-        .catch(() => { if (!gone) setState((s) => (s === 'load' ? 'err' : s)) })
+        .then((data: SituationSnapshot) => {
+          if (disposed) return
+          setSnapshot(data)
+          setState(data?.ready ? 'ok' : 'empty')
+        })
+        .catch(() => { if (!disposed) setState((current) => current === 'load' ? 'err' : current) })
     }
     load()
-    // 8s, not 20s: a sentinel chain moves through six steps in about two
-    // minutes, and a list that lags the incident by a third of it reads as broken.
     timer.current = window.setInterval(load, 8000)
-    return () => { gone = true; if (timer.current) window.clearInterval(timer.current) }
-  }, [zh, scenario])
+    return () => {
+      disposed = true
+      if (timer.current) window.clearInterval(timer.current)
+    }
+  }, [scenario, zh])
 
-  const suggestions = useMemo(() => snap?.suggestions ?? [], [snap])
-  const feed = useMemo(() => snap?.feed ?? [], [snap])
+  const suggestions = useMemo(
+    () => (snapshot?.suggestions ?? []).filter((item) => item.incidentFacts?.dataClassification !== 'controlled_test'),
+    [snapshot],
+  )
   const selected = useMemo(() => {
-    if (pick && pick.under === (focusSubject ?? null)) {
-      const picked = suggestions.find((s) => s.id === pick.id)
+    if (pickedId) {
+      const picked = suggestions.find((item) => item.id === pickedId)
       if (picked) return picked
     }
     if (focusSubject) {
-      const focus = suggestions.find((s) => s.deviceKey === focusSubject || s.device === focusSubject)
-      if (focus) return focus
+      const focused = suggestions.find((item) => item.deviceKey === focusSubject || item.device === focusSubject)
+      if (focused) return focused
     }
-    return suggestions.find((s) => s.id === snap?.defaultSuggestionId) ?? suggestions[0] ?? null
-  }, [suggestions, pick, focusSubject, snap])
-  const newerThanSelected = useMemo(() => {
-    if (!focusSubject || !selected) return null
-    const latest = suggestions[0]
-    if (!latest || latest.id === selected.id) return null
-    return Date.parse(latest.ts) > Date.parse(selected.ts) ? latest : null
-  }, [focusSubject, selected, suggestions])
-  const hot = useMemo(() => hotStages(selected), [selected])
-  const rail = useMemo(() => railFor(selected?.scope, selected?.timeline), [selected])
-  const reportOnly = selected?.reviewVerdict.verdictStatus === 'reported'
+    return suggestions.find((item) => item.id === snapshot?.defaultSuggestionId) ?? suggestions[0] ?? null
+  }, [focusSubject, pickedId, snapshot, suggestions])
 
-  const openCase = (suggestion: Suggestion) => {
-    const jump = () => onTrace?.(
-      suggestion.deviceKey || suggestion.device || suggestion.id,
-      suggestion.caseId ?? undefined,
-    )
-    if (!suggestion.caseId || scenario === 'bench') { jump(); return }
-    fetch(`/api/rca/investigation-cases/${encodeURIComponent(suggestion.caseId)}/open`, {
-      method: 'POST',
-    }).finally(jump)
-  }
-
-  /* Arriving from the situational page's alert strip: bring the panel into view.
-   * Which card is selected is derived above, not set here. */
   useEffect(() => {
-    if (!focusSubject) return
-    document.querySelector('.ls')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (focusSubject) document.querySelector('.ls')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [focusSubject])
 
-  if (state === 'load') return <section className="ls ls-msg">{zh ? '读取 NetOps 磁盘落地记录…' : 'READING NETOPS DISK SINKS…'}</section>
-  if (state === 'err') return <section className="ls ls-msg err">{zh ? '磁盘态势端点不可达' : 'DISK-SINK ENDPOINT UNREACHABLE'}</section>
-  if (state === 'empty' || !snap) return <section className="ls ls-msg">{zh ? '落地文件中无态势记录' : 'NO SITUATION RECORDS IN DISK SINKS'}</section>
+  if (state === 'load') return <section className="ls ls-msg">{zh ? '读取实时案件…' : 'READING LIVE CASES…'}</section>
+  if (state === 'err') return <section className="ls ls-msg err">{zh ? '实时案件接口不可达' : 'LIVE CASE ENDPOINT UNREACHABLE'}</section>
+  if (state === 'empty' || !snapshot) return <section className="ls ls-msg">{zh ? '当前没有实时案件' : 'NO LIVE CASES'}</section>
 
-  const latest = snap.runtime.latestSuggestionTs !== 'n/a' ? snap.runtime.latestSuggestionTs : snap.runtime.latestAlertTs
+  const latest = snapshot.runtime.latestSuggestionTs || snapshot.runtime.latestAlertTs
+  const resolved = suggestions.filter((item) => item.caseDecision?.state === 'resolved').length
+  const investigating = suggestions.filter((item) => !item.caseDecision || item.caseDecision.state === 'investigating').length
+  const activeStep = stateStep(selected?.caseDecision?.state)
+  const facts = selected?.incidentFacts ?? {}
+  const decision = selected?.caseDecision ?? null
+
+  const openCase = () => {
+    if (!selected) return
+    const jump = () => onTrace?.(selected.deviceKey || selected.device || selected.id, selected.caseId ?? undefined)
+    if (!selected.caseId || scenario === 'bench') { jump(); return }
+    fetch(`/api/rca/investigation-cases/${encodeURIComponent(selected.caseId)}/open`, { method: 'POST' }).finally(jump)
+  }
 
   return (
-    <section className="ls" aria-label={zh ? '落地态势记录' : 'Landed situation records'}>
+    <section className="ls ls-business" aria-label={zh ? '实时案件决策' : 'Live case decisions'}>
       <header className="ls-head">
         <div className="ls-head-l">
-          <span className="ls-kick">{zh ? '01 · 真实事件处置 · 审计记录' : '01 · LIVE INCIDENT RESPONSE · AUDIT RECORDS'}</span>
-          <h2 className="ls-title">{zh ? <>真实事件<mark>处置记录</mark></> : <>LIVE INCIDENT <mark>RESPONSE</mark></>}</h2>
+          <span className="ls-kick">{zh ? '01 · 实时案件 · 业务结果' : '01 · LIVE CASES · BUSINESS OUTCOMES'}</span>
+          <h2 className="ls-title">{zh ? <>事件<mark>处置台</mark></> : <>INCIDENT <mark>DECISIONS</mark></>}</h2>
         </div>
         <div className="ls-head-r">
-          <span className="ls-src">{zh ? '检测事实 + 候选动作 + 关联状态' : 'DETECTION FACTS + CANDIDATE ACTIONS + CORRELATION STATE'}</span>
-          <span className="ls-stamp">{zh ? '最新记录' : 'LATEST RECORD'} · {ymd(latest)} {hms(latest)}</span>
-          <span className="ls-counts">
-            <b>{feed.filter((f) => f.kind === 'alert').length}</b> {zh ? '告警' : 'alerts'} · <b>{suggestions.length}</b> {zh ? '建议' : 'suggestions'}
-          </span>
+          <span className="ls-src">{zh ? '检测事实 → 调查 → 决定 → 结果回读' : 'DETECTION → INVESTIGATION → DECISION → READBACK'}</span>
+          <span className="ls-stamp">{ymd(latest)} {hms(latest)}</span>
+          <span className="ls-counts"><b>{suggestions.length}</b> {zh ? '案件' : 'cases'} · <b>{resolved}</b> {zh ? '已决定' : 'decided'} · <b>{investigating}</b> {zh ? '调查中' : 'open'}</span>
         </div>
       </header>
 
-      {newerThanSelected ? (
-        <div className="ls-newer" role="status">
-          <span>
-            {zh ? '当前正在查看较早事件' : 'VIEWING AN EARLIER INCIDENT'} · <code>{selected?.deviceKey || selected?.device}</code>
-          </span>
-          <button
-            type="button"
-            onClick={() => setPick({ id: newerThanSelected.id, under: focusSubject ?? null })}
-          >
-            {zh ? `切换到最新事件 · ${newerThanSelected.deviceKey || newerThanSelected.device}` : `OPEN LATEST · ${newerThanSelected.deviceKey || newerThanSelected.device}`}
-          </button>
-        </div>
-      ) : null}
-
-      {/* The processing rail for the selected incident.
-          Two subsystems, two rails: a sentinel chain never enters the correlator. */}
-      <div className="ls-pipe" role="list" aria-label={zh ? '处理链路' : 'Processing chain'}>
-        <span className="ls-pipe-k">
-          {selected?.scope === 'sentinel'
-            ? reportOnly
-              ? (zh ? '安全门决策流程' : 'SAFETY-GATE DECISION FLOW')
-              : (zh ? '受控处置流程' : 'CONTROLLED RESPONSE FLOW')
-            : (zh ? '事件处理流程' : 'EVENT PROCESSING FLOW')}
-        </span>
-        {rail.map((p, i) => (
-          <div key={p.id} className={`ls-stage ${hot.has(p.id) ? 'hot' : ''}`} role="listitem">
-            <span className="ls-stage-n">{String(i + 1).padStart(2, '0')}</span>
-            <span className="ls-stage-l">{zh ? p.zh : p.en}</span>
-            {i < rail.length - 1 && <span className="ls-stage-arm" aria-hidden="true" />}
+      <div className="ls-decision-rail" aria-label={zh ? '案件状态' : 'Case state'}>
+        {[
+          [zh ? '检测事实' : 'DETECTION', selected?.summary || ''],
+          [zh ? '案件调查' : 'INVESTIGATION', decision?.classification || (zh ? '等待决策' : 'PENDING')],
+          [zh ? '处置决定' : 'DECISION', decision?.action || (zh ? '未形成' : 'NOT READY')],
+          [zh ? '结果回读' : 'READBACK', String(decision?.readback?.outcome ?? (decision?.state === 'resolved' ? (zh ? '无需变更' : 'NO CHANGE') : (zh ? '等待' : 'PENDING')))],
+        ].map(([label, value], index) => (
+          <div className={`ls-decision-step ${index + 1 <= activeStep ? 'is-done' : ''}`} key={label}>
+            <span>{String(index + 1).padStart(2, '0')}</span>
+            <small>{label}</small>
+            <b>{value || 'N/A'}</b>
           </div>
         ))}
       </div>
 
-      <div className="ls-body">
-        {/* left · landed records, newest first */}
-        <aside className="ls-feed" aria-label={zh ? '落地事件记录' : 'Landed event records'}>
-          <div className="ls-col-h">{zh ? '落地记录 · 新→旧' : 'LANDED RECORDS · NEW→OLD'}</div>
-          <div className="ls-feed-list">
-            {feed.map((f) => {
-              const isSug = f.kind === 'suggestion'
-              const on = isSug && selected?.id === `${f.id}`.replace('feed-suggestion-', '')
-              return (
-                <button
-                  key={f.id}
-                  className={`ls-fi ${f.kind} ${on ? 'on' : ''} ${!isSug && onTheater ? 'linkable' : ''}`}
-                  disabled={!isSug && !onTheater}
-                  title={!isSug && onTheater ? (zh ? '在全链路拓扑剧场中展开' : 'Open in the topology theater') : undefined}
-                  onClick={() => (isSug
-                    ? setPick({ id: `${f.id}`.replace('feed-suggestion-', ''), under: focusSubject ?? null })
-                    : onTheater?.(alertEvent(f)))}
-                >
-                  <span className="ls-fi-top">
-                    <span className={`ls-tag sev${sevRank(f.severity)}`}>{isSug ? f.priority || 'P?' : (zh ? '告警' : 'ALERT')}</span>
-                    <span className="ls-fi-kind">{isSug ? (f.scope === 'cluster' ? (zh ? '簇建议' : 'CLUSTER') : (zh ? '单点建议' : 'SINGLE')) : (f.scenario || 'N/A')}</span>
-                    <time className="ls-fi-ts">{hms(f.ts)}</time>
-                  </span>
-                  <span className="ls-fi-dev">{f.device || 'N/A'}</span>
-                  {f.summary && <span className="ls-fi-sum">{f.summary}</span>}
-                </button>
-              )
-            })}
-          </div>
+      <div className="ls-business-body">
+        <aside className="ls-case-ledger" aria-label={zh ? '案件列表' : 'Case list'}>
+          <div className="ls-col-h">{zh ? '案件 · 新到旧' : 'CASES · NEWEST FIRST'}</div>
+          {suggestions.length ? suggestions.map((item) => (
+            <button
+              type="button"
+              key={item.id}
+              className={`ls-case-row ${item.id === selected?.id ? 'is-active' : ''}`}
+              onClick={() => setPickedId(item.id)}
+            >
+              <time>{hms(item.ts)}</time>
+              <span className={`ls-case-state is-${item.caseDecision?.state ?? 'investigating'}`}>{stateLabel(item.caseDecision?.state, zh)}</span>
+              <strong>{item.caseDecision?.headline || item.summary}</strong>
+              <code>{item.caseId || item.id}</code>
+            </button>
+          )) : <p className="ls-case-empty">{zh ? '当前没有观测案件' : 'NO OBSERVED CASES'}</p>}
         </aside>
 
-        {/* right · the selected suggestion's full diagnosis chain */}
-        {selected ? (
-          <div className="ls-detail">
-            <div className="ls-d-head">
-              <span className={`ls-tag sev${sevRank(selected.severity)}`}>{selected.priority}</span>
-              <span className="ls-d-dev">{selected.device}</span>
-              <span className="ls-d-svc">{selected.service}</span>
-              <span className="ls-d-mode">{selected.adaptiveMode} · {selected.impactLevel}</span>
-              {selected.caseId ? <span className="ls-d-case">CASE · {selected.caseId}</span> : null}
-              {onTrace ? (
-                <button
-                  className="ls-theater-cta"
-                  onClick={() => openCase(selected)}
-                >
-                  {zh ? '打开调查案件 ▸' : 'OPEN INVESTIGATION ▸'}
-                </button>
-              ) : null}
-              {onTheater ? (
-                <button className="ls-theater-cta" onClick={() => onTheater(suggestionEvent(selected))}>
-                  ⧉ {zh ? '全链路拓扑剧场' : 'TOPOLOGY THEATER'} ▸
-                </button>
-              ) : null}
-            </div>
-            <p className="ls-d-sum">{selected.summary}</p>
-
-            {selected.scope === 'sentinel' ? (
-              <IncidentMemoryReceipt
-                subject={selected.deviceKey || selected.device}
-                incidentRef={selected.incidentRef}
-                zh={zh}
-              />
-            ) : null}
-
-            {/* Recorded event and decision timeline. */}
-            <div className="ls-block">
-              <div className="ls-block-h">{zh ? '诊断时间线' : 'DIAGNOSIS TIMELINE'}</div>
-              <ol className="ls-tl">
-                {selected.timeline.map((t, i) => (
-                  <li key={i} className={`ls-tl-i ${t.kind}`}>
-                    <time>{hms(t.ts)}</time><span>{t.label}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-
-            {/* Per-stage observations and providers. */}
-            <div className="ls-block">
-              <div className="ls-block-h">{zh ? '检测与决策事实' : 'DETECTION & DECISION FACTS'}</div>
-              <div className="ls-stages">
-                {selected.stageTelemetry.map((s) => (
-                  <div key={s.stageId} className="ls-st">
-                    <span className="ls-st-id">{s.stageId}</span>
-                    <span className="ls-st-detail">{s.detail || s.provider || 'N/A'}</span>
-                    {s.provider && <span className="ls-st-prov">{s.provider}</span>}
-                  </div>
-                ))}
+        <article className="ls-business-decision">
+          {selected ? (
+            <>
+              <div className="ls-business-title">
+                <span className={`ls-case-state is-${decision?.state ?? 'investigating'}`}>{stateLabel(decision?.state, zh)}</span>
+                <div>
+                  <h3>{decision?.headline || (zh ? '检测已落案，调查尚未形成结论' : 'DETECTED; DECISION PENDING')}</h3>
+                  <p>{decision?.summary || selected.summary}</p>
+                </div>
+                {selected.caseId ? <code>{selected.caseId}</code> : null}
               </div>
-            </div>
 
-            {/* Ranked root-cause candidates with confidence and evidence references. */}
-            <div className="ls-block">
-              <div className="ls-block-h">
-                {zh ? '根因候选' : 'ROOT-CAUSE CANDIDATES'} · <b>{selected.hypothesisSet.items.length}</b>
-                {selected.hypothesisSet.summary.contradictory_ref_count != null && (
-                  <span className="ls-block-sub">
-                    {zh ? '支持' : 'supp'} {selected.hypothesisSet.summary.supporting_ref_count ?? 0} · {zh ? '反证' : 'contra'} {selected.hypothesisSet.summary.contradictory_ref_count ?? 0}
-                  </span>
-                )}
-              </div>
-              <ul className="ls-hypos">
-                {selected.hypothesisSet.items.map((h) => (
-                  <li key={h.id} className={`ls-hy ${h.id === selected.hypothesisSet.primaryHypothesisId ? 'primary' : ''}`}>
-                    <span className="ls-hy-rank">#{h.rank}</span>
-                    <span className="ls-hy-stmt">{h.statement}</span>
-                    <span className="ls-hy-conf" title={h.confidenceLabel}>
-                      <i style={{ width: `${Math.round(Math.max(0, Math.min(1, h.confidence)) * 100)}%` }} />
-                      <em>{(h.confidence * 100).toFixed(0)}%</em>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+              <dl className="ls-fact-line">
+                <div><dt>{zh ? '来源' : 'SOURCE'}</dt><dd>{facts.sourceIp || selected.device}</dd></div>
+                <div><dt>{zh ? '目标' : 'TARGET'}</dt><dd>{facts.destinationIp || 'N/A'}{facts.destinationPort ? `:${facts.destinationPort}` : ''}</dd></div>
+                <div><dt>{zh ? '服务' : 'SERVICE'}</dt><dd>{facts.service || selected.service || 'N/A'}</dd></div>
+                <div><dt>{zh ? '设备结果' : 'DEVICE RESULT'}</dt><dd>{facts.action || 'N/A'}{facts.policyType ? ` · ${facts.policyType}` : ''}</dd></div>
+              </dl>
 
-            {/* Candidate action, safety decision, and follow-up owner. */}
-            <div className="ls-block ls-runbook">
-              <div className="ls-block-h">
-                {reportOnly
-                  ? (zh ? '候选动作与安全门条件' : 'CANDIDATE ACTION & SAFETY GATE')
-                  : (zh ? '候选处置方案' : 'CANDIDATE RESPONSE PLAN')}
-              </div>
-              <div className="ls-rb-title">{selected.runbookDraft.title || 'N/A'}</div>
-              {selected.runbookDraft.actions.length > 0 && (
-                <ol className="ls-rb-actions">
-                  {selected.runbookDraft.actions.map((a, i) => <li key={i}>{a}</li>)}
-                </ol>
+              {decision ? (
+                <>
+                  <section className="ls-outcome-line">
+                    <div><span>{zh ? '处置决定' : 'DISPOSITION'}</span><p>{decision.disposition}</p></div>
+                    <div><span>{zh ? '执行动作' : 'ACTION'}</span><p>{decision.action}</p></div>
+                    <div><span>{zh ? '影响对象' : 'AFFECTED ASSETS'}</span><p>{decision.impactedAssets.join(' · ') || (zh ? '未发现受影响业务资产' : 'NO AFFECTED BUSINESS ASSET FOUND')}</p></div>
+                  </section>
+
+                  <section className="ls-evidence-lines">
+                    <h4>{zh ? '关键证据' : 'DECISIVE EVIDENCE'}</h4>
+                    {decision.evidence.slice(0, 3).map((item) => (
+                      <div key={`${item.evidenceId}-${item.label}`}>
+                        <code>{item.evidenceId}</code><b>{item.label}</b><span>{item.value}</span>
+                      </div>
+                    ))}
+                  </section>
+
+                  {decision.missingObservations.length ? (
+                    <section className="ls-missing-lines">
+                      <h4>{zh ? '阻止结案的缺失观察' : 'MISSING OBSERVATIONS BLOCKING CLOSURE'}</h4>
+                      {decision.missingObservations.map((item) => (
+                        <div key={item.code}><b>{item.question}</b>{item.probe ? <code>{item.probe}</code> : null}</div>
+                      ))}
+                    </section>
+                  ) : null}
+                </>
+              ) : (
+                <p className="ls-pending-copy">{zh ? '该记录当前只有检测事实。系统还没有产出可用于关闭、处置或升级的案件决定。' : 'This record currently has detection facts only. No close, act, or escalate decision exists yet.'}</p>
               )}
-              <div className="ls-gate">
-                <span className="ls-gate-lock" aria-hidden="true" />
-                <span className="ls-gate-t">
-                  {reportOnly
-                    ? (zh ? '决策结果 · 写操作未授权' : 'DECISION · WRITE NOT AUTHORIZED')
-                    : (zh ? '审批状态 · 等待授权' : 'APPROVAL STATUS · AUTHORIZATION PENDING')}
-                </span>
-                <span className={`ls-gate-risk ${selected.reviewVerdict.checks.overreachRisk.status}`}>
-                  {reportOnly
-                    ? (zh ? '后续责任 · 安全运营核验并处置' : 'OWNER · SECURITY OPERATIONS VALIDATION')
-                    : `${zh ? '安全门风险' : 'GATE RISK'} · ${selected.reviewVerdict.checks.overreachRisk.status}`}
-                </span>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="ls-detail ls-detail-empty">{zh ? '无建议可展开' : 'NO SUGGESTION TO EXPAND'}</div>
-        )}
-      </div>
 
-      {/* Correlation windows progressing toward a cluster threshold. */}
-      {snap.clusterWatch.length > 0 && (
-        <div className="ls-clusters">
-          <div className="ls-col-h">{zh ? '关联窗口' : 'CORRELATION WINDOWS'} · {snap.runtime.windowSec}s</div>
-          <div className="ls-cw-list">
-            {snap.clusterWatch.map((c, i) => (
-              <div key={i} className="ls-cw">
-                <span className={`ls-tag sev${sevRank(c.severity)}`}>{c.severity}</span>
-                <span className="ls-cw-key">{c.key}</span>
-                <span className="ls-cw-bar"><i style={{ width: `${Math.round((c.progress / Math.max(1, c.target)) * 100)}%` }} /></span>
-                <span className="ls-cw-n">{c.progress}/{c.target}</span>
-                <time className="ls-cw-ts">{hms(c.lastEmitTs)}</time>
+              <div className="ls-business-actions">
+                {onTrace ? <button type="button" onClick={openCase}>{zh ? '查看完整证据 ▸' : 'OPEN EVIDENCE ▸'}</button> : null}
+                {onTheater ? <button type="button" onClick={() => onTheater(eventFor(selected))}>{zh ? '查看网络位置 ▸' : 'OPEN NETWORK POSITION ▸'}</button> : null}
+                <details>
+                  <summary>{zh ? '查看原始检测字段' : 'RAW DETECTION FIELDS'}</summary>
+                  <pre>{JSON.stringify(facts, null, 2)}</pre>
+                </details>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            </>
+          ) : <p>{zh ? '没有可展开案件' : 'NO CASE TO OPEN'}</p>}
+        </article>
+      </div>
     </section>
   )
 }

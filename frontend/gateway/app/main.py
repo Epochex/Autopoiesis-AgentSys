@@ -5,6 +5,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
@@ -1888,11 +1889,34 @@ async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
 async def rca_investigation_cases(
     status: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
+    include_non_live: bool = False,
 ) -> dict[str, Any]:
     cases = await asyncio.to_thread(
         _case_repository().list, status=status, limit=limit
     )
-    return {"ok": True, "count": len(cases), "cases": [case.as_dict() for case in cases]}
+    projected = [case.as_dict() for case in cases]
+    if not include_non_live:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+
+        def current_observed_case(case: dict[str, Any]) -> bool:
+            payload = case.get("sourcePayload") or {}
+            if str(payload.get("dataClassification") or "observed") != "observed":
+                return False
+            try:
+                last_seen = datetime.fromisoformat(
+                    str(case.get("lastSeenAt") or "").replace("Z", "+00:00")
+                )
+            except ValueError:
+                return False
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            return last_seen >= cutoff
+
+        projected = [
+            case for case in projected
+            if current_observed_case(case)
+        ]
+    return {"ok": True, "count": len(projected), "cases": projected}
 
 
 @app.get("/api/rca/investigation-cases/{case_id}")
@@ -2142,11 +2166,23 @@ async def investigate_start(request: InvestigateStart) -> dict[str, Any]:
 
 @app.post("/api/rca/investigate/analyze")
 async def investigate_analyze(request: InvestigateSession) -> dict[str, Any]:
-    """Turn the collected evidence into a diagnosis and a graded runbook."""
+    """Produce a business decision; linked live cases use no model call."""
     from .investigate import analyze
 
     try:
         result = await asyncio.to_thread(analyze, request.session_id, request.lang)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown session") from None
+    return {"ok": True, **result}
+
+
+@app.post("/api/rca/investigate/complete")
+async def investigate_complete(request: InvestigateSession) -> dict[str, Any]:
+    """Advance probes and return conclusion, action, or the exact missing observation."""
+    from .investigate import complete
+
+    try:
+        result = await asyncio.to_thread(complete, request.session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown session") from None
     return {"ok": True, **result}

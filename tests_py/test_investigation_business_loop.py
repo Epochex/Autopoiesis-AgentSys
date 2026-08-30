@@ -35,6 +35,23 @@ def test_high_severity_case_auto_starts_once_and_targets_managed_gateway(tmp_pat
         subject="8.8.8.8",
         rule_id="deny-burst",
         summary="public sender caused a denied-flow burst",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "sourceIp": "8.8.8.8",
+                "destinationIp": "203.0.113.10",
+                "service": "tcp/5555",
+                "action": "deny",
+                "trafficSubtype": "local",
+                "policyId": 0,
+                "policyType": "local-in-policy",
+                "sourceInterface": "wan1",
+                "sourceInterfaceRole": "wan",
+                "denyCount": 200,
+                "windowSeconds": 60,
+            },
+        },
     ))
     monkeypatch.setattr(main, "_investigation_case_repository", repository)
     called: list[str] = []
@@ -50,7 +67,76 @@ def test_high_severity_case_auto_starts_once_and_targets_managed_gateway(tmp_pat
     assert len(first) == 1 and second == []
     assert first[0]["subject"] == "192.168.1.1"
     assert not any("8.8.8.8" in command for command in called)
+    assert first[0]["decision"]["classification"] == "blocked_external_probe"
+    assert first[0]["decision"]["state"] == "resolved"
+    assert first[0]["retrieval_results"] == []
+    assert all(
+        event.get("kind") != "memory_candidates_ranked"
+        for event in first[0]["trace_events"]
+    )
+    assert repository.get(case.case_id).status == "resolved"
+
+
+def test_delayed_exact_fields_replace_an_incomplete_policy_decision(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch)
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    now = datetime.now(timezone.utc).isoformat()
+    source = SourceReference("suggestion", "delayed-policy-facts")
+    case = repository.ingest(CaseObservation(
+        source=source,
+        occurred_at=now,
+        severity="warning",
+        subject="8.8.8.8",
+        rule_id="deny-burst",
+        service="tcp/5555",
+        summary="legacy policy alert",
+        payload={"dataClassification": "observed"},
+    ))
+    monkeypatch.setattr(main, "_investigation_case_repository", repository)
+    monkeypatch.setattr(
+        investigation_tools,
+        "collect_case_flow_window",
+        lambda *_args: {"available": False, "reason": "source_and_destination_ip_required"},
+    )
+    monkeypatch.setattr(
+        investigation_tools,
+        "collect_fortigate_context",
+        lambda *_args: {"degraded": False, "policies": []},
+    )
+
+    first = investigation_cases.auto_start_pending_cases(repository)
+    assert first[0]["decision"]["classification"] == "policy_outcome_unresolved"
     assert repository.get(case.case_id).status == "investigating"
+
+    repository.ingest(CaseObservation(
+        source=source,
+        occurred_at=now,
+        severity="warning",
+        subject="8.8.8.8",
+        rule_id="deny-burst",
+        service="tcp/5555",
+        summary="exact local-in deny",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "sourceIp": "8.8.8.8",
+                "destinationIp": "192.0.2.10",
+                "service": "tcp/5555",
+                "action": "deny",
+                "trafficSubtype": "local",
+                "policyType": "local-in-policy",
+                "policyId": 0,
+                "sourceInterface": "wan1",
+                "sourceInterfaceRole": "wan",
+            },
+        },
+    ))
+
+    refreshed = investigation_cases.auto_start_pending_cases(repository)
+
+    assert refreshed[0]["decision"]["classification"] == "blocked_external_probe"
+    assert repository.get(case.case_id).status == "resolved"
 
 
 def test_confirmed_failed_unit_maps_to_action_and_records_readback(monkeypatch) -> None:

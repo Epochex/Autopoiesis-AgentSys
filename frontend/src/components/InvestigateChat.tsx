@@ -17,8 +17,8 @@ import {
 /* ── 查一个故障 · the chat panel that works one fault end to end ──────────────
  *
  * The panel opens by running the read-only checks itself, so the first thing on
- * screen is what was actually seen, not a prompt box. Everything below that —
- * the verdict, the steps, the follow-up questions — cites those commands by id,
+ * screen is what was actually seen, not a prompt box. The verdict, steps and
+ * follow-up questions cite those commands by id,
  * and a click on a citation lands on the command that produced it.
  *
  * The one rule that is not cosmetic: a step marked `gated` renders its button
@@ -43,6 +43,22 @@ export interface Step {
   runnable?: boolean
 }
 
+interface BusinessDecision {
+  caseId: string
+  sessionId: string
+  state: 'investigating' | 'action_ready' | 'observing' | 'resolved' | 'escalated'
+  classification: string
+  headline: string
+  summary: string
+  disposition: string
+  action: string
+  impactedAssets: string[]
+  evidence: { evidenceId: string; label: string; value: string; source: string }[]
+  missingObservations: { code: string; question: string; probe?: string | null }[]
+  nextProbe?: string | null
+  readback?: Record<string, unknown> | null
+}
+
 interface StartResp {
   ok: boolean
   session_id: string
@@ -57,6 +73,17 @@ interface StartResp {
   trace_events: InvestigationReceipt['trace_events']
   hypothesis_state: HypothesisView
   probe_rounds: ProbeRound[]
+  decision?: BusinessDecision | null
+}
+
+interface CompleteResp {
+  ok: boolean
+  decision: BusinessDecision
+  case_status: string
+  evidence_total: number
+  hypothesis_state?: HypothesisView
+  probe_rounds?: ProbeRound[]
+  action_candidate?: ActionCandidate
 }
 
 interface AnalyzeResp {
@@ -90,6 +117,7 @@ interface RemediateResp {
   reason?: string
   readback_evidence?: Evidence
   candidate?: ActionCandidate
+  decision?: BusinessDecision
 }
 
 interface CloseResp { ok: boolean; resolution: 'confirmed' | 'inconclusive' | 'refuted'; dossier: { dossier_id: string } }
@@ -181,12 +209,12 @@ const seedQuestion = (zh: boolean, family?: string, subject?: string) => {
   const fam = FAULT_CATALOG.find((f) => f.id === family)
   const title = fam ? (zh ? fam.title[0] : fam.title[1]) : ''
   if (zh) {
-    if (subject && title) return `${subject}:${title} —— 现在是什么情况,该怎么办?`
-    if (title) return `${title} —— 现在是什么情况,该怎么办?`
+    if (subject && title) return `${subject}:${title}，现在是什么情况,该怎么办?`
+    if (title) return `${title}，现在是什么情况,该怎么办?`
     if (subject) return `${subject} 现在是什么情况,该怎么办?`
     return '这个网络现在有什么问题,该怎么办?'
   }
-  if (subject && title) return `${subject} — ${title}. What is going on, and what should be done?`
+  if (subject && title) return `${subject}: ${title}. What is going on, and what should be done?`
   if (title) return `${title}. What is going on, and what should be done?`
   if (subject) return `What is going on with ${subject}, and what should be done?`
   return 'What is wrong on this network right now, and what should be done?'
@@ -196,7 +224,7 @@ const T = (zh: boolean) => ({
   title: zh ? '查这一个故障' : 'INVESTIGATE ONE FAULT',
   lead: zh
     ? '先把该看的命令跑一遍,再让它给结论和步骤。每句话都挂着它依据的那条命令,点一下就跳过去。会改东西的步骤停在人工那一格,系统不会替你按。'
-    : 'The checks run first, then it gives a verdict and the steps. Every claim carries the command it rests on — click it and you land on the output. Anything that changes state stops at the human step; the system will not press it for you.',
+    : 'The checks run first, then it gives a verdict and the steps. Every claim carries its source command; click it to open the output. Anything that changes state stops at the human step; the system will not press it for you.',
   ask: zh ? '要查什么' : 'WHAT TO LOOK INTO',
   askPh: zh ? '写一句话,说清要查哪台机器、什么现象' : 'One line: which machine, what you are seeing',
   start: zh ? '开始查' : 'START',
@@ -273,6 +301,7 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
   const [archived, setArchived] = useState<string | null>(null)
   const [actionCandidate, setActionCandidate] = useState<ActionCandidate | null>(null)
   const [actionResult, setActionResult] = useState<RemediateResp | null>(null)
+  const [businessDecision, setBusinessDecision] = useState<BusinessDecision | null>(null)
 
   // One request at a time: the session accumulates evidence server-side, so two
   // in flight would interleave into a context neither answer was written from.
@@ -303,16 +332,23 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
     setArchived(null)
     setActionCandidate(null)
     setActionResult(null)
+    setBusinessDecision(null)
     try {
-      const d = await post<StartResp>('/api/rca/investigate/start', {
+      const opened = await post<StartResp>('/api/rca/investigate/start', {
         question: q,
         family,
         subject,
         case_id: caseId,
       })
+      const completed = caseId && !opened.decision
+        ? await post<CompleteResp>('/api/rca/investigate/complete', { session_id: opened.session_id })
+        : null
+      const d = opened
       if (!aliveRef.current) return
       setSessionId(d.session_id)
-      setSummary(d.summary ?? '')
+      const decision = completed?.decision ?? d.decision ?? null
+      setBusinessDecision(decision)
+      setSummary(decision?.headline ?? d.summary ?? '')
       setEvidence(d.evidence ?? [])
       setHypotheses(d.hypothesis_state ?? null)
       setProbeRounds(d.probe_rounds ?? [])
@@ -324,6 +360,9 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
         retrieval_results: d.retrieval_results ?? [],
         trace_events: d.trace_events ?? [],
       })
+      if (completed?.hypothesis_state) setHypotheses(completed.hypothesis_state)
+      if (completed?.probe_rounds) setProbeRounds(completed.probe_rounds)
+      setActionCandidate(completed?.action_candidate ?? null)
       setOpenCtx(false)
     } catch (e) {
       if (aliveRef.current) setErr(errText(e))
@@ -385,6 +424,7 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
       const d = await post<RemediateResp>('/api/rca/investigate/remediate', { session_id: sessionId })
       if (!aliveRef.current) return
       setActionResult(d)
+      if (d.decision) setBusinessDecision(d.decision)
       if (d.readback_evidence) setEvidence((cur) => merge(cur, [d.readback_evidence as Evidence]))
     } catch (e) {
       if (aliveRef.current) setErr(errText(e))
@@ -554,6 +594,82 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
       </div>
     ) : null
 
+  if (caseId) {
+    return (
+      <section className="dx-iv dx-case-decision" aria-busy={!idle}>
+        <header className="dx-case-head">
+          <div>
+            <span>{zh ? '当前案件结果' : 'CURRENT CASE OUTCOME'}</span>
+            <h2>{businessDecision?.headline || (busy === 'start' ? (zh ? '正在形成案件决定' : 'BUILDING CASE DECISION') : (zh ? '案件保持调查中' : 'CASE REMAINS OPEN'))}</h2>
+          </div>
+          <code>{caseId}</code>
+        </header>
+        {err ? <p className="dx-iv-err">{tx.failed} · {err}</p> : null}
+        {businessDecision ? (
+          <>
+            <p className="dx-case-summary">{businessDecision.summary}</p>
+            <div className="dx-case-outcome">
+              <div><small>{zh ? '状态' : 'STATE'}</small><b>{businessDecision.state}</b></div>
+              <div><small>{zh ? '处置决定' : 'DISPOSITION'}</small><b>{businessDecision.disposition}</b></div>
+              <div><small>{zh ? '动作' : 'ACTION'}</small><b>{businessDecision.action}</b></div>
+              <div><small>{zh ? '影响对象' : 'AFFECTED ASSETS'}</small><b>{businessDecision.impactedAssets.join(' · ') || 'N/A'}</b></div>
+            </div>
+            <section className="dx-case-evidence">
+              <h3>{zh ? '支撑本次决定的证据' : 'EVIDENCE SUPPORTING THIS DECISION'}</h3>
+              {businessDecision.evidence.map((item) => (
+                <button type="button" key={`${item.evidenceId}-${item.label}`} onClick={() => jump(item.evidenceId)}>
+                  <code>{item.evidenceId}</code><b>{item.label}</b><span>{item.value}</span>
+                </button>
+              ))}
+            </section>
+            {businessDecision.missingObservations.length ? (
+              <section className="dx-case-missing">
+                <h3>{zh ? '阻止结案的缺失观察' : 'MISSING OBSERVATIONS BLOCKING CLOSURE'}</h3>
+                {businessDecision.missingObservations.map((item) => (
+                  <div key={item.code}><b>{item.question}</b>{item.probe ? <code>{item.probe}</code> : null}</div>
+                ))}
+              </section>
+            ) : null}
+            {actionCandidate?.eligible && businessDecision.state === 'action_ready' ? (
+              <div className="dx-case-execute">
+                <p>{zh ? '该动作已通过前置检查。执行后页面会等待原系统回读，再决定关闭或升级。' : 'The action passed preflight. The case closes or escalates only after source-system readback.'}</p>
+                <button type="button" onClick={() => void runRemediation()} disabled={!idle}>
+                  {busy === 'remediate' ? (zh ? '执行并观察中…' : 'EXECUTING + OBSERVING…') : (zh ? '执行并等待回读' : 'EXECUTE + WAIT FOR READBACK')}
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : <p className="dx-case-summary">{summary || (zh ? '检测事实已进入案件，当前还没有可显示的业务决定。' : 'Detection facts are attached; no business decision is available yet.')}</p>}
+
+        <details className="dx-case-detail" open={openCtx} onToggle={(event) => setOpenCtx(event.currentTarget.open)}>
+          <summary>{zh ? `原始证据 · ${evidence.length} 条` : `RAW EVIDENCE · ${evidence.length}`}</summary>
+          <ul className="dx-iv-ev-list" id={listId}>
+            {evidence.map((item) => (
+              <li
+                key={item.evidence_id}
+                className={`dx-iv-ev-i${item.ok ? '' : ' is-bad'}${flash?.id === item.evidence_id ? ' is-flash' : ''}`}
+                ref={(node) => {
+                  if (node) evRefs.current.set(item.evidence_id, node)
+                  else evRefs.current.delete(item.evidence_id)
+                }}
+              >
+                <div className="dx-iv-ev-m"><span className="dx-iv-id">{item.evidence_id}</span><span>{clock(item.at)}</span></div>
+                <code className="dx-iv-cmd">{item.command}</code>
+                <pre className={`dx-iv-out${item.ok ? '' : ' is-err'}`}>{item.output || 'N/A'}</pre>
+              </li>
+            ))}
+          </ul>
+        </details>
+        {sessionId && receipt && receipt.retrieval_results.length ? (
+          <details className="dx-case-detail">
+            <summary>{zh ? '历史检索如何影响本次调查' : 'HOW RETRIEVAL AFFECTED THIS INVESTIGATION'}</summary>
+            <InvestigationContextReceipt lang={lang} sessionId={sessionId} receipt={receipt} />
+          </details>
+        ) : null}
+      </section>
+    )
+  }
+
   return (
     <section className="dx-iv" aria-busy={!idle}>
       <div className="dx-iv-head">
@@ -622,7 +738,7 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
                   <span>{clock(item.at)}</span>
                 </div>
                 <code className="dx-iv-cmd">{item.command}</code>
-                <pre className={`dx-iv-out${item.ok ? '' : ' is-err'}`}>{item.output || '—'}</pre>
+                <pre className={`dx-iv-out${item.ok ? '' : ' is-err'}`}>{item.output || 'N/A'}</pre>
               </li>
             )) : (
               <li className="dx-iv-ev-i is-empty">{busy === 'start' ? tx.starting : tx.none}</li>
@@ -650,10 +766,10 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
             <div className="dx-action-rail" aria-label={zh ? '根因到结果回读' : 'Root to readback'}>
               <div><span>01</span><small>{zh ? '已确认根因' : 'CONFIRMED ROOT'}</small><b>{actionCandidate.root_hypothesis_id ?? verdict.rootCause}</b></div>
               <div><span>02</span><small>{zh ? '允许动作' : 'ALLOWLISTED ACTION'}</small><b>{actionCandidate.action ?? (zh ? '无可执行动作' : 'NO ACTION')}</b></div>
-              <div><span>03</span><small>{zh ? '目标' : 'TARGET'}</small><b>{actionCandidate.target ?? '—'}</b></div>
+              <div><span>03</span><small>{zh ? '目标' : 'TARGET'}</small><b>{actionCandidate.target ?? 'N/A'}</b></div>
               <div className={actionResult?.outcome === 'passed' ? 'is-passed' : ''}>
                 <span>04</span><small>{zh ? '结果回读' : 'READBACK'}</small>
-                <b>{actionResult?.outcome ?? (actionCandidate.eligible ? (zh ? '等待执行' : 'READY') : actionCandidate.reason ?? '—')}</b>
+                <b>{actionResult?.outcome ?? (actionCandidate.eligible ? (zh ? '等待执行' : 'READY') : actionCandidate.reason ?? 'N/A')}</b>
               </div>
               {actionCandidate.eligible && !actionResult ? (
                 <button type="button" onClick={() => void runRemediation()} disabled={!idle}>
@@ -750,7 +866,7 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
                     {locked ? <p className="dx-iv-note" id={noteId}><span className="dx-lock" />{lockTip}</p> : null}
                     {out && out.state !== 'run' ? (
                       <pre className={`dx-iv-out${out.state === 'err' ? ' is-err' : ''}`}>
-                        {out.state === 'err' ? out.note ?? out.text : out.text || '—'}
+                        {out.state === 'err' ? out.note ?? out.text : out.text || 'N/A'}
                       </pre>
                     ) : null}
                     {out?.state === 'done' && out.note ? <p className="dx-iv-exit">{out.note}</p> : null}

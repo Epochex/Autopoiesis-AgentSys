@@ -30,7 +30,7 @@ def _has_netops_suggestions() -> bool:
     not _has_netops_suggestions(),
     reason="no NetOps runtime suggestions sink present",
 )
-def test_load_runtime_snapshot_emits_timeline_and_stage_telemetry_for_suggestions():
+def test_load_runtime_snapshot_exposes_detection_facts_without_draft_reasoning():
     settings = Settings.from_env()
 
     snapshot = load_runtime_snapshot(settings)
@@ -39,19 +39,15 @@ def test_load_runtime_snapshot_emits_timeline_and_stage_telemetry_for_suggestion
     assert suggestions
 
     first = suggestions[0]
-    assert first.get("timeline")
-    assert first.get("stageTelemetry")
-    assert first.get("hypothesisSet")
-    assert first.get("runbookDraft")
-    assert first.get("reviewVerdict")
     assert first.get("sourceAlertIds")
     assert first.get("dataClassification") in {"observed", "controlled_test"}
-    assert first["reviewVerdict"]["checks"]["overreachRisk"]["status"]
-    assert first["runbookDraft"]["approvalBoundary"]["approvalRequired"] is True
-
-    stage_ids = [item["stageId"] for item in first["stageTelemetry"]]
-    assert "correlator" in stage_ids
-    assert "aiops-agent" in stage_ids
+    assert first["incidentFacts"]["sourceIp"]
+    assert first["incidentFacts"]["destinationIp"]
+    assert first["incidentFacts"]["service"]
+    assert "stageTelemetry" not in first
+    assert "hypothesisSet" not in first
+    assert "runbookDraft" not in first
+    assert "reviewVerdict" not in first
 
 
 @pytest.mark.skipif(
@@ -70,14 +66,7 @@ def test_english_runtime_snapshot_localizes_all_visible_copy():
         visible.extend([
             suggestion["summary"],
             suggestion["device"],
-            suggestion["adaptiveMode"],
-            suggestion["impactLevel"],
-            suggestion["runbookDraft"]["title"],
         ])
-        visible.extend(point["label"] for point in suggestion["timeline"])
-        visible.extend(stage["detail"] for stage in suggestion["stageTelemetry"])
-        visible.extend(item["statement"] for item in suggestion["hypothesisSet"]["items"])
-        visible.extend(suggestion["runbookDraft"]["actions"])
 
     assert visible
     assert all(not any("\u3400" <= char <= "\u9fff" for char in text) for text in visible)
@@ -132,9 +121,7 @@ def test_build_runtime_stream_delta_marks_cluster_suggestion_path():
     assert delta["kind"] == "cluster"
     assert delta["stageIds"] == [
         "cluster-window",
-        "aiops-agent",
-        "suggestions-topic",
-        "remediation",
+        "case-investigation",
     ]
 
 

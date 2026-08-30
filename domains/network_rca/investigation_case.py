@@ -35,6 +35,35 @@ def _loads(value: str | None, fallback: Any) -> Any:
         return fallback
 
 
+_LEGACY_PRESENTATION_FIELDS = {
+    "adaptiveMode",
+    "triggerReasons",
+    "impactLevel",
+    "stageTelemetry",
+    "hypothesisSet",
+    "runbookDraft",
+    "reviewVerdict",
+    "timeline",
+}
+
+
+def _fact_summary(facts: dict[str, Any], fallback: str) -> str:
+    if not facts:
+        return fallback
+    source = str(facts.get("sourceIp") or "未知来源")
+    destination = str(facts.get("destinationIp") or "未知目标")
+    service = str(facts.get("service") or "未知服务")
+    action = str(facts.get("action") or "未知动作")
+    count = facts.get("denyCount")
+    window = facts.get("windowSeconds")
+    volume = (
+        f"{count} 次/{window} 秒"
+        if count is not None and window is not None
+        else "规则命中"
+    )
+    return f"{source} -> {destination} · {service} · {action} · {volume}"
+
+
 def _merge_timeline(existing: Any, incoming: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Union source observations with case transitions without losing either."""
     out = [dict(item) for item in existing if isinstance(item, dict)]
@@ -111,7 +140,16 @@ class InvestigationCase:
     sources: tuple[SourceReference, ...]
     version: int
 
+    def latest_event(self, kind: str) -> dict[str, Any] | None:
+        return next(
+            (dict(item) for item in reversed(self.timeline) if item.get("kind") == kind),
+            None,
+        )
+
     def as_dict(self) -> dict[str, Any]:
+        decision_event = self.latest_event("business_decision_recorded")
+        decision = dict(decision_event.get("decision") or {}) if decision_event else None
+        session_event = self.latest_event("investigation_session_started")
         return {
             "caseId": self.case_id,
             "status": self.status,
@@ -130,6 +168,10 @@ class InvestigationCase:
             "latestSuggestionId": self.latest_suggestion_id,
             "hypotheses": self.hypotheses,
             "timeline": list(self.timeline),
+            "businessDecision": decision,
+            "investigationSessionId": (
+                session_event.get("sessionId") if session_event is not None else None
+            ),
             "sourcePayload": self.source_payload,
             "sources": [
                 {"kind": ref.kind, "sourceId": ref.source_id}
@@ -195,6 +237,99 @@ class InvestigationCaseRepository:
                     ON investigation_case_sources(case_id);
                 """
             )
+
+    def remove_legacy_reasoning_projection(self) -> int:
+        """Remove draft-model artifacts from the operator-facing case projection.
+
+        Immutable source rows retain the delivered records for audit. The case
+        projection keeps exact incident facts and completed business events.
+        """
+        removed = 0
+        legacy_kinds = {"inference", "suggestion", "critique", "runbook"}
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT case_id, summary, latest_suggestion_id, hypotheses_json, timeline_json, "
+                "source_payload_json FROM investigation_cases"
+            ).fetchall()
+            for row in rows:
+                timeline = list(_loads(row["timeline_json"], []))
+                deterministic_terminal = any(
+                    item.get("kind") == "business_decision_recorded"
+                    and dict(item.get("decision") or {}).get("classification")
+                    == "blocked_external_probe"
+                    for item in timeline
+                )
+                cleaned = [
+                    item for item in timeline
+                    if item.get("kind") not in legacy_kinds
+                    and not (
+                        deterministic_terminal
+                        and item.get("kind") == "retrieval_completed"
+                    )
+                ]
+                hypotheses = dict(_loads(row["hypotheses_json"], {}))
+                payload = dict(_loads(row["source_payload_json"], {}))
+                deleted_fields = [
+                    key for key in _LEGACY_PRESENTATION_FIELDS if key in payload
+                ]
+                for key in deleted_fields:
+                    payload.pop(key, None)
+                incident_facts = dict(payload.get("incidentFacts") or {})
+                if not incident_facts:
+                    source_rows = conn.execute(
+                        "SELECT payload_json FROM investigation_case_sources "
+                        "WHERE case_id=? ORDER BY occurred_at DESC",
+                        (row["case_id"],),
+                    ).fetchall()
+                    for source_row in source_rows:
+                        source_payload = dict(_loads(source_row["payload_json"], {}))
+                        candidate = dict(source_payload.get("incidentFacts") or {})
+                        if candidate:
+                            incident_facts = candidate
+                            payload["incidentFacts"] = candidate
+                            payload["dataClassification"] = str(
+                                candidate.get("dataClassification")
+                                or payload.get("dataClassification")
+                                or "observed"
+                            )
+                            break
+                summary = (
+                    _fact_summary(incident_facts, str(row["summary"]))
+                    if incident_facts
+                    else (
+                        "历史检测记录缺少结构化源字段，案件需要从事实库补查。"
+                        if deleted_fields or row["latest_suggestion_id"]
+                        else str(row["summary"])
+                    )
+                )
+                payload_changed = payload != dict(_loads(row["source_payload_json"], {}))
+                if (
+                    cleaned == timeline
+                    and not hypotheses
+                    and not payload_changed
+                    and summary == row["summary"]
+                ):
+                    continue
+                removed += (
+                    len(timeline) - len(cleaned)
+                    + (1 if hypotheses else 0)
+                    + len(deleted_fields)
+                )
+                conn.execute(
+                    "UPDATE investigation_cases SET summary=?, hypotheses_json='{}', "
+                    "timeline_json=?, source_payload_json=?, updated_at=?, "
+                    "version=version+1 WHERE case_id=?",
+                    (
+                        summary,
+                        _json(cleaned),
+                        _json(payload),
+                        _utc_now(),
+                        row["case_id"],
+                    ),
+                )
+            conn.commit()
+        return removed
 
     @staticmethod
     def _new_case_id(source: SourceReference) -> str:

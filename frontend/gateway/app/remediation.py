@@ -592,6 +592,7 @@ def execute(
         "commands": log.entries,
         "execution_id": execution_id,
         "incident_id": incident_id,
+        "case_id": incident_id if incident_id.startswith("case-") else None,
         "failure_domain": failure_domain,
         "budget_decision": budget_decision.to_dict(),
         "recovery_run": graph.get_run(incident_id).to_dict(),

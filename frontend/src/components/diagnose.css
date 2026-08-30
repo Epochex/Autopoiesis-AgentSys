@@ -516,6 +516,39 @@
 .dx-manual-disposition { border-top:1px solid var(--rule); }
 .dx-manual-disposition > summary { padding:8px 14px; cursor:pointer; font-size:8px; letter-spacing:.1em; color:var(--gray); }
 
+/* Linked live cases use one decision ledger.  Chat, generated runbooks and
+   manual disposition forms remain available only for ad-hoc investigations. */
+.dx-case-decision { gap:0; }
+.dx-case-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:12px 14px; border-bottom:1.5px solid var(--ink); }
+.dx-case-head span { font:8px var(--font-mono); letter-spacing:.12em; color:var(--gray); }
+.dx-case-head h2 { margin:4px 0 0; font:600 20px/1.1 var(--font-display); color:var(--ink); }
+.dx-case-head>code { font:8px var(--font-mono); color:var(--gray); }
+.dx-case-summary { margin:0; padding:12px 14px; border-bottom:1px solid var(--rule); font:10px/1.55 var(--font-mono); color:var(--ink); }
+.dx-case-outcome { display:grid; grid-template-columns:110px 1.4fr 1fr 1fr; border-bottom:1px solid var(--rule); }
+.dx-case-outcome>div { min-width:0; padding:10px 11px; border-right:1px solid var(--rule); }
+.dx-case-outcome>div:last-child { border-right:0; }
+.dx-case-outcome small { display:block; margin-bottom:5px; font:7.5px var(--font-mono); letter-spacing:.1em; color:var(--gray); }
+.dx-case-outcome b { display:block; font:500 9px/1.45 var(--font-mono); color:var(--ink); overflow-wrap:anywhere; }
+.dx-case-evidence,.dx-case-missing { padding:11px 14px; border-bottom:1px solid var(--rule); }
+.dx-case-evidence h3,.dx-case-missing h3 { margin:0 0 7px; font:8px var(--font-mono); letter-spacing:.1em; color:var(--gray); }
+.dx-case-evidence button { width:100%; display:grid; grid-template-columns:55px 100px minmax(0,1fr); gap:8px; padding:6px 7px; border:0; border-top:1px dotted var(--rule); background:transparent; text-align:left; cursor:pointer; font:9px/1.4 var(--font-mono); }
+.dx-case-evidence button:hover { background:var(--paper-2); }
+.dx-case-evidence code,.dx-case-missing code { color:var(--gray); }
+.dx-case-evidence span { color:var(--ink-soft); }
+.dx-case-missing>div { display:flex; justify-content:space-between; gap:10px; padding:7px 9px; border-left:3px solid var(--ink); background:var(--paper-2); font:9px/1.4 var(--font-mono); }
+.dx-case-execute { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; border-bottom:1px solid var(--rule); }
+.dx-case-execute p { margin:0; font:9px/1.45 var(--font-mono); }
+.dx-case-execute button { padding:7px 9px; border:1px solid var(--ink); background:var(--acid); font:700 8px var(--font-mono); cursor:pointer; }
+.dx-case-detail { border-bottom:1px solid var(--rule); }
+.dx-case-detail>summary { padding:9px 14px; cursor:pointer; font:8px var(--font-mono); letter-spacing:.1em; color:var(--gray); }
+.dx-case-detail .dx-iv-ev-list { margin:0 14px 12px; }
+
+@media (max-width:760px) {
+  .dx-case-outcome { grid-template-columns:1fr 1fr; }
+  .dx-case-outcome>div:nth-child(2) { border-right:0; }
+  .dx-case-outcome>div:nth-child(-n+2) { border-bottom:1px solid var(--rule); }
+}
+
 /* Retrieval stays folded until the operator asks for candidate-level detail. */
 .dx-cr { margin:0; border-bottom:1px solid var(--rule); background:var(--paper-2); }
 .dx-cr-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 14px;
