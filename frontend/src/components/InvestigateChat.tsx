@@ -8,6 +8,11 @@ import {
   InvestigationContextReceipt,
   type InvestigationReceipt,
 } from './InvestigationContextReceipt'
+import {
+  HypothesisRail,
+  type HypothesisView,
+  type ProbeRound,
+} from './HypothesisRail'
 
 /* ── 查一个故障 · the chat panel that works one fault end to end ──────────────
  *
@@ -48,7 +53,10 @@ interface StartResp {
   probe_prior: InvestigationReceipt['probe_prior']
   historical_context: InvestigationReceipt['historical_context']
   knowledge_context: InvestigationReceipt['knowledge_context']
+  retrieval_results: InvestigationReceipt['retrieval_results']
   trace_events: InvestigationReceipt['trace_events']
+  hypothesis_state: HypothesisView
+  probe_rounds: ProbeRound[]
 }
 
 interface AnalyzeResp {
@@ -57,6 +65,10 @@ interface AnalyzeResp {
   runbook: Step[]
   citations: string[]
   root_cause?: string
+  follow_up_evidence?: Evidence[]
+  hypothesis_state?: HypothesisView
+  probe_rounds?: ProbeRound[]
+  memory_commit?: { committed: boolean; dossier_id?: string; reason?: string }
 }
 
 interface CloseResp { ok: boolean; resolution: 'confirmed' | 'inconclusive' | 'refuted'; dossier: { dossier_id: string } }
@@ -66,6 +78,9 @@ interface AskResp {
   answer: string
   citations: string[]
   evidence: Evidence[]
+  hypothesis_state?: HypothesisView
+  probe_rounds?: ProbeRound[]
+  memory_commit?: { committed: boolean; dossier_id?: string; reason?: string }
 }
 
 interface RunStepResp {
@@ -220,6 +235,8 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [summary, setSummary] = useState('')
   const [receipt, setReceipt] = useState<InvestigationReceipt | null>(null)
+  const [hypotheses, setHypotheses] = useState<HypothesisView | null>(null)
+  const [probeRounds, setProbeRounds] = useState<ProbeRound[]>([])
   const [evidence, setEvidence] = useState<Evidence[]>([])
   const [verdict, setVerdict] = useState<Verdict | null>(null)
   const [stepOut, setStepOut] = useState<Record<number, StepOut>>({})
@@ -227,7 +244,7 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
   const [turns, setTurns] = useState<Turn[]>([])
   const [busy, setBusy] = useState<Busy>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [openCtx, setOpenCtx] = useState(true)
+  const [openCtx, setOpenCtx] = useState(false)
   const [flash, setFlash] = useState<{ id: string } | null>(null)
   const [rootDraft, setRootDraft] = useState('')
   const [operatorId, setOperatorId] = useState('')
@@ -252,6 +269,8 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
     setSessionId(null)
     setSummary('')
     setReceipt(null)
+    setHypotheses(null)
+    setProbeRounds([])
     setEvidence([])
     setVerdict(null)
     setStepOut({})
@@ -270,14 +289,17 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
       setSessionId(d.session_id)
       setSummary(d.summary ?? '')
       setEvidence(d.evidence ?? [])
+      setHypotheses(d.hypothesis_state ?? null)
+      setProbeRounds(d.probe_rounds ?? [])
       setReceipt({
         probe_candidates: d.probe_candidates ?? [],
         probe_prior: d.probe_prior ?? {},
         historical_context: d.historical_context ?? {},
         knowledge_context: d.knowledge_context ?? [],
+        retrieval_results: d.retrieval_results ?? [],
         trace_events: d.trace_events ?? [],
       })
-      setOpenCtx(true)
+      setOpenCtx(false)
     } catch (e) {
       if (aliveRef.current) setErr(errText(e))
     } finally {
@@ -310,6 +332,12 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
         diagnosis: d.diagnosis ?? '', rootCause: d.root_cause ?? '',
         runbook: d.runbook ?? [], citations: d.citations ?? [],
       })
+      setEvidence((cur) => merge(cur, d.follow_up_evidence ?? []))
+      if (d.hypothesis_state) setHypotheses(d.hypothesis_state)
+      if (d.probe_rounds) setProbeRounds(d.probe_rounds)
+      if (d.memory_commit?.committed && d.memory_commit.dossier_id) {
+        setArchived(d.memory_commit.dossier_id)
+      }
       setRootDraft(d.root_cause ?? '')
       setStepOut({})
       setStop(null)
@@ -426,6 +454,11 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
       const d = await post<AskResp>('/api/rca/investigate/ask', { session_id: sessionId, question: q })
       if (!aliveRef.current) return
       setEvidence((cur) => merge(cur, d.evidence ?? []))
+      if (d.hypothesis_state) setHypotheses(d.hypothesis_state)
+      if (d.probe_rounds) setProbeRounds(d.probe_rounds)
+      if (d.memory_commit?.committed && d.memory_commit.dossier_id) {
+        setArchived(d.memory_commit.dossier_id)
+      }
       setTurns((cur) =>
         cur.map((t) => (t.id === id ? { ...t, a: d.answer ?? '', citations: d.citations ?? [], state: 'done' } : t)))
     } catch (e) {
@@ -512,6 +545,8 @@ export function InvestigateChat({ lang, family, subject, caseId }: { lang: Lang;
       {sessionId && receipt ? (
         <InvestigationContextReceipt lang={lang} sessionId={sessionId} receipt={receipt} />
       ) : null}
+
+      <HypothesisRail lang={lang} view={hypotheses} rounds={probeRounds} onEvidence={jump} />
 
       <div className="dx-iv-ev">
         <button

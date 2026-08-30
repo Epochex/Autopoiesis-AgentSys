@@ -1,0 +1,583 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "active-investigation-adversarial-smoke-v1",
+  "data_classification": "synthetic_controlled",
+  "benchmark_purpose": "evaluator_contract_smoke_test",
+  "top_k": 3,
+  "variants": [
+    "direct_api",
+    "bm25",
+    "hybrid_filtered",
+    "full_active"
+  ],
+  "cases": [
+    {
+      "case_id": "same-symptom-service-versus-policy",
+      "adversarial_kinds": ["same_symptom_different_root"],
+      "withheld_decisive_evidence": false,
+      "evidence_catalog": [
+        {
+          "evidence_id": "svc-current-stopped",
+          "source": "host:service-state",
+          "entity_id": "camera-01",
+          "observed_at": "2026-08-01T10:04:00Z",
+          "roles": ["decisive"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "policy-current-nohit",
+          "source": "firewall:policy-counter",
+          "entity_id": "camera-01",
+          "observed_at": "2026-08-01T10:03:00Z",
+          "roles": ["contradiction", "supporting"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "policy-old-block",
+          "source": "incident:archive",
+          "entity_id": "camera-01",
+          "observed_at": "2025-02-01T10:00:00Z",
+          "roles": ["distractor"],
+          "stale": true,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "other-camera-stopped",
+          "source": "host:service-state",
+          "entity_id": "camera-09",
+          "observed_at": "2026-08-01T10:02:00Z",
+          "roles": ["distractor"],
+          "stale": false,
+          "entity_mismatch": true
+        }
+      ],
+      "gold": {
+        "root_causes": ["camera_service_not_listening"],
+        "decisive_evidence_ids": ["svc-current-stopped"],
+        "contradiction_evidence_ids": ["policy-current-nohit"],
+        "allowed_action_ids": ["restart_camera_service"]
+      },
+      "runs": [
+        {
+          "variant": "direct_api",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "policy-old-block", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["firewall_policy_block"], "hypothesis_status": "confirmed"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "action", "action_id": "disable_firewall_policy"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "conclusion", "root_causes": ["firewall_policy_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "bm25",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "policy-old-block", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "other-camera-stopped", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "probe", "probe_key": "read_policy"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "conclusion", "root_causes": ["firewall_policy_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "hybrid_filtered",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "policy-current-nohit", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "svc-current-stopped", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "probe", "probe_key": "read_service_state"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["camera_service_not_listening"], "hypothesis_status": "confirmed"},
+            {"sequence": 5, "state_version": 5, "process_generation": 1, "event_type": "action", "action_id": "restart_camera_service"},
+            {"sequence": 6, "state_version": 6, "process_generation": 1, "event_type": "conclusion", "root_causes": ["camera_service_not_listening"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "full_active",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "svc-current-stopped", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "policy-current-nohit", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "probe", "probe_key": "read_service_state"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["camera_service_not_listening"], "hypothesis_status": "confirmed"},
+            {"sequence": 5, "state_version": 5, "process_generation": 1, "event_type": "action", "action_id": "restart_camera_service"},
+            {"sequence": 6, "state_version": 6, "process_generation": 1, "event_type": "conclusion", "root_causes": ["camera_service_not_listening"], "confirmed": true}
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "same-keyword-wrong-device",
+      "adversarial_kinds": ["same_keyword_different_entity"],
+      "withheld_decisive_evidence": false,
+      "evidence_catalog": [
+        {
+          "evidence_id": "device-a-policy-42-hit",
+          "source": "firewall:policy-counter",
+          "entity_id": "device-a",
+          "observed_at": "2026-08-02T11:00:00Z",
+          "roles": ["decisive"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "device-b-policy-42-hit",
+          "source": "firewall:policy-counter",
+          "entity_id": "device-b",
+          "observed_at": "2026-08-02T11:00:00Z",
+          "roles": ["distractor"],
+          "stale": false,
+          "entity_mismatch": true
+        },
+        {
+          "evidence_id": "device-a-identity",
+          "source": "asset:identity-map",
+          "entity_id": "device-a",
+          "observed_at": "2026-08-02T10:59:00Z",
+          "roles": ["contradiction", "supporting"],
+          "stale": false,
+          "entity_mismatch": false
+        }
+      ],
+      "gold": {
+        "root_causes": ["device_a_policy_42_block"],
+        "decisive_evidence_ids": ["device-a-policy-42-hit"],
+        "contradiction_evidence_ids": ["device-a-identity"],
+        "allowed_action_ids": ["update_device_a_policy_42"]
+      },
+      "runs": [
+        {
+          "variant": "direct_api",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "device-b-policy-42-hit", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "conclusion", "root_causes": ["device_b_policy_42_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "bm25",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "device-b-policy-42-hit", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "device-a-policy-42-hit", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "conclusion", "root_causes": ["device_b_policy_42_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "hybrid_filtered",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "device-a-identity", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "device-a-policy-42-hit", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["device_a_policy_42_block"], "hypothesis_status": "confirmed"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "action", "action_id": "update_device_a_policy_42"},
+            {"sequence": 5, "state_version": 5, "process_generation": 1, "event_type": "conclusion", "root_causes": ["device_a_policy_42_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "full_active",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "device-a-identity", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "resolve_current_entity"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "retrieval", "evidence_id": "device-a-policy-42-hit", "rank": 2},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["device_a_policy_42_block"], "hypothesis_status": "confirmed"},
+            {"sequence": 5, "state_version": 5, "process_generation": 1, "event_type": "action", "action_id": "update_device_a_policy_42"},
+            {"sequence": 6, "state_version": 6, "process_generation": 1, "event_type": "conclusion", "root_causes": ["device_a_policy_42_block"], "confirmed": true}
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "ip-reassigned-to-new-device",
+      "adversarial_kinds": ["ip_reassignment"],
+      "withheld_decisive_evidence": false,
+      "evidence_catalog": [
+        {
+          "evidence_id": "new-device-dns-failure",
+          "source": "host:dns-probe",
+          "entity_id": "new-laptop",
+          "observed_at": "2026-08-03T09:12:00Z",
+          "roles": ["decisive"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "old-camera-firewall-incident",
+          "source": "incident:archive",
+          "entity_id": "old-camera",
+          "observed_at": "2025-11-03T09:00:00Z",
+          "roles": ["distractor"],
+          "stale": true,
+          "entity_mismatch": true
+        },
+        {
+          "evidence_id": "current-dhcp-binding",
+          "source": "router:dhcp-binding",
+          "entity_id": "new-laptop",
+          "observed_at": "2026-08-03T09:11:00Z",
+          "roles": ["contradiction", "supporting"],
+          "stale": false,
+          "entity_mismatch": false
+        }
+      ],
+      "gold": {
+        "root_causes": ["new_device_dns_misconfiguration"],
+        "decisive_evidence_ids": ["new-device-dns-failure"],
+        "contradiction_evidence_ids": ["current-dhcp-binding"],
+        "allowed_action_ids": ["refresh_new_device_dns"]
+      },
+      "runs": [
+        {
+          "variant": "direct_api",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "old-camera-firewall-incident", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "conclusion", "root_causes": ["old_camera_firewall_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "bm25",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "old-camera-firewall-incident", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "search_same_ip_history"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "conclusion", "root_causes": ["old_camera_firewall_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "hybrid_filtered",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "current-dhcp-binding", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "new-device-dns-failure", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["new_device_dns_misconfiguration"], "hypothesis_status": "confirmed"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "conclusion", "root_causes": ["new_device_dns_misconfiguration"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "full_active",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "current-dhcp-binding", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "resolve_ip_at_event_time"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "retrieval", "evidence_id": "new-device-dns-failure", "rank": 2},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["new_device_dns_misconfiguration"], "hypothesis_status": "confirmed"},
+            {"sequence": 5, "state_version": 5, "process_generation": 1, "event_type": "action", "action_id": "refresh_new_device_dns"},
+            {"sequence": 6, "state_version": 6, "process_generation": 1, "event_type": "conclusion", "root_causes": ["new_device_dns_misconfiguration"], "confirmed": true}
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "stale-configuration-versus-current-route",
+      "adversarial_kinds": ["stale_configuration"],
+      "withheld_decisive_evidence": false,
+      "evidence_catalog": [
+        {
+          "evidence_id": "current-route-missing",
+          "source": "router:active-route-table",
+          "entity_id": "gateway-01",
+          "observed_at": "2026-08-04T12:02:00Z",
+          "roles": ["decisive"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "saved-route-present",
+          "source": "config:archive",
+          "entity_id": "gateway-01",
+          "observed_at": "2026-01-04T12:00:00Z",
+          "roles": ["distractor"],
+          "stale": true,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "policy-current-no-drops",
+          "source": "firewall:policy-counter",
+          "entity_id": "gateway-01",
+          "observed_at": "2026-08-04T12:01:00Z",
+          "roles": ["contradiction", "supporting"],
+          "stale": false,
+          "entity_mismatch": false
+        }
+      ],
+      "gold": {
+        "root_causes": ["active_route_missing"],
+        "decisive_evidence_ids": ["current-route-missing"],
+        "contradiction_evidence_ids": ["policy-current-no-drops"],
+        "allowed_action_ids": ["restore_active_route"]
+      },
+      "runs": [
+        {
+          "variant": "direct_api",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "saved-route-present", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "conclusion", "root_causes": ["firewall_policy_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "bm25",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "saved-route-present", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "policy-current-no-drops", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "conclusion", "root_causes": ["firewall_policy_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "hybrid_filtered",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "policy-current-no-drops", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "current-route-missing", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["active_route_missing"], "hypothesis_status": "confirmed"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "conclusion", "root_causes": ["active_route_missing"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "full_active",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "policy-current-no-drops", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "read_active_route_table"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "retrieval", "evidence_id": "current-route-missing", "rank": 2},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["active_route_missing"], "hypothesis_status": "confirmed"},
+            {"sequence": 5, "state_version": 5, "process_generation": 1, "event_type": "action", "action_id": "restore_active_route"},
+            {"sequence": 6, "state_version": 6, "process_generation": 1, "event_type": "conclusion", "root_causes": ["active_route_missing"], "confirmed": true}
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "contradictory-link-observations",
+      "adversarial_kinds": ["contradictory_logs"],
+      "withheld_decisive_evidence": false,
+      "evidence_catalog": [
+        {
+          "evidence_id": "switch-flap-counter",
+          "source": "switch:interface-counter",
+          "entity_id": "switch-07-port-9",
+          "observed_at": "2026-08-05T14:00:00Z",
+          "roles": ["decisive"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "interface-currently-up",
+          "source": "switch:interface-state",
+          "entity_id": "switch-07-port-9",
+          "observed_at": "2026-08-05T14:01:00Z",
+          "roles": ["contradiction"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "server-timeout",
+          "source": "host:application-log",
+          "entity_id": "server-02",
+          "observed_at": "2026-08-05T14:00:30Z",
+          "roles": ["distractor"],
+          "stale": false,
+          "entity_mismatch": true
+        }
+      ],
+      "gold": {
+        "root_causes": ["switch_port_flap"],
+        "decisive_evidence_ids": ["switch-flap-counter"],
+        "contradiction_evidence_ids": ["interface-currently-up"],
+        "allowed_action_ids": ["isolate_switch_port"]
+      },
+      "runs": [
+        {
+          "variant": "direct_api",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "server-timeout", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "conclusion", "root_causes": ["server_overload"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "bm25",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "switch-flap-counter", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "conclusion", "root_causes": ["switch_port_down"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "hybrid_filtered",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "switch-flap-counter", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "interface-currently-up", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["switch_port_flap"], "hypothesis_status": "confirmed"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "conclusion", "root_causes": ["switch_port_flap"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "full_active",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "interface-currently-up", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "read_flap_counter"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "retrieval", "evidence_id": "switch-flap-counter", "rank": 2},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["switch_port_flap"], "hypothesis_status": "confirmed"},
+            {"sequence": 5, "state_version": 5, "process_generation": 1, "event_type": "conclusion", "root_causes": ["switch_port_flap"], "confirmed": true}
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "decisive-tool-timeout",
+      "adversarial_kinds": ["tool_timeout_decisive_hidden"],
+      "withheld_decisive_evidence": true,
+      "evidence_catalog": [
+        {
+          "evidence_id": "hidden-active-route-missing",
+          "source": "router:timed-out-tool",
+          "entity_id": "gateway-02",
+          "observed_at": "2026-08-06T16:00:00Z",
+          "roles": ["decisive"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "historical-route-incident",
+          "source": "incident:archive",
+          "entity_id": "gateway-02",
+          "observed_at": "2026-02-06T16:00:00Z",
+          "roles": ["distractor"],
+          "stale": true,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "tool-timeout-receipt",
+          "source": "tool:receipt",
+          "entity_id": "gateway-02",
+          "observed_at": "2026-08-06T16:01:00Z",
+          "roles": ["contradiction", "supporting"],
+          "stale": false,
+          "entity_mismatch": false
+        }
+      ],
+      "gold": {
+        "root_causes": ["active_route_missing"],
+        "decisive_evidence_ids": ["hidden-active-route-missing"],
+        "contradiction_evidence_ids": ["tool-timeout-receipt"],
+        "allowed_action_ids": []
+      },
+      "runs": [
+        {
+          "variant": "direct_api",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "historical-route-incident", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "hypothesis", "root_causes": ["active_route_missing"], "hypothesis_status": "confirmed"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "action", "action_id": "add_static_route"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "conclusion", "root_causes": ["active_route_missing"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "bm25",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "historical-route-incident", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "read_route_table"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "retrieval", "evidence_id": "tool-timeout-receipt", "rank": 2},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "conclusion", "root_causes": ["active_route_missing"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "hybrid_filtered",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "tool-timeout-receipt", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "read_route_table"},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "conclusion", "confirmed": false}
+          ]
+        },
+        {
+          "variant": "full_active",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "probe", "probe_key": "read_route_table"},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "tool-timeout-receipt", "rank": 1},
+            {"sequence": 3, "state_version": 3, "process_generation": 1, "event_type": "probe", "probe_key": "read_route_table_backup"},
+            {"sequence": 4, "state_version": 4, "process_generation": 1, "event_type": "conclusion", "confirmed": false}
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "combined-route-and-service-fault",
+      "adversarial_kinds": ["combined_fault"],
+      "withheld_decisive_evidence": false,
+      "evidence_catalog": [
+        {
+          "evidence_id": "combo-route-missing",
+          "source": "router:active-route-table",
+          "entity_id": "gateway-03",
+          "observed_at": "2026-08-07T18:00:00Z",
+          "roles": ["decisive"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "combo-service-down",
+          "source": "host:service-state",
+          "entity_id": "server-03",
+          "observed_at": "2026-08-07T18:01:00Z",
+          "roles": ["decisive"],
+          "stale": false,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "combo-old-policy-block",
+          "source": "incident:archive",
+          "entity_id": "gateway-03",
+          "observed_at": "2025-08-07T18:00:00Z",
+          "roles": ["distractor"],
+          "stale": true,
+          "entity_mismatch": false
+        },
+        {
+          "evidence_id": "combo-policy-nohit",
+          "source": "firewall:policy-counter",
+          "entity_id": "gateway-03",
+          "observed_at": "2026-08-07T18:02:00Z",
+          "roles": ["contradiction"],
+          "stale": false,
+          "entity_mismatch": false
+        }
+      ],
+      "gold": {
+        "root_causes": ["active_route_missing", "target_service_down"],
+        "decisive_evidence_ids": ["combo-route-missing", "combo-service-down"],
+        "contradiction_evidence_ids": ["combo-policy-nohit"],
+        "allowed_action_ids": ["restore_route_and_service"]
+      },
+      "runs": [
+        {
+          "variant": "direct_api",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "combo-old-policy-block", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "check_policy"},
+            {"sequence": 3, "state_version": 1, "process_generation": 2, "event_type": "restart", "checkpoint_restored": false},
+            {"sequence": 4, "state_version": 2, "process_generation": 2, "event_type": "probe", "probe_key": "check_policy"},
+            {"sequence": 5, "state_version": 3, "process_generation": 2, "event_type": "conclusion", "root_causes": ["firewall_policy_block"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "bm25",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "combo-route-missing", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "read_route_table"},
+            {"sequence": 3, "state_version": 1, "process_generation": 2, "event_type": "restart", "checkpoint_restored": false},
+            {"sequence": 4, "state_version": 2, "process_generation": 2, "event_type": "probe", "probe_key": "read_route_table"},
+            {"sequence": 5, "state_version": 3, "process_generation": 2, "event_type": "conclusion", "root_causes": ["active_route_missing"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "hybrid_filtered",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "combo-route-missing", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "retrieval", "evidence_id": "combo-service-down", "rank": 2},
+            {"sequence": 3, "state_version": 3, "process_generation": 2, "event_type": "restart", "checkpoint_restored": true},
+            {"sequence": 4, "state_version": 4, "process_generation": 2, "event_type": "retrieval", "evidence_id": "combo-policy-nohit", "rank": 3},
+            {"sequence": 5, "state_version": 5, "process_generation": 2, "event_type": "hypothesis", "root_causes": ["active_route_missing", "target_service_down"], "hypothesis_status": "confirmed"},
+            {"sequence": 6, "state_version": 6, "process_generation": 2, "event_type": "conclusion", "root_causes": ["active_route_missing", "target_service_down"], "confirmed": true}
+          ]
+        },
+        {
+          "variant": "full_active",
+          "trace": [
+            {"sequence": 1, "state_version": 1, "process_generation": 1, "event_type": "retrieval", "evidence_id": "combo-route-missing", "rank": 1},
+            {"sequence": 2, "state_version": 2, "process_generation": 1, "event_type": "probe", "probe_key": "read_service_state"},
+            {"sequence": 3, "state_version": 2, "process_generation": 2, "event_type": "restart", "checkpoint_restored": true},
+            {"sequence": 4, "state_version": 3, "process_generation": 2, "event_type": "retrieval", "evidence_id": "combo-policy-nohit", "rank": 2},
+            {"sequence": 5, "state_version": 4, "process_generation": 2, "event_type": "probe", "probe_key": "read_service_state_backup"},
+            {"sequence": 6, "state_version": 5, "process_generation": 2, "event_type": "conclusion", "confirmed": false}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,14 @@ TraceKind = Literal[
     "memory_attributed",
     "memory_shortcut",
     "memory_resolved",
+    # Evidence-seeking investigation state.  These events describe decisions
+    # that change the case, rather than every sentence emitted by a model.
+    "retrieval_candidates_filtered",
+    "hypothesis_proposed",
+    "hypothesis_testing",
+    "hypothesis_rejected",
+    "hypothesis_confirmed",
+    "discriminating_probe_selected",
     "context_compiled",
     "skills_exposed",
     "tool_called",

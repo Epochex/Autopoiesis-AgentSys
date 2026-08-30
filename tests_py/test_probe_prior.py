@@ -116,7 +116,7 @@ def _failed_service_memory() -> TieredMemoryStore:
     return memory
 
 
-def test_without_relevant_memory_order_and_count_are_exactly_unchanged(monkeypatch):
+def test_without_relevant_memory_keeps_catalogue_and_uses_query_ranked_opening_slice(monkeypatch):
     called = _fake_commands(monkeypatch)
     memory = TieredMemoryStore()
     memory.add(MemoryRecord(
@@ -131,9 +131,15 @@ def test_without_relevant_memory_order_and_count_are_exactly_unchanged(monkeypat
     opened = investigate.start("disk pressure on this host")
 
     expected = [*investigate.BASELINE_PROBES, *investigate.TRIAGE_PROBES]
-    assert called == expected
     assert opened["probe_candidates"] == expected
-    assert len(opened["evidence"]) == len(expected)
+    assert called == [
+        *investigate.BASELINE_PROBES,
+        "df -h",
+        "ip -br link show",
+        "ip route show",
+        "systemctl --failed --no-legend",
+    ]
+    assert len(opened["evidence"]) == len(called)
     assert not any(row["kind"] == "memory_shortcut" for row in opened["trace_events"])
     retrieval = next(row for row in opened["trace_events"] if row["kind"] == "memory_candidates_ranked")
     assert retrieval["payload"]["returned_count"] == 0
@@ -149,8 +155,17 @@ def test_memory_reorders_triage_without_changing_its_candidate_set(monkeypatch):
     assert triage_candidates[0] == "df -h"
     assert set(triage_candidates) == set(investigate.TRIAGE_PROBES)
     assert len(triage_candidates) == len(investigate.TRIAGE_PROBES)
-    assert called == opened["probe_candidates"]
-    trace = opened["trace_events"][0]["payload"]
+    assert called == [
+        *investigate.BASELINE_PROBES,
+        "df -h",
+        "ip -br link show",
+        "ip route show",
+        "systemctl --failed --no-legend",
+    ]
+    trace = next(
+        row["payload"] for row in opened["trace_events"]
+        if row["kind"] == "memory_shortcut"
+    )
     assert trace["effect"] == "probe_order"
     assert trace["saved_probe_count"] == 0
     assert trace["memory_ids"] == ["proc-disk-pressure", "sem-disk-pressure"]
@@ -166,7 +181,10 @@ def test_fresh_matching_root_stops_the_tail_and_records_exact_savings(monkeypatc
     assert set(opened["probe_candidates"][len(investigate.BASELINE_PROBES):]) == set(
         investigate.TRIAGE_PROBES
     )
-    payload = opened["trace_events"][0]["payload"]
+    payload = next(
+        row["payload"] for row in opened["trace_events"]
+        if row["kind"] == "memory_shortcut"
+    )
     assert payload["effect"] == "probe_order_and_early_stop"
     assert payload["confirmed_root_key"] == "disk_pressure"
     assert payload["saved_probe_count"] == len(investigate.TRIAGE_PROBES) - 1
@@ -204,15 +222,23 @@ def test_failed_service_demo_combines_memory_shortcut_and_knowledge_grounding(mo
     assert shortcut["payload"]["subject"] == "demo-collector.service"
 
 
-def test_a_wrong_memory_guess_only_changes_order_and_runs_the_full_sweep(monkeypatch):
+def test_a_wrong_memory_guess_keeps_untried_candidates_available(monkeypatch):
     called = _fake_commands(monkeypatch, disk_use=30)
     monkeypatch.setattr(investigate, "_live_memory_store", lambda: _disk_memory())
 
     opened = investigate.start("disk pressure on this host")
 
-    assert len(called) == len(investigate.BASELINE_PROBES) + len(investigate.TRIAGE_PROBES)
+    assert len(called) == len(investigate.BASELINE_PROBES) + investigate.OPENING_ACTIVE_PROBE_BUDGET
     assert len(opened["evidence"]) == len(called)
-    assert opened["trace_events"][0]["payload"]["saved_probe_count"] == 0
+    shortcut = next(
+        row["payload"] for row in opened["trace_events"]
+        if row["kind"] == "memory_shortcut"
+    )
+    assert shortcut["saved_probe_count"] == 0
+    assert any(
+        item["status"] == "available"
+        for item in opened["hypothesis_state"]["probes"]
+    )
 
 
 def test_memory_naming_the_entire_sweep_claims_no_shortcut(monkeypatch):
@@ -223,7 +249,8 @@ def test_memory_naming_the_entire_sweep_claims_no_shortcut(monkeypatch):
 
     opened = investigate.start("disk pressure on this host")
 
-    assert called == [*investigate.BASELINE_PROBES, *investigate.TRIAGE_PROBES]
+    assert called[:4] == [*investigate.BASELINE_PROBES, "df -h"]
+    assert len(called) == len(investigate.BASELINE_PROBES) + investigate.OPENING_ACTIVE_PROBE_BUDGET
     assert not any(row["kind"] == "memory_shortcut" for row in opened["trace_events"])
     assert any(row["kind"] == "memory_candidates_ranked" for row in opened["trace_events"])
     assert opened["probe_prior"]["strictly_narrowed"] is False
@@ -241,7 +268,11 @@ def test_fully_stale_memory_stays_visible_but_cannot_reorder(monkeypatch):
 
     opened = investigate.start("disk pressure on this host")
 
-    assert called == [*investigate.BASELINE_PROBES, *investigate.TRIAGE_PROBES]
+    assert opened["probe_candidates"] == [
+        *investigate.BASELINE_PROBES, *investigate.TRIAGE_PROBES,
+    ]
+    assert called[:4] == [*investigate.BASELINE_PROBES, "df -h"]
+    assert len(called) == len(investigate.BASELINE_PROBES) + investigate.OPENING_ACTIVE_PROBE_BUDGET
     considered = opened["probe_prior"]["considered"]
     assert {item["memory_id"] for item in considered} == {
         "proc-disk-pressure", "sem-disk-pressure",

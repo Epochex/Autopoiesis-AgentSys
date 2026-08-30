@@ -31,9 +31,29 @@ import os
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from core.investigate.evidence_retrieval import (
+    EvidenceCandidate,
+    EvidenceRetriever,
+    RetrievalScope,
+)
+from core.investigate.hypothesis_loop import (
+    EvidenceInput,
+    HypothesisLoop,
+    ProbeCandidate,
+    RootCauseHypothesis,
+)
+from core.investigate.network_hypotheses import (
+    ACTIVE_ROOTS as _ACTIVE_ROOTS,
+    AUTO_ARCHIVABLE_ROOTS as _AUTO_ARCHIVABLE_ROOTS,
+    EXPECTED_DOWN_INTERFACES as _EXPECTED_DOWN_INTERFACES,
+    FAMILY_ACTIVE_ROOTS as _FAMILY_ACTIVE_ROOTS,
+    command_matches_probe as _command_matches_probe,
+    create_network_hypothesis_loop,
+    probe_observation as _probe_polarity,
+)
 from core.investigate.safe_exec import is_safe, run
 from core.memory.bm25 import tokenize
 from core.memory.ops_knowledge import retrieve_ops_knowledge
@@ -90,6 +110,12 @@ TRIAGE_PROBES = [
     "journalctl -p err -n 40 --no-pager --since -24h",
     "dmesg -T --level err,crit,alert -x",
 ]
+
+# An open investigation starts with enough checks to separate network path and
+# host-service causes.  The remaining candidates stay available for the next
+# evidence round, so the opening request does not blindly execute the whole
+# catalogue.
+OPENING_ACTIVE_PROBE_BUDGET = 4
 
 # A device portrait is a routing hint, never evidence.  Each anomaly names only
 # existing read-only checks whose fresh output can investigate that observation.
@@ -276,8 +302,6 @@ _QUERY_BRIDGE: dict[str, tuple[str, ...]] = {
     "健康": ("health", "resource"),
 }
 
-_EXPECTED_DOWN_INTERFACES = {"eth0", "eth1", "eth3", "eth4", "eth5", "idrac"}
-
 # Findings that are normal on this box and would otherwise be reported as
 # faults. Stated to the model rather than filtered out of the evidence: the
 # reading stays visible, but it is told not to raise an alarm about it.
@@ -336,6 +360,10 @@ class Session:
     # reference knowledge.  The raw source-shaped fields above remain for the
     # existing UI, while this list is what the model and trace ledger consume.
     retrieval_results: list[dict[str, Any]] = field(default_factory=list)
+    # Durable state of competing causes and the probes that separated them.
+    # This snapshot is restored with the rest of the session after a restart.
+    hypothesis_state: dict[str, Any] = field(default_factory=dict)
+    probe_rounds: list[dict[str, Any]] = field(default_factory=list)
     trace_events: list[dict[str, Any]] = field(default_factory=list)
     diagnosis: str = ""
     root_cause: str = ""
@@ -353,10 +381,12 @@ class Session:
         if len(self.evidence) >= MAX_EVIDENCE:
             return {"evidence_id": "", "command": command, "output": "",
                     "ok": False, "refused": "session evidence limit reached"}
+        _prepare_probe_for_command(self, command)
         execution = run(command)
         item = execution.as_evidence(self.next_evidence_id())
         item["at"] = datetime.now(timezone.utc).isoformat()
         self.evidence.append(item)
+        _record_probe_observation(self, item)
         _after_evidence(self, item)
         return item
 
@@ -394,6 +424,8 @@ class Session:
             "historical_context": self.historical_context,
             "knowledge_context": self.knowledge_context,
             "retrieval_results": self.retrieval_results,
+            "hypothesis_state": self.hypothesis_state,
+            "probe_rounds": self.probe_rounds,
             "trace_events": self.trace_events,
             "diagnosis": self.diagnosis,
             "root_cause": self.root_cause,
@@ -417,6 +449,8 @@ class Session:
             historical_context=dict(value.get("historical_context") or {}),
             knowledge_context=list(value.get("knowledge_context") or ()),
             retrieval_results=list(value.get("retrieval_results") or ()),
+            hypothesis_state=dict(value.get("hypothesis_state") or {}),
+            probe_rounds=list(value.get("probe_rounds") or ()),
             trace_events=list(value.get("trace_events") or ()),
             diagnosis=str(value.get("diagnosis") or ""),
             root_cause=str(value.get("root_cause") or ""),
@@ -817,6 +851,234 @@ def _confirmed_root_keys(evidence: list[dict[str, Any]], subject: str | None) ->
     return confirmed
 
 
+def _loop_for(session: Session) -> HypothesisLoop | None:
+    if not session.hypothesis_state:
+        return None
+    return HypothesisLoop.restore(session.hypothesis_state)
+
+
+def _store_loop(session: Session, loop: HypothesisLoop) -> None:
+    session.hypothesis_state = loop.state.model_dump(mode="json")
+
+
+def _initialise_hypothesis_loop(
+    session: Session,
+    ordered_commands: list[str],
+) -> HypothesisLoop:
+    opened = datetime.fromisoformat(session.opened_at.replace("Z", "+00:00"))
+    loop = create_network_hypothesis_loop(
+        case_id=session.case_id or session.session_id,
+        family=session.family,
+        subject=session.subject,
+        opened_at=opened,
+        question_terms=_query_terms(session.question, session.family, session.subject),
+        ordered_commands=ordered_commands,
+    )
+    _store_loop(session, loop)
+    for hypothesis in loop.state.hypotheses:
+        _persist_session_trace(session, "hypothesis_proposed", {
+            "session_id": session.session_id,
+            "case_id": session.case_id,
+            "hypothesis_id": hypothesis.hypothesis_id,
+            "entity_id": hypothesis.entity_id,
+            "statement": hypothesis.statement,
+            "state_version": loop.state.state_version,
+        })
+    return loop
+
+
+def _record_probe_observation(session: Session, item: Mapping[str, Any]) -> None:
+    loop = _loop_for(session)
+    if loop is None:
+        return
+    command = str(item.get("command") or "")
+    selected = next(
+        (
+            probe
+            for probe in loop.state.probes
+            if probe.status == "selected" and _command_matches_probe(command, probe.description)
+        ),
+        None,
+    )
+    if selected is None:
+        return
+    root_id = selected.distinguishes_hypothesis_ids[0]
+    polarity, decisive, collection_status = _probe_polarity(root_id, item, session.subject)
+    observed_at = datetime.fromisoformat(
+        str(item.get("at") or datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")
+    )
+    observation = loop.record_evidence(EvidenceInput(
+        evidence_id=str(item.get("evidence_id")),
+        hypothesis_id=root_id,
+        entity_id=session.subject or "local-system",
+        observed_at=observed_at,
+        source="live_tool",
+        polarity=polarity,
+        decisive=decisive,
+        collection_status=collection_status,
+        summary=f"{command}: {'succeeded' if item.get('ok') else 'failed'}",
+        probe_id=selected.probe_id,
+    ))
+    _store_loop(session, loop)
+    hypothesis = loop.get_hypothesis(root_id)
+    event_kind = {
+        "proposed": "hypothesis_proposed",
+        "testing": "hypothesis_testing",
+        "rejected": "hypothesis_rejected",
+        "confirmed": "hypothesis_confirmed",
+    }[hypothesis.status]
+    _persist_session_trace(session, event_kind, {
+        "session_id": session.session_id,
+        "case_id": session.case_id,
+        "hypothesis_id": root_id,
+        "status": hypothesis.status,
+        "probe_id": selected.probe_id,
+        "evidence_id": observation.evidence_id,
+        "polarity": observation.polarity,
+        "decisive": observation.decisive,
+        "collection_status": observation.collection_status,
+        "state_version": loop.state.state_version,
+    })
+
+
+def _prepare_probe_for_command(session: Session, command: str) -> None:
+    """Attach a model-requested command to its available hypothesis probe."""
+    loop = _loop_for(session)
+    if loop is None:
+        return
+    if any(
+        probe.status == "selected" and _command_matches_probe(command, probe.description)
+        for probe in loop.state.probes
+    ):
+        return
+    available = next(
+        (
+            probe for probe in loop.state.probes
+            if probe.status == "available" and _command_matches_probe(command, probe.description)
+        ),
+        None,
+    )
+    if available is None:
+        return
+    try:
+        selected = loop.select_probe(available.probe_id)
+    except ValueError:
+        return
+    _store_loop(session, loop)
+    _persist_session_trace(session, "discriminating_probe_selected", {
+        "session_id": session.session_id,
+        "case_id": session.case_id,
+        "probe_id": selected.probe_id,
+        "command": selected.description,
+        "distinguishes": list(selected.distinguishes_hypothesis_ids),
+        "selection_source": "requested_command",
+        "state_version": loop.state.state_version,
+    })
+
+
+def _run_next_discriminating_probe(session: Session) -> dict[str, Any] | None:
+    loop = _loop_for(session)
+    if loop is None:
+        return None
+    selected = loop.select_next_probe()
+    if selected is None:
+        return None
+    _store_loop(session, loop)
+    _persist_session_trace(session, "discriminating_probe_selected", {
+        "session_id": session.session_id,
+        "case_id": session.case_id,
+        "probe_id": selected.probe_id,
+        "command": selected.description,
+        "distinguishes": list(selected.distinguishes_hypothesis_ids),
+        "state_version": loop.state.state_version,
+    })
+    item = session.collect(selected.description)
+    session.probe_rounds.append({
+        "probe_id": selected.probe_id,
+        "command": selected.description,
+        "evidence_id": item.get("evidence_id"),
+        "ok": bool(item.get("ok")),
+        "at": item.get("at"),
+    })
+    return item
+
+
+def _hypothesis_view(session: Session) -> dict[str, Any]:
+    loop = _loop_for(session)
+    if loop is None:
+        return {"state_version": 0, "hypotheses": [], "probes": []}
+    state = loop.state
+    return {
+        "state_version": state.state_version,
+        "hypotheses": [item.model_dump(mode="json") for item in state.hypotheses],
+        "probes": [item.model_dump(mode="json") for item in state.probes],
+        "confirmed_root_keys": [
+            item.hypothesis_id for item in state.hypotheses if item.status == "confirmed"
+        ],
+        "active_root_keys": [
+            item.hypothesis_id for item in state.hypotheses if item.status in {"proposed", "testing"}
+        ],
+    }
+
+
+def _register_model_hypothesis(
+    session: Session,
+    payload: Mapping[str, Any],
+) -> str | None:
+    """Persist an open-ended model candidate without granting it confirmation."""
+    statement = str(payload.get("root_cause") or "").strip()
+    if not statement or statement.casefold() == "inconclusive":
+        return None
+    loop = _loop_for(session)
+    if loop is None:
+        return None
+    if any(item.statement.casefold() == statement.casefold() for item in loop.state.hypotheses):
+        return None
+    model_hypotheses = [
+        item for item in loop.state.hypotheses if item.hypothesis_id.startswith("model:")
+    ]
+    if len(model_hypotheses) >= 3:
+        return None
+    digest = hashlib.sha256(statement.encode("utf-8")).hexdigest()[:12]
+    hypothesis_id = f"model:{digest}"
+    opened = datetime.fromisoformat(session.opened_at.replace("Z", "+00:00"))
+    now = datetime.now(timezone.utc)
+    loop.add_hypothesis(RootCauseHypothesis(
+        hypothesis_id=hypothesis_id,
+        statement=statement,
+        entity_id=session.subject or "local-system",
+        valid_from=opened,
+        valid_to=opened + timedelta(days=30),
+        updated_at=now,
+    ))
+    existing_commands = {item.description for item in loop.state.probes}
+    for index, raw in enumerate(payload.get("need_commands") or (), start=1):
+        command = str(raw).strip()
+        if not command or command in existing_commands or not is_safe(command):
+            continue
+        loop.add_probe(ProbeCandidate(
+            probe_id=f"probe:{hypothesis_id}:{index}",
+            description=command,
+            target_entity_id=session.subject or "local-system",
+            distinguishes_hypothesis_ids=(hypothesis_id,),
+            priority=20_000 - index,
+            estimated_cost=1.0,
+        ), at=now)
+        existing_commands.add(command)
+    _store_loop(session, loop)
+    _persist_session_trace(session, "hypothesis_proposed", {
+        "session_id": session.session_id,
+        "case_id": session.case_id,
+        "hypothesis_id": hypothesis_id,
+        "entity_id": session.subject or "local-system",
+        "statement": statement,
+        "origin": "model_analysis",
+        "confirmation_eligible": False,
+        "state_version": loop.state.state_version,
+    })
+    return hypothesis_id
+
+
 def _persist_session_trace(
     session: Session,
     kind: str,
@@ -1020,6 +1282,120 @@ def _build_retrieval_results(
     return results
 
 
+def _candidate_time(item: Mapping[str, Any]) -> datetime | None:
+    """Read a source timestamp when one is present, without inventing one."""
+    for key in ("observed_at", "updated_at", "opened_at", "created_at"):
+        raw = item.get(key)
+        if not raw:
+            continue
+        try:
+            value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return None
+
+
+def _constrain_retrieval_results(session: Session) -> None:
+    """Filter every recalled item against the current asset and incident window.
+
+    Existing indexes remain responsible for producing candidates.  This step
+    owns the boundary between a relevant-looking passage and context that is
+    actually applicable to the current investigation.
+    """
+    candidates: list[EvidenceCandidate] = []
+    result_by_evidence_id: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(session.retrieval_results, start=1):
+        kind = str(item.get("kind") or "")
+        candidate_kind = (
+            "document"
+            if kind == "knowledge_document"
+            else "historical_incident"
+        )
+        evidence_id = f"retrieval:{kind}:{item.get('item_id') or index}"
+        # Prefixes make identities stable even when two stores use the same id.
+        while evidence_id in result_by_evidence_id:
+            evidence_id += f":{index}"
+        matched_on = {str(value) for value in item.get("matched_on") or ()}
+        scoped_to_subject = bool(session.subject and "subject" in matched_on)
+        asset_ids = (session.subject,) if scoped_to_subject and session.subject else ()
+        entity_ids = asset_ids
+        candidates.append(EvidenceCandidate(
+            evidence_id=evidence_id,
+            text=str(item.get("summary") or item.get("title") or ""),
+            kind=candidate_kind,
+            source=str(item.get("source") or "unknown"),
+            asset_ids=asset_ids,
+            entity_ids=entity_ids,
+            observed_at=_candidate_time(item),
+            upstream_rank=index,
+            metadata={
+                "kind": kind,
+                "item_id": str(item.get("item_id") or ""),
+                "locator": str(item.get("locator") or ""),
+            },
+        ))
+        result_by_evidence_id[evidence_id] = item
+
+    if not candidates:
+        return
+    opened = datetime.fromisoformat(session.opened_at.replace("Z", "+00:00"))
+    now = datetime.now(timezone.utc)
+    scope = RetrievalScope(
+        query_text=" ".join(
+            value for value in (session.question, session.family or "", session.subject or "")
+            if value
+        ),
+        asset_ids=(session.subject,) if session.subject else (),
+        incident_start=opened,
+        incident_end=max(opened, now),
+        seed_entities=(session.subject,) if session.subject else (),
+        history_since=opened - timedelta(days=180),
+        max_relation_hops=2,
+    )
+    retrieved = EvidenceRetriever(candidates).retrieve(
+        scope,
+        top_k=min(12, len(candidates)),
+    )
+    kept_ids = {entry.candidate.evidence_id for entry in retrieved.kept}
+    for entry in retrieved.kept:
+        item = result_by_evidence_id[entry.candidate.evidence_id]
+        item["selected_for_context"] = True
+        item["context_rank"] = entry.rank
+        item["context_score"] = entry.score
+        item["selection_reasons"] = list(entry.reasons)
+        item["decisive_for_current_incident"] = entry.decisive_for_current_incident
+        item.pop("drop_reasons", None)
+    for entry in retrieved.dropped:
+        item = result_by_evidence_id[entry.candidate.evidence_id]
+        item["selected_for_context"] = False
+        item["drop_reasons"] = list(entry.reasons)
+        item["decisive_for_current_incident"] = False
+        item.pop("selection_reasons", None)
+
+    session.retrieval_results.sort(key=lambda item: (
+        not bool(item.get("selected_for_context")),
+        int(item.get("context_rank") or 1_000_000),
+        str(item.get("kind") or ""),
+        str(item.get("item_id") or ""),
+    ))
+    drop_counts: dict[str, int] = {}
+    for entry in retrieved.dropped:
+        for reason in entry.reasons:
+            drop_counts[reason] = drop_counts.get(reason, 0) + 1
+    _persist_session_trace(session, "retrieval_candidates_filtered", {
+        "session_id": session.session_id,
+        "subject": session.subject,
+        "incident_start": opened.isoformat(),
+        "candidate_count": len(candidates),
+        "kept_count": len(kept_ids),
+        "dropped_count": len(retrieved.dropped),
+        "drop_counts": drop_counts,
+        "kept_ids": sorted(kept_ids),
+        "dense_used": retrieved.dense_used,
+    })
+
+
 def _retrieval_context(session: Session) -> list[dict[str, Any]]:
     """Detached bounded retrieval payload supplied to each model call."""
     return [
@@ -1145,6 +1521,7 @@ def start(
         session,
         list(memory_prior.get("retrieval_results") or ()),
     )
+    _constrain_retrieval_results(session)
 
     subject_probes: list[str] = []
     unit_subject = bool(
@@ -1202,28 +1579,50 @@ def start(
         if command not in planned:
             planned.append(command)
     session.probe_candidates = planned
+    _initialise_hypothesis_loop(session, ordered_extra)
 
     for command in BASELINE_PROBES:
         session.collect(command)
 
-    # Early stopping is checked only after every probe named by the chosen
-    # procedural prefix has produced a fresh reading. A memory miss therefore
-    # costs at most a changed order; the untouched tail still runs in full.
+    # Named fault families keep their bounded diagnostic contract.  Open-ended
+    # questions execute a first active slice and retain the untried probes for
+    # subsequent evidence rounds.
     preferred = list(prior["preferred"])
     early_stopped = False
     skipped: list[str] = []
-    for index, command in enumerate(ordered_extra):
-        if command not in BASELINE_PROBES:
-            session.collect(command)
-        prefix_complete = bool(preferred) and index + 1 >= len(preferred)
+    active_budget = (
+        len(_FAMILY_ACTIVE_ROOTS.get(family or "", ()))
+        if not uses_triage
+        else OPENING_ACTIVE_PROBE_BUDGET
+    )
+    for _index in range(active_budget):
+        item = _run_next_discriminating_probe(session)
+        if item is None:
+            break
         if (
             uses_triage
-            and prefix_complete
+            and preferred
             and prior["root_key"] in _confirmed_root_keys(session.evidence, subject)
         ):
-            skipped = ordered_extra[index + 1:]
+            executed = {str(row.get("command") or "") for row in session.probe_rounds}
+            skipped = [command for command in ordered_extra if command not in executed]
             early_stopped = bool(skipped)
             break
+
+    # Some family-specific observations do not represent generic root causes
+    # (for example cloud-init state). They remain part of that family's compact
+    # evidence contract and are collected after the competing generic causes.
+    if not uses_triage:
+        active_commands = {
+            _ACTIVE_ROOTS[root_id].probe
+            for root_id in _FAMILY_ACTIVE_ROOTS.get(family or "", ())
+        }
+        for command in ordered_extra:
+            if command not in BASELINE_PROBES and command not in active_commands:
+                session.collect(command)
+    elif not skipped:
+        executed = {str(row.get("command") or "") for row in session.probe_rounds}
+        skipped = [command for command in ordered_extra if command not in executed]
 
     # Direct subject probes are outside the generic sweep. They still run after a
     # triage early stop because a memory about a family cannot waive verification
@@ -1306,6 +1705,8 @@ def start(
         "historical_context": session.historical_context,
         "knowledge_context": session.knowledge_context,
         "retrieval_results": session.retrieval_results,
+        "hypothesis_state": _hypothesis_view(session),
+        "probe_rounds": session.probe_rounds,
         "trace_events": session.trace_events,
         "summary": _summarise(session),
     }
@@ -1514,6 +1915,56 @@ ANALYZE_SCHEMA = {
 MAX_ANALYZE_ROUNDS = 2
 
 
+def _advance_active_hypotheses(session: Session, *, budget: int) -> list[dict[str, Any]]:
+    """Collect the next bounded set of probes from the persisted competition."""
+    collected: list[dict[str, Any]] = []
+    for _index in range(max(0, budget)):
+        item = _run_next_discriminating_probe(session)
+        if item is None:
+            break
+        collected.append(item)
+    return collected
+
+
+def _archive_confirmed_if_complete(session: Session) -> dict[str, Any]:
+    """Persist a learned root only after the whole competition has settled."""
+    view = _hypothesis_view(session)
+    if view.get("active_root_keys"):
+        return {"committed": False, "reason": "competing_hypotheses_unresolved"}
+    confirmed = [
+        item for item in view.get("hypotheses") or ()
+        if item.get("status") == "confirmed"
+    ]
+    if len(confirmed) != 1:
+        return {"committed": False, "reason": "unique_confirmed_root_required"}
+    hypothesis = confirmed[0]
+    if str(hypothesis.get("hypothesis_id") or "") not in _AUTO_ARCHIVABLE_ROOTS:
+        return {"committed": False, "reason": "confirmed_signal_is_not_a_root_condition"}
+    evidence_ids = [str(value) for value in hypothesis.get("supporting_evidence_ids") or ()]
+    try:
+        archived = close(
+            session.session_id,
+            resolution="confirmed",
+            root_cause=str(hypothesis["statement"]),
+            confirmed_by=f"hypothesis-loop:{session.session_id}",
+            evidence_ids=evidence_ids,
+            operator_note="deterministic hypothesis competition completed",
+        )
+    except RuntimeError:
+        return {"committed": False, "reason": "operational_memory_unavailable"}
+    except (KeyError, ValueError) as error:
+        return {
+            "committed": False,
+            "reason": f"archive_rejected:{type(error).__name__}",
+        }
+    return {
+        "committed": True,
+        "dossier_id": str(archived.get("dossier", {}).get("dossier_id") or ""),
+        "root_key": str(hypothesis.get("hypothesis_id") or ""),
+        "evidence_ids": evidence_ids,
+    }
+
+
 def _client(provider_id: str = "deepseek-v4"):
     """Build a client from the console's own provider registry.
 
@@ -1573,11 +2024,20 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
     session = get(session_id)
     client = _client()
     if client is None:
+        # Deterministic evidence collection remains useful when a paid model is
+        # unavailable.  Finish the bounded candidate set and expose its state.
+        collected = _advance_active_hypotheses(session, budget=2)
+        memory_commit = _archive_confirmed_if_complete(session)
+        _persist_session(session)
         return {
             "diagnosis": "未配置推理模型，只给出已采集的证据。设置 AUTOPOIESIS_LLM_BASE_URL / "
                          "AUTOPOIESIS_LLM_MODEL / AUTOPOIESIS_LLM_API_KEY 后可生成处置方案。",
             "citations": [item["evidence_id"] for item in session.evidence[:3]],
             "runbook": [],
+            "follow_up_evidence": collected,
+            "hypothesis_state": _hypothesis_view(session),
+            "probe_rounds": session.probe_rounds,
+            "memory_commit": memory_commit,
             "degraded": True,
         }
 
@@ -1600,6 +2060,9 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
                     "每条结果都携带来源、分数和与本次调查的匹配关系。"
                     "现场状态和根因结论仍须引用本次会话的新鲜证据。\n"
                     f"检索结果：{json.dumps(_retrieval_context(session), ensure_ascii=False)}\n\n"
+                    "以下候选根因状态由当前会话的探针结果维护。confirmed 和 rejected "
+                    "可作为当前事实，proposed 和 testing 仍是待验证候选。\n"
+                    f"候选状态：{json.dumps(_hypothesis_view(session), ensure_ascii=False)}\n\n"
                     f"已采集的真实命令输出：\n{_evidence_block(session)}\n\n"
                     + ("这是最后一轮，必须基于现有证据给出结论；need_commands 请留空。\n\n"
                        if round_index == MAX_ANALYZE_ROUNDS - 1 else "")
@@ -1616,11 +2079,24 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
                 "error": f"{type(error).__name__}: {error}"[:300],
             }
 
+        _register_model_hypothesis(session, payload)
         wanted = [str(c).strip() for c in (payload.get("need_commands") or []) if str(c).strip()]
-        if not wanted or round_index == MAX_ANALYZE_ROUNDS - 1:
+        if round_index == MAX_ANALYZE_ROUNDS - 1:
             break
-        for command in wanted[:8]:
-            collected.append(session.collect(command))
+        if wanted:
+            for command in wanted[:8]:
+                collected.append(session.collect(command))
+        else:
+            root_guess = str(payload.get("root_cause") or "").strip().casefold()
+            if root_guess and root_guess != "inconclusive":
+                break
+            # A model that returns inconclusive without asking for a useful
+            # observation does not end the investigation.  The persisted loop
+            # supplies one next probe and the second pass sees its fresh output.
+            advanced = _advance_active_hypotheses(session, budget=1)
+            collected.extend(advanced)
+            if not advanced:
+                break
 
     runbook = _sanitise_runbook(payload.get("runbook") or [])
     session.runbook = runbook
@@ -1629,6 +2105,7 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
     citations = _verified_citations(session, payload.get("citations") or [])
     session.root_cause = root_cause
     session.analysis_citations = citations
+    memory_commit = _archive_confirmed_if_complete(session)
     _append_case_event(
         session,
         "hypothesis_updated",
@@ -1652,6 +2129,9 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
         "follow_up_evidence": collected,
         "evidence_total": len(session.evidence),
         "summary": _summarise(session),
+        "hypothesis_state": _hypothesis_view(session),
+        "probe_rounds": session.probe_rounds,
+        "memory_commit": memory_commit,
         "degraded": False,
     }
 
@@ -1665,7 +2145,7 @@ def close(
     evidence_ids: list[str] | tuple[str, ...] = (),
     operator_note: str | None = None,
 ) -> dict[str, Any]:
-    """Archive an operator disposition as an authoritative incident dossier."""
+    """Archive an operator disposition or a fully settled mechanical result."""
     from domains.network_rca.incident_dossier import (
         EvidenceReference,
         IncidentDossier,
@@ -1681,6 +2161,20 @@ def close(
     confirmed_by = confirmed_by.strip()
     if not root_cause or not confirmed_by:
         raise ValueError("root_cause and confirmed_by are required")
+    machine_confirmation = confirmed_by == f"hypothesis-loop:{session.session_id}"
+    confirmed_hypothesis: dict[str, Any] | None = None
+    if machine_confirmation:
+        view = _hypothesis_view(session)
+        active = list(view.get("active_root_keys") or ())
+        matching = [
+            item for item in view.get("hypotheses") or ()
+            if item.get("status") == "confirmed" and item.get("statement") == root_cause
+        ]
+        if resolution != "confirmed" or active or len(matching) != 1:
+            raise ValueError(
+                "machine confirmation requires one settled confirmed hypothesis"
+            )
+        confirmed_hypothesis = matching[0]
     service = getattr(main, "_operational_memory", None)
     if service is None:
         raise RuntimeError("operational memory is unavailable")
@@ -1698,7 +2192,12 @@ def close(
             return {"dossier": existing.model_dump(mode="json"), "resolution": resolution}
         raise ValueError("investigation already has a different archived disposition")
 
-    selected = list(dict.fromkeys(evidence_ids or session.analysis_citations))
+    machine_evidence = (
+        list(confirmed_hypothesis.get("supporting_evidence_ids") or ())
+        if confirmed_hypothesis is not None
+        else []
+    )
+    selected = list(dict.fromkeys(evidence_ids or machine_evidence or session.analysis_citations))
     unknown = sorted(set(selected) - session.evidence_ids())
     if unknown:
         raise ValueError("unknown session evidence: " + ", ".join(unknown))
@@ -1723,38 +2222,37 @@ def close(
             summary=f"{item.get('command')}: {'ok' if item.get('ok') else 'failed'}",
             content_sha256=hashlib.sha256(output.encode("utf-8")).hexdigest(),
         ))
-    operator_payload = json.dumps(
-        {
-            "confirmed_by": confirmed_by,
-            "note": operator_note or "",
-            "resolution": resolution,
-            "root_cause": root_cause,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    operator_evidence_id = f"investigate:{session.session_id}:operator-disposition"
-    references.append(EvidenceReference(
-        evidence_id=operator_evidence_id,
-        source_type="operator",
-        locator=f"investigate-session:{session.session_id}:operator-disposition",
-        observed_at=now,
-        summary=operator_note or f"operator marked root cause {resolution}",
-        content_sha256=hashlib.sha256(operator_payload.encode("utf-8")).hexdigest(),
-    ))
     root_status = "hypothesis" if resolution == "inconclusive" else resolution
-    root_evidence = tuple(
-        [dossier_id_by_session_id[item] for item in selected]
-        + [operator_evidence_id]
-    )
+    root_evidence_ids = [dossier_id_by_session_id[item] for item in selected]
+    if not machine_confirmation:
+        operator_payload = json.dumps(
+            {
+                "confirmed_by": confirmed_by,
+                "note": operator_note or "",
+                "resolution": resolution,
+                "root_cause": root_cause,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        operator_evidence_id = f"investigate:{session.session_id}:operator-disposition"
+        references.append(EvidenceReference(
+            evidence_id=operator_evidence_id,
+            source_type="operator",
+            locator=f"investigate-session:{session.session_id}:operator-disposition",
+            observed_at=now,
+            summary=operator_note or f"operator marked root cause {resolution}",
+            content_sha256=hashlib.sha256(operator_payload.encode("utf-8")).hexdigest(),
+        ))
+        root_evidence_ids.append(operator_evidence_id)
     root = RootCauseHypothesis(
         hypothesis_id=f"investigate-root:{session.session_id}",
         statement=root_cause,
         status=root_status,
-        origin="operator",
+        origin="analysis" if machine_confirmation else "operator",
         confidence=1.0 if resolution == "confirmed" else 0.0,
-        evidence_ids=root_evidence,
+        evidence_ids=tuple(root_evidence_ids),
         updated_at=now,
         confirmed_by=confirmed_by if resolution == "confirmed" else None,
     )
@@ -1845,7 +2343,9 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
     client = _client()
     if client is None:
         return {"answer": "未配置推理模型，无法回答追问。已采集的证据仍可查看。",
-                "citations": [], "evidence": [], "degraded": True}
+                "citations": [], "evidence": [],
+                "hypothesis_state": _hypothesis_view(session),
+                "probe_rounds": session.probe_rounds, "degraded": True}
 
     history = "\n".join(
         f"问：{turn['question']}\n答：{turn['answer'][:600]}" for turn in session.turns[-4:]
@@ -1908,7 +2408,15 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
         status="investigating",
     )
     _persist_session(session)
-    return {"answer": answer, "citations": citations, "evidence": fresh, "degraded": False}
+    return {
+        "answer": answer,
+        "citations": citations,
+        "evidence": fresh,
+        "hypothesis_state": _hypothesis_view(session),
+        "probe_rounds": session.probe_rounds,
+        "memory_commit": _archive_confirmed_if_complete(session),
+        "degraded": False,
+    }
 
 
 def run_step(session_id: str, step: int) -> dict[str, Any]:

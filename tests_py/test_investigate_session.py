@@ -234,13 +234,18 @@ def test_unknown_session_is_a_clear_error():
 # ── the investigation has to actually investigate ────────────────────────────
 
 
-def test_an_open_question_gets_the_full_triage_sweep():
-    """Three generic readings cannot answer 'what is wrong with this network'."""
+def test_an_open_question_gets_a_bounded_active_slice():
+    """The opening turn preserves the tail instead of blindly running the catalogue."""
     opened = investigate.start("这个网络现在有什么问题")
     commands = {item["command"] for item in opened["evidence"]}
-    assert len(opened["evidence"]) >= 12
-    for expected in ("ip route show", "systemctl --failed --no-legend", "ss -tulpn", "df -h"):
+    assert len(opened["probe_rounds"]) == investigate.OPENING_ACTIVE_PROBE_BUDGET
+    assert len(opened["evidence"]) == len(investigate.BASELINE_PROBES) + investigate.OPENING_ACTIVE_PROBE_BUDGET
+    for expected in ("ip route show", "systemctl --failed --no-legend"):
         assert expected in commands
+    assert any(
+        probe["status"] == "available"
+        for probe in opened["hypothesis_state"]["probes"]
+    )
 
 
 def test_a_named_family_gets_its_targeted_checks_not_the_whole_sweep():

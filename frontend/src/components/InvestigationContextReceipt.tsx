@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { Lang } from '../i18n'
 
 export interface ProbePriorReceipt {
@@ -34,34 +34,44 @@ export interface ContextTraceEvent {
   persistence_error?: string
 }
 
+export interface RetrievalReceipt {
+  kind: string
+  item_id: string
+  title?: string
+  summary: string
+  source: string
+  locator: string
+  route: string | string[]
+  score: number
+  matched_on?: string[]
+  selected_for_context: boolean
+  context_rank?: number
+  selection_reasons?: string[]
+  drop_reasons?: string[]
+}
+
 export interface InvestigationReceipt {
   probe_candidates: string[]
   probe_prior: ProbePriorReceipt
   historical_context: Record<string, unknown>
   knowledge_context: KnowledgeReceipt[]
+  retrieval_results: RetrievalReceipt[]
   trace_events: ContextTraceEvent[]
 }
 
-type Influence = {
-  kind: string
-  at: string
-  subject: string
-  what_changed: string
-  evidence: Record<string, unknown>
-}
-
-type InfluenceState = 'idle' | 'checking' | 'confirmed' | 'missing' | 'error'
-
-const strings = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-
-const number = (value: unknown): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : 0
-
-const counts = (context: Record<string, unknown>): [string, number][] =>
-  ['dossiers', 'risks', 'features']
-    .map((key) => [key, Array.isArray(context[key]) ? context[key].length : 0] as [string, number])
-    .filter(([, value]) => value > 0)
+const text = (zh: boolean) => ({
+  title: zh ? '检索候选' : 'RETRIEVAL CANDIDATES',
+  open: zh ? '按需展开' : 'OPEN ON DEMAND',
+  selected: zh ? '进入分析' : 'IN CONTEXT',
+  dropped: zh ? '已过滤' : 'FILTERED',
+  source: zh ? '来源' : 'SOURCE',
+  match: zh ? '匹配' : 'MATCH',
+  reason: zh ? '选择依据' : 'SELECTION',
+  empty: zh ? '本轮没有检索候选' : 'NO RETRIEVAL CANDIDATES',
+  boundary: zh
+    ? '历史事故和文档用于提出候选；现场探针负责确认当前状态。'
+    : 'Incidents and documents propose candidates; fresh probes establish current state.',
+})
 
 export function InvestigationContextReceipt({
   lang,
@@ -73,116 +83,44 @@ export function InvestigationContextReceipt({
   receipt: InvestigationReceipt
 }) {
   const zh = lang === 'zh'
-  const shortcut = receipt.trace_events.find((event) => event.kind === 'memory_shortcut')
-  const payload = shortcut?.payload ?? {}
-  const memoryIds = useMemo(
-    () => strings(payload.memory_ids).length ? strings(payload.memory_ids) : (receipt.probe_prior.memory_ids ?? []),
-    [payload.memory_ids, receipt.probe_prior.memory_ids],
-  )
-  const [influenceState, setInfluenceState] = useState<InfluenceState>(memoryIds.length ? 'checking' : 'idle')
-  const [influences, setInfluences] = useState<Influence[]>([])
-
-  useEffect(() => {
-    let alive = true
-    if (!memoryIds.length) {
-      setInfluenceState('idle')
-      setInfluences([])
-      return () => { alive = false }
-    }
-    setInfluenceState('checking')
-    void Promise.all(memoryIds.map(async (memoryId) => {
-      const response = await fetch(`/api/rca/memory/${encodeURIComponent(memoryId)}/influence`, {
-        headers: { Accept: 'application/json' },
-      })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const body = await response.json() as { influences?: Influence[] }
-      return (body.influences ?? []).filter(
-        (item) => String(item.evidence?.source_trace_id ?? '') === sessionId,
-      )
-    }))
-      .then((rows) => {
-        if (!alive) return
-        const matched = rows.flat()
-        setInfluences(matched)
-        setInfluenceState(matched.length ? 'confirmed' : 'missing')
-      })
-      .catch(() => { if (alive) setInfluenceState('error') })
-    return () => { alive = false }
-  }, [memoryIds, sessionId])
-
-  const preferred = strings(payload.preferred_probes)
-  const original = strings(payload.original_probe_order)
-  const planned = strings(payload.planned_probe_order)
-  const executed = strings(payload.executed_probe_order)
-  const skipped = strings(payload.skipped_probes)
-  const operationalCounts = counts(receipt.historical_context)
+  const tx = useMemo(() => text(zh), [zh])
+  const rows = receipt.retrieval_results ?? []
+  const selected = rows.filter((item) => item.selected_for_context)
+  const dropped = rows.filter((item) => !item.selected_for_context)
 
   return (
-    <section className="dx-cr" data-testid="investigation-context-receipt">
-      <header className="dx-cr-head">
+    <details className="dx-cr" data-testid="investigation-context-receipt">
+      <summary className="dx-cr-head">
         <div>
-          <span>{zh ? '本次调查上下文回执' : 'INVESTIGATION CONTEXT RECEIPT'}</span>
+          <span>{tx.title}</span>
           <b>{sessionId}</b>
         </div>
-        <span className={`dx-cr-state is-${influenceState}`}>
-          {influenceState === 'confirmed'
-            ? (zh ? `影响记录已持久化 · ${influences.length}` : `INFLUENCE PERSISTED · ${influences.length}`)
-            : influenceState === 'checking'
-              ? (zh ? '正在核对影响记录' : 'CHECKING INFLUENCE')
-              : influenceState === 'missing'
-                ? (zh ? '已检索，未形成可归因影响' : 'RETRIEVED · NO ATTRIBUTED EFFECT')
-                : influenceState === 'error'
-                  ? (zh ? '影响端点不可读' : 'INFLUENCE ENDPOINT UNREADABLE')
-                  : (zh ? '本轮没有相关程序性记忆' : 'NO RELEVANT PROCEDURAL MEMORY')}
+        <span className="dx-cr-state">
+          {tx.selected} {selected.length} · {tx.dropped} {dropped.length} · {tx.open}
         </span>
-      </header>
+      </summary>
 
-      <div className="dx-cr-grid">
-        <section className="dx-cr-col">
-          <header><b>{zh ? '历史记忆' : 'HISTORICAL MEMORY'}</b><span>{memoryIds.length}</span></header>
-          {memoryIds.length ? (
-            <>
-              <p className="dx-cr-line"><span>{zh ? '命中' : 'RECALLED'}</span>{memoryIds.join(' · ')}</p>
-              <p className="dx-cr-line"><span>{zh ? '根因族' : 'ROOT FAMILY'}</span>{String(payload.confirmed_root_key ?? receipt.probe_prior.root_key ?? '无')}</p>
-              <p className="dx-cr-line"><span>{zh ? '优先探针' : 'PREFERRED'}</span>{preferred.join(' · ') || '无'}</p>
-              <p className="dx-cr-line"><span>{zh ? '探针变化' : 'PROBE EFFECT'}</span>
-                {zh
-                  ? `${original.length || number(payload.candidate_probe_count)} 条候选 → ${executed.length || receipt.probe_candidates.length} 条实际执行，跳过 ${skipped.length}`
-                  : `${original.length || number(payload.candidate_probe_count)} candidates → ${executed.length || receipt.probe_candidates.length} executed, ${skipped.length} skipped`}
-              </p>
-              {original.length && planned.length ? (
-                <details className="dx-cr-detail">
-                  <summary>{zh ? '展开探针顺序变化' : 'SHOW PROBE ORDER CHANGE'}</summary>
-                  <div><span>{zh ? '原顺序' : 'BEFORE'}</span><code>{original.join(' → ')}</code></div>
-                  <div><span>{zh ? '记忆排序后' : 'AFTER MEMORY'}</span><code>{planned.join(' → ')}</code></div>
-                  <div><span>{zh ? '本轮实际执行' : 'EXECUTED'}</span><code>{executed.join(' → ') || '无'}</code></div>
-                </details>
-              ) : null}
-            </>
-          ) : <p className="dx-cr-empty">{zh ? '本轮保持默认探针顺序' : 'DEFAULT PROBE ORDER RETAINED'}</p>}
-          {operationalCounts.length ? (
-            <p className="dx-cr-line"><span>{zh ? '业务记忆' : 'DOMAIN MEMORY'}</span>
-              {operationalCounts.map(([key, value]) => `${key} ${value}`).join(' · ')}
-            </p>
-          ) : null}
-        </section>
-
-        <section className="dx-cr-col">
-          <header><b>{zh ? '知识检索' : 'KNOWLEDGE RETRIEVAL'}</b><span>{receipt.knowledge_context.length}</span></header>
-          {receipt.knowledge_context.length ? receipt.knowledge_context.map((item) => (
-            <details className="dx-cr-doc" key={item.document_id}>
-              <summary><b>{item.title}</b><span>BM25 {item.score.toFixed(3)}</span></summary>
-              <p>{item.text}</p>
-              <footer>{item.source} · {item.locator} · {item.matched_terms.join(', ')}</footer>
-            </details>
-          )) : <p className="dx-cr-empty">{zh ? '知识库对本问题选择了弃答' : 'KNOWLEDGE RETRIEVAL ABSTAINED'}</p>}
-          <p className="dx-cr-boundary">
-            {zh
-              ? '知识片段解释命令和操作约束；当前探针确认现场状态；动作策略负责授权。'
-              : 'Knowledge explains commands and constraints; fresh probes establish state; action policy authorizes writes.'}
-          </p>
-        </section>
+      <div className="dx-cr-body">
+        {rows.length ? rows.map((item) => (
+          <details className={`dx-cr-hit${item.selected_for_context ? ' is-selected' : ' is-dropped'}`} key={`${item.kind}:${item.item_id}`}>
+            <summary>
+              <span>{item.selected_for_context ? String(item.context_rank ?? '✓') : '×'}</span>
+              <b>{item.title || item.item_id}</b>
+              <em>{item.kind}</em>
+            </summary>
+            <p>{item.summary}</p>
+            <dl>
+              <div><dt>{tx.source}</dt><dd>{item.source} · {item.locator}</dd></div>
+              <div><dt>{tx.match}</dt><dd>{(item.matched_on ?? []).join(' · ') || 'none'}</dd></div>
+              <div><dt>{tx.reason}</dt><dd>{[
+                ...(item.selection_reasons ?? []),
+                ...(item.drop_reasons ?? []),
+              ].join(' · ') || 'ranked candidate'}</dd></div>
+            </dl>
+          </details>
+        )) : <p className="dx-cr-empty">{tx.empty}</p>}
+        <p className="dx-cr-boundary">{tx.boundary}</p>
       </div>
-    </section>
+    </details>
   )
 }

@@ -406,6 +406,43 @@
 .dx-iv-sum { margin:0; padding:9px 14px; border-bottom:1px solid var(--rule); font-size:11px; line-height:1.55;
   color:var(--ink-soft); }
 
+/* Competing hypotheses read as one track.  The overview exposes only state and
+   direction; a selected node reveals its probe and evidence underneath. */
+.dx-hyp { border-bottom:1px solid var(--rule); background:var(--paper); }
+.dx-hyp-head { display:grid; grid-template-columns:auto auto minmax(0,1fr); align-items:baseline; gap:10px;
+  padding:8px 14px; border-bottom:1px solid var(--rule); }
+.dx-hyp-head b { font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; }
+.dx-hyp-head span,.dx-hyp-head small { font-size:8px; letter-spacing:.08em; color:var(--gray); }
+.dx-hyp-head small { justify-self:end; }
+.dx-hyp-track { display:flex; min-width:0; overflow-x:auto; padding:0 14px; }
+.dx-hyp-node { position:relative; display:grid; grid-template-columns:24px minmax(145px,1fr); grid-template-rows:auto auto;
+  flex:1 0 190px; min-width:0; padding:9px 10px 8px 0; border:0; border-right:1px solid var(--rule);
+  background:transparent; color:var(--ink); font:inherit; text-align:left; cursor:pointer; }
+.dx-hyp-node::after { content:""; position:absolute; left:0; right:10px; bottom:0; height:2px; background:var(--rule); }
+.dx-hyp-node > span { grid-row:1/3; font-size:8px; color:var(--gray); font-variant-numeric:tabular-nums; }
+.dx-hyp-node b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9.5px; font-weight:500; }
+.dx-hyp-node em { margin-top:3px; font-size:7.5px; font-style:normal; letter-spacing:.1em; color:var(--gray); }
+.dx-hyp-node.is-testing::after { background:var(--ink); }
+.dx-hyp-node.is-confirmed::after { background:var(--teal); }
+.dx-hyp-node.is-rejected { opacity:.58; }
+.dx-hyp-node.is-rejected::after { background:repeating-linear-gradient(90deg,var(--gray) 0 3px,transparent 3px 6px); }
+.dx-hyp-node.is-selected { background:var(--paper-3); }
+.dx-hyp-detail { display:grid; grid-template-columns:minmax(170px,.7fr) minmax(300px,1.3fr); gap:14px;
+  padding:9px 14px 10px; border-top:1px solid var(--rule); border-left:3px solid var(--rule); }
+.dx-hyp-detail.is-testing { border-left-color:var(--ink); }
+.dx-hyp-detail.is-confirmed { border-left-color:var(--teal); }
+.dx-hyp-detail > div > span { display:block; margin-bottom:3px; font-size:7.5px; letter-spacing:.1em; color:var(--gray); }
+.dx-hyp-detail > div > b { font-size:10px; font-weight:600; line-height:1.4; }
+.dx-hyp-detail dl { display:grid; gap:4px; margin:0; }
+.dx-hyp-detail dl > div { display:grid; grid-template-columns:105px minmax(0,1fr); gap:8px; align-items:baseline; }
+.dx-hyp-detail dt { font-size:7.5px; letter-spacing:.08em; color:var(--gray); }
+.dx-hyp-detail dd { display:flex; flex-wrap:wrap; gap:5px; min-width:0; margin:0; font-size:8.5px; color:var(--ink-soft); }
+.dx-hyp-detail code { overflow-wrap:anywhere; white-space:normal; }
+.dx-hyp-detail dd button { border:0; border-bottom:1px solid var(--ink); padding:0; background:transparent; color:var(--ink);
+  font:inherit; cursor:pointer; }
+.dx-hyp-detail footer { grid-column:1/-1; border-top:1px dotted var(--rule); padding-top:5px; font-size:7.5px;
+  letter-spacing:.08em; color:var(--gray); }
+
 /* background context: what was already run, with its real output */
 .dx-iv-ev { border-bottom:1px solid var(--rule); }
 .dx-iv-ev-h { display:grid; grid-template-columns:1fr auto auto; gap:14px; align-items:baseline; width:100%;
@@ -461,40 +498,32 @@
 .dx-iv-archived { margin:0; padding:7px 9px; border-left:3px solid var(--teal); background:var(--paper-3);
   font-size:9.5px; letter-spacing:.08em; color:var(--ink-soft); }
 
-/* one receipt for the exact context that changed this investigation */
-.dx-cr { margin:10px 0 13px; border:1px solid var(--rule); background:var(--paper-2); }
-.dx-cr-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 11px;
-  border-bottom:1px solid var(--rule); background:var(--paper-3); }
+/* Retrieval stays folded until the operator asks for candidate-level detail. */
+.dx-cr { margin:0; border-bottom:1px solid var(--rule); background:var(--paper-2); }
+.dx-cr-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 14px;
+  background:var(--paper-3); cursor:pointer; list-style:none; }
+.dx-cr-head::-webkit-details-marker,.dx-cr-hit > summary::-webkit-details-marker { display:none; }
 .dx-cr-head > div { display:flex; align-items:baseline; gap:9px; min-width:0; }
-.dx-cr-head > div span { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--gray); }
-.dx-cr-head > div b { overflow:hidden; text-overflow:ellipsis; font-size:9.5px; font-weight:600; color:var(--ink); }
-.dx-cr-state { flex:none; border-left:2px solid var(--gray); padding-left:8px; font-size:8.5px; letter-spacing:.08em;
-  text-transform:uppercase; color:var(--gray); }
-.dx-cr-state.is-confirmed { border-color:var(--teal); color:var(--teal); }
-.dx-cr-state.is-missing,.dx-cr-state.is-error { border-color:var(--hi); color:var(--hi-t); }
-.dx-cr-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
-.dx-cr-col { min-width:0; padding:11px; }
-.dx-cr-col + .dx-cr-col { border-left:1px solid var(--rule); }
-.dx-cr-col > header { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-.dx-cr-col > header b { font-size:9px; letter-spacing:.1em; text-transform:uppercase; }
-.dx-cr-col > header span { font-size:9px; color:var(--gray); }
-.dx-cr-line { display:grid; grid-template-columns:72px minmax(0,1fr); gap:8px; margin:5px 0; font-size:9.5px;
-  line-height:1.45; color:var(--ink-soft); overflow-wrap:anywhere; }
-.dx-cr-line > span,.dx-cr-detail span { font-size:8px; letter-spacing:.08em; text-transform:uppercase; color:var(--gray); }
-.dx-cr-detail,.dx-cr-doc { border-top:1px solid var(--rule); margin-top:8px; padding-top:7px; }
-.dx-cr-detail summary,.dx-cr-doc summary { cursor:pointer; list-style:none; color:var(--ink-soft); }
-.dx-cr-detail summary::-webkit-details-marker,.dx-cr-doc summary::-webkit-details-marker { display:none; }
-.dx-cr-detail summary { font-size:8.5px; letter-spacing:.08em; text-transform:uppercase; }
-.dx-cr-detail > div { display:grid; grid-template-columns:78px minmax(0,1fr); gap:8px; margin-top:7px; }
-.dx-cr-detail code { white-space:normal; overflow-wrap:anywhere; font-size:8.5px; line-height:1.55; color:var(--ink-soft); }
-.dx-cr-doc summary { display:flex; justify-content:space-between; gap:8px; }
-.dx-cr-doc summary b { font-size:9.5px; font-weight:600; }
-.dx-cr-doc summary span { flex:none; font-size:8px; color:var(--teal); }
-.dx-cr-doc p { margin:7px 0 5px; font-size:9px; line-height:1.55; color:var(--ink-soft); }
-.dx-cr-doc footer { font-size:8px; line-height:1.45; color:var(--gray); overflow-wrap:anywhere; }
-.dx-cr-boundary { margin:10px 0 0; padding:7px 8px; border-left:2px solid var(--teal); background:var(--paper-3);
+.dx-cr-head > div span { font-size:8.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink); }
+.dx-cr-head > div b { overflow:hidden; text-overflow:ellipsis; font-size:8.5px; font-weight:400; color:var(--gray); }
+.dx-cr-state { flex:none; font-size:8px; letter-spacing:.07em; text-transform:uppercase; color:var(--gray); }
+.dx-cr-body { padding:2px 14px 10px; border-top:1px solid var(--rule); }
+.dx-cr-hit { border-bottom:1px solid var(--rule); }
+.dx-cr-hit > summary { display:grid; grid-template-columns:30px minmax(0,1fr) auto; gap:8px; align-items:baseline;
+  padding:7px 0; cursor:pointer; list-style:none; }
+.dx-cr-hit > summary span { font-size:8px; color:var(--gray); font-variant-numeric:tabular-nums; }
+.dx-cr-hit.is-selected > summary span { color:var(--teal); }
+.dx-cr-hit.is-dropped > summary { opacity:.6; }
+.dx-cr-hit > summary b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:9.5px; font-weight:500; }
+.dx-cr-hit > summary em { font-size:7.5px; font-style:normal; letter-spacing:.08em; color:var(--gray); }
+.dx-cr-hit > p { margin:0 0 7px 38px; font-size:9px; line-height:1.5; color:var(--ink-soft); }
+.dx-cr-hit dl { display:grid; gap:4px; margin:0 0 8px 38px; }
+.dx-cr-hit dl > div { display:grid; grid-template-columns:82px minmax(0,1fr); gap:8px; }
+.dx-cr-hit dt { font-size:7.5px; letter-spacing:.08em; color:var(--gray); }
+.dx-cr-hit dd { margin:0; overflow-wrap:anywhere; font-size:8px; line-height:1.45; color:var(--ink-soft); }
+.dx-cr-boundary { margin:9px 0 0; padding:6px 8px; border-left:2px solid var(--teal); background:var(--paper-3);
   font-size:8.5px; line-height:1.5; color:var(--gray); }
-.dx-cr-empty { margin:0; font-size:9px; color:var(--gray); }
+.dx-cr-empty { margin:8px 0; font-size:9px; color:var(--gray); }
 
 /* runbook steps: teal for what only reads or only touches what is already
    broken, crimson hatch for what a person runs */
@@ -548,7 +577,8 @@
   .dx-iv-ev-h { grid-template-columns:1fr; gap:4px; }
   .dx-iv-go.is-inline { margin-left:0; }
   .dx-iv-disposition-grid { grid-template-columns:1fr; }
+  .dx-hyp-head { grid-template-columns:1fr auto; }
+  .dx-hyp-head small { display:none; }
+  .dx-hyp-detail { grid-template-columns:1fr; }
   .dx-cr-head { align-items:flex-start; flex-direction:column; }
-  .dx-cr-grid { grid-template-columns:1fr; }
-  .dx-cr-col + .dx-cr-col { border-left:0; border-top:1px solid var(--rule); }
 }

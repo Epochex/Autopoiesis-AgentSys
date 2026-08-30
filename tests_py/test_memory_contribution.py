@@ -105,7 +105,7 @@ def test_portrait_reorders_only_and_preserves_every_probe_once() -> None:
     assert set(ordered) == set(investigate.TRIAGE_PROBES)
 
 
-def test_investigate_without_portrait_runs_the_exact_old_sequence(monkeypatch) -> None:
+def test_investigate_without_portrait_keeps_full_catalogue_and_runs_active_slice(monkeypatch) -> None:
     called: list[str] = []
 
     def execute(command: str) -> _Execution:
@@ -123,8 +123,13 @@ def test_investigate_without_portrait_runs_the_exact_old_sequence(monkeypatch) -
         "ping -c 2 -W 2 192.168.16.28",
         "ip neigh show 192.168.16.28",
     ]
-    assert called == expected
     assert opened["probe_candidates"] == expected
+    assert called == [
+        *investigate.BASELINE_PROBES,
+        *[item["command"] for item in opened["probe_rounds"]],
+        "ping -c 2 -W 2 192.168.16.28",
+        "ip neigh show 192.168.16.28",
+    ]
     assert "profile_anomalies" not in opened["probe_prior"]
     assert "profile_preferred" not in opened["probe_prior"]
 
@@ -153,7 +158,7 @@ def test_investigate_portrait_changes_order_without_early_stop(monkeypatch) -> N
         "ss -tulpn",
     ]
     assert set(triage) == set(investigate.TRIAGE_PROBES)
-    assert len(called) == len(investigate.BASELINE_PROBES) + len(investigate.TRIAGE_PROBES) + 2
+    assert len(called) == len(investigate.BASELINE_PROBES) + investigate.OPENING_ACTIVE_PROBE_BUDGET + 2
     receipts = [
         event for event in opened["trace_events"]
         if event["kind"] == "memory_candidates_ranked"
