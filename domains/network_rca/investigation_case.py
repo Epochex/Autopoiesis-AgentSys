@@ -50,6 +50,11 @@ _LEGACY_PRESENTATION_FIELDS = {
 def _fact_summary(facts: dict[str, Any], fallback: str) -> str:
     if not facts:
         return fallback
+    flow_fields = {
+        "sourceIp", "destinationIp", "service", "action", "denyCount", "windowSeconds",
+    }
+    if not any(facts.get(field) not in (None, "") for field in flow_fields):
+        return fallback
     source = str(facts.get("sourceIp") or "未知来源")
     destination = str(facts.get("destinationIp") or "未知目标")
     service = str(facts.get("service") or "未知服务")

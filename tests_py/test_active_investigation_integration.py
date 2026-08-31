@@ -41,7 +41,13 @@ def test_open_question_executes_an_active_slice_and_keeps_the_tail(monkeypatch) 
     opened = investigate.start("这个网络现在有什么问题")
 
     assert len(opened["probe_rounds"]) == investigate.OPENING_ACTIVE_PROBE_BUDGET
-    assert len(opened["hypothesis_state"]["hypotheses"]) == len(investigate._ACTIVE_ROOTS) - 1
+    expected_root_ids = (
+        set(investigate._ACTIVE_ROOTS)
+        - {"neighbor_unreachable", "system_errors", "kernel_errors"}
+    )
+    assert {
+        item["hypothesis_id"] for item in opened["hypothesis_state"]["hypotheses"]
+    } == expected_root_ids
     assert called == [
         *investigate.BASELINE_PROBES,
         *[item["command"] for item in opened["probe_rounds"]],
@@ -55,7 +61,7 @@ def test_open_question_executes_an_active_slice_and_keeps_the_tail(monkeypatch) 
     expected_tail = {
         spec.probe
         for root_id, spec in investigate._ACTIVE_ROOTS.items()
-        if root_id != "neighbor_unreachable" and spec.probe not in attempted
+        if root_id in expected_root_ids and spec.probe not in attempted
     }
     assert available == expected_tail
 

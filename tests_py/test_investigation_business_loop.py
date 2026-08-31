@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import time
 
 from domains.network_rca.investigation_case import (
     CaseObservation,
@@ -75,6 +76,41 @@ def test_high_severity_case_auto_starts_once_and_targets_managed_gateway(tmp_pat
         for event in first[0]["trace_events"]
     )
     assert repository.get(case.case_id).status == "resolved"
+
+
+def test_background_poller_does_not_race_controlled_acceptance_case(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch)
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    monkeypatch.setattr(main, "_investigation_case_repository", repository)
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("controlled_fault", "acceptance-1"),
+        occurred_at=datetime.now(timezone.utc).isoformat(),
+        severity="high",
+        subject="controlled.service",
+        rule_id="availability_guard_v1",
+        summary="controlled service failed",
+        payload={
+            "dataClassification": "observed",
+            "acceptanceRunId": "run-1",
+            "incidentFacts": {"dataClassification": "observed"},
+        },
+    ))
+
+    assert investigation_cases.auto_start_pending_cases(repository) == []
+
+    monkeypatch.setattr(
+        investigate,
+        "run",
+        lambda command: _execution(
+            command,
+            "controlled.service loaded failed failed"
+            if command == "systemctl --failed --no-legend" else "ok",
+        ),
+    )
+    started = investigation_cases.auto_start_pending_cases(
+        repository, case_ids={case.case_id}
+    )
+    assert len(started) == 1
 
 
 def test_delayed_exact_fields_replace_an_incomplete_policy_decision(tmp_path, monkeypatch) -> None:
@@ -272,13 +308,19 @@ def test_pair_gate_requires_same_root_and_earlier_confirmation() -> None:
     control = {
         "confirmed_roots": ["service_failed"],
         "steps_to_first_confirmation": 4,
+        "probe_count": 4,
         "candidate_probes": ["a", "b"],
+        "decisive_probe_output_fingerprints": {"a": "same"},
+        "elapsed_ms": 400,
         "unscoped_context_count": 0,
     }
     treatment = {
         "confirmed_roots": ["service_failed"],
         "steps_to_first_confirmation": 1,
+        "probe_count": 1,
         "candidate_probes": ["a", "b"],
+        "decisive_probe_output_fingerprints": {"a": "same"},
+        "elapsed_ms": 100,
         "unscoped_context_count": 0,
         "memory_influenced_order": True,
     }
@@ -286,6 +328,32 @@ def test_pair_gate_requires_same_root_and_earlier_confirmation() -> None:
     assert compare_investigation_pair(control, treatment)["business_value_proven"] is True
     treatment["confirmed_roots"] = ["disk_pressure"]
     assert compare_investigation_pair(control, treatment)["business_value_proven"] is False
+
+
+def test_pair_compares_decisive_reading_not_unrelated_volatile_probe() -> None:
+    control = {
+        "confirmed_roots": ["service_failed"],
+        "steps_to_first_confirmation": 3,
+        "probe_count": 5,
+        "candidate_probes": ["service", "memory"],
+        "decisive_probe_output_fingerprints": {"service": "same"},
+        "probe_output_fingerprints": {"service": "same", "memory": "before"},
+        "unscoped_context_count": 0,
+        "elapsed_ms": 500,
+    }
+    treatment = {
+        "confirmed_roots": ["service_failed"],
+        "steps_to_first_confirmation": 1,
+        "probe_count": 1,
+        "candidate_probes": ["service", "memory"],
+        "decisive_probe_output_fingerprints": {"service": "same"},
+        "probe_output_fingerprints": {"service": "same", "memory": "after"},
+        "unscoped_context_count": 0,
+        "elapsed_ms": 100,
+        "memory_influenced_order": True,
+    }
+
+    assert compare_investigation_pair(control, treatment)["business_value_proven"] is True
 
 
 def test_open_root_can_refresh_router_evidence_through_closed_adapter(monkeypatch) -> None:
@@ -310,15 +378,20 @@ def test_open_root_can_refresh_router_evidence_through_closed_adapter(monkeypatc
 
 
 def test_real_pair_runner_proves_earlier_confirmation_without_changing_root(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOPOIESIS_PAIR_REPETITIONS", "3")
     repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
     now = datetime.now(timezone.utc)
     case = repository.ingest(CaseObservation(
         source=SourceReference("suggestion", "memory-pressure-now"),
         occurred_at=now.isoformat(),
         severity="high",
-        subject="collector.service",
+        subject="host-a",
         service="memory-health",
         summary="host degradation detected",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {"observedAt": now.isoformat()},
+        },
     ))
     memory = TieredMemoryStore(enabled=True)
     memory.add(MemoryRecord(
@@ -326,7 +399,7 @@ def test_real_pair_runner_proves_earlier_confirmation_without_changing_root(tmp_
         tier="procedural",
         text="verified memory pressure check",
         tags=["root:memory_pressure", "probe:free -m", "fam-perception-selfheal"],
-        asset_ids=["collector.service"],
+        asset_ids=["host-a"],
         confidence=1.5,
         first_observed_at=now,
         last_observed_at=now,
@@ -343,16 +416,16 @@ def test_real_pair_runner_proves_earlier_confirmation_without_changing_root(tmp_
         "free -m": "Mem: 1000 900 0 0 0 50",
         "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "200",
     }
-    monkeypatch.setattr(
-        investigate,
-        "run",
-        lambda command: _execution(command, outputs.get(command, "ok")),
-    )
+    def measured_run(command: str) -> Execution:
+        time.sleep(0.02)
+        return _execution(command, outputs.get(command, "ok"))
+
+    monkeypatch.setattr(investigate, "run", measured_run)
 
     live = investigate.start(
         "host degradation detected",
         family="fam-perception-selfheal",
-        subject="collector.service",
+        subject="host-a",
         case_id=case.case_id,
     )
     report = investigate.paired_evaluate_case(case.case_id)
@@ -361,16 +434,18 @@ def test_real_pair_runner_proves_earlier_confirmation_without_changing_root(tmp_
     assert report["treatment"]["confirmed_roots"] == ["memory_pressure"]
     assert report["control"]["steps_to_first_confirmation"] > 1
     assert report["treatment"]["steps_to_first_confirmation"] < report["control"]["steps_to_first_confirmation"]
-    assert report["acceptance"]["business_value_proven"] is True
+    assert report["acceptance"]["business_value_proven"] is True, report["acceptance"]
     assert report["control"]["session_id"] != live["session_id"]
     assert report["treatment"]["session_id"] != live["session_id"]
     assert report["fixed_script"]["strategy"] == "fixed_script"
+    assert report["repetitions_per_strategy"] == 3
+    assert all(report["stable_roots_by_strategy"].values())
     measured = repository.get(case.case_id)
     assert measured is not None
     assert any(item["kind"] == "investigation_pair_measured" for item in measured.timeline)
 
 
-def test_second_real_case_automatically_records_memory_savings(tmp_path, monkeypatch) -> None:
+def test_second_real_case_automatically_records_memory_pair(tmp_path, monkeypatch) -> None:
     repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
     memory = TieredMemoryStore(enabled=True)
     now = datetime.now(timezone.utc)
@@ -439,7 +514,7 @@ def test_second_real_case_automatically_records_memory_savings(tmp_path, monkeyp
     result = investigation_cases.auto_start_pending_cases(repository)[0]
     stored = repository.get(second.case_id)
 
-    assert result["memory_evaluation"]["recurrence_value_proven"] is True, result["memory_evaluation"]
+    assert result["memory_evaluation"]["recurrence"]["same_confirmed_root"] is True
     assert result["memory_evaluation"]["recurrence"]["probe_delta"] > 0
     assert stored is not None
     assert any(item["kind"] == "memory_value_measured" for item in stored.timeline)

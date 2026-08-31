@@ -119,6 +119,7 @@ def auto_start_pending_cases(
     repository: InvestigationCaseRepository,
     *,
     limit: int = 4,
+    case_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Drive each fresh case through scope, investigation, action and readback."""
     from .investigate import analyze, complete, remediate, start
@@ -136,6 +137,15 @@ def auto_start_pending_cases(
     candidates = [
         case for case in repository.list(limit=max(1, limit * 6))
         if case.status in {"open", "investigating"}
+        and (case_ids is None or case.case_id in case_ids)
+        # Controlled fault cases have their own single consumer.  Letting the
+        # deployed background poller race the acceptance driver can recover a
+        # service between paired reads and turn the comparison into two
+        # different system states.  The driver supplies exact case ids.
+        and (
+            case_ids is not None
+            or not case.source_payload.get("acceptanceRunId")
+        )
     ]
     for case in candidates:
         if str(case.source_payload.get("dataClassification") or "observed") != "observed":
@@ -223,10 +233,17 @@ def auto_start_pending_cases(
                 )
                 prior_steps = (prior_metrics or {}).get("steps_to_first_confirmation")
                 current_steps = current_metrics.get("steps_to_first_confirmation")
-                observed_faster = bool(
+                observed_earlier = bool(
                     isinstance(prior_steps, int)
                     and isinstance(current_steps, int)
                     and current_steps < prior_steps
+                )
+                prior_probe_count = (prior_metrics or {}).get("probe_count")
+                current_probe_count = current_metrics.get("probe_count")
+                observed_fewer_probes = bool(
+                    isinstance(prior_probe_count, int)
+                    and isinstance(current_probe_count, int)
+                    and current_probe_count < prior_probe_count
                 )
                 report["recurrence"] = {
                     "signature": recurrence_signature(case),
@@ -235,8 +252,15 @@ def auto_start_pending_cases(
                     "prior": prior_metrics,
                     "current": current_metrics,
                     "same_confirmed_root": observed_same_root,
-                    "fewer_probes_than_first_incident": observed_faster,
+                    "fewer_probes_than_first_incident": observed_fewer_probes,
+                    "earlier_confirmation_than_first_incident": observed_earlier,
                     "probe_delta": (
+                        prior_probe_count - current_probe_count
+                        if isinstance(prior_probe_count, int)
+                        and isinstance(current_probe_count, int)
+                        else None
+                    ),
+                    "confirmation_step_delta": (
                         prior_steps - current_steps
                         if isinstance(prior_steps, int) and isinstance(current_steps, int)
                         else None
@@ -245,7 +269,8 @@ def auto_start_pending_cases(
                 report["recurrence_value_proven"] = bool(
                     report.get("acceptance", {}).get("business_value_proven")
                     and observed_same_root
-                    and observed_faster
+                    and observed_fewer_probes
+                    and observed_earlier
                 )
                 repository.append_event(
                     case.case_id,

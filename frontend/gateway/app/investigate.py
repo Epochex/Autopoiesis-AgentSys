@@ -375,6 +375,7 @@ def _diagnostic_signal_family(command: str) -> str | None:
         ("arp -n", "neighbor_state"),
         ("systemctl --failed", "service_state"),
         ("systemctl status", "service_state"),
+        ("systemctl show", "service_state"),
         ("journalctl", "service_logs"),
         ("dmesg", "kernel_logs"),
         ("df -h", "filesystem_state"),
@@ -700,7 +701,10 @@ def _operational_context(subject: str | None, family: str | None) -> dict[str, A
 
 
 def _query_terms(question: str, family: str | None, subject: str | None) -> list[str]:
-    terms = tokenize(" ".join(item for item in (question, family or "", subject or "") if item))
+    # The subject is already passed through the exact asset/entity route.  Its
+    # syntactic suffix must not become a causal hint: every ``*.service`` asset
+    # would otherwise boost ``service_failed`` before any observation exists.
+    terms = tokenize(" ".join(item for item in (question, family or "") if item))
     for marker, additions in _QUERY_BRIDGE.items():
         if marker in question:
             terms.extend(additions)
@@ -871,7 +875,16 @@ def _probe_prior(
     hypotheses: list[dict[str, Any]] = []
     for procedure in procedural:
         _record, proc_weight, proc_stale = weighted[procedure.memory_id]
-        if proc_weight <= 0.0 or proc_stale >= 1.0:
+        exact_asset = not subject or subject in procedure.asset_ids
+        same_family = not family or family in procedure.tags
+        verified_strength = float(procedure.confidence) >= 1.5
+        if (
+            proc_weight <= 0.0
+            or proc_stale >= 1.0
+            or not exact_asset
+            or not same_family
+            or not verified_strength
+        ):
             continue
         probes, skills = _record_probes(procedure)
         if not probes:
@@ -1052,6 +1065,12 @@ def _initialise_hypothesis_loop(
             else _query_terms(session.question, session.family, session.subject)
         ),
         ordered_commands=ordered_commands,
+        preferred_root_ids=(
+            [str(session.probe_prior.get("root_key"))]
+            if session.probe_prior.get("strictly_narrowed")
+            and session.probe_prior.get("root_key")
+            else []
+        ),
     )
     _store_loop(session, loop)
     for hypothesis in loop.state.hypotheses:
@@ -1242,7 +1261,13 @@ def _register_model_hypothesis(
     are stored in the aggregate before the command runs; later output is judged
     by the stored boolean checks rather than by another model interpretation.
     """
-    statement = str(payload.get("root_cause") or "").strip()
+    statement = re.sub(
+        r"\[\s*ev-[0-9A-Za-z_-]+\s*\]",
+        "",
+        str(payload.get("root_cause") or ""),
+        flags=re.IGNORECASE,
+    )
+    statement = re.sub(r"\s+([,.;:!?，。；：！？])", r"\1", " ".join(statement.split())).strip()
     if not statement or statement.casefold() == "inconclusive":
         return None
     loop = _loop_for(session)
@@ -2140,10 +2165,8 @@ def start(
         item = _run_next_discriminating_probe(session)
         if item is None:
             break
-        if (
-            uses_triage
-            and preferred
-            and prior["root_key"] in _confirmed_root_keys(session.evidence, subject)
+        if preferred and prior["root_key"] in _confirmed_root_keys(
+            session.evidence, subject
         ):
             executed = {str(row.get("command") or "") for row in session.probe_rounds}
             skipped = [command for command in ordered_extra if command not in executed]
@@ -2153,7 +2176,7 @@ def start(
     # Some family-specific observations do not represent generic root causes
     # (for example cloud-init state). They remain part of that family's compact
     # evidence contract and are collected after the competing generic causes.
-    if not uses_triage:
+    if not uses_triage and not early_stopped:
         active_commands = {
             _ACTIVE_ROOTS[root_id].probe
             for root_id in _FAMILY_ACTIVE_ROOTS.get(family or "", ())
@@ -2266,6 +2289,28 @@ def investigation_metrics(
         and not item.get("matched_on")
         and not item.get("asset_ids")
     ]
+    confirmed_support_ids = {
+        str(evidence_id)
+        for hypothesis in view.get("hypotheses") or ()
+        if hypothesis.get("status") == "confirmed"
+        for evidence_id in hypothesis.get("supporting_evidence_ids") or ()
+    }
+    decisive_outputs = {
+        str(item.get("command") or ""): hashlib.sha256(
+            json.dumps(
+                {
+                    "ok": bool(item.get("ok")),
+                    "output": str(item.get("output") or ""),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        for item in session.evidence
+        if str(item.get("evidence_id") or "") in confirmed_support_ids
+        and str(item.get("command") or "")
+    }
     return {
         "session_id": session.session_id,
         "memory_enabled": session.memory_enabled,
@@ -2275,6 +2320,11 @@ def investigation_metrics(
         "confirmed_roots": confirmed,
         "steps_to_first_confirmation": min(confirmation_steps) if confirmation_steps else None,
         "probe_count": len(session.probe_rounds),
+        "saved_probe_count": max(
+            0,
+            len(set(session.probe_candidates) - set(BASELINE_PROBES))
+            - len(session.probe_rounds),
+        ),
         "probe_order": [str(item.get("command") or "") for item in session.probe_rounds],
         "candidate_probes": sorted(set(session.probe_candidates) - set(BASELINE_PROBES)),
         "selected_context_count": len(selected_context),
@@ -2286,6 +2336,7 @@ def investigation_metrics(
             not bool(item.get("selected_for_context")) for item in session.retrieval_results
         ),
         "elapsed_ms": round(elapsed_ms, 3) if elapsed_ms is not None else None,
+        "decisive_probe_output_fingerprints": decisive_outputs,
         "probe_output_fingerprints": {
             str(item.get("command") or ""): hashlib.sha256(
                 json.dumps(
@@ -2341,50 +2392,84 @@ def paired_evaluate_case(case_id: str) -> dict[str, Any]:
     )))
     if observation_lag_seconds > max_lag:
         raise ValueError("case is outside the current-state evaluation window")
-    sessions: dict[str, tuple[Session, float]] = {}
+    repetitions = min(5, max(1, int(os.getenv("AUTOPOIESIS_PAIR_REPETITIONS", "1"))))
+    samples: dict[str, list[tuple[Session, float]]] = {
+        "fixed_script": [],
+        "no_memory": [],
+        "full_system": [],
+    }
     for strategy, memory_enabled in (
         ("fixed_script", False),
         ("no_memory", False),
         ("full_system", True),
     ):
-        began = time.perf_counter()
-        opened = start(
-            scope["question"],
-            scope["family"],
-            scope["subject"],
-            case_id,
-            memory_enabled=memory_enabled,
-            evaluation_only=True,
-            evaluation_strategy=strategy,
+        for _sample_index in range(repetitions):
+            began = time.perf_counter()
+            opened = start(
+                scope["question"],
+                scope["family"],
+                scope["subject"],
+                case_id,
+                memory_enabled=memory_enabled,
+                evaluation_only=True,
+                evaluation_strategy=strategy,
+            )
+            session = get(str(opened["session_id"]))
+            loop = _loop_for(session)
+            if strategy != "full_system" or _verified_memory_shortcut_root(session) is None:
+                _advance_active_hypotheses(
+                    session,
+                    budget=len(loop.state.probes) if loop is not None else 0,
+                )
+            _persist_session(session)
+            samples[strategy].append(
+                (session, (time.perf_counter() - began) * 1000.0)
+            )
+
+    sample_metrics = {
+        strategy: [
+            investigation_metrics(session, elapsed_ms=elapsed_ms)
+            for session, elapsed_ms in values
+        ]
+        for strategy, values in samples.items()
+    }
+
+    def representative(strategy: str) -> dict[str, Any]:
+        ordered = sorted(
+            sample_metrics[strategy], key=lambda item: float(item.get("elapsed_ms") or 0.0)
         )
-        session = get(str(opened["session_id"]))
-        loop = _loop_for(session)
-        _advance_active_hypotheses(
-            session,
-            budget=len(loop.state.probes) if loop is not None else 0,
-        )
-        _persist_session(session)
-        sessions[strategy] = (session, (time.perf_counter() - began) * 1000.0)
-    fixed = investigation_metrics(
-        sessions["fixed_script"][0], elapsed_ms=sessions["fixed_script"][1]
-    )
-    control = investigation_metrics(
-        sessions["no_memory"][0], elapsed_ms=sessions["no_memory"][1]
-    )
-    treatment = investigation_metrics(
-        sessions["full_system"][0], elapsed_ms=sessions["full_system"][1]
-    )
+        return dict(ordered[len(ordered) // 2])
+
+    fixed = representative("fixed_script")
+    control = representative("no_memory")
+    treatment = representative("full_system")
+    stable_roots = {
+        strategy: len({
+            tuple(item.get("confirmed_roots") or ())
+            for item in values
+        }) == 1
+        for strategy, values in sample_metrics.items()
+    }
+    acceptance = compare_investigation_pair(control, treatment)
+    fixed_comparison = compare_investigation_pair(fixed, treatment)
+    if not all(stable_roots.values()):
+        for comparison in (acceptance, fixed_comparison):
+            comparison["business_value_proven"] = False
+            comparison["failure_reason"] = "confirmed root changed across repeated executions"
     report = {
         "evaluation_id": f"pair-{uuid.uuid4().hex[:16]}",
         "case_id": case_id,
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
         "observation_lag_seconds": round(max(0.0, observation_lag_seconds), 3),
         "input_mode": "fresh_probe_pair",
+        "repetitions_per_strategy": repetitions,
+        "stable_roots_by_strategy": stable_roots,
+        "strategy_samples": sample_metrics,
         "fixed_script": fixed,
         "control": control,
         "treatment": treatment,
-        "acceptance": compare_investigation_pair(control, treatment),
-        "fixed_script_comparison": compare_investigation_pair(fixed, treatment),
+        "acceptance": acceptance,
+        "fixed_script_comparison": fixed_comparison,
     }
     path = _pair_log_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2611,10 +2696,11 @@ ANALYZE_SCHEMA = {
     ],
 }
 
-# How many times analyze may collect more evidence and reason again. Two rounds
-# is the point where an extra pass stops changing the conclusion on the cases
-# we have, and each round is a paid call.
-MAX_ANALYZE_ROUNDS = 2
+# Open causes often need one pass to choose checks, one pass to refine an
+# initially missing signal, and one pass to name the root from both observations.
+# The third pass is a hard ceiling: it applies only after the bounded catalogue
+# has been exhausted and prevents an unbounded paid-model/tool loop.
+MAX_ANALYZE_ROUNDS = 3
 
 
 def _advance_active_hypotheses(session: Session, *, budget: int) -> list[dict[str, Any]]:
@@ -2785,6 +2871,11 @@ def _system_prompt(language: str = "zh") -> str:
         "returned root_hypothesis_id on the next round.\n"
         "Adapter probes are closed read-only tools: adapter:fortigate_context, "
         "adapter:device_history, and adapter:live_flows.\n"
+        "Allowed host checks must be one argv-only command. Useful exact forms "
+        "include `systemctl show UNIT -p PROPERTY --value`, `systemctl status "
+        "UNIT --no-pager`, `journalctl -u UNIT -n 40 --no-pager`, and `curl -s "
+        "-m 5 PRIVATE_URL`. Do not combine short flags or use variables, pipes, "
+        "redirection, command substitution, or command chaining.\n"
         "8. Do not report the following as faults; they are normal here:\n"
         + "".join(f"   - {line}\n" for line in KNOWN_NORMAL)
         + f"9. Answer in {'Chinese' if language == 'zh' else 'English'}.\n"
@@ -2845,6 +2936,45 @@ def _down_interface(session: Session) -> str | None:
     return candidates[0] if len(set(candidates)) == 1 else None
 
 
+def _verified_memory_shortcut_root(session: Session) -> RootCauseHypothesis | None:
+    """Return a freshly confirmed root reached through an admitted recurrence.
+
+    The shortcut is deliberately narrow: an exact managed scope, a verified
+    procedural record, a strict subset of the normal probe catalogue, and a
+    fresh decisive observation for the remembered root are all required.  A
+    wrong memory therefore costs ordering only.  Its first probe is opposed and
+    the ordinary competition continues.
+    """
+    if session.scope_quality != "exact" or not session.probe_prior.get("strictly_narrowed"):
+        return None
+    if float(session.probe_prior.get("procedural_confidence") or 0.0) < 1.5:
+        return None
+    shortcut = next(
+        (
+            dict(event.get("payload") or {})
+            for event in reversed(session.trace_events)
+            if event.get("kind") == "memory_shortcut"
+        ),
+        None,
+    )
+    if not shortcut or shortcut.get("effect") != "probe_order_and_early_stop":
+        return None
+    if int(shortcut.get("saved_probe_count") or 0) <= 0:
+        return None
+    root_id = str(shortcut.get("confirmed_root_key") or "")
+    if not root_id or root_id != str(session.probe_prior.get("root_key") or ""):
+        return None
+    loop = _loop_for(session)
+    if loop is None:
+        return None
+    confirmed = [item for item in loop.state.hypotheses if item.status == "confirmed"]
+    if len(confirmed) != 1 or confirmed[0].hypothesis_id != root_id:
+        return None
+    if not confirmed[0].supporting_evidence_ids or confirmed[0].opposing_evidence_ids:
+        return None
+    return confirmed[0]
+
+
 def action_candidate(session_id: str) -> dict[str, Any]:
     """Map one settled root to a preflighted, allowlisted recovery action."""
     session = get(session_id)
@@ -2853,6 +2983,10 @@ def action_candidate(session_id: str) -> dict[str, Any]:
         return {"eligible": False, "reason": "hypothesis_state_missing"}
     active = [item for item in loop.state.hypotheses if item.status in {"proposed", "testing"}]
     confirmed = [item for item in loop.state.hypotheses if item.status == "confirmed"]
+    shortcut_root = _verified_memory_shortcut_root(session)
+    if active and shortcut_root is not None:
+        confirmed = [shortcut_root]
+        active = []
     if active or len(confirmed) != 1:
         return {"eligible": False, "reason": "unique_settled_root_required"}
     root = confirmed[0]
@@ -3063,7 +3197,8 @@ def complete(session_id: str) -> dict[str, Any]:
         }
 
     loop = _loop_for(session)
-    if loop is not None:
+    shortcut_root = _verified_memory_shortcut_root(session)
+    if loop is not None and shortcut_root is None:
         _advance_active_hypotheses(session, budget=len(loop.state.probes))
     view = _hypothesis_view(session)
     active = list(view.get("active_root_keys") or ())
@@ -3071,6 +3206,9 @@ def complete(session_id: str) -> dict[str, Any]:
         item for item in view.get("hypotheses") or ()
         if item.get("status") == "confirmed"
     ]
+    if shortcut_root is not None:
+        active = []
+        confirmed = [shortcut_root.model_dump(mode="json")]
     case_key = session.case_id or f"adhoc:{session.session_id}"
     procedure_memory_id: str | None = None
     if active:
@@ -3115,7 +3253,11 @@ def complete(session_id: str) -> dict[str, Any]:
             state="action_ready" if eligible else "escalated",
             classification=str(root.get("hypothesis_id") or "confirmed_root"),
             headline=f"已确认：{root.get('statement') or root.get('hypothesis_id')}",
-            summary="当前只读观察已排除竞争原因，并确认一个根因。",
+            summary=(
+                "复发记忆命中同一受管对象，记忆指定的首项探针已用当前读数再次确认根因。"
+                if shortcut_root is not None
+                else "当前只读观察已排除竞争原因，并确认一个根因。"
+            ),
             disposition=(
                 "允许执行已通过前置检查的单一动作，完成后必须回读原系统。"
                 if eligible
@@ -3326,7 +3468,12 @@ def remediate(
     }
 
 
-def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
+def analyze(
+    session_id: str,
+    language: str = "zh",
+    *,
+    client_override: Any | None = None,
+) -> dict[str, Any]:
     """Turn collected evidence into a diagnosis and a graded runbook."""
     session = get(session_id)
     if session.case_id:
@@ -3347,7 +3494,7 @@ def analyze(session_id: str, language: str = "zh") -> dict[str, Any]:
                 "action_candidate": action_candidate(session_id),
                 "degraded": False,
             }
-    client = _client()
+    client = client_override if client_override is not None else _client()
     if client is None:
         # Deterministic evidence collection remains useful when a paid model is
         # unavailable.  Finish the bounded candidate set and expose its state.

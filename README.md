@@ -26,7 +26,7 @@
 
 ### 六项业务价值及其可执行验收
 
-系统按案件记录计算六项结果。`GET /api/rca/investigate/business-value` 读取实际案件时间线和调查会话，逐项返回 `proven`、`partial`、`failed` 或 `not_observed`，并列出通过的案件标识、分子、分母和测量值。`failed` 表示已有适用案件但全部未通过，`not_observed` 表示尚无适用案件。代码存在、单元测试通过和页面可见均不直接计为业务价值。
+系统按案件记录计算六项结果。`GET /api/rca/investigate/business-value` 读取实际案件时间线和调查会话，逐项返回 `proven`、`partial`、`failed` 或 `not_observed`，并列出通过的案件标识、分子、分母和测量值。`failed` 表示已有适用案件但全部未通过，`not_observed` 表示尚无适用案件。`?cohort=latest_acceptance` 只读取最近一次完整受控验收，默认口径同时保留生产案件和最近验收，历史失败不会被删除。代码存在、单元测试通过和页面可见均不直接计为业务价值。
 
 | 价值点 | 必须出现的实际记录 | 通过条件 |
 |---|---|---|
@@ -39,6 +39,19 @@
 
 聚合器位于 [`core/eval/business_value_acceptance.py`](./core/eval/business_value_acceptance.py)。复发案件按故障族、故障域、服务和受管资产形成 cohort，系统只在出现独立历史案件时触发配对。公网探测已被拒绝这类终态安全事件不具备记忆提速空间，会退出记忆收益评测。
 
+2026-08-31 的完整现场验收为 [`benchmark_results/business_value_acceptance_20260831.json`](./benchmark_results/business_value_acceptance_20260831.json)，运行标识 `20260831T115350Z-d03425`。验收创建仅绑定回环地址的临时 systemd 服务，实际触发首次启动失败、复发退出、永久启动失败和结构版本不一致，最后清理临时单元。六项结果如下：
+
+| 价值点 | 现场结果 | 直接证据 |
+|---|---:|---|
+| 自动接案 | 6/6 | 六个案件均由后台启动，并保存资产、时间范围和故障域 |
+| 开放根因调查 | 1/1 | 固定目录排除后，Codex 分析端提出新根因，产品执行端冻结并运行端点与服务状态两类探针，`ev-008`、`ev-009` 同时支持 |
+| 结论约束 | 6/6 | 最终决定只引用对应根因的当前支持证据，模型根因满足双信号条件 |
+| 真实提速 | 1/1 | 每个策略执行三次并取中位数；固定脚本 6 个探针、首次确认第 3 步、3958.738ms，完整系统 1 个探针、首次确认第 1 步、1262.811ms |
+| 动作与恢复 | 5/5 | 成功重启取得稳定回读；永久失败返回 `revert_unverified`，案件升级并停止继续变更 |
+| 复发记忆收益 | 1/1 | 同一根因从首次事故 3 步缩短到复发事故 1 步；同案固定脚本、关闭记忆和完整系统三臂根因一致 |
+
+验收脚本位于 [`scripts/run_business_value_acceptance.py`](./scripts/run_business_value_acceptance.py)，故障目标位于 [`scripts/business_value_fault_target.py`](./scripts/business_value_fault_target.py)。脚本使用独立动作预算、暂停开关、记忆存储和配对账本；开放调查调用本机 Codex，根因确认仍由产品执行的当前探针完成。
+
 ### 案件级业务验收契约
 
 每条真实案件必须通过以下检查：
@@ -50,7 +63,7 @@
 5. 开放根因的确认探针必须来自有明确诊断含义的只读工具，并覆盖至少两个不同信号域；`date`、`uptime` 等通用读数不能确认新根因。
 6. 记忆收益同时检查首次事故到复发事故的实际探针变化，以及复发案件自身的无记忆配对；任一对照失败都不计收益。
 
-内部测试集按这六条组织：来源字段、范围圈定和案件归并位于 `tests_py/test_runtime_reader.py`、`tests_py/test_incident_scope.py` 和 `tests_py/test_investigation_case.py`；开放根因、无关引用和双信号确认位于 `tests_py/test_investigate_session.py`；案件决策、自动动作、失败停止、回读和配对收益位于 `tests_py/test_investigation_business_loop.py`；业务价值聚合口径由 `tests_py/test_business_value_acceptance.py` 锁定；跨时间反证、重启恢复和记忆消融位于 `tests_py/test_temporal_case_evaluation.py`。固定案例锁定机制契约，部署准入读取当前数据流形成的案件，计算根因正确率、错误结案率、错误动作率、首次确认探针数和动作回读成功率。
+内部测试集按这六条组织：来源字段、范围圈定和案件归并位于数据读取、案件范围和案件持久化测试；开放根因、无关引用和双信号确认位于调查会话测试；案件决策、自动动作、失败停止、回读和配对收益位于业务闭环测试；业务价值聚合口径由 `tests_py/test_business_value_acceptance.py` 锁定；跨时间反证、重启恢复和记忆消融位于 `tests_py/test_temporal_case_evaluation.py`。固定案例锁定机制契约，部署准入读取当前数据流形成的案件，计算根因正确率、错误结案率、错误动作率、首次确认探针数和动作回读成功率。
 
 ## 先看三个真实 use case
 
@@ -435,7 +448,7 @@ environment.findings 记录已经证实的异常，environment.coverage 逐故�
 
 ## 评测边界与业务准入
 
-现有评测分别测量代码契约、固定案例行为、检索召回和索引性能。业务准入依据时间序列案件：实时事件创建持久化案件，延迟证据到达后继续调查，反证能够修正假设，服务重启后从检查点恢复，有记忆与无记忆在同一案件上进行配对。轨迹评分器位于 [`core/eval/temporal_case_evaluation.py`](./core/eval/temporal_case_evaluation.py)，真实案件配对判定器位于 [`core/eval/investigation_pair.py`](./core/eval/investigation_pair.py)。`POST /api/rca/investigate/evaluate-pair` 会真正执行两次只读调查并保存原始会话 ID、探针顺序、首次确认步数和验收结果。当前仓库尚未发布达到统计显著性的线上案件汇总。
+现有评测分别测量代码契约、固定案例行为、检索召回、索引性能和案件级业务结果。业务准入依据时间序列案件：实时事件创建持久化案件，延迟证据到达后继续调查，反证能够修正假设，服务重启后从检查点恢复，有记忆与无记忆在同一案件上进行配对。轨迹评分器位于 [`core/eval/temporal_case_evaluation.py`](./core/eval/temporal_case_evaluation.py)，真实案件配对判定器位于 [`core/eval/investigation_pair.py`](./core/eval/investigation_pair.py)。`POST /api/rca/investigate/evaluate-pair` 会真正执行固定脚本、关闭记忆和完整系统三臂，并保存原始会话 ID、探针顺序、首次确认步数、中位耗时和验收结果。当前仓库发布了一次 6 案例受控现场验收；1 个复发对用于证明链路可执行，样本量支持机制验收，后续跨天生产案件用于估计长期收益分布。
 
 ### 开放式调查对抗测试集
 
@@ -509,13 +522,13 @@ pytest -q tests_py/test_active_investigation_benchmark.py \
 
 | 用例 | 有效行为 | Bad use case 的失败证据 | 当前覆盖 |
 |---|---|---|---|
-| 重复故障 | 保持核实成功率并减少探针 | 上下文持续增长，探针、耗时与正确率维持原值 | 已覆盖，收益尚未检出 |
+| 重复故障 | 保持核实成功率并减少探针 | 上下文持续增长，探针、耗时与正确率维持原值 | 现场复发对从 3 步降至 1 步，三臂根因一致 |
 | 等量无关历史 | 根因、证据引用和动作保持稳定 | 无关历史触发错误根因或额外动作 | 已覆盖，本测试集未观察到伤害 |
 | 当前设备已恢复 | 新探针显示健康后停止状态修改 | 沿用历史故障并请求修改 | 已覆盖只读判断 |
 | 故障归属变化 | 停止本地修改并保留升级材料 | 历史处置越过当前所有权边界 | 已覆盖只读判断 |
-| 固定操作手册 | 动态记忆降低调查成本 | 动态记忆增加维护和 token 成本，结果与固定手册一致 | 已覆盖，优势尚未检出 |
+| 固定操作手册 | 动态记忆降低调查成本 | 动态记忆增加维护和 token 成本，结果与固定手册一致 | 现场三次中位数减少 5 个探针、2 个确认步骤和 2695.927ms |
 | 根因冲突 | 新证据推翻旧根因后停止给旧记忆信用 | 旧根因持续被检索和强化 | 记忆操作单测已覆盖，完整任务回放待补 |
-| 授权动作回读 | 动作回执、结果回读与回退全部留痕 | 结论正确，真实修改缺少结果回读 | 已覆盖服务动作映射、回读证据与案件状态 |
+| 授权动作回读 | 动作回执、结果回读与回退全部留痕 | 结论正确，真实修改缺少结果回读 | 5/5 动作取得终态回读，包含成功恢复与失败停止 |
 
 #### 判定门槛
 
@@ -537,7 +550,7 @@ python3 -m core.eval.memory_contribution
 python3 -m core.eval.memory_effectiveness_suite
 ~~~
 
-每周 CI 运行固定 seed 的五臂契约测试，并由 [`tests_py/test_memory_effectiveness_suite.py`](./tests_py/test_memory_effectiveness_suite.py) 锁定评分器边界。这组固定案例不承担业务准入。时间序列案件评分器负责持久状态、延迟证据、反证、检查点恢复和记忆消融；当前缺少线上案件轨迹输入。详细边界见 [记忆有效性测试](./docs/MEMORY_EFFECTIVENESS.md) 和 [评测口径](./docs/BENCHMARKS.md)。
+每周 CI 运行固定 seed 的五臂契约测试，并由 [`tests_py/test_memory_effectiveness_suite.py`](./tests_py/test_memory_effectiveness_suite.py) 锁定评分器边界。这组固定案例不承担业务准入。受控现场验收负责自动接案、开放根因、动作回读和复发配对；时间序列案件评分器负责持久状态、延迟证据、反证和检查点恢复。详细边界见 [记忆有效性测试](./docs/MEMORY_EFFECTIVENESS.md) 和 [评测口径](./docs/BENCHMARKS.md)。
 
 ### 3. LongMemEval-500：检索能力
 
@@ -628,10 +641,11 @@ HNSW 冷构建 909.7 秒，索引体积 784 MB。该实验说明索引配置的�
 | RCAEval 根因服务候选 | 733 案例，Hit@1 0.8104，Hit@3 0.9768，Hit@5 0.9959 | 注入时间前后的鲁棒指标变化能有效缩小根因服务范围；它没有执行开放式 Agent 调查 |
 | ITBench 告警自动圈定 | 28/35 完整，0.8000 | 7 个场景的告警缺少目标资产或没有覆盖真值中的受影响告警组，公开回放判失败 |
 | ITBench Kubernetes 事件检索 | 27 个场景存在根因事件，Hit@20 0.3704，宏平均 Recall@20 0.1743；另有 8 个场景缺少根因事件 | 单一事件源无法支撑开放根因，指标、日志、链路和配置快照需要进入同一调查适配器 |
-| 复发记忆配对 | 542 对，49 对减少候选，210 对增加候选，平均多查 0.5609 个候选 | 当前“相似历史优先”策略产生明显负迁移，记忆业务价值判失败 |
-| 动作与恢复 | AIOpsLab 有 14 个缓解任务、35 个注入加恢复文件 | 外部项目具备测试场景；本项目尚未在隔离环境完成动作、回读、稳定观察和失败恢复测试 |
+| 复发记忆配对 | 542 对，介入 3 对，改善 3 对，伤害 0 对，平均减少 0.00738 个候选 | 记忆只在同系统、同测试套件、同故障类的 5 个历史近邻中至少 4 个根因一致，且该根因仍位于当前 Top-5 时介入；539 对主动弃权 |
+| 结论约束留出集 | repetition 4 及以后共 159 案例，确认 24，正确 24，错误确认 0；把支持信号降到两类后 24/24 拒答 | 三类当前指标信号才发布根因，降低覆盖率以换取零错误确认 |
+| 动作与恢复 | AIOpsLab 有 14 个缓解任务、35 个注入加恢复文件；本项目受控现场动作 5/5 取得终态回读 | 外部场景用于能力对照，本项目用回环服务独立验证成功恢复、稳定观察与失败停止 |
 
-这组结果把六项业务价值分成三种状态。2026-08-31 的现场接口记录自动接案 3/4，为 partial；结论约束 3/3，为 proven。开放根因、处理时间、动作恢复和复发记忆均没有合格现场样本；记忆还在公开配对中出现负收益。公开数据尚未执行模型结论的支持、反证和正确拒答评分。RCAEval 的高 Hit@5 只说明候选范围可以快速缩小，完整调查仍需消费多源当前证据并产生可核验结果。
+公开回放与现场验收共同形成当前结论。ITBench 的 7 个范围失败和较低事件召回保留为数据源缺口；RCAEval 的 Hit@5 说明候选范围可以快速缩小，三信号门在留出集上提供 24/24 正确确认和 135 次拒答；保守记忆门消除了先前的公开负迁移。最近一次现场验收的六项状态全部为 `proven`，它覆盖 6 个受控真实案件和 1 个复发对。公开大样本没有执行本项目动作，现场小样本没有估计长期事故分布，两类证据在结果文件中分别记录。
 
 可复现命令：
 
@@ -644,8 +658,8 @@ python -m core.eval.public_aiops_business download \
 python -m core.eval.public_aiops_business evaluate \
   --cache-dir /data/autopoiesis-public-benchmarks/cache \
   --aiopslab-root /data/autopoiesis-public-benchmarks/AIOpsLab \
-  --live-business-value-url http://127.0.0.1:8026/api/rca/investigate/business-value \
-  --output /tmp/public-aiops-business.json
+  --live-business-value-url 'http://127.0.0.1:8026/api/rca/investigate/business-value?cohort=latest_acceptance' \
+  --output benchmark_results/public_aiops_business_20260831.json
 ~~~
 
 ## 可复现命令
@@ -749,12 +763,12 @@ PostgreSQL 在同一事务中提交当前记录和追加式事件。乐观版本
 | IncidentDossier、RiskPattern、NetworkFeature | 在线生成并持久化 |
 | systemd 隔离服务自动恢复 | 已接入真实执行、观察与回读 |
 | 自动接案与范围圈定 | 已接入后台；每次结果由 business-value 接口按案件统计 |
-| 开放根因调查 | 双信号冻结检查已接入；当前线上是否出现通过样本由 business-value 接口返回 |
-| 记忆重排探针、RAG 与 influence | 已写入真实调查会话；提速收益必须通过探针输出一致的配对结果 |
+| 开放根因调查 | 双信号冻结检查已接入；最近验收批次有 1/1 个模型原生根因通过当前端点与服务状态双信号确认 |
+| 记忆重排探针、RAG 与 influence | 已写入真实调查会话；现场三臂配对减少 5 个探针和 2 个确认步骤 |
 | 防火墙攻击事件自动封禁 | 当前场景由安全门保留配置并转人工 |
 | 交换机与防火墙 L2 配置写入 | 策略与接口已实现，真实设备适配器和凭据未注册 |
 | 整网故障覆盖 | 按传感器覆盖，盲区通过 environment.coverage 明示 |
-| 长期记忆收益 | 复发自动配对已接入；当前小样本成功率增益未检出时保持 not_observed |
+| 长期记忆收益 | 现场独立复发案件 1/1 收益成立；公开 542 对中介入 3、改善 3、伤害 0、弃权 539；跨天生产分布继续积累 |
 
 这张表是报告、答辩和面试中推荐使用的项目边界。每一项都能继续追问到输入、状态机、执行条件、输出和验证证据。
 

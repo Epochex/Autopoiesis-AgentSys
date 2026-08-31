@@ -252,6 +252,27 @@ def test_legacy_suggestion_projection_is_rebuilt_from_exact_alert_facts(tmp_path
         assert field not in cleaned.source_payload
 
 
+def test_non_flow_incident_facts_preserve_the_source_summary(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("controlled_fault", "host-degraded"),
+        occurred_at="2026-08-29T10:00:00+00:00",
+        subject="managed-host-a",
+        summary="受管主机出现未知可用性退化，定位当前根因",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "detector": "controlled_loopback_acceptance",
+            },
+        },
+    ))
+
+    repository.remove_legacy_reasoning_projection()
+
+    assert repository.get(case.case_id).summary == "受管主机出现未知可用性退化，定位当前根因"
+
+
 def test_case_query_and_open_http_api(tmp_path, monkeypatch) -> None:
     from fastapi.testclient import TestClient
     from frontend.gateway.app import main
@@ -265,7 +286,7 @@ def test_case_query_and_open_http_api(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "_investigation_case_repository", repository)
     client = TestClient(main.app)
 
-    listing = client.get("/api/rca/investigation-cases")
+    listing = client.get("/api/rca/investigation-cases?include_non_live=true")
     detail = client.get(f"/api/rca/investigation-cases/{case.case_id}")
     opened = client.post(f"/api/rca/investigation-cases/{case.case_id}/open?actor=tester")
 

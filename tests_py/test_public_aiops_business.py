@@ -57,8 +57,9 @@ def test_group_asset_normalisation_handles_itbench_aliases() -> None:
 
 def test_recurrence_index_never_needs_root_label_in_query() -> None:
     rows = [
+        *[
         MetricCaseResult(
-            case_id="first",
+            case_id=f"first-{index}",
             dataset="RE1-OB",
             suite="RE1",
             system="ob",
@@ -68,7 +69,7 @@ def test_recurrence_index_never_needs_root_label_in_query() -> None:
             service_ranking=("checkoutservice", "frontend"),
             metric_ranking=("checkoutservice_cpu", "frontend_latency-90"),
             root_rank=1,
-        ),
+        ) for index in range(5)],
         MetricCaseResult(
             case_id="repeat",
             dataset="RE1-OB",
@@ -86,7 +87,8 @@ def test_recurrence_index_never_needs_root_label_in_query() -> None:
     assert report["pair_count"] == 1
     assert report["mean_candidate_saving"] == 1
     assert report["harmed_count"] == 0
-    assert report["pairs"][0]["retrieved_memory_ids"] == ["first"]
+    assert len(report["pairs"][0]["retrieved_memory_ids"]) == 5
+    assert report["pairs"][0]["memory_admitted"] is True
 
 
 def test_public_report_does_not_invent_live_status() -> None:

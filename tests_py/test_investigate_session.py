@@ -294,11 +294,11 @@ def test_analyze_stops_asking_after_the_round_cap(monkeypatch, session_id):
 
 
 def test_the_last_round_is_told_to_conclude(monkeypatch, session_id):
-    client = FakeClient(
+    client = FakeClient(*[
         {"diagnosis": "d", "root_cause": "inconclusive", "citations": [],
-         "need_commands": ["date"], "runbook": []},
-        {"diagnosis": "d", "root_cause": "x", "citations": [], "need_commands": [], "runbook": []},
-    )
+         "need_commands": ["date"], "runbook": []}
+        for _ in range(investigate.MAX_ANALYZE_ROUNDS)
+    ])
     _use(monkeypatch, client)
     investigate.analyze(session_id)
     assert "最后一轮" in client.seen[-1][-1]["content"]
@@ -334,9 +334,10 @@ def test_open_root_is_published_only_after_two_independent_frozen_checks(monkeyp
     )
     monkeypatch.setattr(investigate, "_live_memory_store", lambda: None)
     root = "collector listener remains present while its data dependency times out"
+    clean_root = root + "。"
     proposal = {
         "diagnosis": "two current signals support the dependency failure",
-        "root_cause": root,
+        "root_cause": root + " [ev-001] 。",
         "root_hypothesis_id": "",
         "citations": [],
         "need_commands": [],
@@ -355,7 +356,7 @@ def test_open_root_is_published_only_after_two_independent_frozen_checks(monkeyp
 
     result = investigate.analyze(opened["session_id"])
 
-    assert result["root_cause"] == root
+    assert result["root_cause"] == clean_root
     assert len(result["citations"]) == 2
     supporting = [
         item for item in investigate.get(opened["session_id"]).evidence

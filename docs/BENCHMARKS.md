@@ -8,10 +8,12 @@ service.
 The release-level evaluation target is a temporal investigation case.  A qualifying trace
 starts from a live event cluster, persists evidence and hypotheses across steps, waits for
 delayed evidence, revises a contradicted hypothesis, restores from a checkpoint after a
-service restart, and closes on independently labelled evidence.  Paired traces compare
-``no_memory`` and ``with_memory`` under the same event stream and tool budget.  The executable
-scorer is `core/eval/temporal_case_evaluation.py`.  The repository currently contains its
-contract tests; a production-trace result has not been committed.
+service restart, and closes on independently labelled evidence.  Paired traces execute
+``fixed_script``, ``no_memory`` and ``full_system`` against the same current fault and tool
+budget.  `core/eval/temporal_case_evaluation.py` scores exported traces;
+`core/eval/business_value_acceptance.py` scores persisted live cases and sessions.  The
+committed 2026-08-31 acceptance run contains six controlled host cases and one repeated-fault
+pair.
 
 | evaluation | measured object | valid conclusion | excluded conclusion |
 |---|---|---|---|
@@ -26,6 +28,7 @@ contract tests; a production-trace result has not been committed.
 | RCAEval full metric replay | 733 valid cases from a 735-case labelled index | root-service candidate rank and recurrence negative transfer | open investigation, model grounding or action recovery |
 | ITBench-Lite SRE replay | 35 labelled alert and Kubernetes-event snapshots | alert-scope completeness and event retrieval | live interaction or active remediation |
 | AIOpsLab source audit | registered fault and mitigation scenario contracts | available external action-test coverage | this project's action success or readback |
+| controlled host acceptance | six loopback-bound systemd fault cases | executable takeover, open investigation, grounded decision, same-fault speed, action readback and recurrence paths | population-wide production rates |
 
 ## Public AIOps business-value audit
 
@@ -41,8 +44,20 @@ cases.  The deterministic robust-shift baseline measured root-service Hit@1 0.81
 
 The chronological memory comparison used 542 recurrence pairs.  Query and indexed text
 contained observed metric names only; the verified root service stayed in result metadata.
-Memory reduced candidate count in 49 pairs, increased it in 210 pairs, and changed the mean
-candidate count by +0.5609.  The memory-value claim therefore fails on this public replay.
+Memory can intervene only inside the same system, suite and fault class, when at least four
+of the five retrieved prior roots agree and that root remains in the current Top-5.  It
+intervened in 3 pairs, reduced candidates in all 3, harmed 0 and abstained in 539.  On the
+held-out repetition-4-and-later split it again intervened in 3 of 159 pairs, saved 4
+candidates and harmed 0.  Mean saving over all 542 pairs is 0.00738 candidates; the low
+coverage is part of the result.
+
+The conclusion gate was fitted on repetitions 1 to 3 and evaluated on repetitions 4 and
+later.  A root is published only when three distinct current metric signal types appear in
+the Top-5.  The 159-case held-out split published 24 roots, all 24 matched the label, and
+abstained on 135.  Removing one signal type from the 24 accepted inputs caused 24 of 24 to
+abstain, with zero false confirmations.  This establishes the measured precision and
+coverage of this deterministic gate on RCAEval; it does not estimate every future open
+failure family.
 
 ITBench alert parsing produced a complete asset, time and fault-domain scope in 28 of 35
 scenarios.  Kubernetes events contained at least one root-bearing record in 27 scenarios.
@@ -53,12 +68,16 @@ must join the event evidence before the open-investigation loop can be evaluated
 
 The AIOpsLab source audit found 89 registered task ids, including 14 mitigation tasks, and 35
 scenario files with both fault injection and recovery methods.  These counts describe an
-external test facility.  Action business value in this project requires an isolated run that
-records action execution, original-system readback, stability observation and failed recovery.
+external test facility.  This project's separate controlled host acceptance executed five
+eligible actions: successful restarts reached stable original-system readback, while an
+always-failing service ended in ``revert_unverified``, required human escalation and stopped
+further changes.
 
 The committed artifact `benchmark_results/public_aiops_business_20260831.json` contains
-aggregates, every ITBench scenario, the worst RCA ranks and representative positive and
-negative memory transfers.  The documented command writes the complete case-level report.
+aggregates, all 733 RCAEval case results, all 542 recurrence pairs, every ITBench scenario and
+the latest controlled host snapshot.  The host evidence is also committed independently as
+`benchmark_results/business_value_acceptance_20260831.json`, so public replay and local action
+evidence can be inspected without conflating their sample levels.
 
 `examples/benchmarks.py` remains a developer diagnostic for fixed fixtures.  Its output must
 not appear in a release claim, resume metric or whole-system completion statement.
@@ -297,7 +316,7 @@ primary references, and limitations are in
 ## Full test suite
 
 ```bash
-python3 -m pytest tests_py/ -q      # FAISS/psycopg/FastAPI environment: 383 passed, 8 skipped
+python3 -m pytest tests_py/ -q      # 2026-08-31: 1327 passed, 11 skipped, 1 dependency deprecation warning
 # persistence coverage: 2 opt-in PostgreSQL 17 container integrations + 12 logic unit tests
 # opt-in 100k/1m performance regression: 2 passed
 ```

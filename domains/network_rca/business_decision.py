@@ -132,7 +132,10 @@ def is_terminal_local_in_deny(facts: Mapping[str, Any]) -> bool:
         and _public_ip(str(facts.get("sourceIp") or ""))
         and str(facts.get("sourceInterfaceRole") or "").casefold() == "wan"
         and str(facts.get("trafficSubtype") or "").casefold() == "local"
-        and str(facts.get("policyType") or "").casefold() == "local-in-policy"
+        and str(facts.get("policyType") or "").casefold() in {
+            "local-in-policy",
+            "local-in-policy6",
+        }
         and str(facts.get("action") or "").casefold() == "deny"
     )
 

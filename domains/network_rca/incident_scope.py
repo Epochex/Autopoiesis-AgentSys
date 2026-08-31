@@ -135,7 +135,15 @@ def derive_incident_scope(
     policy_id = str(facts.get("policyId") or "").strip()
     subtype = str(facts.get("trafficSubtype") or "").casefold()
     policy_type = str(facts.get("policyType") or "").casefold()
-    local_in = subtype == "local" and policy_type == "local-in-policy"
+    # FortiOS uses a distinct policy type for IPv6 local traffic.  Both forms
+    # terminate on the managed firewall, including link-local multicast such as
+    # SSDP/WS-Discovery.  Treating ``local-in-policy6`` as an ordinary forwarded
+    # flow loses the only managed target even though the ingress interface and
+    # policy class already locate the fault domain exactly.
+    local_in = subtype == "local" and policy_type in {
+        "local-in-policy",
+        "local-in-policy6",
+    }
 
     managed: list[str] = []
     external: list[str] = []

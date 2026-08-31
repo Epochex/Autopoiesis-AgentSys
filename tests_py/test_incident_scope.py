@@ -84,3 +84,29 @@ def test_unmapped_public_record_has_no_probe_target() -> None:
     assert scope.quality == "unresolved"
     assert scope.managed_assets == ()
     assert "managedAsset" in scope.missing
+
+
+def test_ipv6_local_in_scope_terminates_on_managed_gateway() -> None:
+    now = datetime(2026, 8, 31, 7, 33, tzinfo=timezone.utc).isoformat()
+    scope = derive_incident_scope(
+        subject="fe80::19f6:8fb1:57ea:abd",
+        service="udp/3702",
+        first_seen_at=now,
+        last_seen_at=now,
+        facts={
+            "sourceIp": "fe80::19f6:8fb1:57ea:abd",
+            "destinationIp": "ff02::c",
+            "trafficSubtype": "local",
+            "policyType": "local-in-policy6",
+            "sourceInterface": "port5",
+            "sourceInterfaceRole": "lan",
+            "action": "deny",
+        },
+        managed_gateway="192.168.1.1",
+        fault_family="fam-policy-reachability",
+        topology=TOPOLOGY,
+    )
+
+    assert scope.managed_assets == ("192.168.1.1",)
+    assert scope.fault_domain == "gateway-control-plane:192.168.1.1:port5"
+    assert scope.quality == "exact"

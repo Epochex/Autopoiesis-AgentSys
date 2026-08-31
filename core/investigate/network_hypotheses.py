@@ -113,9 +113,28 @@ def create_network_hypothesis_loop(
     opened_at: datetime,
     question_terms: Sequence[str],
     ordered_commands: Sequence[str],
+    preferred_root_ids: Sequence[str] = (),
 ) -> HypothesisLoop:
     """Create the applicable candidate set and rank its read-only probes."""
     root_ids = FAMILY_ACTIVE_ROOTS.get(family, ()) if family else tuple(ACTIVE_ROOTS)
+    # Error streams are evidence sources, not causal statements.  A busy host
+    # almost always has some unrelated error in these broad windows; treating
+    # their mere presence as a root creates false multi-root outcomes.  Open
+    # hypotheses may still request unit-scoped journal or kernel checks and
+    # freeze a predicate for the specific claim they are testing.
+    root_ids = tuple(
+        root_id for root_id in root_ids
+        if root_id not in {"system_errors", "kernel_errors"}
+    )
+    if subject and subject.endswith((".service", ".target", ".socket", ".timer")):
+        # A unit-scoped incident may use only observations that name that unit.
+        # Host link, route, capacity, journal and the gateway's own health probe
+        # describe different fault domains.  Letting them compete here can hold
+        # a confirmed unit failure open because an unrelated tool failed, or can
+        # manufacture a second root from another process on the host.  Once the
+        # unit state is healthy, the open-root path can request unit-specific
+        # journal and endpoint checks with frozen verification predicates.
+        root_ids = tuple(root_id for root_id in root_ids if root_id == "service_failed")
     if not subject or re.fullmatch(r"\d+(?:\.\d+){3}", subject) is None:
         root_ids = tuple(root_id for root_id in root_ids if root_id != "neighbor_unreachable")
     loop = HypothesisLoop.create(case_id, at=opened_at)
@@ -149,7 +168,9 @@ def create_network_hypothesis_loop(
             description=spec.probe,
             target_entity_id=entity,
             distinguishes_hypothesis_ids=(root_id,),
-            priority=10_000 - order[root_id] * 100 + overlap * 1_000,
+            priority=(
+                30_000 if root_id in set(preferred_root_ids) else 10_000
+            ) - order[root_id] * 100 + overlap * 1_000,
             estimated_cost=1.0,
         ), at=opened_at)
     return loop

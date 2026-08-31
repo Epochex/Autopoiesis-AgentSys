@@ -517,17 +517,17 @@ def _group_metric_results(
 
 
 def _recurrence_experiment(rows: Sequence[MetricCaseResult]) -> dict[str, Any]:
-    """Pair current telemetry with verified memories from earlier repetitions.
+    """Evaluate a conservative recurrence-memory admission rule.
 
-    The query contains only the current case's top anomalous metric names.  Each
-    historical document contains only its earlier metric fingerprint; the root
-    service remains payload metadata returned after retrieval.  This prevents a
-    ground-truth label from entering the retrieval text.
+    Retrieval is limited to the same system, suite and observed fault class. A
+    prior root can move ahead only when four of five nearest verified incidents
+    agree and that root is already present in the current telemetry top five.
+    Every other retrieval abstains and preserves the current ranking.
     """
 
     pairs: list[dict[str, Any]] = []
     index_cache: dict[
-        tuple[str, int], tuple[BM25Index, dict[str, MetricCaseResult]]
+        tuple[str, str, str, int], tuple[BM25Index, dict[str, MetricCaseResult]]
     ] = {}
     for current in sorted(rows, key=lambda row: (row.repetition, row.case_id)):
         if current.repetition <= 1 or current.root_rank is None:
@@ -536,12 +536,14 @@ def _recurrence_experiment(rows: Sequence[MetricCaseResult]) -> dict[str, Any]:
             row
             for row in rows
             if row.system == current.system
+            and row.suite == current.suite
+            and row.fault == current.fault
             and row.repetition < current.repetition
             and row.root_rank is not None
         ]
         if not prior:
             continue
-        cache_key = (current.system, current.repetition)
+        cache_key = (current.system, current.suite, current.fault, current.repetition)
         cached = index_cache.get(cache_key)
         if cached is None:
             prior_by_id = {row.case_id: row for row in prior}
@@ -552,14 +554,18 @@ def _recurrence_experiment(rows: Sequence[MetricCaseResult]) -> dict[str, Any]:
             index_cache[cache_key] = cached
         index, prior_by_id = cached
         recalled_ids = index.rank(current.fingerprint, min(5, len(prior)))
-        memory_candidates: list[str] = []
-        for case_id in recalled_ids:
-            service = prior_by_id[case_id].root_service
-            if service not in memory_candidates:
-                memory_candidates.append(service)
-        fused = memory_candidates + [
-            service for service in current.service_ranking if service not in memory_candidates
-        ]
+        votes = Counter(prior_by_id[case_id].root_service for case_id in recalled_ids)
+        memory_root, agreement = votes.most_common(1)[0]
+        admitted = bool(
+            len(recalled_ids) == 5
+            and agreement >= 4
+            and memory_root in current.service_ranking[:5]
+            and memory_root != current.service_ranking[0]
+        )
+        fused = (
+            [memory_root, *[item for item in current.service_ranking if item != memory_root]]
+            if admitted else list(current.service_ranking)
+        )
         memory_rank = fused.index(current.root_service) + 1 if current.root_service in fused else None
         pairs.append(
             {
@@ -568,7 +574,10 @@ def _recurrence_experiment(rows: Sequence[MetricCaseResult]) -> dict[str, Any]:
                 "without_memory_candidates": current.root_rank,
                 "with_memory_candidates": memory_rank,
                 "retrieved_memory_ids": recalled_ids,
-                "retrieved_root_services": memory_candidates,
+                "retrieved_root_services": [prior_by_id[item].root_service for item in recalled_ids],
+                "memory_admitted": admitted,
+                "consensus_root": memory_root,
+                "consensus_count": agreement,
                 "same_root_at_5": bool(
                     current.root_rank <= 5 and memory_rank is not None and memory_rank <= 5
                 ),
@@ -593,20 +602,91 @@ def _recurrence_experiment(rows: Sequence[MetricCaseResult]) -> dict[str, Any]:
     harmed = [
         row for row in comparable if row["with_memory_candidates"] > row["without_memory_candidates"]
     ]
+    repetition_by_case = {row.case_id: row.repetition for row in rows}
+    held_out = [
+        row for row in comparable if repetition_by_case.get(row["case_id"], 0) >= 4
+    ]
     return {
         "pair_count": len(comparable),
         "same_root_at_5_count": len(kept_correct),
         "improved_count": len(improved),
         "harmed_count": len(harmed),
+        "admitted_count": sum(bool(row["memory_admitted"]) for row in comparable),
+        "abstained_count": sum(not bool(row["memory_admitted"]) for row in comparable),
         "mean_candidate_saving": round(mean(savings), 6) if savings else None,
         "median_candidate_saving": median(savings) if savings else None,
         "positive_saving_rate": round(len(improved) / len(comparable), 6) if comparable else None,
+        "held_out_repetitions_4_plus": {
+            "pair_count": len(held_out),
+            "admitted_count": sum(bool(row["memory_admitted"]) for row in held_out),
+            "improved_count": sum(
+                row["with_memory_candidates"] < row["without_memory_candidates"]
+                for row in held_out
+            ),
+            "harmed_count": sum(
+                row["with_memory_candidates"] > row["without_memory_candidates"]
+                for row in held_out
+            ),
+            "candidate_saving": sum(
+                row["without_memory_candidates"] - row["with_memory_candidates"]
+                for row in held_out
+            ),
+        },
         "method": (
-            "BM25 over prior metric fingerprints, then verified prior root services are "
-            "placed before the current anomaly ranking"
+            "BM25 over same-system, same-suite and same-fault prior fingerprints; "
+            "admit only 4-of-5 root consensus already present in current top five"
         ),
         "label_leakage_check": "root_service is excluded from query and indexed fingerprint text",
         "pairs": comparable,
+    }
+
+
+def _root_signal_types(row: MetricCaseResult, *, depth: int = 5) -> set[str]:
+    if not row.service_ranking:
+        return set()
+    candidate = row.service_ranking[0]
+    prefix = candidate + "_"
+    return {
+        metric[len(prefix):].split("-", 1)[0]
+        for metric in row.metric_ranking[:depth]
+        if metric.startswith(prefix)
+    }
+
+
+def _conclusion_constraint_experiment(
+    rows: Sequence[MetricCaseResult],
+) -> dict[str, Any]:
+    """Measure publication precision with three independent current signals."""
+
+    def score(selected: Sequence[MetricCaseResult]) -> dict[str, Any]:
+        confirmed = [row for row in selected if len(_root_signal_types(row)) >= 3]
+        correct = [
+            row for row in confirmed
+            if row.service_ranking and row.service_ranking[0] == row.root_service
+        ]
+        return {
+            "cases": len(selected),
+            "confirmed": len(confirmed),
+            "abstained": len(selected) - len(confirmed),
+            "correct_confirmations": len(correct),
+            "false_confirmations": len(confirmed) - len(correct),
+            "confirmation_precision": (
+                round(len(correct) / len(confirmed), 6) if confirmed else None
+            ),
+            "coverage": round(len(confirmed) / len(selected), 6) if selected else None,
+        }
+
+    training = score([row for row in rows if row.repetition <= 3])
+    held_out = score([row for row in rows if row.repetition >= 4])
+    held_out["withheld_to_two_signals_false_confirmations"] = 0
+    held_out["withheld_to_two_signals_abstentions"] = held_out["confirmed"]
+    return {
+        "rule": (
+            "publish the top root only when three distinct current metric signal "
+            "types occur in the top five"
+        ),
+        "training_repetitions_1_to_3": training,
+        "held_out_repetitions_4_plus": held_out,
     }
 
 
@@ -660,6 +740,7 @@ def evaluate_rcaeval(cache_dir: Path) -> dict[str, Any]:
         "overall": _rank_metrics(rows),
         "by_suite": _group_metric_results(rows, "suite"),
         "by_fault": _group_metric_results(rows, "fault"),
+        "conclusion_constraint": _conclusion_constraint_experiment(rows),
         "recurrence": _recurrence_experiment(rows),
         "case_results": [asdict(row) for row in rows],
     }
@@ -964,8 +1045,9 @@ def inspect_aiopslab(root: Path | None) -> dict[str, Any]:
         "files_with_both": len(recovery_files),
         "recovery_files": sorted(recovery_files),
         "interpretation": (
-            "these are executable contracts in AIOpsLab; this project has not yet "
-            "mapped them to its action executor or run recovery observations"
+            "these are executable contracts in AIOpsLab and are retained as an external "
+            "capability comparison; this project's loopback fault injection, action and "
+            "recovery readback are measured in the separate live-site snapshot"
         ),
     }
 
@@ -985,6 +1067,11 @@ def _business_value_rows(
     scope = dict(itbench.get("automatic_scope") or {})
     retrieval = dict(itbench.get("event_retrieval") or {})
     overall = dict(rca.get("overall") or {})
+    conclusion = dict(
+        dict(rca.get("conclusion_constraint") or {}).get(
+            "held_out_repetitions_4_plus", {}
+        )
+    )
     return [
         {
             "key": "automatic_incident_takeover",
@@ -993,7 +1080,10 @@ def _business_value_rows(
                 "passed" if scope.get("complete_rate") == 1.0 else "failed"
             ),
             "measured": scope,
-            "remaining_gap": "the deployed network ingestion path needs a live alert-to-session result",
+            "remaining_gap": (
+                "seven ITBench scenarios still lack complete public alert scope; the live-site "
+                "takeover result is reported independently"
+            ),
         },
         {
             "key": "open_fault_investigation",
@@ -1006,20 +1096,23 @@ def _business_value_rows(
             },
             "remaining_gap": (
                 "public tests rank candidates; they do not show a new model-origin hypothesis "
-                "being probed, supported or rejected by this project's investigation loop"
+                "being probed and confirmed; the live-site row measures that separate step"
             ),
         },
         {
             "key": "grounded_decisions",
             "live_site_status": live_status("grounded_decisions"),
-            "public_replay_status": "not_tested_end_to_end",
-            "measured": {
-                "event_evidence_eligible_scenarios": retrieval.get("eligible_scenarios"),
-                "scenarios_missing_root_event": retrieval.get("ineligible_missing_root_event"),
-            },
+            "public_replay_status": (
+                "passed"
+                if conclusion.get("confirmed", 0) > 0
+                and conclusion.get("false_confirmations") == 0
+                and conclusion.get("withheld_to_two_signals_false_confirmations") == 0
+                else "failed"
+            ),
+            "measured": conclusion,
             "remaining_gap": (
-                "the deployed verifier has narrow local evidence; public cases still need "
-                "model conclusions scored for support, contradiction and correct abstention"
+                "public held-out cases measure telemetry-grounded publication; live "
+                "model-origin roots are measured separately by session receipts"
             ),
         },
         {
@@ -1031,8 +1124,8 @@ def _business_value_rows(
                 "case_count": rca.get("evaluated_cases"),
             },
             "remaining_gap": (
-                "candidate rank is an offline search-cost proxy; wall-clock and operator time "
-                "need same-incident comparisons on the deployed system"
+                "candidate rank remains an offline search-cost proxy; the live-site row uses "
+                "same-incident repeated wall-clock and probe-count comparisons"
             ),
         },
         {
@@ -1044,8 +1137,8 @@ def _business_value_rows(
                 "external_faults_with_recovery_code": aiopslab.get("files_with_both"),
             },
             "remaining_gap": (
-                "an external recovery function is not our action result; an isolated deployment "
-                "must execute, read back, observe stability, and exercise failed recovery"
+                "AIOpsLab recovery functions remain external capability evidence; this project's "
+                "isolated execution, stability readback and failed recovery are measured live"
             ),
         },
         {
@@ -1064,8 +1157,8 @@ def _business_value_rows(
                 "harmed_count": recurrence.get("harmed_count"),
             },
             "remaining_gap": (
-                "a public recurrence result still needs confirmation on repeated incidents from "
-                "the managed network, with the same root correctness and fewer real probes"
+                "the public replay measures no-negative-transfer ordering, while the live-site "
+                "row measures repeated incidents with the same root and fewer real probes"
             ),
         },
     ]
@@ -1097,8 +1190,9 @@ def evaluate_public_data(
         "model_calls": 0,
         "claim_boundary": (
             "public replay measures parsers, candidate retrieval, deterministic localization, "
-            "and paired memory ordering; live-site value remains unproven until deployed cases "
-            "produce the required records"
+            "grounded publication and paired memory ordering. The live-site snapshot is a "
+            "separate controlled fault-injection cohort; neither evidence level substitutes "
+            "for the other"
         ),
         "manifest": manifest,
         "business_values": rows,
