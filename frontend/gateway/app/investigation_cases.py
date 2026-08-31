@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from domains.network_rca.investigation_case import (
+    CaseEvent,
     CaseObservation,
     InvestigationCaseRepository,
     SourceReference,
@@ -216,7 +217,7 @@ def resolve_routine_observations(
     repository: InvestigationCaseRepository, *, limit: int = 500,
 ) -> int:
     """Close already-landed LAN group traffic without creating Agent sessions."""
-    resolved = 0
+    transitions: list[CaseEvent] = []
     for case in repository.list(status="open", limit=limit):
         facts = dict(case.source_payload.get("incidentFacts") or {})
         if not _is_routine_lan_broadcast(facts):
@@ -240,15 +241,14 @@ def resolve_routine_observations(
             "readback": None,
             "generatedAt": datetime.now(timezone.utc).isoformat(),
         }
-        repository.append_event(
-            case.case_id,
+        transitions.append(CaseEvent(
+            case_id=case.case_id,
             kind="business_decision_recorded",
             payload={"decision": decision},
             status="resolved",
             event_id=f"{case.case_id}:routine-observation-suppressed",
-        )
-        resolved += 1
-    return resolved
+        ))
+    return repository.append_events(transitions)
 
 
 def auto_start_pending_cases(

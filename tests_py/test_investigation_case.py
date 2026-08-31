@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from domains.network_rca.investigation_case import (
+    CaseEvent,
     CaseObservation,
     InvestigationCaseRepository,
     SourceReference,
@@ -106,6 +107,31 @@ def test_routine_lan_broadcast_case_is_closed_without_an_investigation(tmp_path)
     assert stored is not None and stored.status == "resolved"
     assert stored.as_dict()["businessDecision"]["classification"] == "routine_observation_suppressed"
     assert stored.latest_event("investigation_session_started") is None
+
+
+def test_case_events_batch_commits_multiple_cases_and_is_idempotent(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    cases = [
+        repository.ingest(CaseObservation(
+            source=SourceReference("alert", f"alert-{index}"),
+            occurred_at="2026-08-31T20:00:00Z",
+        ))
+        for index in range(3)
+    ]
+    transitions = [
+        CaseEvent(
+            case_id=case.case_id,
+            kind="business_decision_recorded",
+            payload={"decision": {"classification": "routine_observation_suppressed"}},
+            status="resolved",
+            event_id=f"{case.case_id}:resolved",
+        )
+        for case in cases
+    ]
+
+    assert repository.append_events(transitions) == 3
+    assert repository.append_events(transitions) == 0
+    assert all(repository.get(case.case_id).status == "resolved" for case in cases)
 
 
 def test_high_impact_durable_case_is_projected_into_live_business_ledger(tmp_path) -> None:

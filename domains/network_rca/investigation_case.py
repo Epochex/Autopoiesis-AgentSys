@@ -123,6 +123,18 @@ class CaseObservation:
 
 
 @dataclass(frozen=True)
+class CaseEvent:
+    """One idempotent case transition suitable for transactional batching."""
+
+    case_id: str
+    kind: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    status: str | None = None
+    occurred_at: str | None = None
+    event_id: str | None = None
+
+
+@dataclass(frozen=True)
 class InvestigationCase:
     case_id: str
     status: str
@@ -652,6 +664,54 @@ class InvestigationCaseRepository:
             )
             conn.commit()
         return self.get(case_id)
+
+    def append_events(self, events: Iterable[CaseEvent]) -> int:
+        """Append many independent transitions with one durable commit.
+
+        This is used for bounded migrations and detector projections.  A single
+        transaction avoids one filesystem sync per case on local-path storage,
+        while per-case event identifiers preserve the same idempotency contract
+        as :meth:`append_event`.
+        """
+        pending = list(events)
+        if not pending:
+            return 0
+        allowed_statuses = {
+            "open", "investigating", "waiting", "resolved", "escalated", "closed",
+        }
+        updated = 0
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for item in pending:
+                kind = item.kind.strip()
+                if not item.case_id.strip() or not kind:
+                    raise ValueError("case id and event kind are required")
+                if item.status is not None and item.status not in allowed_statuses:
+                    raise ValueError("unsupported investigation case status")
+                row = conn.execute(
+                    "SELECT status, timeline_json FROM investigation_cases WHERE case_id=?",
+                    (item.case_id,),
+                ).fetchone()
+                if row is None:
+                    continue
+                timeline = list(_loads(row["timeline_json"], []))
+                if item.event_id and any(
+                    event.get("eventId") == item.event_id for event in timeline
+                ):
+                    continue
+                now = item.occurred_at or _utc_now()
+                event = {"kind": kind, "ts": now, **dict(item.payload)}
+                if item.event_id:
+                    event["eventId"] = item.event_id
+                timeline.append(event)
+                conn.execute(
+                    "UPDATE investigation_cases SET status=?, updated_at=?, "
+                    "timeline_json=?, version=version+1 WHERE case_id=?",
+                    (item.status or row["status"], now, _json(timeline), item.case_id),
+                )
+                updated += 1
+            conn.commit()
+        return updated
 
     @staticmethod
     def _from_row(
