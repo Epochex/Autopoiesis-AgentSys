@@ -140,6 +140,14 @@ def create_network_hypothesis_loop(
         root_id for root_id in root_ids
         if root_id not in {"system_errors", "kernel_errors"}
     )
+    if family is None:
+        # These roots require source-specific incident facts and closed adapters.
+        # Letting them enter an untyped host investigation leaves an impossible
+        # probe active and prevents the open-root path from taking over.
+        root_ids = tuple(
+            root_id for root_id in root_ids
+            if root_id not in {"admin_bruteforce_lockout", "duplicate_ip_static"}
+        )
     if subject and subject.endswith((".service", ".target", ".socket", ".timer")):
         # A unit-scoped incident may use only observations that name that unit.
         # Host link, route, capacity, journal and the gateway's own health probe

@@ -23,6 +23,8 @@ def test_broad_error_streams_are_evidence_sources_not_root_candidates() -> None:
     assert "service_failed" in root_ids
     assert "system_errors" not in root_ids
     assert "kernel_errors" not in root_ids
+    assert "admin_bruteforce_lockout" not in root_ids
+    assert "duplicate_ip_static" not in root_ids
 
 
 def test_named_unit_uses_only_unit_scoped_catalogue_root() -> None:

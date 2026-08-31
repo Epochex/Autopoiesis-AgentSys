@@ -280,6 +280,8 @@ def run() -> dict[str, Any]:
     investigate._live_memory_store = lambda: acceptance_memory
     investigate._operational_context = lambda *_args: {}
     investigate._device_profile_anomaly_types = lambda *_args: []
+    codex = CodexCLIClient()
+    investigate._client = lambda *_args, **_kwargs: codex
     remediation.DEFAULT_BAKE_IN = BakeIn(
         window_seconds=3.0,
         stability_window_seconds=3.0,
@@ -430,7 +432,6 @@ def run() -> dict[str, Any]:
         before = investigate.complete(str(opened["session_id"]))
         if dict(before.get("decision") or {}).get("classification") != "open_root_required":
             raise RuntimeError(f"open-root precondition failed: {before.get('decision')}")
-        codex = CodexCLIClient()
         open_result = investigate.analyze(
             str(opened["session_id"]), client_override=codex
         )
@@ -441,6 +442,7 @@ def run() -> dict[str, Any]:
             "citations": open_result.get("citations"),
             "codex_calls": codex.calls,
         }
+        evidence["codex_call_count"] = len(codex.calls)
 
         cases = [
             case.as_dict()
