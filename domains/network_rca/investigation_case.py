@@ -657,6 +657,12 @@ class InvestigationCaseRepository:
                 return None
             timeline = list(_loads(row["timeline_json"], []))
             if event_id and any(item.get("eventId") == event_id for item in timeline):
+                if status is not None and status != row["status"]:
+                    conn.execute(
+                        "UPDATE investigation_cases SET status=?, updated_at=?, "
+                        "version=version+1 WHERE case_id=?",
+                        (status, now, case_id),
+                    )
                 conn.commit()
                 return self.get(case_id)
             event = {"kind": kind, "ts": now, **dict(payload or {})}
@@ -704,6 +710,14 @@ class InvestigationCaseRepository:
                 if item.event_id and any(
                     event.get("eventId") == item.event_id for event in timeline
                 ):
+                    if item.status is not None and item.status != row["status"]:
+                        now = item.occurred_at or _utc_now()
+                        conn.execute(
+                            "UPDATE investigation_cases SET status=?, updated_at=?, "
+                            "version=version+1 WHERE case_id=?",
+                            (item.status, now, item.case_id),
+                        )
+                        updated += 1
                     continue
                 now = item.occurred_at or _utc_now()
                 event = {"kind": kind, "ts": now, **dict(item.payload)}

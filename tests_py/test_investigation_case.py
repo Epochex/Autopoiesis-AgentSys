@@ -128,6 +128,7 @@ def test_routine_observation_recovers_from_an_accidental_reopen(tmp_path) -> Non
             },
         },
     ))
+    assert resolve_routine_observations(repository) == 1
     repository.append_event(
         case.case_id,
         kind="investigation_session_started",
@@ -141,6 +142,10 @@ def test_routine_observation_recovers_from_an_accidental_reopen(tmp_path) -> Non
     assert stored.as_dict()["businessDecision"]["classification"] == (
         "routine_observation_suppressed"
     )
+    assert len([
+        item for item in stored.timeline
+        if item.get("eventId") == f"{case.case_id}:routine-observation-suppressed"
+    ]) == 1
 
 
 def test_case_events_batch_commits_multiple_cases_and_is_idempotent(tmp_path) -> None:
