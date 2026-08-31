@@ -419,6 +419,7 @@ def _execute_readonly_probe(session: "Session", command: str) -> dict[str, Any]:
             payload = collect_admin_auth_window(
                 session.incident_start,
                 session.incident_end,
+                managed_device=str(session.incident_facts.get("managedDevice") or ""),
                 failure_threshold=int(session.incident_facts.get("threshold") or 12),
                 distinct_source_threshold=int(
                     session.incident_facts.get("distinctSourceThreshold") or 5
@@ -3186,13 +3187,19 @@ def _confirmed_root_business_text(
         failures = int(measured.get("failed_logins") or facts.get("failedLogins") or 0)
         distinct = int(measured.get("distinct_sources") or facts.get("distinctSources") or 0)
         lockouts = int(measured.get("lockouts") or facts.get("lockouts") or 0)
+        vpn_entry = str(facts.get("trafficSubtype") or "").casefold() == "vpn"
+        entry_name = "SSL VPN 认证入口" if vpn_entry else "防火墙管理入口"
+        follow_up = (
+            "由设备负责人核对被尝试账户和合法来源，启用多因素认证并限制 SSL VPN 来源范围；"
+            "策略提交后重新查询失败认证、账户锁定与成功登录记录。"
+            if vpn_entry else
+            "由设备负责人确认合法管理来源，收紧管理账户 trusthost 或关闭公网管理入口；"
+            "策略提交后重新查询失败登录、锁定与管理口放行记录。"
+        )
         return (
-            "已确认防火墙管理口遭遇分布式登录攻击",
+            f"已确认{entry_name}遭遇分布式登录攻击",
             f"事件窗口内记录 {failures} 次失败登录，来自 {distinct} 个来源地址，触发 {lockouts} 次锁定。",
-            (
-                "由设备负责人确认合法管理来源，收紧管理账户 trusthost 或关闭公网管理入口；"
-                "策略提交后重新查询失败登录、锁定与管理口放行记录。"
-            ),
+            follow_up,
         )
     labels = {
         "carrier_down": "受管物理网口失去载波",

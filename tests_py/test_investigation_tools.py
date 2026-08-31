@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from frontend.gateway.app.investigation_tools import collect_fortigate_context
+from frontend.gateway.app import history
+from frontend.gateway.app.investigation_tools import (
+    collect_admin_auth_window,
+    collect_fortigate_context,
+)
 
 
 class _API:
@@ -63,3 +67,32 @@ def test_non_ip_subject_does_not_request_host_session_data() -> None:
     assert result["target_devices"] == []
     assert "target_status" not in result
     assert "target_flows" not in result
+
+
+def test_auth_window_is_bounded_to_the_managed_device(monkeypatch) -> None:
+    queries: list[str] = []
+
+    def query(sql: str) -> list[dict]:
+        queries.append(sql)
+        return [{"failed_logins": 12, "distinct_sources": 6, "lockouts": 0}]
+
+    monkeypatch.setattr(history, "_q", query)
+
+    result = collect_admin_auth_window(
+        "2026-08-31T20:14:00Z",
+        "2026-08-31T20:16:00Z",
+        managed_device="FG100ETK20014183",
+    )
+
+    assert result["available"] is True
+    assert result["query_scope"]["managed_device"] == "FG100ETK20014183"
+    assert "device_id='FG100ETK20014183'" in queries[0]
+    assert "device_name='FG100ETK20014183'" in queries[0]
+
+
+def test_auth_window_rejects_an_unbounded_device_query() -> None:
+    result = collect_admin_auth_window(
+        "2026-08-31T20:14:00Z", "2026-08-31T20:16:00Z",
+    )
+
+    assert result == {"available": False, "reason": "managed_device_required"}

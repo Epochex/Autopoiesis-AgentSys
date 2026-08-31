@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -187,6 +188,7 @@ def collect_environment_finding(finding_id: str, subject: str | None) -> dict[st
 def collect_admin_auth_window(
     incident_start: str | None, incident_end: str | None,
     *,
+    managed_device: str | None = None,
     failure_threshold: int = 12,
     distinct_source_threshold: int = 5,
 ) -> dict[str, Any]:
@@ -198,6 +200,9 @@ def collect_admin_auth_window(
         end = datetime.fromisoformat(str(incident_end or "").replace("Z", "+00:00"))
     except ValueError:
         return {"available": False, "reason": "incident_window_required"}
+    device = str(managed_device or "").strip()
+    if not device or re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", device) is None:
+        return {"available": False, "reason": "managed_device_required"}
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     if end.tzinfo is None:
@@ -213,14 +218,17 @@ def collect_admin_auth_window(
         "min(event_ts) AS first_seen, max(event_ts) AS last_seen "
         f"FROM {_CH_DB}.security_events "
         f"WHERE event_ts >= toDateTime64('{start_text}',3) "
-        f"AND event_ts <= toDateTime64('{end_text}',3)"
+        f"AND event_ts <= toDateTime64('{end_text}',3) "
+        f"AND (device_id='{device}' OR device_name='{device}')"
     )
     row = rows[0] if rows else {}
     return {
         "available": True,
         "failure_threshold": max(1, int(failure_threshold)),
         "distinct_source_threshold": max(1, int(distinct_source_threshold)),
-        "query_scope": {"start": start.isoformat(), "end": end.isoformat()},
+        "query_scope": {
+            "start": start.isoformat(), "end": end.isoformat(), "managed_device": device,
+        },
         "failed_logins": int(row.get("failed_logins") or 0),
         "distinct_sources": int(row.get("distinct_sources") or 0),
         "lockouts": int(row.get("lockouts") or 0),
