@@ -131,6 +131,18 @@ def test_parse_stream_event_builds_stable_real_envelope():
     assert first["event_status"] == ""
 
 
+def test_fact_row_has_same_stable_event_key_across_retries():
+    line = _traffic_line("192.0.2.6").decode()
+    first = facts_ingest.parse_line(line)
+    second = facts_ingest.parse_line(line)
+
+    assert first is not None
+    assert first == second
+    row = dict(zip(facts_ingest._COLS, first, strict=True))
+    assert len(str(row["event_id"])) == 64
+    assert row["srcip"] == "192.0.2.6"
+
+
 def test_redpanda_outbox_retains_then_deletes_acknowledged_batches(tmp_path, monkeypatch):
     outbox = facts_ingest.RedpandaOutbox(
         enabled=True,
@@ -276,6 +288,19 @@ def test_create_and_insert_security_events_use_independent_table(monkeypatch):
     assert payload is not None and b"admin_login_failed" in payload
 
 
+def test_fact_archive_uses_stable_event_key_and_replacing_engine(monkeypatch):
+    posts: list[str] = []
+    monkeypatch.setattr(facts_ingest, "_ch_post", lambda query, data=None: posts.append(query))
+
+    facts_ingest.create_facts_table()
+
+    ddl = posts[0]
+    assert "CREATE TABLE IF NOT EXISTS autopoiesis.facts_v2" in ddl
+    assert "event_id String" in ddl
+    assert "ENGINE = ReplacingMergeTree(ingested_at)" in ddl
+    assert "ORDER BY event_id" in ddl
+
+
 class _FakeStdout:
     def __init__(self, lines: list[bytes]):
         self._lines = lines
@@ -381,6 +406,44 @@ def test_stream_batches_facts_and_security_events_to_separate_sinks(monkeypatch)
     assert security_batches[0][0][18] == "replay"
 
 
+def test_finite_source_poll_advances_checkpoint_after_sink_commit(monkeypatch):
+    lines = [_traffic_line("192.0.2.4"), (_ADMIN_FAILED + "\n").encode()]
+    _install_process(monkeypatch, lines)
+    order: list[tuple[str, int]] = []
+    start = 300
+
+    inserted = facts_ingest._stream(
+        "unused",
+        None,
+        "source-poll-test",
+        on_batch=lambda facts, security, events: order.append(("sink", len(facts) + len(security))),
+        source_start_offset=start,
+        on_source_progress=lambda offset: order.append(("checkpoint", offset)),
+    )
+
+    assert inserted == 1
+    assert order[0] == ("sink", 2)
+    assert order[1] == ("checkpoint", start + sum(len(line) for line in lines))
+
+
+def test_finite_source_poll_does_not_checkpoint_partial_line(monkeypatch):
+    complete = _traffic_line("192.0.2.4")
+    partial = _traffic_line("192.0.2.5").rstrip(b"\n")
+    _install_process(monkeypatch, [complete, partial])
+    offsets: list[int] = []
+
+    facts_ingest._stream(
+        "unused",
+        None,
+        "source-poll-test",
+        on_batch=lambda *_args: None,
+        source_start_offset=10,
+        on_source_progress=offsets.append,
+    )
+
+    assert offsets == [10 + len(complete)]
+
+
 def test_live_batch_contains_all_real_event_types_for_redpanda(monkeypatch):
     vpn = (
         'date=2026-08-23 time=12:05:00 devid="FG-1" type="event" subtype="vpn" '
@@ -432,23 +495,34 @@ def test_live_disconnect_records_reconnect_and_keeps_running(monkeypatch, capsys
         on_security_rows=None,
         security_provenance="real",
         on_batch=None,
+        source_start_offset=None,
+        on_source_progress=None,
+        recoverable_process_error=False,
     ):
-        assert live_mode is True
+        assert live_mode is False
         assert on_security_rows is None
         assert callable(on_batch)
         assert security_provenance == "real"
+        assert source_start_offset == 100
+        assert callable(on_source_progress)
+        assert recoverable_process_error is True
         if on_process is not None:
             on_process(SimpleNamespace(pid=4321))
-        raise facts_ingest.RecoverableSSHError("SSH live stream ended with status 255")
+        raise facts_ingest.RecoverableSSHError("SSH stream exited with status 255")
 
     class _StopLive(BaseException):
         pass
 
     def stop_after_first_reconnect(seconds):
-        assert seconds == 5
+        assert seconds == facts_ingest.SOURCE_POLL_SECONDS
         raise _StopLive
 
-    monkeypatch.setattr(facts_ingest, "_source_position", lambda: {})
+    checkpoint = {"source_file_id": "1:2", "source_offset_bytes": 100, "source_path": facts_ingest.R230_LOG}
+    monkeypatch.setattr(facts_ingest, "_read_checkpoint", lambda: checkpoint)
+    monkeypatch.setattr(facts_ingest, "_source_position", lambda path=facts_ingest.R230_LOG: {
+        "source_file_id": "1:2", "source_offset_bytes": 120, "source_mtime_epoch": 1,
+    })
+    monkeypatch.setattr(facts_ingest, "create_facts_table", lambda: None)
     monkeypatch.setattr(facts_ingest, "create_security_events_table", lambda: None)
     monkeypatch.setattr(facts_ingest, "_stream", stream_once)
     monkeypatch.setattr(facts_ingest, "_write_status", lambda **updates: statuses.append(updates))
@@ -460,13 +534,18 @@ def test_live_disconnect_records_reconnect_and_keeps_running(monkeypatch, capsys
     reconnecting = [state for state in statuses if state.get("ssh_connection") == "reconnecting"]
     assert reconnecting[-1]["reconnect_count"] == 1
     assert reconnecting[-1]["last_error_type"] == "RecoverableSSHError"
-    assert "SSH source interrupted (SSH live stream ended with status 255)" in capsys.readouterr().err
+    assert "SSH source interrupted (SSH stream exited with status 255)" in capsys.readouterr().err
 
 
 def test_live_fatal_error_is_logged_and_propagated(monkeypatch, capsys):
     statuses: list[dict] = []
 
-    monkeypatch.setattr(facts_ingest, "_source_position", lambda: {})
+    checkpoint = {"source_file_id": "1:2", "source_offset_bytes": 100, "source_path": facts_ingest.R230_LOG}
+    monkeypatch.setattr(facts_ingest, "_read_checkpoint", lambda: checkpoint)
+    monkeypatch.setattr(facts_ingest, "_source_position", lambda path=facts_ingest.R230_LOG: {
+        "source_file_id": "1:2", "source_offset_bytes": 120, "source_mtime_epoch": 1,
+    })
+    monkeypatch.setattr(facts_ingest, "create_facts_table", lambda: None)
     monkeypatch.setattr(facts_ingest, "create_security_events_table", lambda: None)
     monkeypatch.setattr(
         facts_ingest,
@@ -480,7 +559,7 @@ def test_live_fatal_error_is_logged_and_propagated(monkeypatch, capsys):
 
     failed = [state for state in statuses if state.get("ssh_connection") == "error"]
     assert failed[-1]["last_error_type"] == "ValueError"
-    assert "fatal stream error (ValueError: bad fact row)" in capsys.readouterr().err
+    assert "fatal ingest error (ValueError: bad fact row)" in capsys.readouterr().err
 
 
 def test_backfill_creates_and_routes_security_sink(monkeypatch):

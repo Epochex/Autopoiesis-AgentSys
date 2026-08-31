@@ -12,6 +12,7 @@ import { RetrievalPage } from './components/RetrievalPage'
 import { BenchConsole } from './components/BenchConsole'
 import { TopoSearch } from './components/TopoSearch'
 import { TrajectoryBench } from './components/TrajectoryBench'
+import { SituationalOverview } from './components/SituationalOverview'
 import { lazy, Suspense } from 'react'
 
 const Constellation3D = lazy(() => import('./components/Constellation3D').then((m) => ({ default: m.Constellation3D })))
@@ -43,8 +44,8 @@ function App() {
   const [active, setActive] = useState('')
   const [drillSub, setDrillSub] = useState<string | null>(null)
   const [drillDev, setDrillDev] = useState<string | null>(null)
-  const [tempo, setTempo] = useState(1)
-  const [rate, setRate] = useState<number | null>(null)
+  const [tempo] = useState(1)
+  const [rate] = useState<number | null>(null)
   const [threat, setThreat] = useState<Threat | null>(null)
   const [wan, setWan] = useState<WanThreat | null>(null)
   const [marks, setMarks] = useState<Record<string, { severity: string; verdict: string }>>({})
@@ -240,31 +241,8 @@ function App() {
   }, [])
 
   useEffect(() => {
-    void load(provider)
-  }, [provider, load])
-
-  // poll R230 live event-rate → pulse tempo
-  useEffect(() => {
-    let alive = true
-    const tick = async () => {
-      try {
-        const r = await fetch('/api/rca/pulse')
-        const j = await r.json()
-        if (alive && j.live && typeof j.eventsPerSec === 'number') {
-          setRate(j.eventsPerSec)
-          setTempo(Math.max(0.6, Math.min(3, j.eventsPerSec / 12)))
-        }
-      } catch {
-        /* keep last */
-      }
-    }
-    void tick()
-    const id = setInterval(tick, 4500)
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-  }, [])
+    if (scenario === 'live' && view === 'trajectory') void load(provider)
+  }, [provider, load, scenario, view])
 
   const researchDevice = async (dev: Device | null, cidr: string) => {
     setWan(null)
@@ -311,13 +289,10 @@ function App() {
     }
   }
 
-  if (st.s === 'load') return <div className="boot"><span className="orbit" /></div>
-  if (st.s === 'err') return <div className="boot err">gateway · {st.m}</div>
-
-  const d = st.d
-  const s = d.dataStats
-  const topo = d.topology
-  const c: RcaCase | undefined = d.cases.find((x) => x.id === active) ?? d.cases[0]
+  const d = st.s === 'ok' ? st.d : null
+  const s = d?.dataStats
+  const topo = d?.topology
+  const c: RcaCase | undefined = d?.cases.find((x) => x.id === active) ?? d?.cases[0]
 
   return (
     <div className="stage" data-view={view}>
@@ -343,7 +318,7 @@ function App() {
               resolve their own reasoner server-side and ignore it — so it is
               captioned with its real scope, and hidden on the diagnose page where it
               governs nothing at all. */}
-          {scenario !== 'live' || view === 'diagnose' ? null : (
+          {scenario !== 'live' || view !== 'trajectory' || !d ? null : (
             <div className="engines" role="group" aria-label={lang === 'zh' ? '案例诊断引擎' : 'Case-diagnosis reasoner'}>
               <span className="eng-scope">{lang === 'zh' ? '案例诊断' : 'Case diag'}</span>
               {d.providers.map((p) => {
@@ -376,7 +351,16 @@ function App() {
         </div>
       </header>
 
-      {view === 'cost' ? (
+      {view === 'console' && scenario === 'live' ? (
+        <SituationalOverview
+          lang={lang}
+          onOpenCase={(subject, caseId) => {
+            setTraceSubject(subject)
+            setTraceCaseId(caseId)
+            setView('diagnose')
+          }}
+        />
+      ) : view === 'cost' ? (
         <CostPage lang={lang} />
       ) : view === 'retrieval' ? (
         <RetrievalPage lang={lang} scenario={scenario} />
@@ -391,7 +375,11 @@ function App() {
         <BenchConsole lang={lang} />
       ) : view === 'trajectory' && scenario === 'bench' ? (
         <TrajectoryBench lang={lang} onTheater={openTheater} />
-      ) : view === 'trajectory' && d.datasetReady && c ? (
+      ) : st.s === 'load' ? (
+        <div className="boot"><span className="orbit" /></div>
+      ) : st.s === 'err' ? (
+        <div className="boot err">gateway · {st.m}</div>
+      ) : view === 'trajectory' && d?.datasetReady && c ? (
         <TrajectoryPage
           key={`${active}:${lang}`}
           cases={d.cases}
@@ -406,7 +394,7 @@ function App() {
           }}
           focusSubject={traceSubject ?? undefined}
         />
-      ) : d.datasetReady && s && c ? (
+      ) : d?.datasetReady && s && c ? (
         <>
           {scenario === 'live' ? (
             <LiveAlerts
@@ -519,7 +507,7 @@ function App() {
 
         </>
       ) : (
-        <div className="boot err">{d.note}</div>
+        <div className="boot err">{d?.note ?? (lang === 'zh' ? '当前视图没有可用数据' : 'NO DATA FOR THIS VIEW')}</div>
       )}
 
       {/* Bench full-chain theater: standalone full-screen overlay REUSING the live

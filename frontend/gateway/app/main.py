@@ -1908,6 +1908,31 @@ async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
     return await asyncio.to_thread(sync_snapshot_cases, snapshot, _case_repository())
 
 
+@app.get("/api/rca/situational-overview")
+async def rca_situational_overview(
+    refresh: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Current assets, changes, boundary traffic, risk and case outcomes.
+
+    This endpoint never loads the held-out RCA dataset or replay topology.  Its
+    inputs are the FortiGate read-only API, ClickHouse production tables, the
+    latest environment sweep and the durable production case repository.
+    """
+    from .situational_awareness import build_situational_overview
+
+    report = _environment_report
+    if report is None:
+        from domains.network_rca.environment import build_environment_report
+
+        report = await asyncio.to_thread(build_environment_report)
+    return await asyncio.to_thread(
+        build_situational_overview,
+        _case_repository(),
+        report,
+        refresh=refresh,
+    )
+
+
 @app.get("/api/rca/investigation-cases")
 async def rca_investigation_cases(
     status: str | None = None,

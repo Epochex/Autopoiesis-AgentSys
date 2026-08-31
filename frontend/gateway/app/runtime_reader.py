@@ -145,7 +145,10 @@ def _data_classification(raw: dict[str, Any]) -> str:
     ]
     explicit_test_identity = any(
         str(value or "").casefold().startswith(
-            ("controlled-", "redpanda-e2e-", "replay-", "bvaccept-", "autopoiesis-acceptance-")
+            (
+                "controlled-", "redpanda-e2e-", "replay-", "bvaccept-",
+                "managed-host-", "synthetic-", "autopoiesis-acceptance-",
+            )
         )
         for value in identities
     )

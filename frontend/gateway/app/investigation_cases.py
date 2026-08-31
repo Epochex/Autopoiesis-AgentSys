@@ -20,6 +20,48 @@ from domains.network_rca.investigation_case import (
 _IP = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _MAC = re.compile(r"(?i)(?<![0-9a-f])(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f])")
 
+_CONTROLLED_IDENTITY_PREFIXES = (
+    "autopoiesis-acceptance-",
+    "bvaccept-",
+    "controlled-",
+    "managed-host-",
+    "redpanda-e2e-",
+    "replay-",
+    "synthetic-",
+)
+
+
+def is_controlled_identity(value: Any) -> bool:
+    """Return whether an operator-visible identity belongs to a test or replay.
+
+    Older acceptance runs were persisted before the explicit classification field
+    was added.  Their generated unit and host names are stable, so identity is the
+    durable second line of separation between production cases and test evidence.
+    """
+    normalized = str(value or "").strip().casefold()
+    return normalized.startswith(_CONTROLLED_IDENTITY_PREFIXES)
+
+
+def is_observed_case(case: Any) -> bool:
+    """Production projection predicate shared by APIs and background workers."""
+    payload = dict(getattr(case, "source_payload", {}) or {})
+    facts = dict(payload.get("incidentFacts") or {})
+    classification = str(
+        payload.get("dataClassification")
+        or facts.get("dataClassification")
+        or "observed"
+    ).casefold()
+    identities = (
+        getattr(case, "subject", ""),
+        payload.get("device"),
+        payload.get("deviceKey"),
+        payload.get("acceptanceRunId"),
+        facts.get("managedDevice"),
+    )
+    return classification == "observed" and not any(
+        is_controlled_identity(identity) for identity in identities
+    )
+
 
 def _at(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -303,7 +345,7 @@ def auto_start_pending_cases(
         )
     ]
     for case in candidates:
-        if str(case.source_payload.get("dataClassification") or "observed") != "observed":
+        if not is_observed_case(case):
             continue
         try:
             age_seconds = (now - _at(case.last_seen_at)).total_seconds()
@@ -485,7 +527,19 @@ def _suggestion_id(item: dict[str, Any]) -> str:
 
 
 def _observed(item: dict[str, Any]) -> bool:
-    return str(item.get("dataClassification") or "observed") == "observed"
+    facts = dict(item.get("incidentFacts") or {})
+    classification = str(
+        item.get("dataClassification")
+        or facts.get("dataClassification")
+        or "observed"
+    ).casefold()
+    identities = (
+        item.get("device"), item.get("deviceKey"), item.get("acceptanceRunId"),
+        facts.get("managedDevice"),
+    )
+    return classification == "observed" and not any(
+        is_controlled_identity(identity) for identity in identities
+    )
 
 
 def _merge_incident_facts(
@@ -654,7 +708,7 @@ def sync_snapshot_cases(
     for case in repository.list(limit=100):
         if case.case_id in existing_case_ids:
             continue
-        if str(case.source_payload.get("dataClassification") or "observed") != "observed":
+        if not is_observed_case(case):
             continue
         try:
             if _at(case.last_seen_at).timestamp() < cutoff:

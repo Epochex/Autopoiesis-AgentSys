@@ -156,7 +156,10 @@ def _stable_id(*parts: str) -> str:
 def _data_classification(subject: str, detection: dict[str, Any]) -> str:
     """Keep controlled acceptance units out of the production case population."""
     normalized = subject.casefold()
-    if normalized.startswith(("autopoiesis-acceptance-", "bvaccept-")):
+    if normalized.startswith((
+        "autopoiesis-acceptance-", "bvaccept-", "managed-host-",
+        "controlled-", "redpanda-e2e-", "replay-", "synthetic-",
+    )):
         return "controlled_test"
     explicit = str(detection.get("data_classification") or "").casefold()
     return explicit if explicit in {"observed", "controlled_test", "drill", "replay"} else "observed"

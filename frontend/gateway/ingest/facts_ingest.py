@@ -13,7 +13,7 @@ in order; historical backfills never enter the production topic.
 Two modes:
   backfill  — replay every rotated .gz (oldest→newest) + the current file once.
   security-backfill — replay only system/local signals into security_events.
-  live      — `tail -F` the current file, inserting new flows continuously.
+  live      — poll the current file from a durable byte checkpoint.
 
 Config via env (falls back to `/etc/autopoiesis.env` values):
   R230_SSH, R230_PASS, R230_LOG            — SSH target + live log path
@@ -78,7 +78,7 @@ CH_URL = _env("CLICKHOUSE_URL", "http://10.43.125.243:8123")
 CH_USER = _env("CLICKHOUSE_USER", "autopoiesis")
 CH_PASS = _env("CLICKHOUSE_PASSWORD")
 CH_DB = _env("AUTOPOIESIS_CLICKHOUSE_DB", "autopoiesis")
-CH_TABLE = "facts"
+CH_TABLE = _env("FACTS_CLICKHOUSE_TABLE", "facts_v2")
 SECURITY_TABLE = "security_events"
 
 R230_SSH = _env("R230_SSH", "root@192.168.1.23")
@@ -89,6 +89,11 @@ R230_DIR = os.path.dirname(R230_LOG)
 BATCH = int(_env("FACTS_BATCH", "5000"))
 LIVE_FLUSH_SECONDS = float(_env("FACTS_LIVE_FLUSH_SECONDS", "5"))
 STATUS_FILE = Path(_env("FACTS_STATUS_FILE", "/run/autopoiesis-facts-ingest/status.json"))
+CHECKPOINT_FILE = Path(_env(
+    "FACTS_CHECKPOINT_FILE",
+    "/var/lib/autopoiesis-facts-ingest/source-checkpoint.json",
+))
+SOURCE_POLL_SECONDS = max(0.2, float(_env("FACTS_SOURCE_POLL_SECONDS", "5")))
 
 REDPANDA_PUBLISH_ENABLED = _env("REDPANDA_PUBLISH_ENABLED", "0").strip().lower() in {
     "1", "true", "yes", "on",
@@ -106,7 +111,7 @@ REDPANDA_HTTP_TIMEOUT_SECONDS = float(_env("REDPANDA_HTTP_TIMEOUT_SECONDS", "15"
 # FortiGate syslog is space-separated key=value; values may be "quoted".
 _KV = re.compile(r'(\w+)=(?:"([^"]*)"|(\S+))')
 _COLS = [
-    "event_ts", "device_key", "srcip", "dstip", "dstport", "proto", "action",
+    "event_ts", "event_id", "device_key", "srcip", "dstip", "dstport", "proto", "action",
     "service", "app", "type", "subtype", "srcintf", "dstintf", "dstcountry",
     "srcname", "sentbyte", "rcvdbyte",
 ]
@@ -140,7 +145,7 @@ def _ts(d: dict[str, str]) -> str | None:
     return None
 
 
-def parse_line(line: str) -> list | None:
+def parse_line(line: str, source_kind: str = "real") -> list | None:
     """One FortiGate traffic/voip line → a fact row (list matching _COLS), or None."""
     if 'type="traffic"' not in line and 'subtype="voip"' not in line:
         return None
@@ -156,8 +161,12 @@ def parse_line(line: str) -> list | None:
         port_i = port_i if 0 <= port_i <= 65535 else 0
     except ValueError:
         port_i = 0
+    raw_log = line.rstrip("\r\n")
+    event_id = hashlib.sha256(
+        f"{source_kind}\0{ts}\0{raw_log}".encode("utf-8", errors="replace")
+    ).hexdigest()
     return [
-        ts, src, src, dst, port_i,
+        ts, event_id, src, src, dst, port_i,
         d.get("proto", ""), d.get("action", ""),
         d.get("service", ""), d.get("app", ""),
         d.get("type", "traffic"), d.get("subtype", ""),
@@ -516,6 +525,41 @@ def _ch_post(query: str, data: bytes | None = None) -> None:
             time.sleep(2 * attempt)
 
 
+def create_facts_table() -> None:
+    """Create the event-keyed fact archive used after the live cutover.
+
+    Readers continue to use ``autopoiesis.facts``.  The deployment migration
+    turns that name into a union view over the retained legacy table and this
+    event-keyed table, so historical queries keep their existing contract.
+    """
+    _ch_post(
+        f"""CREATE TABLE IF NOT EXISTS {CH_DB}.{CH_TABLE} (
+            event_ts DateTime64(3, 'UTC'),
+            event_id String,
+            device_key String,
+            srcip String,
+            dstip String,
+            dstport UInt16,
+            proto LowCardinality(String),
+            action LowCardinality(String),
+            service LowCardinality(String),
+            app LowCardinality(String),
+            type LowCardinality(String),
+            subtype LowCardinality(String),
+            srcintf LowCardinality(String),
+            dstintf LowCardinality(String),
+            dstcountry LowCardinality(String),
+            srcname String,
+            sentbyte UInt64,
+            rcvdbyte UInt64,
+            ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+        ) ENGINE = ReplacingMergeTree(ingested_at)
+        PARTITION BY toYYYYMM(event_ts)
+        ORDER BY event_id
+        TTL toDateTime(event_ts) + toIntervalDay(100)"""
+    )
+
+
 def create_security_events_table() -> None:
     """Create the independent security-event sink without modifying existing tables."""
     _ch_post(
@@ -599,14 +643,75 @@ def _write_status(**updates) -> None:
             pass
 
 
-def _source_position() -> dict[str, str | int]:
+def _read_checkpoint() -> dict[str, str | int] | None:
+    try:
+        value = json.loads(CHECKPOINT_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    file_id = str(value.get("source_file_id") or "")
+    try:
+        offset = int(value.get("source_offset_bytes"))
+    except (TypeError, ValueError):
+        return None
+    if not file_id or offset < 0:
+        return None
+    return {
+        "source_file_id": file_id,
+        "source_offset_bytes": offset,
+        "source_path": str(value.get("source_path") or R230_LOG),
+    }
+
+
+def _write_checkpoint(*, file_id: str, offset: int, source_path: str = R230_LOG) -> None:
+    """Durably advance the source cursor only after all sinks accepted a batch."""
+    CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    value = {
+        "source_file_id": file_id,
+        "source_offset_bytes": int(offset),
+        "source_path": source_path,
+        "committed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    tmp = CHECKPOINT_FILE.with_name(f".{CHECKPOINT_FILE.name}.{os.getpid()}.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, CHECKPOINT_FILE)
+
+
+def _find_source_file(file_id: str) -> str | None:
+    """Find an uncompressed rotated file with the checkpoint's device/inode."""
+    if re.fullmatch(r"\d+:\d+", file_id) is None:
+        return None
+    remote_cmd = (
+        f"find {shlex.quote(R230_DIR)} -maxdepth 1 -type f ! -name '*.gz' "
+        "-printf '%D:%i %p\\n'"
+    )
+    try:
+        result = subprocess.run(
+            _ssh_cmd(remote_cmd), env=_ssh_env(), capture_output=True, text=True,
+            timeout=20, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        identity, separator, path = line.partition(" ")
+        if separator and identity == file_id and path:
+            return path
+    return None
+
+
+def _source_position(path: str = R230_LOG) -> dict[str, str | int]:
     """Return R230 log identity and current EOF byte offset through read-only stat."""
     # Space-separated, not \t: inside the remote single-quoted stat format the
     # backslash-t is passed literally to R230's shell, so it arrives as the two
     # characters "\t", not a tab. Splitting on a real tab then never matched and
     # every probe raised "invalid response" — which is what pinned the live
     # tailer in a permanent reconnect loop, inserting nothing.
-    remote_cmd = f"stat -Lc '%d:%i %s %Y' -- {shlex.quote(R230_LOG)}"
+    remote_cmd = f"stat -Lc '%d:%i %s %Y' -- {shlex.quote(path)}"
     try:
         result = subprocess.run(
             _ssh_cmd(remote_cmd),
@@ -646,6 +751,9 @@ def _stream(
     security_provenance: str = "real",
     parse_facts: bool = True,
     on_batch=None,
+    source_start_offset: int | None = None,
+    on_source_progress=None,
+    recoverable_process_error: bool = False,
 ) -> int:
     """Run a remote command and batch-insert parsed rows.
 
@@ -668,11 +776,13 @@ def _stream(
     security_batch: list[list] = []
     stream_batch: list[dict[str, object]] = []
     n = 0
+    source_offset = source_start_offset
+    reported_offset = source_start_offset
     t0 = time.time()
     last_flush_at = clock() if live_mode else None
 
     def flush(pulse_at=None) -> None:
-        nonlocal batch, security_batch, stream_batch, n, last_flush_at
+        nonlocal batch, security_batch, stream_batch, n, last_flush_at, reported_offset
         if not batch and not security_batch and not stream_batch:
             return
         if on_batch is not None:
@@ -687,11 +797,20 @@ def _stream(
         batch = []
         security_batch = []
         stream_batch = []
+        if on_source_progress is not None and source_offset is not None:
+            on_source_progress(source_offset)
+            reported_offset = source_offset
         if live_mode:
             last_flush_at = pulse_at if pulse_at is not None else clock()
 
     try:
         for raw in proc.stdout:
+            if source_offset is not None:
+                # A finite poll can reach EOF while the writer is midway through a
+                # line. Leave that fragment behind for the next poll.
+                if not raw.endswith(b"\n"):
+                    break
+                source_offset += len(raw)
             line = raw.decode("utf-8", errors="ignore")
             if parse_facts:
                 row = parse_line(line)
@@ -720,6 +839,12 @@ def _stream(
                     rate = n / max(1e-3, time.time() - t0)
                     print(f"[{label}] {n:,} facts inserted ({rate:,.0f}/s)", flush=True)
         flush()
+        if (
+            on_source_progress is not None and source_offset is not None
+            and source_offset != reported_offset
+        ):
+            on_source_progress(source_offset)
+            reported_offset = source_offset
     except BaseException:
         try:
             proc.terminate()
@@ -737,12 +862,16 @@ def _stream(
     if live_mode:
         raise RecoverableSSHError(f"SSH live stream ended with status {returncode}")
     if returncode != 0:
-        raise RuntimeError(f"SSH stream exited with status {returncode}")
+        error = f"SSH stream exited with status {returncode}"
+        if recoverable_process_error:
+            raise RecoverableSSHError(error)
+        raise RuntimeError(error)
     return n
 
 
 def backfill() -> None:
     """Replay every rotated .gz (oldest→newest) then the current file, into ClickHouse."""
+    create_facts_table()
     create_security_events_table()
     provenance = _env("SECURITY_EVENTS_PROVENANCE", "real")
     ls = subprocess.run(
@@ -890,15 +1019,12 @@ def commit_live_batch_sinks(
 
 
 def live() -> None:
-    """Tail the current log into ClickHouse and the production event topic."""
+    """Read the current log from a durable position into both production sinks."""
+    create_facts_table()
     create_security_events_table()
     provenance = _env("SECURITY_EVENTS_PROVENANCE", "real")
     outbox = RedpandaOutbox()
-    print(f"[live] tailing {R230_LOG}", flush=True)
-    cmd = (
-        f"tail -n0 -F -- {shlex.quote(R230_LOG)} | "
-        "grep --line-buffered -aE 'type=\"traffic\"|type=\"event\"|type=\"utm\"|subtype=\"voip\"'"
-    )
+    print(f"[live] polling {R230_LOG} from {CHECKPOINT_FILE}", flush=True)
     started_at = datetime.now(timezone.utc).isoformat()
     rows_since_start = 0
     security_rows_since_start = 0
@@ -907,6 +1033,7 @@ def live() -> None:
     queued_batches, queued_bytes = outbox.pending()
     _write_status(
         mode="live",
+        source_mode="checkpoint_poll",
         pid=os.getpid(),
         started_at=started_at,
         rows_inserted_since_start=0,
@@ -959,27 +1086,126 @@ def live() -> None:
             flush=True,
         )
 
+    checkpoint = _read_checkpoint()
+    try:
+        previous_status = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        previous_status = {}
+    source_gap_latched = bool(previous_status.get("source_gap_detected"))
+    initialized_at_eof = checkpoint is None
+    if checkpoint is None:
+        initial = _source_position()
+        checkpoint = {
+            "source_file_id": str(initial["source_file_id"]),
+            "source_offset_bytes": int(initial["source_offset_bytes"]),
+            "source_path": R230_LOG,
+        }
+        _write_checkpoint(
+            file_id=str(checkpoint["source_file_id"]),
+            offset=int(checkpoint["source_offset_bytes"]),
+        )
+        _write_status(
+            checkpoint_initialized_at_eof=True,
+            source_committed_offset_bytes=int(checkpoint["source_offset_bytes"]),
+        )
+
+    def read_file_range(path: str, file_id: str, start_offset: int, label: str) -> None:
+        # Re-check the inode inside the same SSH command. If rotation happens
+        # between the outer stat and this read, the command emits nothing and the
+        # next poll resolves the new file instead of skipping its first bytes.
+        safe_path = shlex.quote(path)
+        command = (
+            f"if [ \"$(stat -Lc '%d:%i' -- {safe_path} 2>/dev/null)\" = "
+            f"{shlex.quote(file_id)} ]; then tail -c +{int(start_offset) + 1} -- {safe_path}; fi"
+        )
+
+        def stream_started(proc: subprocess.Popen) -> None:
+            _write_status(
+                ssh_connection="connected",
+                ssh_pid=proc.pid,
+                last_error_type=None,
+                source_file_id=file_id,
+                source_committed_offset_bytes=start_offset,
+            )
+
+        def advance(offset: int) -> None:
+            _write_checkpoint(file_id=file_id, offset=offset, source_path=path)
+            _write_status(
+                source_file_id=file_id,
+                source_committed_offset_bytes=offset,
+                source_path=path,
+            )
+
+        _stream(
+            command,
+            None,
+            label,
+            stream_started,
+            live_mode=False,
+            security_provenance=provenance,
+            on_batch=commit_live_batch,
+            source_start_offset=start_offset,
+            on_source_progress=advance,
+            recoverable_process_error=True,
+        )
+        _write_status(ssh_connection="connected", ssh_pid=None)
+
     while True:
         try:
             position = _source_position()
+            checkpoint = _read_checkpoint() or checkpoint
+            current_id = str(position["source_file_id"])
+            current_eof = int(position["source_offset_bytes"])
+            checkpoint_id = str(checkpoint["source_file_id"])
+            checkpoint_offset = int(checkpoint["source_offset_bytes"])
+            source_gap = False
+            rotation_recovered = False
 
-            def stream_started(proc: subprocess.Popen) -> None:
-                _write_status(
-                    ssh_connection="connected",
-                    ssh_pid=proc.pid,
-                    last_error_type=None,
-                    **position,
-                )
+            if checkpoint_id != current_id:
+                rotated_path = _find_source_file(checkpoint_id)
+                if rotated_path:
+                    rotated_position = _source_position(rotated_path)
+                    rotated_eof = int(rotated_position["source_offset_bytes"])
+                    if rotated_eof > checkpoint_offset:
+                        read_file_range(
+                            rotated_path, checkpoint_id, checkpoint_offset, "live-rotation-drain",
+                        )
+                    rotation_recovered = True
+                else:
+                    # The old file may already be compressed. Record the blind
+                    # interval explicitly and resume the new file from byte zero;
+                    # event ids make a later repair replay safe.
+                    source_gap = True
+                    source_gap_latched = True
+                _write_checkpoint(file_id=current_id, offset=0, source_path=R230_LOG)
+                checkpoint = {
+                    "source_file_id": current_id,
+                    "source_offset_bytes": 0,
+                    "source_path": R230_LOG,
+                }
+                checkpoint_offset = 0
+            elif current_eof < checkpoint_offset:
+                # Copy-truncate rotation retained the inode but reset file size.
+                _write_checkpoint(file_id=current_id, offset=0, source_path=R230_LOG)
+                checkpoint_offset = 0
+                rotation_recovered = True
 
-            _stream(
-                cmd,
-                None,
-                "live",
-                stream_started,
-                live_mode=True,
-                security_provenance=provenance,
-                on_batch=commit_live_batch,
+            if current_eof > checkpoint_offset:
+                read_file_range(R230_LOG, current_id, checkpoint_offset, "live-poll")
+
+            committed = _read_checkpoint() or checkpoint
+            _write_status(
+                ssh_connection="connected",
+                ssh_pid=None,
+                source_file_id=current_id,
+                source_eof_bytes=max(current_eof, int(committed["source_offset_bytes"])),
+                source_committed_offset_bytes=int(committed["source_offset_bytes"]),
+                source_gap_detected=source_gap_latched,
+                rotation_recovered=rotation_recovered,
+                checkpoint_initialized_at_eof=initialized_at_eof,
             )
+            initialized_at_eof = False
+            time.sleep(SOURCE_POLL_SECONDS)
         except RecoverableSSHError as exc:
             reconnect_count += 1
             _write_status(
@@ -989,10 +1215,11 @@ def live() -> None:
                 last_error_type=type(exc).__name__,
             )
             print(
-                f"[live] SSH source interrupted ({exc}); reconnecting in 5s",
+                f"[live] SSH source interrupted ({exc}); retrying in {SOURCE_POLL_SECONDS:g}s",
                 file=sys.stderr,
                 flush=True,
             )
+            time.sleep(SOURCE_POLL_SECONDS)
         except Exception as exc:
             _write_status(
                 ssh_connection="error",
@@ -1001,12 +1228,11 @@ def live() -> None:
                 last_error_type=type(exc).__name__,
             )
             print(
-                f"[live] fatal stream error ({type(exc).__name__}: {exc})",
+                f"[live] fatal ingest error ({type(exc).__name__}: {exc})",
                 file=sys.stderr,
                 flush=True,
             )
             raise
-        time.sleep(5)
 
 
 def _clickhouse_status() -> dict[str, str | int | None]:
@@ -1046,7 +1272,11 @@ def status() -> int:
     collector_running = _pid_alive(state.get("pid"))
     ssh_pid_running = collector_running and _pid_alive(state.get("ssh_pid"))
     collector_ssh = state.get("ssh_connection", "unknown")
-    if collector_ssh == "connected" and not ssh_pid_running:
+    if (
+        collector_ssh == "connected"
+        and state.get("source_mode") != "checkpoint_poll"
+        and not ssh_pid_running
+    ):
         collector_ssh = "stale"
 
     print(f"collector: {'running' if collector_running else 'stopped'} (pid={state.get('pid', '-')})")
