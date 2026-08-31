@@ -19,7 +19,7 @@ NetOps tag:       netops-paper-freeze-20260831T124059Z
 
 冻结目录包含两套 Git bundle、NetOps 未提交补丁与未跟踪论文文件、K3s 资源和受保护 Secret 清单、自建镜像、ClickHouse shadow 快照、Redpanda 两个数据卷的停机快照、主题与消费者位点，以及两台节点的数据目录清单。旧 ClickHouse 和 Redpanda 卷的回收策略已设为 `Retain`。
 
-切换完成后，旧 `netops.*` 主题、ClickHouse `netops` 数据库、NetOps 应用 Pod、空的 `edge` namespace、systemd 单元和两台节点上的自建镜像已从在线环境退出。两台节点的 NetOps 工作树已移入冻结区，活动源码入口只保留 Autopoiesis。生产 PostgreSQL 记忆对象写入 `autopoiesis_production` schema，不再读写旧 `public` schema 中的记忆表。
+切换完成后，旧 `netops.*` 主题、ClickHouse `netops` 数据库、NetOps 应用 Pod、空的 `edge` namespace、systemd 单元和两台节点上的自建镜像已从在线环境退出。两台节点的 NetOps 工作树已移入冻结区，活动源码入口只保留 Autopoiesis。生产 PostgreSQL 记忆对象写入 `autopoiesis_production` schema。旧 `public` 记忆表完成自定义格式导出和恢复目录校验后已删除，数据库占用由 37 GB 降至 24 MB。
 
 Redpanda 和 ClickHouse 的 StatefulSet、头部 Service 及 PVC 保留创建时的 K3s 对象名，这些对象承载现有数据盘和稳定网络身份。它们已标记 `app.kubernetes.io/part-of=autopoiesis` 与 `asset.autopoiesis.io/origin=netops-frozen`。Autopoiesis 应用只连接 `autopoiesis-redpanda` 和 `autopoiesis-clickhouse` 适配服务，旧对象名不再构成应用契约。
 
