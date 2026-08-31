@@ -40,7 +40,7 @@ def _case_family(rule_id: str, service: str, summary: str) -> str | None:
     if any(marker in text for marker in ("deny", "policy", "firewall", "拒绝", "策略")):
         return "fam-policy-reachability"
     if any(marker in text for marker in (
-        "arp", "dhcp", "address", "mac", "identity", "ownership", "duplicate_ip", "地址",
+        "arp", "dhcp", "mac", "identity", "ownership", "duplicate_ip", "地址归属", "地址冲突",
     )):
         return "fam-address-ownership"
     if any(marker in text for marker in ("service", "health", "cpu", "memory", "服务", "内存")):
@@ -484,6 +484,12 @@ def _merge_incident_facts(
 
 def _detection_summary(item: dict[str, Any]) -> str:
     facts = dict(item.get("incidentFacts") or {})
+    if facts.get("failedLogins") is not None:
+        device = str(facts.get("managedDevice") or item.get("deviceKey") or "受管网关")
+        failures = int(facts.get("failedLogins") or 0)
+        distinct = int(facts.get("distinctSources") or 0)
+        window = int(facts.get("windowSeconds") or 0)
+        return f"{device} · {window} 秒内 {failures} 次认证失败 · {distinct} 个公网来源"
     if not facts or not any(
         facts.get(field) not in (None, "")
         for field in (

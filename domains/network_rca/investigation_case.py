@@ -50,6 +50,12 @@ _LEGACY_PRESENTATION_FIELDS = {
 def _fact_summary(facts: dict[str, Any], fallback: str) -> str:
     if not facts:
         return fallback
+    if facts.get("failedLogins") is not None:
+        device = str(facts.get("managedDevice") or "受管网关")
+        failures = int(facts.get("failedLogins") or 0)
+        distinct = int(facts.get("distinctSources") or 0)
+        window = int(facts.get("windowSeconds") or 0)
+        return f"{device} · {window} 秒内 {failures} 次认证失败 · {distinct} 个公网来源"
     flow_fields = {
         "sourceIp", "destinationIp", "service", "action", "denyCount", "windowSeconds",
     }

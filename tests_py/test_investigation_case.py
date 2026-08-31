@@ -7,6 +7,7 @@ from domains.network_rca.investigation_case import (
     SourceReference,
 )
 from frontend.gateway.app.investigation_cases import (
+    _case_family,
     resolve_routine_observations,
     sync_environment_cases,
     sync_snapshot_cases,
@@ -487,6 +488,42 @@ def test_non_flow_incident_facts_preserve_the_source_summary(tmp_path) -> None:
     repository.remove_legacy_reasoning_projection()
 
     assert repository.get(case.case_id).summary == "受管主机出现未知可用性退化，定位当前根因"
+
+
+def test_auth_incident_summary_exposes_the_measured_change(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "auth-window"),
+        occurred_at="2026-08-31T20:15:09Z",
+        subject="FG100ETK20014183",
+        summary="raw auth alert",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "managedDevice": "FG100ETK20014183",
+                "failedLogins": 22,
+                "distinctSources": 22,
+                "windowSeconds": 60,
+                "service": "fortigate-admin",
+                "action": "ssl-login-fail",
+                "trafficSubtype": "vpn",
+            },
+        },
+    ))
+
+    repository.remove_legacy_reasoning_projection()
+
+    assert repository.get(case.case_id).summary == (
+        "FG100ETK20014183 · 60 秒内 22 次认证失败 · 22 个公网来源"
+    )
+
+
+def test_health_url_word_does_not_select_address_ownership_family() -> None:
+    assert _case_family(
+        "availability_guard_v1",
+        "endpoint",
+        "当前根因不在固定目录中，只读健康地址为 http://127.0.0.1:8080/health",
+    ) != "fam-address-ownership"
 
 
 def test_case_query_and_open_http_api(tmp_path, monkeypatch) -> None:

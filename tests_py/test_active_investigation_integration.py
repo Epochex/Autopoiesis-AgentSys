@@ -43,7 +43,10 @@ def test_open_question_executes_an_active_slice_and_keeps_the_tail(monkeypatch) 
     assert len(opened["probe_rounds"]) == investigate.OPENING_ACTIVE_PROBE_BUDGET
     expected_root_ids = (
         set(investigate._ACTIVE_ROOTS)
-        - {"neighbor_unreachable", "system_errors", "kernel_errors"}
+        - {
+            "neighbor_unreachable", "system_errors", "kernel_errors",
+            "admin_bruteforce_lockout", "duplicate_ip_static",
+        }
     )
     assert {
         item["hypothesis_id"] for item in opened["hypothesis_state"]["hypotheses"]
