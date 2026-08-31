@@ -14,6 +14,12 @@ whole-system readiness.
 - `multiagent_parallel_fair.json`: deterministic I/O overlap for four handlers.  The
   handlers sleep and return fixed evidence; this artifact contains no model-quality or
   diagnosis-quality measurement.
+- `public_aiops_business_20260831.json`: committed summary of the public replay over 733
+  eligible RCAEval cases, 35 ITBench-Lite SRE snapshots and an AIOpsLab source audit.  It
+  retains every ITBench scenario, worst RCA ranks and representative positive and negative
+  memory transfers.  The evaluator command writes the complete case-level result.  Every
+  business-value row has a separate `live_site_status`; public replay does not promote a
+  deployed-system claim.
 
 The large `.faiss` indexes are reproducible caches and are intentionally ignored. See
 [`docs/HNSW_SCALE_BENCHMARK.md`](../docs/HNSW_SCALE_BENCHMARK.md) for methodology,

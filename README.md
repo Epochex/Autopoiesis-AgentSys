@@ -611,9 +611,42 @@ HNSW 冷构建 909.7 秒，索引体积 784 MB。该实验说明索引配置的�
 
 压缩回收 20,000 条物理向量，快照重载 0.7162 秒，重启前后查询结果一致。该实验测量版本过滤、压缩和快照恢复，数据见 [benchmark_results/vector_lifecycle_100k.json](./benchmark_results/vector_lifecycle_100k.json)。
 
-### 8. ITBench 的位置
+### 8. 公开 AIOps 测试集与当前失败项
 
-ITBench SRE、CISO 和 FinOps 数字保留为公开研究参照。当前仓库没有在 ITBench 专用集群上完成本地跑分，因此 README 不列本地对比排名。项目本身的可复验结论来自本节列出的真实事件、配对消融、LongMemEval、FortiOS 检索和索引实验。
+公开测试采用作者或研究机构发布的原始数据和故障真值。数据源清单、版本、许可证、纳入原因和排除原因保存在 [`core/eval/public_aiops_sources.json`](./core/eval/public_aiops_sources.json)，执行器位于 [`core/eval/public_aiops_business.py`](./core/eval/public_aiops_business.py)，聚合结果、全部 ITBench 场景和代表性坏例保存在 [`benchmark_results/public_aiops_business_20260831.json`](./benchmark_results/public_aiops_business_20260831.json)。执行命令生成完整逐案例结果，全量执行没有模型调用。
+
+本轮纳入三个来源：
+
+- [RCAEval](https://github.com/phamquiluan/RCAEval)：735 个带根因服务、注入时间和重复轮次的故障案例。733 个案例具备完整的注入前后窗口，2 个案例因发布的注入时间无法切分窗口而退出评分。
+- [ITBench-Lite SRE](https://huggingface.co/datasets/ibm-research/ITBench-Lite)：35 个带告警、Kubernetes 事件、根因实体和建议动作的事故快照。
+- [Microsoft AIOpsLab](https://github.com/microsoft/AIOpsLab)：静态检查 89 个任务标识、14 个缓解任务和 35 个同时实现故障注入与恢复函数的场景文件。
+
+筛选时排除了两类数据。OpenRCA 官方资源建议达到 80 GB 磁盘和 32 GB 内存，超出本机安全测试预算；模型生成的问答和重建轨迹缺少独立故障真值。AIOpsArena 与 RCAEval 的指标、日志、链路故障注入角色重复，本轮保留其来源记录，没有增加 818 MB 的重复 Git LFS 数据。
+
+| 测量对象 | 样本与结果 | 当前结论 |
+|---|---:|---|
+| RCAEval 根因服务候选 | 733 案例，Hit@1 0.8104，Hit@3 0.9768，Hit@5 0.9959 | 注入时间前后的鲁棒指标变化能有效缩小根因服务范围；它没有执行开放式 Agent 调查 |
+| ITBench 告警自动圈定 | 28/35 完整，0.8000 | 7 个场景的告警缺少目标资产或没有覆盖真值中的受影响告警组，公开回放判失败 |
+| ITBench Kubernetes 事件检索 | 27 个场景存在根因事件，Hit@20 0.3704，宏平均 Recall@20 0.1743；另有 8 个场景缺少根因事件 | 单一事件源无法支撑开放根因，指标、日志、链路和配置快照需要进入同一调查适配器 |
+| 复发记忆配对 | 542 对，49 对减少候选，210 对增加候选，平均多查 0.5609 个候选 | 当前“相似历史优先”策略产生明显负迁移，记忆业务价值判失败 |
+| 动作与恢复 | AIOpsLab 有 14 个缓解任务、35 个注入加恢复文件 | 外部项目具备测试场景；本项目尚未在隔离环境完成动作、回读、稳定观察和失败恢复测试 |
+
+这组结果把六项业务价值分成三种状态。2026-08-31 的现场接口记录自动接案 3/4，为 partial；结论约束 3/3，为 proven。开放根因、处理时间、动作恢复和复发记忆均没有合格现场样本；记忆还在公开配对中出现负收益。公开数据尚未执行模型结论的支持、反证和正确拒答评分。RCAEval 的高 Hit@5 只说明候选范围可以快速缩小，完整调查仍需消费多源当前证据并产生可核验结果。
+
+可复现命令：
+
+~~~bash
+python3 -m venv /tmp/autopoiesis-public-aiops
+. /tmp/autopoiesis-public-aiops/bin/activate
+pip install -e '.[public-aiops]'
+python -m core.eval.public_aiops_business download \
+  --cache-dir /data/autopoiesis-public-benchmarks/cache --workers 16
+python -m core.eval.public_aiops_business evaluate \
+  --cache-dir /data/autopoiesis-public-benchmarks/cache \
+  --aiopslab-root /data/autopoiesis-public-benchmarks/AIOpsLab \
+  --live-business-value-url http://127.0.0.1:8026/api/rca/investigate/business-value \
+  --output /tmp/public-aiops-business.json
+~~~
 
 ## 可复现命令
 

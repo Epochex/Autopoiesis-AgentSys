@@ -50,6 +50,11 @@ rerank = [
   "sentence-transformers>=2.2",
   "torch>=2.0",
 ]
+public-aiops = [
+  "pandas>=2.2",
+  "pyarrow>=16",
+  "PyYAML>=6",
+]
 
 # Flat repo layout: the importable packages are core/ and domains/. Pin
 # discovery so the editable install does not trip over frontend/, tests_py/,

@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "name": "RCAEval",
+      "selected": true,
+      "revision": "afeacb11bcc94dadfd1c8f483ee4377b2b8b614e",
+      "license": "MIT for author-produced code and datasets; bundled baselines retain their own licenses",
+      "homepage": "https://github.com/phamquiluan/RCAEval",
+      "data": "https://huggingface.co/datasets/phamquiluan/RCAEval",
+      "scope": "735 labelled fault-injection cases across three systems, three suites and eleven fault types",
+      "used_for": [
+        "root-service candidate localization",
+        "candidate-count proxy",
+        "chronological recurrence-memory pairing"
+      ]
+    },
+    {
+      "name": "ITBench-Lite SRE",
+      "selected": true,
+      "revision": "d0916b08ba421ce5e672e9ad68aa947d938dfef0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/itbench-hub/ITBench-Evaluations",
+      "data": "https://huggingface.co/datasets/ibm-research/ITBench-Lite",
+      "scope": "35 labelled SRE snapshots with alerts, metrics, logs, traces, Kubernetes state and recommended actions",
+      "used_for": [
+        "alert-to-scope replay",
+        "Kubernetes-event root-evidence availability",
+        "BM25 root-event retrieval"
+      ]
+    },
+    {
+      "name": "Microsoft AIOpsLab",
+      "selected": true,
+      "revision": "ddf7e40619689dad75eaf8f2174e263c4157ec76",
+      "license": "MIT",
+      "homepage": "https://github.com/microsoft/AIOpsLab",
+      "scope": "fault injection, detection, localization, analysis and mitigation scenario contracts",
+      "used_for": [
+        "static action-and-recovery capability inventory"
+      ]
+    },
+    {
+      "name": "AIOpsArena dataset",
+      "selected": false,
+      "revision": "7c73e77d5a5109d30461417757c1c6ba3c234534",
+      "homepage": "https://github.com/AIOpsArena/dataset",
+      "scope": "three-day metric, log and trace exports with fault-injection ground truth",
+      "exclusion": "duplicates RCAEval's telemetry role and requires an additional 818 MB Git LFS transfer"
+    },
+    {
+      "name": "Microsoft OpenRCA",
+      "selected": false,
+      "homepage": "https://github.com/microsoft/OpenRCA",
+      "scope": "multimodal KPI, trace graph and log root-cause benchmark",
+      "exclusion": "official resource guidance requires at least 80 GB disk and 32 GB memory"
+    },
+    {
+      "name": "generated QA and reconstructed trajectory datasets",
+      "selected": false,
+      "exclusion": "model-generated answers and reconstructed evidence are not independent incident ground truth"
+    }
+  ]
+}

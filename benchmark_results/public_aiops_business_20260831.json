@@ -1,0 +1,2994 @@
+{
+  "aiopslab": {
+    "available": true,
+    "data_level": "external_capability",
+    "files_with_both": 35,
+    "files_with_inject_fault": 35,
+    "files_with_recover_fault": 35,
+    "interpretation": "these are executable contracts in AIOpsLab; this project has not yet mapped them to its action executor or run recovery observations",
+    "recovery_files": [
+      "aiopslab/orchestrator/problems/ad_service_failure/ad_service_failure.py",
+      "aiopslab/orchestrator/problems/ad_service_high_cpu/ad_service_high_cpu.py",
+      "aiopslab/orchestrator/problems/ad_service_manual_gc/ad_service_manual_gc.py",
+      "aiopslab/orchestrator/problems/assign_non_existent_node/assign_non_existent_node_social_net.py",
+      "aiopslab/orchestrator/problems/auth_miss_mongodb/auth_miss_mongodb.py",
+      "aiopslab/orchestrator/problems/cart_service_failure/cart_service_failure.py",
+      "aiopslab/orchestrator/problems/container_kill/container_kill.py",
+      "aiopslab/orchestrator/problems/disk_woreout/disk_woreout.py",
+      "aiopslab/orchestrator/problems/flower_model_misconfig/model_misconfig.py",
+      "aiopslab/orchestrator/problems/flower_node_stop/node_stop.py",
+      "aiopslab/orchestrator/problems/image_slow_load/image_slow_load.py",
+      "aiopslab/orchestrator/problems/k8s_target_port_misconfig/target_port.py",
+      "aiopslab/orchestrator/problems/kafka_queue_problems/kafka_queue_problems.py",
+      "aiopslab/orchestrator/problems/kernel_fault/kernel_fault.py",
+      "aiopslab/orchestrator/problems/loadgenerator_flood_homepage/loadgenerator_flood_homepage.py",
+      "aiopslab/orchestrator/problems/misconfig_app/misconfig_app_hotel_res.py",
+      "aiopslab/orchestrator/problems/network_delay/network_delay.py",
+      "aiopslab/orchestrator/problems/network_loss/network_loss.py",
+      "aiopslab/orchestrator/problems/no_op/no_op.py",
+      "aiopslab/orchestrator/problems/operator_misoperation/invalid_affinity_toleration.py",
+      "aiopslab/orchestrator/problems/operator_misoperation/non_existent_storage.py",
+      "aiopslab/orchestrator/problems/operator_misoperation/overload_replicas.py",
+      "aiopslab/orchestrator/problems/operator_misoperation/security_context_fault.py",
+      "aiopslab/orchestrator/problems/operator_misoperation/wrong_update_strategy.py",
+      "aiopslab/orchestrator/problems/payment_service_failure/payment_service_failure.py",
+      "aiopslab/orchestrator/problems/payment_service_unreachable/payment_service_unreachable.py",
+      "aiopslab/orchestrator/problems/pod_failure/pod_failure.py",
+      "aiopslab/orchestrator/problems/pod_kill/pod_kill.py",
+      "aiopslab/orchestrator/problems/product_catalog_failure/product_catalog_failure.py",
+      "aiopslab/orchestrator/problems/recommendation_service_cache_failure/recommendation_service_cache_failure.py",
+      "aiopslab/orchestrator/problems/redeploy_without_pv/redeploy_without_pv.py",
+      "aiopslab/orchestrator/problems/revoke_auth/revoke_auth.py",
+      "aiopslab/orchestrator/problems/scale_pod/scale_pod_social_net.py",
+      "aiopslab/orchestrator/problems/storage_user_unregistered/storage_user_unregistered.py",
+      "aiopslab/orchestrator/problems/wrong_bin_usage/wrong_bin_usage.py"
+    ],
+    "registry_problem_ids": 89,
+    "task_counts": {
+      "analysis": 13,
+      "detection": 34,
+      "localization": 28,
+      "mitigation": 14
+    }
+  },
+  "business_values": [
+    {
+      "key": "automatic_incident_takeover",
+      "live_site_status": "partial",
+      "measured": {
+        "complete_count": 28,
+        "complete_rate": 0.8,
+        "definition": "firing alert yields at least one asset, bounded time, fault domain, and overlap with the labelled affected alert group"
+      },
+      "public_replay_status": "failed",
+      "remaining_gap": "the deployed network ingestion path needs a live alert-to-session result"
+    },
+    {
+      "key": "open_fault_investigation",
+      "live_site_status": "not_observed",
+      "measured": {
+        "event_evidence_eligible_scenarios": 27,
+        "event_evidence_hit_at_20": 0.37037,
+        "metric_root_service_hit_at_5": 0.995907
+      },
+      "public_replay_status": "partial",
+      "remaining_gap": "public tests rank candidates; they do not show a new model-origin hypothesis being probed, supported or rejected by this project's investigation loop"
+    },
+    {
+      "key": "grounded_decisions",
+      "live_site_status": "proven",
+      "measured": {
+        "event_evidence_eligible_scenarios": 27,
+        "scenarios_missing_root_event": 8
+      },
+      "public_replay_status": "not_tested_end_to_end",
+      "remaining_gap": "the deployed verifier has narrow local evidence; public cases still need model conclusions scored for support, contradiction and correct abstention"
+    },
+    {
+      "key": "faster_investigation",
+      "live_site_status": "not_observed",
+      "measured": {
+        "case_count": 733,
+        "mean_candidates_to_root": 1.274216
+      },
+      "public_replay_status": "proxy_only",
+      "remaining_gap": "candidate rank is an offline search-cost proxy; wall-clock and operator time need same-incident comparisons on the deployed system"
+    },
+    {
+      "key": "action_and_recovery_readback",
+      "live_site_status": "not_observed",
+      "measured": {
+        "external_faults_with_recovery_code": 35,
+        "external_mitigation_tasks": 14
+      },
+      "public_replay_status": "not_tested",
+      "remaining_gap": "an external recovery function is not our action result; an isolated deployment must execute, read back, observe stability, and exercise failed recovery"
+    },
+    {
+      "key": "recurrence_memory_value",
+      "live_site_status": "not_observed",
+      "measured": {
+        "harmed_count": 210,
+        "mean_candidate_saving": -0.560886,
+        "pair_count": 542,
+        "positive_saving_rate": 0.090406
+      },
+      "public_replay_status": "failed",
+      "remaining_gap": "a public recurrence result still needs confirmation on repeated incidents from the managed network, with the same root correctness and fewer real probes"
+    }
+  ],
+  "claim_boundary": "public replay measures parsers, candidate retrieval, deterministic localization, and paired memory ordering; live-site value remains unproven until deployed cases produce the required records",
+  "created_at": "2026-08-31T09:22:32.885972+00:00",
+  "evaluator_version": "autopoiesis-public-aiops-business/1",
+  "itbench_lite_sre": {
+    "automatic_scope": {
+      "complete_count": 28,
+      "complete_rate": 0.8,
+      "definition": "firing alert yields at least one asset, bounded time, fault domain, and overlap with the labelled affected alert group"
+    },
+    "complete_scenarios": 35,
+    "data_level": "public_replay",
+    "dataset": "ITBench-Lite/SRE",
+    "event_retrieval": {
+      "eligible_scenarios": 27,
+      "hit_at_20": 0.37037,
+      "ineligible_missing_root_event": 8,
+      "macro_root_event_recall_at_20": 0.174258,
+      "mean_reciprocal_rank": 0.345679,
+      "missing_evidence_policy": "a scenario with no root-bearing Kubernetes event is excluded from retrieval accuracy and remains unresolved for this evidence source"
+    },
+    "scenario_count": 35,
+    "scenarios": [
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 352,
+          "eligible": true,
+          "events_dropped_by_namespace": 516,
+          "gold_events": 30,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "load-generator",
+          "load-generator-pod-1"
+        ],
+        "scenario_id": "Scenario-1",
+        "scope": {
+          "asset_ids": [
+            "checkout",
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:55:46Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 4,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency checkout frontend frontend-proxy Latency in service frontend-proxy in namespace otel-demo is above 1500ms (current: 15000s) Request error rate in service checkout in namespace otel-demo is above 0 (current: 0.19999999999999998) Request error rate in service frontend in namespace otel-demo is above 0 (current: 0.39999999999999997) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 10.799999999999999)",
+          "start": "2025-12-15T17:25:19.431042761Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.666667,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 380,
+          "eligible": true,
+          "events_dropped_by_namespace": 452,
+          "gold_events": 380,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.052632
+        },
+        "expected_alert_assets": [
+          "ad",
+          "frontend",
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-namespace-1"
+        ],
+        "scenario_id": "Scenario-102",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:59:18Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 2.4999999999999996) Request error rate in service frontend in namespace otel-demo is above 0 (current: 5.088888888888889)",
+          "start": "2025-12-15T17:55:33.255943253Z"
+        }
+      },
+      {
+        "alert_asset_coverage": null,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 460,
+          "eligible": false,
+          "events_dropped_by_namespace": 460,
+          "gold_events": 0,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": null
+        },
+        "expected_alert_assets": [],
+        "recommended_action_count": 0,
+        "root_entities": [],
+        "scenario_id": "Scenario-105",
+        "scope": {
+          "asset_ids": [
+            "checkout",
+            "frontend",
+            "frontend-proxy",
+            "recommendation"
+          ],
+          "end": "2025-12-15T17:59:15Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 4,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate checkout frontend frontend-proxy recommendation Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 7.922222222222222) Request error rate in service frontend in namespace otel-demo is above 0 (current: 16.866666666666664) Request error rate in service checkout in namespace otel-demo is above 0 (current: 0.6) Request error rate in service recommendation in namespace otel-demo is above 0 (current: 1.1777777777777776)",
+          "start": "2025-12-15T17:56:04.072999735Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.0,
+        "automatic_scope_complete": false,
+        "event_retrieval": {
+          "candidate_events": 366,
+          "eligible": true,
+          "events_dropped_by_namespace": 460,
+          "gold_events": 34,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "fraud-detection"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "flagd-config",
+          "fraud-detection"
+        ],
+        "scenario_id": "Scenario-11",
+        "scope": {
+          "asset_ids": [
+            "ad",
+            "checkout",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:53:45Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 3,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency ad checkout frontend-proxy Latency in service checkout in namespace otel-demo is above 1500ms (current: 15000s) Request error rate in service ad in namespace otel-demo is above 0 (current: 0.01111111111111111) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.39999999999999997)",
+          "start": "2025-12-15T17:51:18.783473538Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.0,
+        "automatic_scope_complete": false,
+        "event_retrieval": {
+          "candidate_events": 54,
+          "eligible": false,
+          "events_dropped_by_namespace": 832,
+          "gold_events": 0,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": null
+        },
+        "expected_alert_assets": [
+          "frontend"
+        ],
+        "recommended_action_count": 4,
+        "root_entities": [
+          "flagd-config",
+          "flagd-config-1",
+          "frontend",
+          "product-catalog"
+        ],
+        "scenario_id": "Scenario-12",
+        "scope": {
+          "asset_ids": [
+            "prometheus-kube-prometheus-prometheus"
+          ],
+          "end": "2025-12-15T17:24:32.046804338Z",
+          "fault_domains": [
+            "KubeControllerManagerDown",
+            "KubeSchedulerDown",
+            "PrometheusNotConnectedToAlertmanagers",
+            "Watchdog"
+          ],
+          "firing_alerts": 4,
+          "namespaces": [
+            "prometheus"
+          ],
+          "query": "KubeControllerManagerDown KubeSchedulerDown PrometheusNotConnectedToAlertmanagers Watchdog prometheus-kube-prometheus-prometheus KubeScheduler has disappeared from Prometheus target discovery. Prometheus prometheus/prometheus-prometheus-kube-prometheus-prometheus-0 is not connected to any Alertmanagers. KubeControllerManager has disappeared from Prometheus target discovery. This is an alert meant to ensure that the entire alerting pipeline is functional.\nThis alert is always firing, therefore it should always be firing in Alertmanager\nand always fire against a receiver. There are integrations with various notification\nmechanisms that send a notification when this alert is not firing. For example the\n\"DeadMansSnitch\" integration in PagerDuty.",
+          "start": "2025-12-15T17:24:05.029145367Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.5,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 352,
+          "eligible": true,
+          "events_dropped_by_namespace": 518,
+          "gold_events": 44,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.454545
+        },
+        "expected_alert_assets": [
+          "checkout",
+          "frontend",
+          "frontend-proxy",
+          "payment"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "checkout",
+          "flagd-config",
+          "frontend"
+        ],
+        "scenario_id": "Scenario-13",
+        "scope": {
+          "asset_ids": [
+            "frontend-proxy",
+            "payment"
+          ],
+          "end": "2025-12-15T17:53:42Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend-proxy payment Request error rate in service payment in namespace otel-demo is above 0 (current: 0.09430500000000001) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.01111111111111111)",
+          "start": "2025-12-15T17:47:32.812025962Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.333333,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 372,
+          "eligible": true,
+          "events_dropped_by_namespace": 536,
+          "gold_events": 74,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.27027
+        },
+        "expected_alert_assets": [
+          "checkout",
+          "frontend",
+          "payment"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "checkout",
+          "flagd-config",
+          "flagd-config-1",
+          "frontend",
+          "payment"
+        ],
+        "scenario_id": "Scenario-14",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:55:17Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend in namespace otel-demo is above 0 (current: 2.5777777777777775) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.3444444444444443)",
+          "start": "2025-12-15T17:51:23.959248828Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 378,
+          "eligible": true,
+          "events_dropped_by_namespace": 512,
+          "gold_events": 24,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.833333
+        },
+        "expected_alert_assets": [
+          "frontend"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "ad",
+          "flagd-config",
+          "flagd-config-1",
+          "frontend"
+        ],
+        "scenario_id": "Scenario-15",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy",
+            "payment"
+          ],
+          "end": "2025-12-15T17:53:39Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 3,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy payment Request error rate in service payment in namespace otel-demo is above 0 (current: 0.03964074074074074) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 2.2555555555555555) Request error rate in service frontend in namespace otel-demo is above 0 (current: 4.422222222222222)",
+          "start": "2025-12-15T17:49:49.854879369Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 352,
+          "eligible": true,
+          "events_dropped_by_namespace": 520,
+          "gold_events": 30,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "shipping"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "shipping",
+          "shipping-deployment-1"
+        ],
+        "scenario_id": "Scenario-16",
+        "scope": {
+          "asset_ids": [
+            "checkout",
+            "frontend",
+            "frontend-proxy",
+            "shipping"
+          ],
+          "end": "2025-12-15T17:57:59Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 4,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate checkout frontend frontend-proxy shipping Request error rate in service frontend in namespace otel-demo is above 0 (current: 1.7777777777777777) Request error rate in service checkout in namespace otel-demo is above 0 (current: 0.8888888888888888) Request error rate in service shipping in namespace otel-demo is above 0 (current: 0.911111111111111) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.8666666666666666)",
+          "start": "2025-12-15T17:54:07.148307191Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.4,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1214,
+          "eligible": true,
+          "events_dropped_by_namespace": 524,
+          "gold_events": 864,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "checkout",
+          "frontend",
+          "frontendproxy",
+          "productcatalog",
+          "recommendation"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "delay-otel-demo-product-catalog-1"
+        ],
+        "scenario_id": "Scenario-17",
+        "scope": {
+          "asset_ids": [
+            "checkout",
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:57:18Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 4,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency checkout frontend frontend-proxy Latency in service frontend-proxy in namespace otel-demo is above 1500ms (current: 15000s) Latency in service frontend in namespace otel-demo is above 1500ms (current: 15000s) Latency in service checkout in namespace otel-demo is above 1500ms (current: 15000s) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.422222222222222)",
+          "start": "2025-12-15T17:54:01.200506512Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1178,
+          "eligible": true,
+          "events_dropped_by_namespace": 522,
+          "gold_events": 740,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "frontend"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "otel-demo-product-catalog-network-delay-1",
+          "pod-otel-demo-checkout-1"
+        ],
+        "scenario_id": "Scenario-18",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:58:41Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend in namespace otel-demo is above 0 (current: 3.4999999999999996) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.733333333333333)",
+          "start": "2025-12-15T17:54:07.970990435Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1576,
+          "eligible": true,
+          "events_dropped_by_namespace": 526,
+          "gold_events": 1158,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "checkout",
+          "frontend",
+          "shipping"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-email-checkout-network-partition-1",
+          "partition-otel-demo-shippingservice-1"
+        ],
+        "scenario_id": "Scenario-19",
+        "scope": {
+          "asset_ids": [
+            "checkout",
+            "frontend",
+            "frontend-proxy",
+            "shipping"
+          ],
+          "end": "2025-12-15T17:58:44Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 6,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency checkout frontend frontend-proxy shipping Latency in service shipping in namespace otel-demo is above 1500ms (current: 9698.275862068964s) Latency in service checkout in namespace otel-demo is above 1500ms (current: 9260.10101010101s) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.6444444444444444) Request error rate in service frontend in namespace otel-demo is above 0 (current: 1.2444444444444442) Request error rate in service shipping in namespace otel-demo is above 0 (current: 0.6444444444444444) Request error rate in service checkout in namespace otel-demo is above 0 (current: 0.7333333333333333)",
+          "start": "2025-12-15T17:53:06.920785651Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.333333,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 370,
+          "eligible": true,
+          "events_dropped_by_namespace": 516,
+          "gold_events": 82,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.146341
+        },
+        "expected_alert_assets": [
+          "cart",
+          "frontend",
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "cart",
+          "flagd-config",
+          "frontend"
+        ],
+        "scenario_id": "Scenario-2",
+        "scope": {
+          "asset_ids": [
+            "fraud-detection",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:52:23Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate fraud-detection frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.01111111111111111) Request error rate in service fraud-detection in namespace otel-demo is above 0 (current: 0.01111111111111111)",
+          "start": "2025-12-15T17:43:50.488970782Z"
+        }
+      },
+      {
+        "alert_asset_coverage": null,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 478,
+          "eligible": false,
+          "events_dropped_by_namespace": 464,
+          "gold_events": 0,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": null
+        },
+        "expected_alert_assets": [],
+        "recommended_action_count": 0,
+        "root_entities": [],
+        "scenario_id": "Scenario-20",
+        "scope": {
+          "asset_ids": [
+            "checkout",
+            "frontend",
+            "frontend-proxy",
+            "recommendation"
+          ],
+          "end": "2025-12-15T17:55:50Z",
+          "fault_domains": [
+            "PendingPodsDetected",
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 5,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "PendingPodsDetected RequestErrorRate checkout frontend frontend-proxy recommendation Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 18.18888888888889) Request error rate in service frontend in namespace otel-demo is above 0 (current: 36.511111111111106) Request error rate in service recommendation in namespace otel-demo is above 0 (current: 2.622222222222222) Request error rate in service checkout in namespace otel-demo is above 0 (current: 1.7555555555555553) Pods in pending state in namespace otel-demo above 0 (current: 1)",
+          "start": "2025-12-15T17:49:53.564379742Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.6,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1458,
+          "eligible": true,
+          "events_dropped_by_namespace": 518,
+          "gold_events": 1040,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "cart",
+          "checkout",
+          "frontend",
+          "frontend-proxy",
+          "valkey-cart"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-valkey-memory-stress"
+        ],
+        "scenario_id": "Scenario-21",
+        "scope": {
+          "asset_ids": [
+            "cart",
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:58:52Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 6,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency cart frontend frontend-proxy Latency in service cart in namespace otel-demo is above 1500ms (current: 15000s) Latency in service frontend-proxy in namespace otel-demo is above 1500ms (current: 15000s) Latency in service frontend in namespace otel-demo is above 1500ms (current: 15000s) Request error rate in service frontend in namespace otel-demo is above 0 (current: 3.0222222222222217) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.4333333333333331) Request error rate in service cart in namespace otel-demo is above 0 (current: 0.8426862962962962)",
+          "start": "2025-12-15T17:54:06.215027759Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.666667,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1682,
+          "eligible": true,
+          "events_dropped_by_namespace": 532,
+          "gold_events": 1268,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "ad",
+          "frontend",
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-ad-memory-stress"
+        ],
+        "scenario_id": "Scenario-22",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:58:42Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend in namespace otel-demo is above 0 (current: 2.622222222222222) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.3444444444444443)",
+          "start": "2025-12-15T17:54:55.085093936Z"
+        }
+      },
+      {
+        "alert_asset_coverage": null,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 446,
+          "eligible": false,
+          "events_dropped_by_namespace": 512,
+          "gold_events": 0,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": null
+        },
+        "expected_alert_assets": [],
+        "recommended_action_count": 0,
+        "root_entities": [],
+        "scenario_id": "Scenario-23",
+        "scope": {
+          "asset_ids": [
+            "fraud-detection",
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T18:00:13Z",
+          "fault_domains": [
+            "PendingPodsDetected",
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 4,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "PendingPodsDetected RequestErrorRate fraud-detection frontend frontend-proxy Pods in pending state in namespace otel-demo above 0 (current: 1) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 2.0444444444444443) Request error rate in service fraud-detection in namespace otel-demo is above 0 (current: 0.01111111111111111) Request error rate in service frontend in namespace otel-demo is above 0 (current: 4.155555555555555)",
+          "start": "2025-12-15T17:54:40.336305853Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.0,
+        "automatic_scope_complete": false,
+        "event_retrieval": {
+          "candidate_events": 378,
+          "eligible": true,
+          "events_dropped_by_namespace": 460,
+          "gold_events": 60,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "checkout"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "checkout-deployment"
+        ],
+        "scenario_id": "Scenario-24",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:55:17Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend in namespace otel-demo is above 0 (current: 3.6111111111111107) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.7333333333333332)",
+          "start": "2025-12-15T17:41:19.038370408Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.5,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1012,
+          "eligible": true,
+          "events_dropped_by_namespace": 520,
+          "gold_events": 668,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "frontend",
+          "recommendation"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "cpustress-recommendation-1",
+          "otel-demo-recommendation-cpu-stress"
+        ],
+        "scenario_id": "Scenario-25",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T18:00:14Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 3,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency frontend frontend-proxy Latency in service frontend in namespace otel-demo is above 1500ms (current: 2389.5833333333335s) Latency in service frontend-proxy in namespace otel-demo is above 1500ms (current: 2691.6666666666756s) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.06666666666666667)",
+          "start": "2025-12-15T17:58:04.551402655Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1240,
+          "eligible": false,
+          "events_dropped_by_namespace": 530,
+          "gold_events": 0,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": null
+        },
+        "expected_alert_assets": [
+          "ad",
+          "frontend"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "jvm-return-otel-demo-ad-1"
+        ],
+        "scenario_id": "Scenario-29",
+        "scope": {
+          "asset_ids": [
+            "ad",
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:58:05Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 3,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate ad frontend frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 2.1111111111111107) Request error rate in service ad in namespace otel-demo is above 0 (current: 0.9777777777777776) Request error rate in service frontend in namespace otel-demo is above 0 (current: 3.9111111111111105)",
+          "start": "2025-12-15T17:47:21.460402135Z"
+        }
+      },
+      {
+        "alert_asset_coverage": null,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 340,
+          "eligible": false,
+          "events_dropped_by_namespace": 518,
+          "gold_events": 0,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": null
+        },
+        "expected_alert_assets": [],
+        "recommended_action_count": 0,
+        "root_entities": [],
+        "scenario_id": "Scenario-31",
+        "scope": {
+          "asset_ids": [
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:56:55Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 1,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.033333333333333326)",
+          "start": "2025-12-15T17:57:13.229243327Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.0,
+        "automatic_scope_complete": false,
+        "event_retrieval": {
+          "candidate_events": 354,
+          "eligible": true,
+          "events_dropped_by_namespace": 516,
+          "gold_events": 40,
+          "reciprocal_rank": 0.333333,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.075
+        },
+        "expected_alert_assets": [
+          "ad",
+          "frontend",
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "ad",
+          "ad-pod-1"
+        ],
+        "scenario_id": "Scenario-33",
+        "scope": {
+          "asset_ids": [],
+          "end": "2025-12-15T17:59:41Z",
+          "fault_domains": [
+            "PendingPodsDetected"
+          ],
+          "firing_alerts": 1,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "PendingPodsDetected Pods in pending state in namespace otel-demo above 0 (current: 2)",
+          "start": "2025-12-15T17:55:48.471579169Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.5,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 346,
+          "eligible": true,
+          "events_dropped_by_namespace": 530,
+          "gold_events": 20,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "cart",
+          "checkout",
+          "frontend",
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "valkey",
+          "valkey-pod-1"
+        ],
+        "scenario_id": "Scenario-34",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:53:39Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 4,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency frontend frontend-proxy Latency in service frontend-proxy in namespace otel-demo is above 1500ms (current: 15000s) Latency in service frontend in namespace otel-demo is above 1500ms (current: 15000s) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.0888888888888888) Request error rate in service frontend in namespace otel-demo is above 0 (current: 0.4481907407407407)",
+          "start": "2025-12-15T17:50:35.424627359Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.666667,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1182,
+          "eligible": true,
+          "events_dropped_by_namespace": 530,
+          "gold_events": 836,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "ad",
+          "frontend",
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-ad-jvm-chaos"
+        ],
+        "scenario_id": "Scenario-35",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:59:16Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend in namespace otel-demo is above 0 (current: 3.033333333333333) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.5333333333333332)",
+          "start": "2025-12-15T17:55:06.824140828Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.0,
+        "automatic_scope_complete": false,
+        "event_retrieval": {
+          "candidate_events": 1729,
+          "eligible": false,
+          "events_dropped_by_namespace": 456,
+          "gold_events": 0,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": null
+        },
+        "expected_alert_assets": [
+          "otel-demo-namespace-1"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-*",
+          "otel-demo-horizontal-pod-autoscalers"
+        ],
+        "scenario_id": "Scenario-38",
+        "scope": {
+          "asset_ids": [
+            "fraud-detection"
+          ],
+          "end": "2025-12-15T18:16:22Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 1,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate fraud-detection Request error rate in service fraud-detection in namespace otel-demo is above 0 (current: 0.02222222222222222)",
+          "start": "2025-12-15T18:18:44.847729751Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.25,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 354,
+          "eligible": false,
+          "events_dropped_by_namespace": 532,
+          "gold_events": 0,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": null
+        },
+        "expected_alert_assets": [
+          "checkout",
+          "frontend",
+          "frontend-proxy",
+          "product-catalog"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "flagd-config",
+          "flagd-config-1"
+        ],
+        "scenario_id": "Scenario-4",
+        "scope": {
+          "asset_ids": [
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:54:22Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 1,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.01111111111111111)",
+          "start": "2025-12-15T17:55:47.934820964Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 380,
+          "eligible": true,
+          "events_dropped_by_namespace": 514,
+          "gold_events": 26,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.769231
+        },
+        "expected_alert_assets": [
+          "frontend"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "adservice",
+          "flagd-config",
+          "flagd-config-1",
+          "frontend"
+        ],
+        "scenario_id": "Scenario-5",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:54:27Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 2.4555555555555553) Request error rate in service frontend in namespace otel-demo is above 0 (current: 5.088888888888889)",
+          "start": "2025-12-15T17:46:13.89496108Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.666667,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 356,
+          "eligible": true,
+          "events_dropped_by_namespace": 522,
+          "gold_events": 24,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.833333
+        },
+        "expected_alert_assets": [
+          "ad",
+          "frontend",
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "ad",
+          "flagd-config",
+          "frontend"
+        ],
+        "scenario_id": "Scenario-6",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:53:41Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend in namespace otel-demo is above 0 (current: 2.355555555555555) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.2444444444444442)",
+          "start": "2025-12-15T17:48:59.397582593Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.25,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 356,
+          "eligible": true,
+          "events_dropped_by_namespace": 516,
+          "gold_events": 74,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 0.27027
+        },
+        "expected_alert_assets": [
+          "checkout",
+          "frontend",
+          "frontend-proxy",
+          "payment"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "checkout",
+          "flagd-config",
+          "frontend",
+          "payment"
+        ],
+        "scenario_id": "Scenario-7",
+        "scope": {
+          "asset_ids": [
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:54:05Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 1,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.01111111111111111)",
+          "start": "2025-12-15T17:48:10.555135172Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.25,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 352,
+          "eligible": true,
+          "events_dropped_by_namespace": 520,
+          "gold_events": 20,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "checkout",
+          "frontend",
+          "frontend-proxy",
+          "payment"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "checkout",
+          "flagd-config",
+          "otel-demo-emailservice"
+        ],
+        "scenario_id": "Scenario-8",
+        "scope": {
+          "asset_ids": [
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:53:45Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 1,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.02222222222222222)",
+          "start": "2025-12-15T17:57:29.800120215Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.0,
+        "automatic_scope_complete": false,
+        "event_retrieval": {
+          "candidate_events": 1480,
+          "eligible": true,
+          "events_dropped_by_namespace": 526,
+          "gold_events": 1028,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "checkout"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-checkout-kafka-network-partition"
+        ],
+        "scenario_id": "Scenario-80",
+        "scope": {
+          "asset_ids": [
+            "frontend",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:59:26Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 1.5999999999999999) Request error rate in service frontend in namespace otel-demo is above 0 (current: 2.244444444444444)",
+          "start": "2025-12-15T17:34:31.067025518Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1730,
+          "eligible": true,
+          "events_dropped_by_namespace": 528,
+          "gold_events": 1260,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "checkout",
+          "frontend",
+          "frontend-proxy",
+          "shipping"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-shipping-quote-network-partition"
+        ],
+        "scenario_id": "Scenario-81",
+        "scope": {
+          "asset_ids": [
+            "checkout",
+            "frontend",
+            "frontend-proxy",
+            "shipping"
+          ],
+          "end": "2025-12-15T18:02:48Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 6,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency checkout frontend frontend-proxy shipping Latency in service checkout in namespace otel-demo is above 1500ms (current: 9200s) Latency in service shipping in namespace otel-demo is above 1500ms (current: 9720s) Request error rate in service shipping in namespace otel-demo is above 0 (current: 0.5555555555555555) Request error rate in service checkout in namespace otel-demo is above 0 (current: 0.5555555555555555) Request error rate in service frontend in namespace otel-demo is above 0 (current: 1.111111111111111) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.5555555555555555)",
+          "start": "2025-12-15T17:59:58.49193012Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 1.0,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 1448,
+          "eligible": true,
+          "events_dropped_by_namespace": 526,
+          "gold_events": 1010,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "checkout"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-email-checkout-network-partition"
+        ],
+        "scenario_id": "Scenario-83",
+        "scope": {
+          "asset_ids": [
+            "checkout",
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T18:01:29Z",
+          "fault_domains": [
+            "RequestErrorRate",
+            "RequestLatency"
+          ],
+          "firing_alerts": 4,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate RequestLatency checkout frontend-proxy Latency in service checkout in namespace otel-demo is above 1500ms (current: 15000s) Latency in service frontend-proxy in namespace otel-demo is above 1500ms (current: 2787.4999999998863s) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.2444444444444444) Request error rate in service checkout in namespace otel-demo is above 0 (current: 0.09999999999999999)",
+          "start": "2025-12-15T17:57:10.50528766Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.5,
+        "automatic_scope_complete": true,
+        "event_retrieval": {
+          "candidate_events": 358,
+          "eligible": true,
+          "events_dropped_by_namespace": 522,
+          "gold_events": 12,
+          "reciprocal_rank": 1.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": true,
+          "root_event_recall_at_20": 1.0
+        },
+        "expected_alert_assets": [
+          "frontend",
+          "frontend-proxy"
+        ],
+        "recommended_action_count": 2,
+        "root_entities": [
+          "flagd-config",
+          "frontend-proxy"
+        ],
+        "scenario_id": "Scenario-9",
+        "scope": {
+          "asset_ids": [
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T17:53:45Z",
+          "fault_domains": [
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 1,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "RequestErrorRate frontend-proxy Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.01111111111111111)",
+          "start": "2025-12-15T17:56:33.356997339Z"
+        }
+      },
+      {
+        "alert_asset_coverage": 0.0,
+        "automatic_scope_complete": false,
+        "event_retrieval": {
+          "candidate_events": 2096,
+          "eligible": true,
+          "events_dropped_by_namespace": 522,
+          "gold_events": 1584,
+          "reciprocal_rank": 0.0,
+          "retrieved": 20,
+          "root_event_hit_at_20": false,
+          "root_event_recall_at_20": 0.0
+        },
+        "expected_alert_assets": [
+          "fraud-detection",
+          "otel-demo-fraud-detection-kafka-network-partition"
+        ],
+        "recommended_action_count": 1,
+        "root_entities": [
+          "otel-demo-fraud-detection-kafka-network-partition"
+        ],
+        "scenario_id": "Scenario-91",
+        "scope": {
+          "asset_ids": [
+            "frontend-proxy"
+          ],
+          "end": "2025-12-15T18:07:06Z",
+          "fault_domains": [
+            "KafkaConnectionClosureRate",
+            "RequestErrorRate"
+          ],
+          "firing_alerts": 2,
+          "namespaces": [
+            "otel-demo"
+          ],
+          "query": "KafkaConnectionClosureRate RequestErrorRate frontend-proxy Job otel-collector has a closure rate above 0 (current: 0.062412320829521195) Request error rate in service frontend-proxy in namespace otel-demo is above 0 (current: 0.01111111111111111)",
+          "start": "2025-12-15T18:03:01.226376759Z"
+        }
+      }
+    ]
+  },
+  "live_site_snapshot": {
+    "allProven": false,
+    "caseCount": 12,
+    "ok": true,
+    "rows": [
+      {
+        "caseIds": [
+          "case-1ea3a3318bd0990d1130",
+          "case-0f6ed52c082d4aee73bf",
+          "case-038359ceeba7ad754f5f"
+        ],
+        "eligibleCases": 4,
+        "key": "automatic_incident_takeover",
+        "measured": {
+          "scopedAutoStartedCases": 3
+        },
+        "passedCases": 3,
+        "requirement": "auto-started case has a managed asset, bounded scope and fault domain",
+        "status": "partial"
+      },
+      {
+        "caseIds": [],
+        "eligibleCases": 0,
+        "key": "open_fault_investigation",
+        "measured": {
+          "confirmedModelOriginRoots": 0
+        },
+        "passedCases": 0,
+        "requirement": "model-origin root is confirmed by frozen independent probes and becomes the decision",
+        "status": "not_observed"
+      },
+      {
+        "caseIds": [
+          "case-038359ceeba7ad754f5f",
+          "case-1d8979ccc44e1c4c403d",
+          "case-14433e99d4f8e175d15f"
+        ],
+        "eligibleCases": 3,
+        "key": "grounded_decisions",
+        "measured": {
+          "groundedDecisionRate": 1.0
+        },
+        "passedCases": 3,
+        "requirement": "final evidence ids are the deterministic supports of the published root",
+        "status": "proven"
+      },
+      {
+        "caseIds": [],
+        "eligibleCases": 0,
+        "key": "faster_investigation",
+        "measured": {
+          "sameCasePairsWithEarlierConfirmation": 0
+        },
+        "passedCases": 0,
+        "requirement": "same fresh probe outputs and root, with earlier confirmation than the fixed-script control",
+        "status": "not_observed"
+      },
+      {
+        "caseIds": [],
+        "eligibleCases": 0,
+        "key": "action_and_recovery_readback",
+        "measured": {
+          "actionsWithTerminalReadback": 0
+        },
+        "passedCases": 0,
+        "requirement": "action-ready case ends resolved or escalated with original-system readback",
+        "status": "not_observed"
+      },
+      {
+        "caseIds": [],
+        "eligibleCases": 0,
+        "key": "recurrence_memory_value",
+        "measured": {
+          "probeDeltas": [],
+          "recurrencesWithProvenSavings": 0
+        },
+        "passedCases": 0,
+        "requirement": "recurrence matches the first root and uses fewer probes; same-case ablation also passes",
+        "status": "not_observed"
+      }
+    ],
+    "sessionCount": 11
+  },
+  "manifest": {
+    "cache_dir": "/data/autopoiesis-public-benchmarks/cache",
+    "created_at": "2026-08-31T09:03:56.889261+00:00",
+    "file_summary": {
+      "bytes": 345936416,
+      "cache_hits": 837,
+      "count": 841
+    },
+    "schema_version": 1,
+    "selection": {
+      "aiopsarena": {
+        "reason": "same telemetry role as RCAEval; repository files require an extra 818 MB Git LFS transfer",
+        "selected": false
+      },
+      "generated_qa_and_trajectory_sets": {
+        "reason": "model-generated answers are not independent incident ground truth",
+        "selected": false
+      },
+      "itbench_lite_sre": {
+        "downloaded_files": 105,
+        "failures": [],
+        "reason": "labelled root entities plus alert and Kubernetes-event snapshots",
+        "scenario_count": 35
+      },
+      "openrca": {
+        "reason": "official minimum is 80 GB disk and 32 GB memory, above this host's safe test budget",
+        "selected": false
+      },
+      "rcaeval": {
+        "downloaded_metric_cases": 735,
+        "failures": [],
+        "index_cases": 735,
+        "reason": "labelled root service, injection time, repeated faults, bounded metric download"
+      }
+    },
+    "sources": {
+      "itbench_lite": {
+        "last_modified": "2026-04-21T15:30:08.000Z",
+        "repo": "ibm-research/ITBench-Lite",
+        "revision": "d0916b08ba421ce5e672e9ad68aa947d938dfef0"
+      },
+      "rcaeval": {
+        "last_modified": "2026-08-02T04:39:00.000Z",
+        "repo": "phamquiluan/RCAEval",
+        "revision": "afeacb11bcc94dadfd1c8f483ee4377b2b8b614e"
+      }
+    }
+  },
+  "model_calls": 0,
+  "rcaeval": {
+    "by_fault": {
+      "cpu": {
+        "cases": 119,
+        "hit_at_1": 0.831933,
+        "hit_at_3": 0.97479,
+        "hit_at_5": 0.991597,
+        "mean_candidates_to_root": 1.260504,
+        "mean_reciprocal_rank": 0.904762,
+        "rankable_cases": 119
+      },
+      "delay": {
+        "cases": 120,
+        "hit_at_1": 0.85,
+        "hit_at_3": 0.991667,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.191667,
+        "mean_reciprocal_rank": 0.91875,
+        "rankable_cases": 120
+      },
+      "disk": {
+        "cases": 120,
+        "hit_at_1": 0.85,
+        "hit_at_3": 1.0,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.15,
+        "mean_reciprocal_rank": 0.925,
+        "rankable_cases": 120
+      },
+      "f1": {
+        "cases": 26,
+        "hit_at_1": 0.961538,
+        "hit_at_3": 1.0,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.038462,
+        "mean_reciprocal_rank": 0.980769,
+        "rankable_cases": 26
+      },
+      "f2": {
+        "cases": 13,
+        "hit_at_1": 0.692308,
+        "hit_at_3": 1.0,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.307692,
+        "mean_reciprocal_rank": 0.846154,
+        "rankable_cases": 13
+      },
+      "f3": {
+        "cases": 26,
+        "hit_at_1": 0.807692,
+        "hit_at_3": 0.923077,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.346154,
+        "mean_reciprocal_rank": 0.884615,
+        "rankable_cases": 26
+      },
+      "f4": {
+        "cases": 19,
+        "hit_at_1": 0.736842,
+        "hit_at_3": 1.0,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.315789,
+        "mean_reciprocal_rank": 0.859649,
+        "rankable_cases": 19
+      },
+      "f5": {
+        "cases": 6,
+        "hit_at_1": 0.333333,
+        "hit_at_3": 0.666667,
+        "hit_at_5": 0.666667,
+        "mean_candidates_to_root": 3.333333,
+        "mean_reciprocal_rank": 0.547619,
+        "rankable_cases": 6
+      },
+      "loss": {
+        "cases": 119,
+        "hit_at_1": 0.630252,
+        "hit_at_3": 0.932773,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.596639,
+        "mean_reciprocal_rank": 0.785854,
+        "rankable_cases": 119
+      },
+      "mem": {
+        "cases": 120,
+        "hit_at_1": 0.933333,
+        "hit_at_3": 1.0,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.066667,
+        "mean_reciprocal_rank": 0.966667,
+        "rankable_cases": 120
+      },
+      "socket": {
+        "cases": 45,
+        "hit_at_1": 0.733333,
+        "hit_at_3": 0.977778,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.355556,
+        "mean_reciprocal_rank": 0.853704,
+        "rankable_cases": 45
+      }
+    },
+    "by_suite": {
+      "RE1": {
+        "cases": 373,
+        "hit_at_1": 0.817694,
+        "hit_at_3": 0.97319,
+        "hit_at_5": 0.997319,
+        "mean_candidates_to_root": 1.270777,
+        "mean_reciprocal_rank": 0.897945,
+        "rankable_cases": 373
+      },
+      "RE2": {
+        "cases": 270,
+        "hit_at_1": 0.807407,
+        "hit_at_3": 0.988889,
+        "hit_at_5": 1.0,
+        "mean_candidates_to_root": 1.244444,
+        "mean_reciprocal_rank": 0.895988,
+        "rankable_cases": 270
+      },
+      "RE3": {
+        "cases": 90,
+        "hit_at_1": 0.788889,
+        "hit_at_3": 0.955556,
+        "hit_at_5": 0.977778,
+        "mean_candidates_to_root": 1.377778,
+        "mean_reciprocal_rank": 0.879101,
+        "rankable_cases": 90
+      }
+    },
+    "case_result_summary": {
+      "count": 733,
+      "worst_root_ranks": [
+        {
+          "case_id": "re3ob_emailservice_f5_2",
+          "fault": "f5",
+          "root_rank": 7,
+          "root_service": "emailservice"
+        },
+        {
+          "case_id": "re3ob_emailservice_f5_3",
+          "fault": "f5",
+          "root_rank": 7,
+          "root_service": "emailservice"
+        },
+        {
+          "case_id": "re1ob_currencyservice_cpu_1",
+          "fault": "cpu",
+          "root_rank": 6,
+          "root_service": "currencyservice"
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_loss_2",
+          "fault": "loss",
+          "root_rank": 5,
+          "root_service": "productcatalogservice"
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_loss_5",
+          "fault": "loss",
+          "root_rank": 5,
+          "root_service": "productcatalogservice"
+        },
+        {
+          "case_id": "re1tt_ts-travel-service_loss_2",
+          "fault": "loss",
+          "root_rank": 5,
+          "root_service": "ts-travel-service"
+        },
+        {
+          "case_id": "re1ob_checkoutservice_loss_1",
+          "fault": "loss",
+          "root_rank": 4,
+          "root_service": "checkoutservice"
+        },
+        {
+          "case_id": "re1ob_currencyservice_cpu_2",
+          "fault": "cpu",
+          "root_rank": 4,
+          "root_service": "currencyservice"
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_cpu_4",
+          "fault": "cpu",
+          "root_rank": 4,
+          "root_service": "productcatalogservice"
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_loss_1",
+          "fault": "loss",
+          "root_rank": 4,
+          "root_service": "productcatalogservice"
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_loss_3",
+          "fault": "loss",
+          "root_rank": 4,
+          "root_service": "productcatalogservice"
+        },
+        {
+          "case_id": "re1ss_payment_loss_1",
+          "fault": "loss",
+          "root_rank": 4,
+          "root_service": "payment"
+        },
+        {
+          "case_id": "re2ss_orders_socket_1",
+          "fault": "socket",
+          "root_rank": 4,
+          "root_service": "orders"
+        },
+        {
+          "case_id": "re2tt_ts-auth-service_loss_3",
+          "fault": "loss",
+          "root_rank": 4,
+          "root_service": "ts-auth-service"
+        },
+        {
+          "case_id": "re2tt_ts-travel-service_delay_1",
+          "fault": "delay",
+          "root_rank": 4,
+          "root_service": "ts-travel-service"
+        },
+        {
+          "case_id": "re3ss_carts_f3_1",
+          "fault": "f3",
+          "root_rank": 4,
+          "root_service": "carts"
+        },
+        {
+          "case_id": "re3ss_front-end_f3_2",
+          "fault": "f3",
+          "root_rank": 4,
+          "root_service": "front-end"
+        },
+        {
+          "case_id": "re1ob_adservice_loss_2",
+          "fault": "loss",
+          "root_rank": 3,
+          "root_service": "adservice"
+        },
+        {
+          "case_id": "re1ob_adservice_loss_5",
+          "fault": "loss",
+          "root_rank": 3,
+          "root_service": "adservice"
+        },
+        {
+          "case_id": "re1ob_checkoutservice_loss_4",
+          "fault": "loss",
+          "root_rank": 3,
+          "root_service": "checkoutservice"
+        },
+        {
+          "case_id": "re1ob_currencyservice_cpu_4",
+          "fault": "cpu",
+          "root_rank": 3,
+          "root_service": "currencyservice"
+        },
+        {
+          "case_id": "re1ob_currencyservice_cpu_5",
+          "fault": "cpu",
+          "root_rank": 3,
+          "root_service": "currencyservice"
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_loss_4",
+          "fault": "loss",
+          "root_rank": 3,
+          "root_service": "productcatalogservice"
+        },
+        {
+          "case_id": "re1ss_payment_loss_5",
+          "fault": "loss",
+          "root_rank": 3,
+          "root_service": "payment"
+        },
+        {
+          "case_id": "re1tt_ts-auth-service_delay_3",
+          "fault": "delay",
+          "root_rank": 3,
+          "root_service": "ts-auth-service"
+        }
+      ]
+    },
+    "data_level": "public_replay",
+    "data_quality_exclusions": [
+      {
+        "case_id": "re1ob_currencyservice_loss_1",
+        "error": "re1ob_currencyservice_loss_1: injection time does not split the series",
+        "reason": "published injection timestamp leaves no baseline or no post-injection window"
+      },
+      {
+        "case_id": "re1ob_productcatalogservice_cpu_3",
+        "error": "re1ob_productcatalogservice_cpu_3: injection time does not split the series",
+        "reason": "published injection timestamp leaves no baseline or no post-injection window"
+      }
+    ],
+    "dataset": "RCAEval",
+    "evaluated_cases": 733,
+    "failures": [],
+    "labelled_cases_in_index": 735,
+    "overall": {
+      "cases": 733,
+      "hit_at_1": 0.810368,
+      "hit_at_3": 0.976808,
+      "hit_at_5": 0.995907,
+      "mean_candidates_to_root": 1.274216,
+      "mean_reciprocal_rank": 0.89491,
+      "rankable_cases": 733
+    },
+    "recurrence": {
+      "best_positive_transfer": [
+        {
+          "case_id": "re3ob_emailservice_f5_2",
+          "retrieved_memory_ids": [
+            "re3ob_emailservice_f4_1",
+            "re1ob_adservice_delay_1",
+            "re3ob_emailservice_f5_1",
+            "re1ob_adservice_loss_1",
+            "re3ob_emailservice_f1_1"
+          ],
+          "retrieved_root_services": [
+            "emailservice",
+            "adservice"
+          ],
+          "root_service": "emailservice",
+          "same_root_at_5": false,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 7
+        },
+        {
+          "case_id": "re3ob_emailservice_f5_3",
+          "retrieved_memory_ids": [
+            "re3ob_emailservice_f4_1",
+            "re3ob_emailservice_f5_1",
+            "re1ob_adservice_delay_2",
+            "re3ob_emailservice_f5_2",
+            "re1ob_checkoutservice_loss_2"
+          ],
+          "retrieved_root_services": [
+            "emailservice",
+            "adservice",
+            "checkoutservice"
+          ],
+          "root_service": "emailservice",
+          "same_root_at_5": false,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 7
+        },
+        {
+          "case_id": "re1tt_ts-travel-service_loss_2",
+          "retrieved_memory_ids": [
+            "re1tt_ts-travel-service_disk_1",
+            "re2tt_ts-train-service_cpu_1",
+            "re1tt_ts-auth-service_disk_1",
+            "re2tt_ts-order-service_socket_1",
+            "re1tt_ts-order-service_disk_1"
+          ],
+          "retrieved_root_services": [
+            "ts-travel-service",
+            "ts-train-service",
+            "ts-auth-service",
+            "ts-order-service"
+          ],
+          "root_service": "ts-travel-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 5
+        },
+        {
+          "case_id": "re1ob_adservice_loss_5",
+          "retrieved_memory_ids": [
+            "re1ob_adservice_delay_3",
+            "re1ob_adservice_delay_1",
+            "re1ob_adservice_delay_2",
+            "re3ob_adservice_f3_3",
+            "re3ob_emailservice_f4_1"
+          ],
+          "retrieved_root_services": [
+            "adservice",
+            "emailservice"
+          ],
+          "root_service": "adservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re1ob_checkoutservice_loss_4",
+          "retrieved_memory_ids": [
+            "re1ob_checkoutservice_loss_3",
+            "re1ob_adservice_delay_3",
+            "re1ob_cartservice_delay_1",
+            "re3ob_emailservice_f4_1",
+            "re3ob_emailservice_f5_1"
+          ],
+          "retrieved_root_services": [
+            "checkoutservice",
+            "adservice",
+            "cartservice",
+            "emailservice"
+          ],
+          "root_service": "checkoutservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re1ob_currencyservice_cpu_4",
+          "retrieved_memory_ids": [
+            "re1ob_currencyservice_cpu_2",
+            "re1ob_currencyservice_cpu_3",
+            "re1ob_cartservice_cpu_1",
+            "re1ob_cartservice_cpu_2",
+            "re1ob_cartservice_mem_1"
+          ],
+          "retrieved_root_services": [
+            "currencyservice",
+            "cartservice"
+          ],
+          "root_service": "currencyservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re1ob_currencyservice_cpu_5",
+          "retrieved_memory_ids": [
+            "re1ob_currencyservice_cpu_3",
+            "re1ob_currencyservice_cpu_2",
+            "re1ob_currencyservice_cpu_4",
+            "re1ob_adservice_cpu_4",
+            "re1ob_checkoutservice_cpu_4"
+          ],
+          "retrieved_root_services": [
+            "currencyservice",
+            "adservice",
+            "checkoutservice"
+          ],
+          "root_service": "currencyservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_loss_2",
+          "retrieved_memory_ids": [
+            "re3ob_adservice_f5_1",
+            "re1ob_cartservice_loss_1",
+            "re1ob_productcatalogservice_loss_1",
+            "re3ob_emailservice_f4_1",
+            "re1ob_adservice_delay_1"
+          ],
+          "retrieved_root_services": [
+            "adservice",
+            "cartservice",
+            "productcatalogservice",
+            "emailservice"
+          ],
+          "root_service": "productcatalogservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 3,
+          "without_memory_candidates": 5
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_loss_3",
+          "retrieved_memory_ids": [
+            "re1ob_adservice_delay_2",
+            "re3ob_adservice_f5_1",
+            "re1ob_productcatalogservice_loss_2",
+            "re3ob_emailservice_f4_1",
+            "re1ob_productcatalogservice_loss_1"
+          ],
+          "retrieved_root_services": [
+            "adservice",
+            "productcatalogservice",
+            "emailservice"
+          ],
+          "root_service": "productcatalogservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 2,
+          "without_memory_candidates": 4
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_loss_4",
+          "retrieved_memory_ids": [
+            "re2ob_productcatalogservice_mem_2",
+            "re2ob_productcatalogservice_mem_3",
+            "re2ob_currencyservice_loss_1",
+            "re2ob_productcatalogservice_loss_2",
+            "re3ob_currencyservice_f1_1"
+          ],
+          "retrieved_root_services": [
+            "productcatalogservice",
+            "currencyservice"
+          ],
+          "root_service": "productcatalogservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re1ss_payment_loss_5",
+          "retrieved_memory_ids": [
+            "re2ss_payment_cpu_3",
+            "re2ss_payment_disk_2",
+            "re1ss_payment_cpu_4",
+            "re2ss_orders_socket_3",
+            "re2ss_payment_cpu_2"
+          ],
+          "retrieved_root_services": [
+            "payment",
+            "orders"
+          ],
+          "root_service": "payment",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re2ob_currencyservice_loss_3",
+          "retrieved_memory_ids": [
+            "re2ob_currencyservice_cpu_1",
+            "re1ob_currencyservice_loss_2",
+            "re2ob_currencyservice_socket_1",
+            "re2ob_currencyservice_socket_2",
+            "re2ob_currencyservice_disk_2"
+          ],
+          "retrieved_root_services": [
+            "currencyservice"
+          ],
+          "root_service": "currencyservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re2ob_currencyservice_socket_2",
+          "retrieved_memory_ids": [
+            "re2ob_currencyservice_disk_1",
+            "re3ob_cartservice_f1_1",
+            "re1ob_currencyservice_disk_1",
+            "re2ob_currencyservice_cpu_1",
+            "re3ob_currencyservice_f1_1"
+          ],
+          "retrieved_root_services": [
+            "currencyservice",
+            "cartservice"
+          ],
+          "root_service": "currencyservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re2tt_ts-auth-service_loss_3",
+          "retrieved_memory_ids": [
+            "re1tt_ts-travel-service_disk_2",
+            "re2tt_ts-auth-service_delay_2",
+            "re2tt_ts-travel-service_cpu_2",
+            "re1tt_ts-route-service_disk_2",
+            "re2tt_ts-auth-service_cpu_1"
+          ],
+          "retrieved_root_services": [
+            "ts-travel-service",
+            "ts-auth-service",
+            "ts-route-service"
+          ],
+          "root_service": "ts-auth-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 2,
+          "without_memory_candidates": 4
+        },
+        {
+          "case_id": "re1ob_adservice_disk_2",
+          "retrieved_memory_ids": [
+            "re1ob_adservice_disk_1",
+            "re2ob_recommendationservice_delay_1",
+            "re3ob_emailservice_f1_1",
+            "re2ob_emailservice_disk_1",
+            "re2ob_checkoutservice_mem_1"
+          ],
+          "retrieved_root_services": [
+            "adservice",
+            "recommendationservice",
+            "emailservice",
+            "checkoutservice"
+          ],
+          "root_service": "adservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        },
+        {
+          "case_id": "re1ob_adservice_loss_2",
+          "retrieved_memory_ids": [
+            "re3ob_emailservice_f4_1",
+            "re3ob_emailservice_f2_1",
+            "re1ob_adservice_loss_1",
+            "re3ob_emailservice_f1_1",
+            "re3ob_emailservice_f5_1"
+          ],
+          "retrieved_root_services": [
+            "emailservice",
+            "adservice"
+          ],
+          "root_service": "adservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 2,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re1ob_checkoutservice_disk_2",
+          "retrieved_memory_ids": [
+            "re1ob_checkoutservice_loss_1",
+            "re2ob_emailservice_socket_1",
+            "re1ob_cartservice_disk_1",
+            "re2ob_checkoutservice_cpu_1",
+            "re2ob_checkoutservice_mem_1"
+          ],
+          "retrieved_root_services": [
+            "checkoutservice",
+            "emailservice",
+            "cartservice"
+          ],
+          "root_service": "checkoutservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        },
+        {
+          "case_id": "re1ss_carts_delay_3",
+          "retrieved_memory_ids": [
+            "re1ss_carts_loss_1",
+            "re1ss_user_loss_1",
+            "re1ss_orders_delay_1",
+            "re2ss_orders_loss_2",
+            "re2ss_payment_delay_2"
+          ],
+          "retrieved_root_services": [
+            "carts",
+            "user",
+            "orders",
+            "payment"
+          ],
+          "root_service": "carts",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        },
+        {
+          "case_id": "re1ss_carts_delay_5",
+          "retrieved_memory_ids": [
+            "re1ss_carts_loss_1",
+            "re2ss_carts_delay_3",
+            "re1ss_user_loss_1",
+            "re1ss_carts_delay_3",
+            "re1ss_carts_loss_3"
+          ],
+          "retrieved_root_services": [
+            "carts",
+            "user"
+          ],
+          "root_service": "carts",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        },
+        {
+          "case_id": "re1ss_carts_loss_3",
+          "retrieved_memory_ids": [
+            "re1ss_carts_loss_1",
+            "re1ss_user_loss_1",
+            "re1ss_orders_delay_1",
+            "re2ss_orders_loss_2",
+            "re2ss_payment_delay_2"
+          ],
+          "retrieved_root_services": [
+            "carts",
+            "user",
+            "orders",
+            "payment"
+          ],
+          "root_service": "carts",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        },
+        {
+          "case_id": "re1ss_carts_mem_3",
+          "retrieved_memory_ids": [
+            "re1ss_carts_cpu_1",
+            "re3ss_carts_f3_2",
+            "re1ss_user_cpu_2",
+            "re2ss_carts_loss_1",
+            "re1ss_catalogue_cpu_2"
+          ],
+          "retrieved_root_services": [
+            "carts",
+            "user",
+            "catalogue"
+          ],
+          "root_service": "carts",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        },
+        {
+          "case_id": "re1ss_payment_loss_4",
+          "retrieved_memory_ids": [
+            "re1ss_payment_loss_3",
+            "re3ss_front-end_f2_2",
+            "re1ss_payment_disk_3",
+            "re1ss_user_mem_3",
+            "re3ss_front-end_f2_3"
+          ],
+          "retrieved_root_services": [
+            "payment",
+            "front-end",
+            "user"
+          ],
+          "root_service": "payment",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        },
+        {
+          "case_id": "re1tt_ts-auth-service_delay_3",
+          "retrieved_memory_ids": [
+            "re1tt_ts-order-service_cpu_2",
+            "re2tt_ts-order-service_cpu_2",
+            "re3tt_ts-auth-service_f3_1",
+            "re1tt_ts-auth-service_mem_2",
+            "re1tt_ts-travel-service_disk_2"
+          ],
+          "retrieved_root_services": [
+            "ts-order-service",
+            "ts-auth-service",
+            "ts-travel-service"
+          ],
+          "root_service": "ts-auth-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 2,
+          "without_memory_candidates": 3
+        },
+        {
+          "case_id": "re1tt_ts-auth-service_loss_5",
+          "retrieved_memory_ids": [
+            "re1tt_ts-auth-service_cpu_3",
+            "re1tt_ts-train-service_disk_1",
+            "re1tt_ts-route-service_cpu_4",
+            "re1tt_ts-auth-service_disk_4",
+            "re1tt_ts-order-service_disk_2"
+          ],
+          "retrieved_root_services": [
+            "ts-auth-service",
+            "ts-train-service",
+            "ts-route-service",
+            "ts-order-service"
+          ],
+          "root_service": "ts-auth-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        },
+        {
+          "case_id": "re1tt_ts-auth-service_mem_2",
+          "retrieved_memory_ids": [
+            "re2tt_ts-auth-service_disk_1",
+            "re2tt_ts-auth-service_delay_1",
+            "re1tt_ts-auth-service_loss_1",
+            "re1tt_ts-auth-service_disk_1",
+            "re3tt_ts-auth-service_f3_1"
+          ],
+          "retrieved_root_services": [
+            "ts-auth-service"
+          ],
+          "root_service": "ts-auth-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 1,
+          "without_memory_candidates": 2
+        }
+      ],
+      "harmed_count": 210,
+      "improved_count": 49,
+      "label_leakage_check": "root_service is excluded from query and indexed fingerprint text",
+      "mean_candidate_saving": -0.560886,
+      "median_candidate_saving": 0.0,
+      "method": "BM25 over prior metric fingerprints, then verified prior root services are placed before the current anomaly ranking",
+      "pair_count": 542,
+      "positive_saving_rate": 0.090406,
+      "same_root_at_5_count": 538,
+      "worst_negative_transfer": [
+        {
+          "case_id": "re2tt_ts-travel-service_disk_2",
+          "retrieved_memory_ids": [
+            "re2tt_ts-train-service_cpu_1",
+            "re2tt_ts-route-service_loss_1",
+            "re2tt_ts-auth-service_delay_1",
+            "re1tt_ts-order-service_cpu_1",
+            "re2tt_ts-travel-service_socket_1"
+          ],
+          "retrieved_root_services": [
+            "ts-train-service",
+            "ts-route-service",
+            "ts-auth-service",
+            "ts-order-service",
+            "ts-travel-service"
+          ],
+          "root_service": "ts-travel-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2tt_ts-route-service_mem_2",
+          "retrieved_memory_ids": [
+            "re2tt_ts-order-service_mem_1",
+            "re2tt_ts-train-service_mem_1",
+            "re2tt_ts-auth-service_mem_1",
+            "re2tt_ts-travel-service_mem_1",
+            "re2tt_ts-order-service_disk_1"
+          ],
+          "retrieved_root_services": [
+            "ts-order-service",
+            "ts-train-service",
+            "ts-auth-service",
+            "ts-travel-service"
+          ],
+          "root_service": "ts-route-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2ss_user_delay_3",
+          "retrieved_memory_ids": [
+            "re2ss_carts_loss_2",
+            "re2ss_orders_loss_2",
+            "re2ss_catalogue_cpu_1",
+            "re3ss_front-end_f1_2",
+            "re2ss_user_mem_2"
+          ],
+          "retrieved_root_services": [
+            "carts",
+            "orders",
+            "catalogue",
+            "front-end",
+            "user"
+          ],
+          "root_service": "user",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2ss_orders_loss_2",
+          "retrieved_memory_ids": [
+            "re2ss_carts_delay_1",
+            "re2ss_payment_delay_1",
+            "re2ss_catalogue_cpu_1",
+            "re2ss_user_cpu_1",
+            "re3ss_carts_f4_1"
+          ],
+          "retrieved_root_services": [
+            "carts",
+            "payment",
+            "catalogue",
+            "user"
+          ],
+          "root_service": "orders",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2ss_orders_disk_2",
+          "retrieved_memory_ids": [
+            "re3ss_front-end_f1_1",
+            "re1ss_catalogue_delay_1",
+            "re2ss_carts_socket_1",
+            "re3ss_front-end_f3_1",
+            "re2ss_payment_delay_1"
+          ],
+          "retrieved_root_services": [
+            "front-end",
+            "catalogue",
+            "carts",
+            "payment"
+          ],
+          "root_service": "orders",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2ss_carts_cpu_2",
+          "retrieved_memory_ids": [
+            "re2ss_orders_socket_1",
+            "re2ss_catalogue_socket_1",
+            "re2ss_user_delay_1",
+            "re2ss_payment_socket_1",
+            "re2ss_catalogue_disk_1"
+          ],
+          "retrieved_root_services": [
+            "orders",
+            "catalogue",
+            "user",
+            "payment"
+          ],
+          "root_service": "carts",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2ob_recommendationservice_socket_2",
+          "retrieved_memory_ids": [
+            "re3ob_emailservice_f1_1",
+            "re1ob_adservice_loss_1",
+            "re2ob_checkoutservice_delay_1",
+            "re2ob_productcatalogservice_loss_1",
+            "re2ob_recommendationservice_cpu_1"
+          ],
+          "retrieved_root_services": [
+            "emailservice",
+            "adservice",
+            "checkoutservice",
+            "productcatalogservice",
+            "recommendationservice"
+          ],
+          "root_service": "recommendationservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1tt_ts-travel-service_disk_4",
+          "retrieved_memory_ids": [
+            "re2tt_ts-order-service_socket_3",
+            "re2tt_ts-train-service_socket_3",
+            "re1tt_ts-auth-service_delay_3",
+            "re3tt_ts-route-service_f4_1",
+            "re2tt_ts-auth-service_loss_3"
+          ],
+          "retrieved_root_services": [
+            "ts-order-service",
+            "ts-train-service",
+            "ts-auth-service",
+            "ts-route-service"
+          ],
+          "root_service": "ts-travel-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1tt_ts-route-service_cpu_4",
+          "retrieved_memory_ids": [
+            "re2tt_ts-order-service_delay_3",
+            "re2tt_ts-travel-service_disk_2",
+            "re1tt_ts-auth-service_cpu_3",
+            "re2tt_ts-train-service_socket_3",
+            "re1tt_ts-order-service_loss_3"
+          ],
+          "retrieved_root_services": [
+            "ts-order-service",
+            "ts-travel-service",
+            "ts-auth-service",
+            "ts-train-service"
+          ],
+          "root_service": "ts-route-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1ss_user_loss_4",
+          "retrieved_memory_ids": [
+            "re3ss_front-end_f3_2",
+            "re3ss_orders_f1_2",
+            "re1ss_payment_cpu_2",
+            "re3ss_orders_f3_2",
+            "re1ss_carts_loss_2"
+          ],
+          "retrieved_root_services": [
+            "front-end",
+            "orders",
+            "payment",
+            "carts"
+          ],
+          "root_service": "user",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1ob_productcatalogservice_mem_2",
+          "retrieved_memory_ids": [
+            "re1ob_checkoutservice_cpu_1",
+            "re1ob_adservice_disk_1",
+            "re1ob_adservice_delay_1",
+            "re1ob_currencyservice_delay_1",
+            "re1ob_cartservice_delay_1"
+          ],
+          "retrieved_root_services": [
+            "checkoutservice",
+            "adservice",
+            "currencyservice",
+            "cartservice"
+          ],
+          "root_service": "productcatalogservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1ob_checkoutservice_mem_5",
+          "retrieved_memory_ids": [
+            "re1ob_productcatalogservice_mem_3",
+            "re1ob_cartservice_loss_3",
+            "re1ob_currencyservice_cpu_3",
+            "re1ob_adservice_cpu_3",
+            "re1ob_checkoutservice_mem_4"
+          ],
+          "retrieved_root_services": [
+            "productcatalogservice",
+            "cartservice",
+            "currencyservice",
+            "adservice",
+            "checkoutservice"
+          ],
+          "root_service": "checkoutservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1ob_checkoutservice_disk_4",
+          "retrieved_memory_ids": [
+            "re1ob_currencyservice_delay_1",
+            "re1ob_productcatalogservice_mem_2",
+            "re1ob_adservice_delay_1",
+            "re1ob_adservice_delay_2",
+            "re1ob_cartservice_disk_2"
+          ],
+          "retrieved_root_services": [
+            "currencyservice",
+            "productcatalogservice",
+            "adservice",
+            "cartservice"
+          ],
+          "root_service": "checkoutservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 5,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re3ob_currencyservice_f1_3",
+          "retrieved_memory_ids": [
+            "re3ob_emailservice_f4_1",
+            "re1ob_adservice_delay_2",
+            "re1ob_checkoutservice_delay_1",
+            "re3ob_currencyservice_f1_1",
+            "re1ob_adservice_delay_1"
+          ],
+          "retrieved_root_services": [
+            "emailservice",
+            "adservice",
+            "checkoutservice",
+            "currencyservice"
+          ],
+          "root_service": "currencyservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re3ob_cartservice_f1_2",
+          "retrieved_memory_ids": [
+            "re2ob_emailservice_socket_1",
+            "re2ob_emailservice_mem_1",
+            "re2ob_emailservice_loss_1",
+            "re1ob_currencyservice_disk_1",
+            "re1ob_checkoutservice_disk_1"
+          ],
+          "retrieved_root_services": [
+            "emailservice",
+            "currencyservice",
+            "checkoutservice"
+          ],
+          "root_service": "cartservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2tt_ts-travel-service_mem_3",
+          "retrieved_memory_ids": [
+            "re2tt_ts-order-service_mem_2",
+            "re2tt_ts-train-service_mem_1",
+            "re2tt_ts-order-service_mem_1",
+            "re2tt_ts-train-service_mem_2",
+            "re2tt_ts-route-service_mem_2"
+          ],
+          "retrieved_root_services": [
+            "ts-order-service",
+            "ts-train-service",
+            "ts-route-service"
+          ],
+          "root_service": "ts-travel-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2tt_ts-route-service_cpu_2",
+          "retrieved_memory_ids": [
+            "re2tt_ts-travel-service_loss_1",
+            "re1tt_ts-travel-service_disk_1",
+            "re1tt_ts-auth-service_disk_1",
+            "re2tt_ts-order-service_cpu_1",
+            "re2tt_ts-travel-service_disk_1"
+          ],
+          "retrieved_root_services": [
+            "ts-travel-service",
+            "ts-auth-service",
+            "ts-order-service"
+          ],
+          "root_service": "ts-route-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2tt_ts-auth-service_mem_3",
+          "retrieved_memory_ids": [
+            "re2tt_ts-route-service_mem_2",
+            "re2tt_ts-train-service_mem_2",
+            "re2tt_ts-order-service_mem_2",
+            "re2tt_ts-auth-service_mem_1",
+            "re2tt_ts-order-service_mem_1"
+          ],
+          "retrieved_root_services": [
+            "ts-route-service",
+            "ts-train-service",
+            "ts-order-service",
+            "ts-auth-service"
+          ],
+          "root_service": "ts-auth-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2ss_orders_mem_3",
+          "retrieved_memory_ids": [
+            "re2ss_carts_loss_2",
+            "re2ss_catalogue_disk_1",
+            "re2ss_catalogue_disk_2",
+            "re2ss_payment_mem_1",
+            "re2ss_catalogue_delay_1"
+          ],
+          "retrieved_root_services": [
+            "carts",
+            "catalogue",
+            "payment"
+          ],
+          "root_service": "orders",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re2ob_productcatalogservice_delay_2",
+          "retrieved_memory_ids": [
+            "re2ob_recommendationservice_delay_1",
+            "re2ob_checkoutservice_mem_1",
+            "re2ob_emailservice_mem_1",
+            "re2ob_productcatalogservice_disk_1",
+            "re2ob_checkoutservice_loss_1"
+          ],
+          "retrieved_root_services": [
+            "recommendationservice",
+            "checkoutservice",
+            "emailservice",
+            "productcatalogservice"
+          ],
+          "root_service": "productcatalogservice",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1tt_ts-train-service_disk_2",
+          "retrieved_memory_ids": [
+            "re1tt_ts-travel-service_disk_1",
+            "re1tt_ts-auth-service_disk_1",
+            "re2tt_ts-travel-service_loss_1",
+            "re1tt_ts-travel-service_cpu_1",
+            "re3tt_ts-route-service_f2_1"
+          ],
+          "retrieved_root_services": [
+            "ts-travel-service",
+            "ts-auth-service",
+            "ts-route-service"
+          ],
+          "root_service": "ts-train-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1tt_ts-route-service_disk_3",
+          "retrieved_memory_ids": [
+            "re1tt_ts-auth-service_disk_2",
+            "re1tt_ts-train-service_disk_2",
+            "re2tt_ts-order-service_cpu_1",
+            "re1tt_ts-route-service_disk_2",
+            "re2tt_ts-auth-service_delay_2"
+          ],
+          "retrieved_root_services": [
+            "ts-auth-service",
+            "ts-train-service",
+            "ts-order-service",
+            "ts-route-service"
+          ],
+          "root_service": "ts-route-service",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1ss_user_mem_5",
+          "retrieved_memory_ids": [
+            "re3ss_front-end_f2_2",
+            "re1ss_orders_delay_4",
+            "re1ss_catalogue_disk_4",
+            "re3ss_front-end_f3_1",
+            "re3ss_front-end_f2_3"
+          ],
+          "retrieved_root_services": [
+            "front-end",
+            "orders",
+            "catalogue"
+          ],
+          "root_service": "user",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1ss_user_loss_2",
+          "retrieved_memory_ids": [
+            "re3ss_front-end_f2_1",
+            "re3ss_front-end_f3_1",
+            "re1ss_catalogue_mem_1",
+            "re1ss_orders_cpu_1",
+            "re3ss_front-end_f1_1"
+          ],
+          "retrieved_root_services": [
+            "front-end",
+            "catalogue",
+            "orders"
+          ],
+          "root_service": "user",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        },
+        {
+          "case_id": "re1ss_payment_disk_3",
+          "retrieved_memory_ids": [
+            "re3ss_front-end_f3_2",
+            "re2ss_orders_delay_2",
+            "re2ss_catalogue_socket_1",
+            "re2ss_payment_disk_2",
+            "re1ss_payment_disk_2"
+          ],
+          "retrieved_root_services": [
+            "front-end",
+            "orders",
+            "catalogue",
+            "payment"
+          ],
+          "root_service": "payment",
+          "same_root_at_5": true,
+          "with_memory_candidates": 4,
+          "without_memory_candidates": 1
+        }
+      ]
+    }
+  },
+  "result_artifact": {
+    "detail": "aggregate metrics, all ITBench scenario failures, RCAEval worst ranks and recurrence transfer examples",
+    "full_case_result": "generated by the documented evaluate command; local run saved outside git",
+    "public_replay_only": true,
+    "source_catalog": "core/eval/public_aiops_sources.json"
+  },
+  "schema_version": 1
+}
