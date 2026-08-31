@@ -588,6 +588,13 @@ def _build_kb_hybrid_scenario(query: str | None = None) -> dict[str, Any]:
     }
 
     # ── rerank (optional) ────────────────────────────────────────────────────────
+    # Dense similarity always has a nearest neighbour, including queries with no
+    # evidence-bearing vocabulary in this corpus. Once the gate classifies the
+    # query as ungrounded, those neighbours remain route diagnostics only and
+    # cannot enter fusion, reranking or model context.
+    if decision.action == "incorrect":
+        fused = []
+
     rerank = _rerank_stage(text, fused, _ROUTE_DEPTH)
 
     # ── context compilation over the gate-approved set (fusion fallback) ─────────

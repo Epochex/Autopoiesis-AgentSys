@@ -34,11 +34,11 @@ UNIT_FILE="/etc/systemd/system/${UNIT}.service"
 SUBJECT="${UNIT}.service"       # what systemd --failed prints, and what the timeline records
 CONTROLLED_SOURCE="203.0.113.77"   # RFC 5737 documentation range
 
-GATEWAY=netops-ops-console-backend
+GATEWAY=autopoiesis-gateway
 DROPIN_DIR="/etc/systemd/system/${GATEWAY}.service.d"
 DROPIN_FILE="${DROPIN_DIR}/zz-demo-recurrence.conf"
-DEMO_ENV_FILE="/etc/selfevo-console-demo-recurrence.env"
-TIMELINE_DEFAULT="/data/autopoiesis-runtime/sentinel-timeline.jsonl"
+DEMO_ENV_FILE="/etc/autopoiesis-demo-recurrence.env"
+TIMELINE_DEFAULT="/data/autopoiesis-production/sentinel-timeline.jsonl"
 HEALTHZ="http://127.0.0.1:8026/api/healthz"
 
 # Recurrence timing used by the controlled workflow.
@@ -114,14 +114,14 @@ wait_for_gateway() {
 #
 # Why a drop-in with its own EnvironmentFile, and not the obvious alternatives:
 #
-#   - Editing /etc/selfevo-console.env in place would work, but that file holds
+#   - Editing /etc/autopoiesis.env in place would work, but that file holds
 #     every provider credential on this box. A sed against a secrets file, with
 #     a demo script that might be Ctrl-C'd halfway, is not a trade worth making
 #     for four numbers.
 #   - A drop-in with plain `Environment=` lines does NOT work here, and this is
 #     systemd applies EnvironmentFile= over Environment=
 #     regardless of order, and AUTOPOIESIS_SENTINEL_INTERVAL is already set in
-#     /etc/selfevo-console.env. Measured on this box (systemd 249), not assumed.
+#     /etc/autopoiesis.env. Measured on this box (systemd 249), not assumed.
 #     So the override has to arrive as an EnvironmentFile too.
 #   - Drop-ins are read in lexical filename order and a later EnvironmentFile
 #     wins over an earlier one, so the name must sort after `provider-env.conf`.
@@ -194,7 +194,7 @@ revert_demo_override() {
     local left
     left=$(gateway_env AUTOPOIESIS_RECURRENCE_WINDOW)
     if [[ -n "$left" ]]; then
-        echo "警告：网关进程里仍有 AUTOPOIESIS_RECURRENCE_WINDOW=$left，请检查 /etc/selfevo-console.env 的重复配置" >&2
+        echo "警告：网关进程里仍有 AUTOPOIESIS_RECURRENCE_WINDOW=$left，请检查 /etc/autopoiesis.env 的重复配置" >&2
     else
         echo "已恢复生产口径（窗口 24h / 基础冷却 600s）"
     fi
@@ -590,7 +590,7 @@ bruteforce)
 
 recurring)
     sentinel_enabled || die "哨兵未启用，recurring 流程需要后台巡检。
-先在 /etc/selfevo-console.env 里设 AUTOPOIESIS_SENTINEL=1 再 systemctl restart $GATEWAY。"
+先在 /etc/autopoiesis.env 里设 AUTOPOIESIS_SENTINEL=1 再 systemctl restart $GATEWAY。"
 
     echo "复发升级流程：重复触发同一故障并记录阈值决策。"
     echo

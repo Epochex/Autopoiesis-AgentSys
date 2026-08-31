@@ -118,7 +118,7 @@ class RiskEvent:
     target_account: str | None = None
     target_service: str | None = None
     evidence_ref: str | None = None
-    source_table: str = "netops.facts"
+    source_table: str = "autopoiesis.facts"
 
     def __post_init__(self) -> None:
         event_id = _text(self.event_id)
@@ -147,7 +147,7 @@ class RiskEvent:
         service = _text(self.target_service)
         object.__setattr__(self, "target_service", service.casefold() if service else None)
         object.__setattr__(self, "evidence_ref", _text(self.evidence_ref))
-        object.__setattr__(self, "source_table", _text(self.source_table) or "netops.facts")
+        object.__setattr__(self, "source_table", _text(self.source_table) or "autopoiesis.facts")
 
     @property
     def pattern_id(self) -> str:
@@ -520,7 +520,7 @@ class RiskPatternStore:
         self,
         rows: Iterable[Mapping[str, Any]],
         *,
-        source_table: str = "netops.facts",
+        source_table: str = "autopoiesis.facts",
     ) -> list[RiskPattern]:
         """Map and merge a bounded query batch; normal traffic rows are skipped."""
         events = (
@@ -692,7 +692,7 @@ class RiskPatternStore:
                 dedupe_truncated=bool(item.get("dedupe_truncated", False)),
             )
             if not pattern._evidence_ref_tables and item.get("evidence_refs"):
-                fallback_table = next(iter(sorted(pattern._source_tables)), "netops.facts")
+                fallback_table = next(iter(sorted(pattern._source_tables)), "autopoiesis.facts")
                 pattern._evidence_ref_tables = {
                     str(ref): fallback_table for ref in item["evidence_refs"]
                 }
@@ -747,7 +747,7 @@ def _row_risk_type(row: Mapping[str, Any]) -> str | None:
 def risk_event_from_clickhouse_row(
     row: Mapping[str, Any],
     *,
-    source_table: str = "netops.facts",
+    source_table: str = "autopoiesis.facts",
 ) -> RiskEvent | None:
     """Purely map a ClickHouse JSON row to a normalized risk observation.
 

@@ -52,7 +52,7 @@ export function TrajectoryPage({
     <div className="traj-page">
       <div className="tp-grid" />
 
-      {/* NetOps disk-sink records appear above the separate offline replay. */}
+      {/* Production event records appear above the isolated offline replay. */}
       <LiveSituation zh={zh} onTheater={onTheater} onTrace={onTrace} focusSubject={focusSubject} />
 
       {/* Explicit source boundary: disk-sink records above, temp-dir benchmark below. */}

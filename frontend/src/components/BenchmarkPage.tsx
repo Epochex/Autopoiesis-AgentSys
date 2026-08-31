@@ -40,7 +40,6 @@ export function BenchmarkPage({ lang }: { lang: Lang }) {
 
   useEffect(() => {
     let alive = true
-    setSt({ s: 'load' })
     fetch('/api/rca/benchmark?lang=' + lang, { headers: { Accept: 'application/json' } })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http'))))
       .then((d: BenchmarkResp) => { if (alive) setSt(d && d.ok ? { s: 'ok', d, fixture: false } : { s: 'ok', d: BENCHMARK_FIXTURE, fixture: true }) })

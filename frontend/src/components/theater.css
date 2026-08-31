@@ -14,7 +14,7 @@
   --st-aiops-agent: #7a3fa0;
   --st-suggestions-topic: #1c8f88;
   --st-remediation: #2f7d33;
-  /* sentinel loop — deliberately a different run of hues from the NetOps rail,
+  /* Sentinel loop uses a different run of hues from the incident rail,
      so the two chains never read as the same pipeline */
   --st-detector: #4954c9;
   --st-confirm: #a86a12;

@@ -559,7 +559,7 @@ def test_timestamp_and_prose_debris_are_rejected():
     for junk in ("642017z", "877581z", "2026-08-22t23", "rehearsal...",
                  "successfully.", "and", "with", "42"):
         assert not _is_useful_term(junk), f"{junk!r} should be dropped"
-    for real in ("demo-collector.service", "eth2", "netops-node1", "9/kill",
+    for real in ("demo-collector.service", "eth2", "autopoiesis-node1", "9/kill",
                  "http_code", "192.168.1.27", "fam-perception-selfheal"):
         assert _is_useful_term(real), f"{real!r} must survive"
 

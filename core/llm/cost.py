@@ -44,7 +44,7 @@ def _default_ledger() -> Path:
     # this fallback covers direct imports performed later in a test body.
     if "PYTEST_CURRENT_TEST" in os.environ:
         return Path(tempfile.gettempdir()) / "autopoiesis-cost-test.jsonl"
-    return Path("/data/autopoiesis-runtime/llm-cost.jsonl")
+    return Path("/data/autopoiesis-production/llm-cost.jsonl")
 
 
 # Tests and embedders may inject a path explicitly. Leaving this unset avoids

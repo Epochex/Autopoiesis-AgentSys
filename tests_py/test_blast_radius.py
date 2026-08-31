@@ -46,9 +46,9 @@ def test_a_missing_interface_is_not_reported_as_harmless():
     assert result["measured"]["exists"] is False
 
 
-@requires_active_unit("netops-ops-console-backend")
+@requires_active_unit("autopoiesis-gateway")
 def test_a_running_unit_is_reported_as_blocked():
-    result = estimate("restart_unit", "netops-ops-console-backend")
+    result = estimate("restart_unit", "autopoiesis-gateway")
     assert result["scope"] == "blocked"
     assert result["measured"]["state"] == "active"
 

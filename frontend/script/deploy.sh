@@ -14,7 +14,7 @@
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/data/Autopoiesis-AgentSys}"
-SERVICE="${SERVICE:-netops-ops-console-backend}"
+SERVICE="${SERVICE:-autopoiesis-gateway}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8026/api/healthz}"
 VENV="${VENV:-$APP_DIR/frontend/.venv}"
 ALLOW_DIRTY="${ALLOW_DIRTY:-0}"

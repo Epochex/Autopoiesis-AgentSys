@@ -2361,7 +2361,7 @@ def investigation_metrics(
 def _pair_log_path() -> Path:
     return Path(os.getenv(
         "AUTOPOIESIS_INVESTIGATION_PAIR_LOG",
-        "/data/autopoiesis-runtime/investigation-pairs.jsonl",
+        "/data/autopoiesis-production/investigation-pairs.jsonl",
     ))
 
 

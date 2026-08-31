@@ -89,7 +89,7 @@
           "kind": "happy_path",
           "inputs": {
             "action": "restart_unit",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 200
@@ -101,7 +101,7 @@
           "kind": "boundary",
           "inputs": {
             "action": "x",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 200
@@ -115,7 +115,7 @@
           "kind": "boundary",
           "inputs": {
             "action": "restart_unit",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 422
@@ -141,7 +141,7 @@
           "kind": "error_path",
           "inputs": {
             "action": "restart_unit",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": "500"
@@ -341,7 +341,7 @@
           "kind": "happy_path",
           "inputs": {
             "action": "restart_unit",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 200
@@ -353,7 +353,7 @@
           "kind": "happy_path",
           "inputs": {
             "action": "restart_unit",
-            "target": "netops-alerts-sink"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 200
@@ -365,7 +365,7 @@
           "kind": "boundary",
           "inputs": {
             "action": "x",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 200
@@ -379,7 +379,7 @@
           "kind": "boundary",
           "inputs": {
             "action": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 200
@@ -393,7 +393,7 @@
           "kind": "boundary",
           "inputs": {
             "action": "xx",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 200
@@ -407,7 +407,7 @@
           "kind": "boundary",
           "inputs": {
             "action": "",
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 422
@@ -476,7 +476,7 @@
           "name": "execute_negative_missing_action",
           "kind": "negative",
           "inputs": {
-            "target": "netops-correlator"
+            "target": "autopoiesis-event-pipeline"
           },
           "expected": {
             "status": 422

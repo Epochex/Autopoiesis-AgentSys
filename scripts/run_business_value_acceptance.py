@@ -28,7 +28,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 RUN_ID = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
-RUN_ROOT = Path("/data/autopoiesis-runtime/business-value-acceptance") / RUN_ID
+RUN_ROOT = Path("/data/autopoiesis-test-artifacts/business-value-acceptance") / RUN_ID
 RUN_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ["AUTOPOIESIS_REMEDIATION_BUDGET"] = str(RUN_ROOT / "remediation-budget.json")
 os.environ["AUTOPOIESIS_REMEDIATION_LOG"] = str(RUN_ROOT / "remediation-runs.jsonl")

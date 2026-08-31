@@ -1,44 +1,27 @@
-# Role Alignment
+# Project Identity
 
-Autopoiesis-AgentSys is positioned as a Python research engineering project for self-evolving agent systems, enterprise memory, context compression, and policy iteration. It is not a NetOps-only artifact; NetOps and intranet incident analysis are retained as high-pressure benchmark domains because they force the system to handle evidence boundaries, topology-aware context, approval gates, and auditable recovery decisions.
+Autopoiesis-AgentSys is the current network situational-awareness and incident-investigation system for a private network with mixed devices. It continuously receives FortiGate and host observations, detects known conditions, groups related signals into cases, investigates unresolved causes with read-only tools, controls approved actions, reads recovery evidence back from the managed system, and retains validated incident knowledge for recurrence handling.
 
-## Target Signals
+## Business boundary
 
-The project should communicate these signals:
+The production chain owns four outcomes:
 
-- Agent systems: bounded planner-executor-critic loops, typed skills, approval-aware tool use, trace replay, and regression gates.
-- Enterprise memory: scoped memory records, trace-derived utility scoring, retrieval packs, and branch-aware context selection.
-- Context compression: evidence admission, missing-evidence surfacing, token budgets, and citation-preserving packets.
-- Policy iteration: GRPO-style group rewards, failure-driven trace mining, offline distillation candidates, and release gates.
-- Adaptive orchestration: default single-agent handling with selective escalation to critic loops, sparse consensus, or star topology only when evidence ambiguity or blast radius justifies it.
+- turn a stream of device events into an asset-scoped incident with a stable `case_id`;
+- resolve conditions that are not covered by a single fixed rule through evidence-driven investigation;
+- carry a confirmed cause into a permitted action, an observation window and a recovery decision;
+- reuse validated incident history when a compatible fault recurs, while keeping current observations authoritative.
 
-## Project Identity
+NetOps is the frozen research and paper repository. Its historical experiments remain in the dated archive described by [`NETOPS_ASSET_SEPARATION.md`](./NETOPS_ASSET_SEPARATION.md). Autopoiesis production dependencies are limited to the current repository, `autopoiesis.*` topics, the `autopoiesis` ClickHouse database, the `autopoiesis_production` memory schema and `/data/autopoiesis-production` outputs.
 
-Strong one-line framing:
+## Engineering signals
 
-> Built Autopoiesis-AgentSys, a Python self-evolving agent orchestration platform that combines enterprise memory graphs, evidence-aware context compression, topology gating, and GRPO-style policy iteration for auditable long-running agents.
+| Capability | Concrete implementation |
+|---|---|
+| Persistent investigation | Case state, competing hypotheses, probe results and action observations survive service restarts |
+| Context compilation | Exact ClickHouse queries, historical incident retrieval and knowledge retrieval are filtered by asset, time, source and validation state |
+| Tool use | Read-only probes and approved actions use typed inputs, bounded timeouts, idempotency keys and explicit result objects |
+| Memory | Incident dossiers, risk patterns, network features and execution records enter later retrieval through scoped repositories |
+| Safety | Action eligibility, approval, blast radius, stop conditions and recovery readback are maintained by deterministic components |
+| Evaluation | Fixed scripts, direct-model calls and the complete system run against the same case inputs and preserve raw traces |
 
-The architecture is domain-neutral. Recommended demo families:
-
-- `decision`: ads/growth or operations simulators with counterfactual actions, reward gates, and stability checks.
-- `coding`: repository investigation tasks with sandboxed command execution and review.
-- `office`: digital employee workflows for brief drafting, handoff, and asynchronous collaboration.
-- `netops`: audit-heavy intranet incident investigation as a stress test, not the project headline.
-
-## Capability Map
-
-| Target signal | Autopoiesis-AgentSys surface | Next deepening |
-| --- | --- | --- |
-| Agent loop | AgentKernel, planner, executor, reviewer, repair and approval states | resumable cancellation, bounded retry policy |
-| Skill library | typed Skill SDK, registry, document, memory, decision, CLI, workspace skills | skill versioning, replay fixtures, MCP adapters |
-| Tool governance | permissions, risk levels, approval gates, sandboxed subprocesses | container sandbox, network and secret policies |
-| Enterprise memory | scoped stores, memory graph, trace utility scoring | vector retrieval, retention policy, memory conflict resolution |
-| Context compression | context packs, evidence packets, branch coverage and missing evidence | prompt-token accounting, retrieval cache, citation verifier |
-| Policy iteration | reward redistribution, topology gate, policy candidate release gates | online trajectory learner, offline distillation queue |
-| Evaluation | matrix harness, trace diff, regression gates | cost, token, latency stability, strategy quality metrics |
-
-## Resume Narrative
-
-- Built a Python self-evolving agent orchestration platform with typed skill orchestration, scoped enterprise memory, evidence-aware context compression, approval gates, trace replay, and regression gates.
-- Designed a policy iteration layer that converts execution traces into memory utilities, branch-aware evidence packets, topology decisions, and GRPO-style reward signals for safer agent updates.
-- Kept NetOps as an audit-heavy enterprise benchmark while abstracting the core system across coding, decision simulation, office workflow, and incident investigation.
+The public project narrative follows this production boundary. Paper-specific classifiers, benchmark names and historical service identities remain in the frozen archive.

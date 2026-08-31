@@ -1,8 +1,8 @@
 """Contract test for the ``runtime_dir`` override on ``load_runtime_snapshot``.
 
-The benchmark scenario points the SAME live-situation reader at the isolated replay
-side-car output instead of the prod NetOps sink. That is done by passing an explicit
-``runtime_dir`` that overrides ``settings.netops_runtime_dir``. These tests build a
+The benchmark scenario points the same live-situation reader at isolated replay
+output. That is done by passing an explicit ``runtime_dir`` that overrides
+``settings.stream_output_dir``. These tests build a
 real-shaped alert + suggestion sink in a temp dir and assert the reader reads from
 the OVERRIDE dir, and that a non-existent override degrades to "no live data" without
 raising.
@@ -53,10 +53,10 @@ def _seed_runtime(root: Path) -> None:
 
 
 def test_runtime_dir_override_reads_from_the_given_dir(tmp_path):
-    override = tmp_path / "netops-runtime-replay"
+    override = tmp_path / "autopoiesis-stream-replay"
     _seed_runtime(override)
 
-    # settings.netops_runtime_dir points at a DIFFERENT (empty) place; the override wins.
+    # The configured stream directory points elsewhere; the override wins.
     settings = Settings.from_env()
 
     snapshot = load_runtime_snapshot(settings, "zh", runtime_dir=override)
@@ -87,7 +87,7 @@ def test_nonexistent_runtime_dir_degrades_without_raising(tmp_path):
 
 
 def test_recent_rotated_sink_files_remain_visible_to_case_sync(tmp_path):
-    override = tmp_path / "netops-runtime-replay"
+    override = tmp_path / "autopoiesis-stream-replay"
     _seed_runtime(override)
     _write_jsonl(
         override / "alerts" / "alerts-20260101-01.jsonl",

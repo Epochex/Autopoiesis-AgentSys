@@ -1,5 +1,5 @@
 [Unit]
-Description=Autopoiesis live FortiGate facts ingest
+Description=Autopoiesis live FortiGate event ingest
 Documentation=file:///data/Autopoiesis-AgentSys/docs/FACTS_INGEST_SERVICE.md
 Wants=network-online.target
 After=network-online.target
@@ -8,11 +8,17 @@ After=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/data/Autopoiesis-AgentSys
-EnvironmentFile=/etc/selfevo-console.env
+EnvironmentFile=/etc/autopoiesis.env
 Environment=PYTHONUNBUFFERED=1
-RuntimeDirectory=netops-facts-ingest
+Environment=AUTOPOIESIS_CLICKHOUSE_DB=autopoiesis
+Environment=FACTS_STATUS_FILE=/run/autopoiesis-facts-ingest/status.json
+Environment=REDPANDA_PUBLISH_ENABLED=1
+Environment=REDPANDA_PROXY_URL=http://10.43.234.236:8082
+Environment=REDPANDA_TOPIC_RAW=autopoiesis.events.raw.v1
+Environment=REDPANDA_OUTBOX_DIR=/var/lib/autopoiesis-facts-ingest/outbox
+RuntimeDirectory=autopoiesis-facts-ingest
 RuntimeDirectoryMode=0750
-StateDirectory=netops-facts-ingest
+StateDirectory=autopoiesis-facts-ingest
 StateDirectoryMode=0750
 ExecStart=/usr/bin/python3 /data/Autopoiesis-AgentSys/frontend/gateway/ingest/facts_ingest.py live
 Restart=on-failure

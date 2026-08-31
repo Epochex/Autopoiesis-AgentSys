@@ -99,8 +99,8 @@ def test_refresh_merges_security_and_deny_sources_and_reports_source_health():
     view = service.audit_view()
     assert view["counts"]["risks"] == 2
     assert set(view["coverage"]["sources"]) == {
-        "environment.findings", "netops.facts",
-        "netops.security_events", "sentinel.timeline"
+        "environment.findings", "autopoiesis.facts",
+        "autopoiesis.security_events", "sentinel.timeline"
     }
     assert all(row["source"] == "real" for row in view["risks"])
     assert service.refresh()["updated_patterns"] == 0
@@ -125,7 +125,7 @@ def test_repeated_real_security_risk_opens_one_durable_dossier():
     repository = InMemoryOperationalRepository()
     service = OperationalMemoryService(repository, durable=False)
 
-    assert service.ingest_risk_rows(rows, source_table="netops.security_events") == 1
+    assert service.ingest_risk_rows(rows, source_table="autopoiesis.security_events") == 1
     view = service.audit_view()
 
     assert view["counts"]["dossiers"] == 1

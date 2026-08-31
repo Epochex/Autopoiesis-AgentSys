@@ -1,4 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: contexthelix-console
+  name: autopoiesis
+  labels:
+    app.kubernetes.io/name: autopoiesis
+    app.kubernetes.io/part-of: autopoiesis

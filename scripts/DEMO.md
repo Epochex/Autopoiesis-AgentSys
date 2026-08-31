@@ -411,7 +411,7 @@ sudo ./scripts/demo_memory_rag.sh status
 
 ```bash
 curl -fsS http://127.0.0.1:8026/api/rca/sentinel/timeline?limit=20 | python3 -m json.tool
-systemctl is-active netops-ops-console-backend
+systemctl is-active autopoiesis-gateway
 sudo ./scripts/inject_incident.sh status
 ```
 
@@ -435,7 +435,7 @@ sudo ./scripts/demo_memory_rag.sh status
 ### 回执显示检索但没有 influence
 
 ```bash
-journalctl -u netops-ops-console-backend -n 80 --no-pager
+journalctl -u autopoiesis-gateway -n 80 --no-pager
 curl -fsS http://127.0.0.1:8026/api/rca/memory/proc-sentinel.failed_units/influence | python3 -m json.tool
 ```
 

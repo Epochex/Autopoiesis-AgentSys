@@ -1,7 +1,7 @@
 """Project the sentinel's own timeline into the live-situation card contract.
 
 The situational page and the 长轨迹 card list are fed by `runtime_reader`, which
-tails what the NetOps stream pipeline lands on disk. The sentinel is a different
+tails what the Autopoiesis event pipeline lands on disk. The sentinel is a different
 subsystem writing a different file, so until now a fault it found, acted on and
 closed left both pages completely unchanged — the operator watched the page that
 matters and saw nothing happen.
@@ -19,9 +19,7 @@ Two places where that honesty costs a field:
     ranked hypothesis set to show. Claiming a spread of candidates would be
     describing an inference the system never made.
   * `runbookDraft.approvalBoundary.approvalRequired` is False when the sentinel
-    executed unattended. The NetOps mapper hardcodes True because that pipeline
-    never auto-executes; the sentinel does, within a closed allowlist, and the
-    card has to say so rather than inherit a claim from the other subsystem.
+    executed unattended within a closed allowlist.
 """
 from __future__ import annotations
 
@@ -153,6 +151,15 @@ def _no_action_reason(
 
 def _stable_id(*parts: str) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _data_classification(subject: str, detection: dict[str, Any]) -> str:
+    """Keep controlled acceptance units out of the production case population."""
+    normalized = subject.casefold()
+    if normalized.startswith(("autopoiesis-acceptance-", "bvaccept-")):
+        return "controlled_test"
+    explicit = str(detection.get("data_classification") or "").casefold()
+    return explicit if explicit in {"observed", "controlled_test", "drill", "replay"} else "observed"
 
 
 def _age_seconds(iso: str, now: float) -> float:
@@ -435,6 +442,7 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
 
     return {
         "id": f"sentinel-{_stable_id(subject)[:16]}",
+        "dataClassification": _data_classification(subject, detection),
         "incidentRef": incident_ref(chain) if any(
             row.get("kind") == "detected" for row in chain
         ) else None,
@@ -503,7 +511,7 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "actions": [a for a in actions if a],
             "approvalBoundary": {
                 # Honest per-record value: the sentinel executes unattended inside a
-                # closed allowlist, so this is not the NetOps blanket True.
+                # Closed allowlist: this branch never broadens into an unconditional approval.
                 "approvalRequired": gated or verdict_status == "needs_human",
                 "disposition": disposition,
                 "reviewerApprovalFlag": gated,
@@ -527,7 +535,7 @@ def sentinel_cards(lang: str = "zh", *, now: float | None = None) -> list[dict[s
     """Recent sentinel chains as live-situation cards, newest first.
 
     Never raises: a missing or half-written timeline yields an empty list, so the
-    live-situation panel degrades to the NetOps-only view it had before.
+    live-situation panel keeps its current incident view.
     """
     import time
 
@@ -572,6 +580,7 @@ def merge_into_snapshot(snapshot: dict[str, Any], lang: str = "zh") -> dict[str,
             "device": card["device"],
             "deviceKey": card["deviceKey"],
             "summary": card["summary"],
+            "dataClassification": card["dataClassification"],
         })
     feed.sort(key=lambda f: f.get("ts", ""), reverse=True)
     snapshot["feed"] = feed

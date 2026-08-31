@@ -49,9 +49,9 @@ def test_refusal_names_the_offending_construct():
         "ip -br link show eth2",
         "ip addr show",
         "ip route show default",
-        "systemctl is-active netops-ops-console-backend",
+        "systemctl is-active autopoiesis-gateway",
         "systemctl --failed --no-legend",
-        "journalctl -u netops-collector -n 50 --no-pager",
+        "journalctl -u autopoiesis-facts-ingest -n 50 --no-pager",
         "df -h /data",
         "ss -tulpn",
         "free -m",
@@ -85,9 +85,9 @@ def test_programs_outside_the_allowlist_are_refused(command):
         "ip addr add 10.0.0.1/24 dev eth2",
         "ip route del default",
         "ip neigh flush dev eth2",
-        "systemctl restart netops-collector",
+        "systemctl restart autopoiesis-facts-ingest",
         "systemctl stop nginx",
-        "systemctl disable netops-collector",
+        "systemctl disable autopoiesis-facts-ingest",
         "docker rm -f container",
         "kubectl delete pod x",
     ],
@@ -136,12 +136,12 @@ def test_empty_command_is_refused():
 
 def test_unbalanced_quotes_are_refused_not_guessed_at():
     with pytest.raises(Refused, match="cannot parse"):
-        parse('journalctl -u "netops')
+        parse('journalctl -u "invalid')
 
 
 def test_quoted_arguments_survive_parsing():
-    assert parse('journalctl -u "netops collector" -n 5') == [
-        "journalctl", "-u", "netops collector", "-n", "5"
+    assert parse('journalctl -u "invalid unit" -n 5') == [
+        "journalctl", "-u", "invalid unit", "-n", "5"
     ]
 
 

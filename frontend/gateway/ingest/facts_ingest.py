@@ -5,7 +5,7 @@ event path. The raw
 FortiGate logs live on R230 (`/data/fortigate-runtime/input/`): the live file
 plus ~2.5 months of rotated `.gz`. This reads them over SSH, parses each traffic
 line into a flat fact row, normalizes selected authentication and management-
-plane signals into `netops.security_events`, batch-inserts both stores into
+plane signals into `autopoiesis.security_events`, batch-inserts both stores into
 ClickHouse, and publishes the live event envelope to Redpanda through its HTTP
 proxy. Failed Redpanda batches remain in a bounded disk outbox and are retried
 in order; historical backfills never enter the production topic.
@@ -15,16 +15,16 @@ Two modes:
   security-backfill — replay only system/local signals into security_events.
   live      — `tail -F` the current file, inserting new flows continuously.
 
-Config via env (falls back to `/etc/selfevo-console.env` values):
+Config via env (falls back to `/etc/autopoiesis.env` values):
   R230_SSH, R230_PASS, R230_LOG            — SSH target + live log path
   CLICKHOUSE_URL  (default http://10.43.125.243:8123)
-  CLICKHOUSE_USER/PASSWORD/DB              — default user/db: netops/netops
+  CLICKHOUSE_USER/PASSWORD/DB              - default user/db: autopoiesis/autopoiesis
   FACTS_LIVE_FLUSH_SECONDS                  — default 5
-  FACTS_STATUS_FILE                         — default /run/netops-facts-ingest/status.json
+  FACTS_STATUS_FILE                         - default /run/autopoiesis-facts-ingest/status.json
   SECURITY_EVENTS_PROVENANCE                — real (default), replay, or drill
   REDPANDA_PUBLISH_ENABLED                  — publish live envelopes when true
   REDPANDA_PROXY_URL                        — HTTP proxy base URL
-  REDPANDA_TOPIC_RAW                        — default netops.facts.raw.v1
+  REDPANDA_TOPIC_RAW                        - default autopoiesis.events.raw.v1
   REDPANDA_OUTBOX_DIR                       — durable retry directory
   REDPANDA_OUTBOX_MAX_BYTES                 — default 512 MiB
 """
@@ -66,7 +66,7 @@ def _read_env_file(path: str) -> dict[str, str]:
     return values
 
 
-_ENV_FILE = os.getenv("FACTS_ENV_FILE", "/etc/selfevo-console.env")
+_ENV_FILE = os.getenv("FACTS_ENV_FILE", "/etc/autopoiesis.env")
 _FILE_ENV = _read_env_file(_ENV_FILE)
 
 
@@ -75,9 +75,9 @@ def _env(name: str, default: str = "") -> str:
 
 
 CH_URL = _env("CLICKHOUSE_URL", "http://10.43.125.243:8123")
-CH_USER = _env("CLICKHOUSE_USER", "netops")
+CH_USER = _env("CLICKHOUSE_USER", "autopoiesis")
 CH_PASS = _env("CLICKHOUSE_PASSWORD")
-CH_DB = _env("CLICKHOUSE_DB", "netops")
+CH_DB = _env("AUTOPOIESIS_CLICKHOUSE_DB", "autopoiesis")
 CH_TABLE = "facts"
 SECURITY_TABLE = "security_events"
 
@@ -88,15 +88,15 @@ R230_DIR = os.path.dirname(R230_LOG)
 
 BATCH = int(_env("FACTS_BATCH", "5000"))
 LIVE_FLUSH_SECONDS = float(_env("FACTS_LIVE_FLUSH_SECONDS", "5"))
-STATUS_FILE = Path(_env("FACTS_STATUS_FILE", "/run/netops-facts-ingest/status.json"))
+STATUS_FILE = Path(_env("FACTS_STATUS_FILE", "/run/autopoiesis-facts-ingest/status.json"))
 
 REDPANDA_PUBLISH_ENABLED = _env("REDPANDA_PUBLISH_ENABLED", "0").strip().lower() in {
     "1", "true", "yes", "on",
 }
 REDPANDA_PROXY_URL = _env("REDPANDA_PROXY_URL").rstrip("/")
-REDPANDA_TOPIC_RAW = _env("REDPANDA_TOPIC_RAW", "netops.facts.raw.v1")
+REDPANDA_TOPIC_RAW = _env("REDPANDA_TOPIC_RAW", "autopoiesis.events.raw.v1")
 REDPANDA_OUTBOX_DIR = Path(
-    _env("REDPANDA_OUTBOX_DIR", "/var/lib/netops-facts-ingest/outbox")
+    _env("REDPANDA_OUTBOX_DIR", "/var/lib/autopoiesis-facts-ingest/outbox")
 )
 REDPANDA_OUTBOX_MAX_BYTES = int(
     _env("REDPANDA_OUTBOX_MAX_BYTES", str(512 * 1024 * 1024))

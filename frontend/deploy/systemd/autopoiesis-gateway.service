@@ -1,0 +1,27 @@
+[Unit]
+Description=Autopoiesis network investigation gateway
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/data/Autopoiesis-AgentSys/frontend
+EnvironmentFile=-/etc/autopoiesis.env
+Environment=PYTHONUNBUFFERED=1
+Environment=AUTOPOIESIS_REPO_ROOT=/data/Autopoiesis-AgentSys
+Environment=AUTOPOIESIS_FRONTEND_DIST=/data/Autopoiesis-AgentSys/frontend/dist
+Environment=AUTOPOIESIS_STREAM_DIR=/data/autopoiesis-production/stream
+Environment=AUTOPOIESIS_MEMORY_SCHEMA=autopoiesis_production
+Environment=AUTOPOIESIS_KAFKA_BROKERS=10.43.234.236:9093
+Environment=CLICKHOUSE_DB=autopoiesis
+ExecStart=/data/Autopoiesis-AgentSys/frontend/.venv/bin/python -m uvicorn gateway.app.main:app --app-dir /data/Autopoiesis-AgentSys/frontend --host 127.0.0.1 --port 8026 --loop asyncio
+Restart=always
+RestartSec=3
+TimeoutStopSec=8
+KillMode=mixed
+MemoryHigh=768M
+MemoryMax=1024M
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

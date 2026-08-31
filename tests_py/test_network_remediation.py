@@ -60,7 +60,7 @@ def test_bounce_refuses_the_tailscale_interface_before_running_anything():
 
 
 def test_ordinary_targets_pass_the_check():
-    for target in ("eno1", "enp3s0", "netops-collector", "192.168.1.23"):
+    for target in ("eno1", "enp3s0", "autopoiesis-facts-ingest", "192.168.1.23"):
         assert_not_tailscale(target)
 
 
@@ -110,7 +110,7 @@ def test_restart_refuses_a_running_unit():
     ran: list[list[str]] = []
     command = _fake({"systemctl is-active": "active"}, ran)
     with pytest.raises(UnsafeTarget, match="not failed"):
-        restart_unit(command, "netops-collector")
+        restart_unit(command, "autopoiesis-facts-ingest")
     assert not any("restart" in " ".join(argv) for argv in ran)
 
 
@@ -118,11 +118,11 @@ def test_restart_stops_once_the_budget_is_spent():
     command = _fake(
         {
             "systemctl is-active": "failed",
-            "systemctl show netops-collector -p NRestarts": "2",
+            "systemctl show autopoiesis-facts-ingest -p NRestarts": "2",
         }
     )
     with pytest.raises(UnsafeTarget, match="already been restarted"):
-        restart_unit(command, "netops-collector", max_restarts=2)
+        restart_unit(command, "autopoiesis-facts-ingest", max_restarts=2)
 
 
 def test_restart_declines_when_a_dependency_is_unreachable():
@@ -135,7 +135,7 @@ def test_restart_declines_when_a_dependency_is_unreachable():
         }
     )
     with pytest.raises(UnsafeTarget, match="unreachable dependency"):
-        restart_unit(command, "netops-collector")
+        restart_unit(command, "autopoiesis-facts-ingest")
 
 
 def test_restart_proceeds_for_a_plain_failure():
@@ -148,8 +148,8 @@ def test_restart_proceeds_for_a_plain_failure():
         },
         ran,
     )
-    restart_unit(command, "netops-collector")
-    assert any(" ".join(argv) == "systemctl restart netops-collector" for argv in ran)
+    restart_unit(command, "autopoiesis-facts-ingest")
+    assert any(" ".join(argv) == "systemctl restart autopoiesis-facts-ingest" for argv in ran)
 
 
 def test_dependency_signatures_are_matched_case_insensitively():
@@ -159,7 +159,7 @@ def test_dependency_signatures_are_matched_case_insensitively():
 
 def test_unit_probe_reports_running_state():
     command = _fake({"systemctl is-active": "active", "systemctl show": "1"})
-    reading, healthy = unit_probe(command, "netops-collector").sample()
+    reading, healthy = unit_probe(command, "autopoiesis-facts-ingest").sample()
     assert healthy is True
     assert reading["restarts"] == 1
 

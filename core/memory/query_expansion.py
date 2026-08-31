@@ -9,7 +9,7 @@ deterministic, model-free normalisations close that gap:
     documents (standard IR practice, no domain knowledge). This alone recovers
     deny↔denying and lifts real held-out recall@3 0.833 -> 0.917.
 
-  * ``NETWORK_SYNONYMS`` — a small, explicit netops lexicon (flow↔traffic, …).
+  * ``NETWORK_SYNONYMS`` — a small, explicit network-operation lexicon (flow↔traffic, …).
     This is domain knowledge, not tuning; it is listed in full below so a reader
     can audit it. On the 6-case held-out set it closes the last gap to 1.0, but
     with n=6 that increment is illustrative — the honest, no-lexicon number is the
@@ -19,7 +19,7 @@ Everything here is pure Python and deterministic: same input → same tokens.
 """
 from __future__ import annotations
 
-# Explicit, auditable netops equivalences. Symmetric pairs are expanded in both
+# Explicit, auditable network-operation equivalences. Symmetric pairs are expanded in both
 # directions at load time. Kept deliberately small and general.
 _SYNONYM_SEED: dict[str, list[str]] = {
     "flow": ["traffic"],

@@ -157,7 +157,7 @@ curl -fsS http://127.0.0.1:8026/api/rca/remediation/safety
 ```bash
 curl -fsS -X POST http://127.0.0.1:8026/api/rca/remediation/preflight \
   -H 'Content-Type: application/json' \
-  -d '{"action":"restart_unit","target":"netops-ops-console-backend.service"}'
+  -d '{"action":"restart_unit","target":"autopoiesis-gateway.service"}'
 ```
 
 必须返回 `eligible=false`，理由说明只有 failed 服务才符合条件。

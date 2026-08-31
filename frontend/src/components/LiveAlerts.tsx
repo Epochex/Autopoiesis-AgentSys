@@ -2,7 +2,7 @@ import './live-alerts.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import type { TheaterEvent } from '../types'
-import { sentinelStageIds } from './netops-pipeline'
+import { sentinelStageIds } from './autopoiesis-pipeline'
 import { latestIncidentCycle } from './sentinel-cycle'
 
 /* Real-time incident queue for events emitted by the sentinel.

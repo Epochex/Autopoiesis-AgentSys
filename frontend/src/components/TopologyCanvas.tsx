@@ -574,30 +574,27 @@ export function TopologyCanvas({
   //    field. We reframe the viewport onto {node ∪ neighbours} and the graph layer
   //    fades every unrelated host, so a dense community becomes one legible ego net. */
   const [focusDev, setFocusDev] = useState<string | null>(null)
-  // Latest graph, mirrored into a ref so the live device_profile / device_history
-  // effects below can tell a BENCH memory node (cidr mem://autopoiesis, GraphDevice
-  // carries `.memory`) apart from a real host WITHOUT taking `graph` as a dependency
-  // — their firing behavior for real devices stays byte-for-byte unchanged.
-  const graphRef = useRef<SubnetGraph | null>(graph)
-  graphRef.current = graph
-  const isMemNode = (ip: string | null) => !!(ip && graphRef.current?.devices.find((d) => d.ip === ip)?.memory)
+  // The current graph marks benchmark memory nodes explicitly. Keep that lookup
+  // reactive so profile and history probes follow the selected graph.
+  const isMemNode = useCallback(
+    (ip: string | null) => !!(ip && graph?.devices.find((d) => d.ip === ip)?.memory),
+    [graph],
+  )
   // ── traffic portrait of the focused host: fetched per click, drives both the
   //    right-hand portrait panel and the flow-topology overlay in the graph layer.
   const [profile, setProfile] = useState<DeviceProfile | null>(null)
   useEffect(() => {
-    if (!focusDev) {
-      setProfile(null)
-      return
+    let gone = false
+    if (!focusDev || isMemNode(focusDev)) {
+      queueMicrotask(() => { if (!gone) setProfile(null) })
+      return () => { gone = true }
     }
     // Bench memory node: a memory_id has no live traffic profile — skip the probe
     // entirely (it would 404) and let the memory-record panel render instead.
-    if (isMemNode(focusDev)) {
-      setProfile(null)
-      return
-    }
-    let gone = false
     let timer: ReturnType<typeof setTimeout> | undefined
-    setProfile({ ip: focusDev, loading: true } as DeviceProfile)
+    queueMicrotask(() => {
+      if (!gone) setProfile({ ip: focusDev, loading: true } as DeviceProfile)
+    })
     // poll while a host stays focused so live bandwidth/sessions stay current
     // and the router-side rolling rate baseline stays warm.
     const tick = (first: boolean) => {
@@ -620,9 +617,9 @@ export function TopologyCanvas({
       gone = true
       if (timer) clearTimeout(timer)
     }
-  }, [focusDev, lang])
+  }, [focusDev, isMemNode, lang])
 
-  // ── historical portrait (ClickHouse netops.facts, last 7 days). Fetched once
+  // ── historical portrait (ClickHouse autopoiesis.facts, last 7 days). Fetched once
   //    per focus; independent of the live poll since history moves slowly.
   const [history, setHistory] = useState<DeviceHistory | null>(null)
   const [histFull, setHistFull] = useState<DeviceHistory | null>(null)  // all historical targets, fetched on expand
@@ -632,9 +629,13 @@ export function TopologyCanvas({
   const [vlanLat, setVlanLat] = useState<VlanLat | null>(null)
   const [vlanLatBusy, setVlanLatBusy] = useState(false)
   useEffect(() => {
-    setVlanLat(null)
-    if (!drillSub) { setVlanDiag(null); return }
     let gone = false
+    queueMicrotask(() => {
+      if (gone) return
+      setVlanLat(null)
+      if (!drillSub) setVlanDiag(null)
+    })
+    if (!drillSub) return () => { gone = true }
     fetch(`/api/rca/vlan_diag?cidr=${encodeURIComponent(drillSub)}&days=7`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j: VlanDiag | null) => { if (!gone) setVlanDiag(j?.ok && !j.empty ? j : null) })
@@ -642,15 +643,21 @@ export function TopologyCanvas({
     return () => { gone = true }
   }, [drillSub])
   useEffect(() => {
+    let gone = false
     if (!focusDev || isMemNode(focusDev)) {
-      setHistory(null)
+      queueMicrotask(() => {
+        if (gone) return
+        setHistory(null)
+        setHistFull(null)
+        setLatency(null)
+      })
+      return () => { gone = true }
+    }
+    queueMicrotask(() => {
+      if (gone) return
       setHistFull(null)
       setLatency(null)
-      return
-    }
-    setHistFull(null)
-    setLatency(null)
-    let gone = false
+    })
     fetch(`/api/rca/device_history?ip=${encodeURIComponent(focusDev)}&days=7`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j: DeviceHistory | null) => {
@@ -662,7 +669,7 @@ export function TopologyCanvas({
     return () => {
       gone = true
     }
-  }, [focusDev])
+  }, [focusDev, isMemNode])
   // opening/closing a segment resets both the ego-focus and the viewport. This is
   // the "adjust state when a prop changes" pattern (compare during render), not an
   // effect — so it stays in sync without a post-render flash.

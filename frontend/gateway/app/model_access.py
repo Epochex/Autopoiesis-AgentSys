@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-CACHE_DIR = Path(os.getenv("AUTOPOIESIS_LLM_CACHE_DIR", "/data/autopoiesis-runtime/llm-cache"))
+CACHE_DIR = Path(os.getenv("AUTOPOIESIS_LLM_CACHE_DIR", "/data/autopoiesis-production/llm-cache"))
 
 # Model-derived views of slow-moving facts — a subnet's device profiles, a
 # topology's relationships — do not need re-deriving every day, and re-deriving

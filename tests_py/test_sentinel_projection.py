@@ -105,6 +105,20 @@ def test_a_healed_chain_becomes_one_closed_card(tmp_path, monkeypatch):
     assert card["runbookDraft"]["planStatus"] == "executed"
 
 
+def test_acceptance_unit_is_excluded_from_production_classification(tmp_path, monkeypatch):
+    events = [
+        {
+            **event,
+            "subject": "autopoiesis-acceptance-recover-abc123.service",
+        }
+        for event in HEALED
+        if event.get("subject")
+    ]
+    _write(tmp_path, events, monkeypatch)
+    card = sentinel_cards("zh", now=NOW + 200)[0]
+    assert card["dataClassification"] == "controlled_test"
+
+
 def test_live_action_and_observation_events_advance_the_card(tmp_path, monkeypatch):
     observing = HEALED[2:6] + [
         {"kind": "remediation_committed", "at": _at(27),
@@ -228,7 +242,7 @@ def test_an_in_flight_chain_reads_as_in_flight(tmp_path, monkeypatch):
     assert card["reviewVerdict"]["checks"]["overreachRisk"]["status"] == "running"
     assert card["runbookDraft"]["planStatus"] == "in_flight"
     # an unattended action inside the allowlist is not gated — the card must not
-    # inherit the NetOps pipeline's blanket "approval required"
+    # inherit the autonomous incident chain's blanket "approval required"
     assert card["runbookDraft"]["approvalBoundary"]["approvalRequired"] is False
 
 

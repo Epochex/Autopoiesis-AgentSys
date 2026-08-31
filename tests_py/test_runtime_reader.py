@@ -1,17 +1,9 @@
-"""Live-situation reader contract.
-
-The NetOps subsystem ships these specs (tests/frontend/test_runtime_reader_*.py)
-as the blessed contract for the Autopoiesis gateway's live panel. They are ported
-here so the reader is verified against real landed NetOps output in this repo's CI.
-
-The snapshot test is skipped when no NetOps runtime dir is present (CI without the
-shared sink); the delta test is pure and always runs.
-"""
+"""Live-situation reader contract for Autopoiesis-owned stream output."""
 from __future__ import annotations
 
 import pytest
 
-# runtime_reader depends only on config (plain stdlib) + landed NetOps files, so it
+# runtime_reader depends only on config (plain stdlib) + landed Autopoiesis files, so it
 # needs no fastapi — unlike the main-app gateway tests. Import directly.
 from frontend.gateway.app.config import Settings
 from frontend.gateway.app.runtime_reader import (
@@ -20,15 +12,15 @@ from frontend.gateway.app.runtime_reader import (
 )
 
 
-def _has_netops_suggestions() -> bool:
+def _has_suggestions() -> bool:
     settings = Settings.from_env()
-    aiops = settings.netops_runtime_dir / "aiops"
+    aiops = settings.stream_output_dir / "aiops"
     return aiops.is_dir() and any(aiops.glob("suggestions-*.jsonl"))
 
 
 @pytest.mark.skipif(
-    not _has_netops_suggestions(),
-    reason="no NetOps runtime suggestions sink present",
+    not _has_suggestions(),
+    reason="no Autopoiesis suggestion fixture present",
 )
 def test_load_runtime_snapshot_exposes_detection_facts_without_draft_reasoning():
     settings = Settings.from_env()
@@ -51,8 +43,8 @@ def test_load_runtime_snapshot_exposes_detection_facts_without_draft_reasoning()
 
 
 @pytest.mark.skipif(
-    not _has_netops_suggestions(),
-    reason="no NetOps runtime suggestions sink present",
+    not _has_suggestions(),
+    reason="no Autopoiesis suggestion fixture present",
 )
 def test_english_runtime_snapshot_localizes_all_visible_copy():
     snapshot = load_runtime_snapshot(Settings.from_env(), "en")

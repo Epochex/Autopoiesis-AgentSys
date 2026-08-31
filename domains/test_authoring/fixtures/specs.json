@@ -24,7 +24,7 @@
           "required": true,
           "min_length": 1,
           "max_length": 128,
-          "example": "netops-correlator",
+          "example": "autopoiesis-event-pipeline",
           "description": "动作作用的唯一目标"
         }
       ],
@@ -71,7 +71,7 @@
           "required": true,
           "min_length": 1,
           "max_length": 128,
-          "example": "netops-correlator",
+          "example": "autopoiesis-event-pipeline",
           "description": "动作作用的唯一目标"
         }
       ],

@@ -209,7 +209,7 @@ export interface DeviceStatus {
   lastSeenText: string | null
   hasLiveSession: boolean
 }
-/** One historical destination aggregate for a host (from ClickHouse netops.facts). */
+/** One historical destination aggregate for a host (from ClickHouse autopoiesis.facts). */
 export interface HistoryDest {
   ip: string
   country: string | null
@@ -307,7 +307,7 @@ export interface PriorCycle {
 }
 
 /* ── event-driven full-chain topology theater ────────────────────────────────
- * A NetOps live-feed item promoted onto page 1: the console expands the WHOLE
+ * An Autopoiesis live-feed item promoted onto page 1: the console expands the WHOLE
  * topology (every subnet, every mined device) and plays the event's pipeline
  * chain across it. `device` is the raw src_device_key from the landed record;
  * mapping onto a real topology node happens against `topology.anchors` and is
@@ -324,10 +324,10 @@ export interface TheaterEvent {
   scenario?: string
   summary?: string
   scope?: string
-  /** pipeline stages this event actually lit (from the NetOps stage vocabulary) */
+  /** Pipeline stages this event actually reached in the incident chain. */
   stageIds: string[]
   /** Topology node this concerns, when the backend measured it. Preferred over
-   *  matching `device` against anchor names, which only works for NetOps keys. */
+   *  matching `device` against anchor names, which only works for known source keys. */
   anchorIp?: string
   /** Where it came from, when that differs from where it landed (e.g. the source
    *  of failed logins against this host). */

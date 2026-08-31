@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { Lang } from '../i18n'
-import { currentRound } from './netops-pipeline'
+import { currentRound } from './autopoiesis-pipeline'
 import { type ChainStep as Step, useSentinelChain } from './use-sentinel-chain'
 
 /* Current response state for the selected device.

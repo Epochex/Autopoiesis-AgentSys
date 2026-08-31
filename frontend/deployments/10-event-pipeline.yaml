@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autopoiesis-event-pipeline
+  namespace: autopoiesis
+  labels:
+    app.kubernetes.io/name: autopoiesis-event-pipeline
+    app.kubernetes.io/part-of: autopoiesis
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: autopoiesis-event-pipeline
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: autopoiesis-event-pipeline
+        app.kubernetes.io/part-of: autopoiesis
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: r450
+      securityContext:
+        fsGroup: 65532
+      containers:
+        - name: event-pipeline
+          image: autopoiesis-event-pipeline:v8
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AUTOPOIESIS_KAFKA_BROKERS
+              value: autopoiesis-redpanda:9093
+            - name: AUTOPOIESIS_RAW_TOPIC
+              value: autopoiesis.events.raw.v1
+            - name: AUTOPOIESIS_ALERT_TOPIC
+              value: autopoiesis.alerts.v1
+            - name: AUTOPOIESIS_DLQ_TOPIC
+              value: autopoiesis.dlq.v1
+            - name: AUTOPOIESIS_CLICKHOUSE_URL
+              value: http://autopoiesis-clickhouse:8123
+            - name: AUTOPOIESIS_CLICKHOUSE_DATABASE
+              value: autopoiesis
+            - name: AUTOPOIESIS_CLICKHOUSE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: autopoiesis-clickhouse
+                  key: username
+            - name: AUTOPOIESIS_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: autopoiesis-clickhouse
+                  key: password
+            - name: AUTOPOIESIS_ALERT_DIRECTORY
+              value: /data/autopoiesis-production/stream/alerts
+            - name: AUTOPOIESIS_EVENT_STATUS_FILE
+              value: /data/autopoiesis-production/status/event-pipeline.json
+            - name: AUTOPOIESIS_OFFSET_RESET
+              value: earliest
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: output
+              mountPath: /data/autopoiesis-production
+      volumes:
+        - name: output
+          hostPath:
+            path: /data/autopoiesis-production
+            type: DirectoryOrCreate

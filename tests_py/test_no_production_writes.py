@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 
-PRODUCTION_ROOT = Path("/data/autopoiesis-runtime")
+PRODUCTION_ROOT = Path("/data/autopoiesis-production")
 
 
 def _under(path: Path, root: Path) -> bool:

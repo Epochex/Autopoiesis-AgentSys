@@ -51,7 +51,7 @@ export function ContextFull({ recall, prevRecall, records, caseRoot, zh, onClose
   const prevCandOf = useMemo(() => new Map((prevRecall?.retrieval_candidates ?? []).map((c) => [c.memory_id, c])), [prevRecall])
 
   const inc = recall.included_memory_ids
-  const prevInc = prevRecall?.included_memory_ids ?? []
+  const prevInc = useMemo(() => prevRecall?.included_memory_ids ?? [], [prevRecall])
   const incSet = new Set(inc)
   const prevIncSet = new Set(prevInc)
 

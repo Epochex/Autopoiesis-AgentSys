@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVICE_NAME="${BACKEND_SERVICE:-netops-ops-console-backend.service}"
+SERVICE_NAME="${BACKEND_SERVICE:-autopoiesis-gateway.service}"
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${BACKEND_PORT:-8026}"
 BACKEND_CMD=(
@@ -13,8 +13,8 @@ BACKEND_CMD=(
   "--port" "${BACKEND_PORT}"
   "--loop" "asyncio"
 )
-LOG_PATH="${BACKEND_LOG_PATH:-/tmp/contexthelix-console-backend.log}"
-PID_PATH="${BACKEND_PID_PATH:-/tmp/contexthelix-console-backend.pid}"
+LOG_PATH="${BACKEND_LOG_PATH:-/tmp/autopoiesis-gateway.log}"
+PID_PATH="${BACKEND_PID_PATH:-/tmp/autopoiesis-gateway.pid}"
 HEALTH_URL="http://${BACKEND_HOST}:${BACKEND_PORT}/api/healthz"
 SNAPSHOT_URL="http://${BACKEND_HOST}:${BACKEND_PORT}/api/control-loop/snapshot"
 
@@ -52,9 +52,9 @@ start_manual_backend() {
   (
     cd "${ROOT_DIR}"
     export PYTHONUNBUFFERED=1
-    export CONTEXTHELIX_ARTIFACT_ROOT="${CONTEXTHELIX_ARTIFACT_ROOT:-${NETOPS_RUNTIME_ROOT:-/data/netops-runtime}}"
-    export CONTEXTHELIX_REPO_ROOT="${CONTEXTHELIX_REPO_ROOT:-/data/Autopoiesis-AgentSys}"
-    export CONTEXTHELIX_FRONTEND_DIST="${CONTEXTHELIX_FRONTEND_DIST:-${ROOT_DIR}/dist}"
+    export AUTOPOIESIS_STREAM_DIR="${AUTOPOIESIS_STREAM_DIR:-/data/autopoiesis-production/stream}"
+    export AUTOPOIESIS_REPO_ROOT="${AUTOPOIESIS_REPO_ROOT:-/data/Autopoiesis-AgentSys}"
+    export AUTOPOIESIS_FRONTEND_DIST="${AUTOPOIESIS_FRONTEND_DIST:-${ROOT_DIR}/dist}"
     nohup "${BACKEND_CMD[@]}" >"${LOG_PATH}" 2>&1 &
     echo $! >"${PID_PATH}"
   )

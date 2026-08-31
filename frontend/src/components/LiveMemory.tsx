@@ -597,12 +597,17 @@ export function LiveMemory({ lang }: { lang: Lang }) {
 
   useEffect(() => {
     if (!steps.length) return
-    if (!cursorInitialized.current) {
-      cursorInitialized.current = true
-      setCursor(Math.max(0, steps.length - 1))
-      return
-    }
-    setCursor((value) => Math.min(value, Math.max(0, steps.length - 1)))
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+      if (!cursorInitialized.current) {
+        cursorInitialized.current = true
+        setCursor(Math.max(0, steps.length - 1))
+        return
+      }
+      setCursor((value) => Math.min(value, Math.max(0, steps.length - 1)))
+    })
+    return () => { active = false }
   }, [steps])
 
   useEffect(() => {
@@ -651,13 +656,20 @@ export function LiveMemory({ lang }: { lang: Lang }) {
   const selectedSummary = displayRecords.find((record) => record.memory_id === selectedId) ?? null
   useEffect(() => {
     if (!selectedId) {
-      setSelectedDetail(null)
-      setDetailLoading(false)
-      return
+      let active = true
+      queueMicrotask(() => {
+        if (!active) return
+        setSelectedDetail(null)
+        setDetailLoading(false)
+      })
+      return () => { active = false }
     }
     const controller = new AbortController()
-    setDetailLoading(true)
-    setSelectedDetail(null)
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return
+      setDetailLoading(true)
+      setSelectedDetail(null)
+    })
     fetch(`/api/rca/memory/${encodeURIComponent(selectedId)}`, {
       headers: { Accept: 'application/json' }, signal: controller.signal,
     })

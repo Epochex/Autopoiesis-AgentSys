@@ -1,0 +1,11 @@
+[Unit]
+Description=Capture the Autopoiesis L2 identity table every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=autopoiesis-arp-collect.service
+
+[Install]
+WantedBy=timers.target

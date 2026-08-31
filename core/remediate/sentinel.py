@@ -48,7 +48,7 @@ def _default_timeline() -> Path:
         return Path(configured)
     if "PYTEST_CURRENT_TEST" in os.environ:
         return Path(tempfile.gettempdir()) / "autopoiesis-sentinel-test.jsonl"
-    return Path("/data/autopoiesis-runtime/sentinel-timeline.jsonl")
+    return Path("/data/autopoiesis-production/sentinel-timeline.jsonl")
 
 
 TIMELINE_PATH = _default_timeline()

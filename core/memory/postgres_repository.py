@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 from core.memory.store import MemoryRecord
+from core.memory.postgres_scope import enter_schema, validate_schema_name
 
 
 EventType = Literal["UPSERT", "QUARANTINE", "REDACT"]
@@ -109,11 +110,13 @@ class PostgresMemoryRepository:
         self,
         dsn: str,
         *,
+        schema: str | None = None,
         connect_factory: Callable[[str], Any] | None = None,
     ) -> None:
         if not dsn:
             raise ValueError("dsn must not be empty")
         self._dsn = dsn
+        self._schema = validate_schema_name(schema)
         self._connect_factory = connect_factory
 
     @staticmethod
@@ -122,14 +125,18 @@ class PostgresMemoryRepository:
 
     def _connect(self) -> Any:
         if self._connect_factory is not None:
-            return self._connect_factory(self._dsn)
+            connection = self._connect_factory(self._dsn)
+            enter_schema(connection, self._schema)
+            return connection
         try:
             import psycopg  # type: ignore[import-not-found]
         except ImportError as exc:  # pragma: no cover - exercised without db extra
             raise RuntimeError(
                 "PostgreSQL persistence requires psycopg 3; install psycopg[binary]"
             ) from exc
-        return psycopg.connect(self._dsn)
+        connection = psycopg.connect(self._dsn)
+        enter_schema(connection, self._schema)
+        return connection
 
     def initialize_schema(self) -> None:
         with self._connect() as connection:

@@ -10,7 +10,7 @@ ATTACK_SAMPLE_INTERVAL=${AUTOPOIESIS_DEMO_ATTACK_INTERVAL:-15}
 TIMELINE_TIMEOUT=${AUTOPOIESIS_DEMO_TIMELINE_TIMEOUT:-420}
 SUBJECT=demo-collector.service
 FIREWALL=FG100ETK20014183
-GATEWAY_UNIT=netops-ops-console-backend.service
+GATEWAY_UNIT=autopoiesis-gateway.service
 
 TMP_DIR=$(mktemp -d /tmp/autopoiesis-memory-demo.XXXXXX)
 CONTROL_BACKUP="$TMP_DIR/emergency-stop.backup"
@@ -241,11 +241,11 @@ wait_for_timeline() {
 
 resolve_control_file() {
     local pid configured
-    pid=$(systemctl show netops-ops-console-backend -p MainPID --value 2>/dev/null || true)
+    pid=$(systemctl show autopoiesis-gateway -p MainPID --value 2>/dev/null || true)
     [[ -n "$pid" && "$pid" != 0 ]] || die "无法取得网关 MainPID，不能安全定位急停状态文件"
     configured=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
         | sed -n 's/^AUTOPOIESIS_REMEDIATION_STOP=//p' | head -1)
-    CONTROL_PATH=${configured:-/data/autopoiesis-runtime/remediation-emergency-stop.json}
+    CONTROL_PATH=${configured:-/data/autopoiesis-production/remediation-emergency-stop.json}
     [[ "$CONTROL_PATH" == /* ]] || die "急停状态路径不是绝对路径：$CONTROL_PATH"
     [[ "$CONTROL_PATH" != / && "$CONTROL_PATH" != /data && "$CONTROL_PATH" != /tmp ]] \
         || die "拒绝操作过宽的急停状态路径：$CONTROL_PATH"

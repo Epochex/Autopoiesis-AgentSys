@@ -239,11 +239,11 @@ def test_incident_replay_reuses_fact_schema_and_never_claims_live_observation():
             assert event["incident_id"] == incident_id
 
 
-def test_shared_replay_transport_rejects_observed_event_before_subprocess(monkeypatch):
+def test_shared_replay_transport_rejects_observed_event_before_kafka(monkeypatch):
     def forbidden(*_args, **_kwargs):
-        raise AssertionError("subprocess must not run for non-simulated input")
+        raise AssertionError("Kafka must not open for non-simulated input")
 
-    monkeypatch.setattr("core.evolve.replay_stream.subprocess.run", forbidden)
+    monkeypatch.setattr("core.evolve.replay_stream._kafka_types", forbidden)
     result = produce_tagged_replay(
         [{"replay": True, "source_kind": "observed", "case_id": "case"}],
         ["case"],

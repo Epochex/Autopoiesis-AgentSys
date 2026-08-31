@@ -1,13 +1,13 @@
 /* 事件驱动全链路拓扑剧场 / EVENT-DRIVEN FULL-CHAIN TOPOLOGY THEATER
  *
- * A NetOps live-feed event promoted onto page 1. Unlike the resting console
+ * An Autopoiesis live-feed event promoted onto page 1. Unlike the resting console
  * (one segment drilled at a time), the theater expands the WHOLE topology at
  * once — every subnet, every device the firewall's mined device graph knows —
  * and plays the event across it:
  *
  *   WAN field → FortiGate → interfaces → all subnet clusters (all nodes)
  *                    ╲ syslog (real: R230 is the configured sink)
- *                     R230 ── NetOps pipeline rail (correlator → … → remediation)
+ *                     R230: Autopoiesis incident rail (correlator to remediation)
  *
  * Honesty rules carried over from the console:
  *   - every node is a real mined device; positions inside a cluster reuse the
@@ -21,7 +21,7 @@ import { useMemo, useState } from 'react'
 import type { DataStats, SubnetGraph, TheaterEvent, Topology } from '../types'
 import type { Lang } from '../i18n'
 import { useReducedMotion } from '../reduced-motion'
-import { currentRound, railFor, sentinelStageIds } from './netops-pipeline'
+import { currentRound, railFor, sentinelStageIds } from './autopoiesis-pipeline'
 import { type ChainStep, useSentinelChain } from './use-sentinel-chain'
 import './theater.css'
 import { ExecutionLog } from './ExecutionLog'
@@ -460,7 +460,7 @@ export function TheaterStage({
 
   return (
     <g className="theater">
-      {/* ── NetOps pipeline rail: the chain the landed event actually lit ── */}
+      {/* Autopoiesis incident rail: the chain the landed event actually lit */}
       <g className="th-rail">
         <text x={RAIL_X0 - 12} y={RAIL_Y - 26} className="th-rail-kick" textAnchor="start">
           {isSentinel
@@ -951,7 +951,7 @@ export function TheaterStage({
             <div className="th-banner-sum">{zh ? '全拓扑展开 · 点击任意节点看其真实关联' : 'Full topology · click any node for its mined relations'}</div>
           )}
           <div className="th-banner-note">
-            {zh ? `实网设备图 ${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} 节点 · NetOps 实时落地事件` : `${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} mined nodes · landed NetOps events`}
+            {zh ? `实网设备图 ${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} 节点 · Autopoiesis 实时事件` : `${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} mined nodes · Autopoiesis live events`}
           </div>
         </div>
       </foreignObject>

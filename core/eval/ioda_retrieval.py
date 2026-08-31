@@ -73,7 +73,7 @@ from core.memory.rrf import rrf_fuse
 
 # ── configuration ──────────────────────────────────────────────────────────────
 _DEFAULT_DATA_DIR = Path(
-    "/data/netops-runtime/section45_real_internet/"
+    "/data/autopoiesis-test-artifacts/section45_real_internet/"
     "radar_ioda_v2_strict_three_source_with_controls"
 )
 _MANIFEST_NAME = "radar_ioda_v2_event_manifest.json"

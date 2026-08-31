@@ -7,8 +7,8 @@ Three GitHub Actions workflows live under [`.github/workflows/`](../.github/work
 Runs on every push to `main`, every PR, and manual dispatch.
 
 - Python 3.11, installs `.[dev]` (pip-cached on `pyproject.toml`).
-- `pytest tests_py` — the full deterministic suite (573 passed / 8 skipped at time of writing).
-- `python -m domains.network_rca.phase15` — the mock-labeled Phase 1.5 pipeline report (pipeline check, not a held-out quality metric).
+- `pytest tests_py` : the full deterministic suite (573 passed / 8 skipped at time of writing).
+- `python -m domains.network_rca.phase15` : the mock-labeled Phase 1.5 pipeline report (pipeline check, not a held-out quality metric).
 - Validates `domains/network_rca/fixtures/real/manifest.json` when present; otherwise notes that real held-out evaluation stays gated to local runs (the real FortiGate data is gitignored).
 
 ## `frontend-ci.yml`
@@ -16,27 +16,27 @@ Runs on every push to `main`, every PR, and manual dispatch.
 Runs on pushes/PRs that touch `frontend/**`, and manual dispatch.
 
 - Node 20, `npm ci` (npm-cached on `frontend/package-lock.json`).
-- `npm run build` — `tsc -b` type-check + `vite build`. **This is the merge gate.**
-- `npm run lint` — advisory (`continue-on-error`). Strict `react-hooks` rules flag long-standing patterns in the tactical-canvas components; surfaced but not blocking.
-- `vitest run --passWithNoTests` — unit tests; passes cleanly until suites are added.
+- `npm run build` : `tsc -b` type-check + `vite build`. **This is the merge gate.**
+- `npm run lint` : advisory (`continue-on-error`). Strict `react-hooks` rules flag long-standing patterns in the tactical-canvas components; surfaced but not blocking.
+- `vitest run --passWithNoTests` : unit tests; passes cleanly until suites are added.
 
 ## `benchmarks.yml`
 
 Manual dispatch + weekly cron (Mon 06:00 UTC).
 
-- `python3 examples/benchmarks.py` — deterministic developer diagnostic on seed or fixed fixtures. It checks routing and memory contracts and produces no business-readiness score.
-- `tests_py/test_temporal_case_evaluation.py` — contract tests for temporal-case metrics: delayed evidence, contradiction revision, checkpoint recovery and paired memory cost. Production trace export is still required before reporting these metrics.
+- `python3 examples/benchmarks.py` : deterministic developer diagnostic on seed or fixed fixtures. It checks routing and memory contracts and produces no business-readiness score.
+- `tests_py/test_temporal_case_evaluation.py` : contract tests for temporal-case metrics: delayed evidence, contradiction revision, checkpoint recovery and paired memory cost. Production trace export is still required before reporting these metrics.
 
 ---
 
 # CD (delivery + deployment)
 
-## `release.yml` — delivery to GHCR
+## `release.yml` : delivery to GHCR
 
 Runs on version tags (`v*`) and manual dispatch. Builds the console image from
 `frontend/Dockerfile` (multi-stage: `vite build` → FastAPI runtime on :8026)
 and pushes to `ghcr.io/epochex/autopoiesis-agent-sys` with tag/sha/`latest`
-tags. Uses the built-in `GITHUB_TOKEN` (`packages: write`) — **no external
+tags. Uses the built-in `GITHUB_TOKEN` (`packages: write`) : **no external
 secrets**. Buildx layer cache via GitHub Actions cache.
 
 Cut a release:
@@ -45,10 +45,10 @@ Cut a release:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-## `deploy.yml` — deployment to the live r450 box
+## `deploy.yml` : deployment to the live r450 box
 
 The live site is bare-metal on r450 (LAN-only): systemd
-`netops-ops-console-backend.service` runs `.venv/bin/uvicorn` on 127.0.0.1:8026,
+`autopoiesis-gateway.service` runs `.venv/bin/uvicorn` on 127.0.0.1:8026,
 nginx serves `frontend/dist`. Because r450 is not reachable from GitHub's cloud
 runners, deployment runs on a **self-hosted runner registered on r450**.
 
@@ -59,8 +59,8 @@ as root so it can `systemctl restart`). Every push to `main` triggers `deploy`,
 which runs [`frontend/script/deploy.sh`](../frontend/script/deploy.sh) against
 the live tree: fast-forward to `origin/main` → `npm ci && npm run build` →
 refresh gateway deps into `.venv` → `systemctl restart` → poll `/api/healthz`
-(20× 1s). Only `push` (owner creds) and manual dispatch trigger it — no
-`pull_request` — so a fork PR can never run code on the self-hosted runner. You
+(20× 1s). Only `push` (owner creds) and manual dispatch trigger it : no
+`pull_request` : so a fork PR can never run code on the self-hosted runner. You
 can still deploy by hand with `deploy.sh` on the box, or from the Actions tab.
 
 Runner admin: `cd /opt/gh-runner-autopoiesis`; `sudo ./svc.sh status|stop|start`
@@ -93,4 +93,4 @@ Run the rollout by hand any time:
 ## Notes
 
 - Workflows previously lived under `ci/github-workflows/` because an earlier push token lacked `workflow` scope. They now live in `.github/workflows/` directly; push with a token that has `workflow` scope.
-- The heavy optional extras (`dense`, `rerank`, `postgres`, `vector-bench`) are **not** installed in CI — the deterministic core is zero-dependency and the relevant tests `importorskip` those extras, so they skip cleanly on the runner.
+- The heavy optional extras (`dense`, `rerank`, `postgres`, `vector-bench`) are **not** installed in CI : the deterministic core is zero-dependency and the relevant tests `importorskip` those extras, so they skip cleanly on the runner.

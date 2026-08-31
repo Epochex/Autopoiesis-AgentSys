@@ -397,7 +397,12 @@ class OperationalMemoryService:
             query = _q
             database = _CH_DB
         else:
-            database = "netops"
+            database = "autopoiesis"
+        try:
+            lookback_days = int(os.getenv("AUTOPOIESIS_OPERATIONAL_LOOKBACK_DAYS", "7"))
+        except ValueError:
+            lookback_days = 7
+        lookback_days = max(1, min(lookback_days, 30))
         source_status: dict[str, str] = {}
         updated = 0
         risk_events: list[RiskEvent] = []
@@ -410,7 +415,7 @@ class OperationalMemoryService:
                 "'event' AS type, event_type AS subtype, username AS user, status, "
                 "logdesc, message AS msg, event_type AS risk_type, provenance "
                 f"FROM {database}.security_events "
-                "WHERE event_ts >= now() - INTERVAL 90 DAY "
+                f"WHERE event_ts >= now() - INTERVAL {lookback_days} DAY "
                 "ORDER BY event_ts DESC LIMIT 20000",
             ),
             (
@@ -418,7 +423,8 @@ class OperationalMemoryService:
                 "SELECT event_ts, device_key, srcip, dstip, dstport, proto, action, "
                 "service, app, type, subtype "
                 f"FROM {database}.facts "
-                "WHERE event_ts >= now() - INTERVAL 90 DAY AND action IN ('deny','blocked','block') "
+                f"WHERE event_ts >= now() - INTERVAL {lookback_days} DAY "
+                "AND action IN ('deny','blocked','block') "
                 "ORDER BY event_ts DESC LIMIT 10000",
             ),
         )
@@ -730,7 +736,12 @@ def build_operational_memory_service() -> OperationalMemoryService:
     dsn = autopoiesis_env("MEMORY_DSN")
     if dsn:
         try:
-            repository = PostgresOperationalRepository(dsn)
+            repository = PostgresOperationalRepository(
+                dsn,
+                schema=autopoiesis_env(
+                    "MEMORY_SCHEMA", "autopoiesis_production"
+                ),
+            )
             repository.initialize_schema()
             return OperationalMemoryService(repository, durable=True)
         except Exception:

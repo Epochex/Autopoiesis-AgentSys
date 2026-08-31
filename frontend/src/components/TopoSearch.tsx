@@ -19,9 +19,12 @@ export function TopoSearch({ lang, onPick }: { lang: Lang; onPick: (ip: string, 
   useEffect(() => {
     if (t.current) window.clearTimeout(t.current)
     const s = q.trim()
-    if (s.length < 1) { setHits([]); setOpen(false); return }
-    setBusy(true)
+    if (s.length < 1) {
+      t.current = window.setTimeout(() => { setHits([]); setOpen(false); setBusy(false) }, 0)
+      return () => { if (t.current) window.clearTimeout(t.current) }
+    }
     t.current = window.setTimeout(() => {
+      setBusy(true)
       fetch(`/api/rca/device_search?q=${encodeURIComponent(s)}`)
         .then((r) => r.json())
         .then((d) => { if (d && d.ok) { setHits(d.results); setOpen(true) } })

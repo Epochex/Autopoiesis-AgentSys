@@ -197,7 +197,7 @@ LEAKAGE_NOTE = (
     "is pure real-log tokens (no query words injected), but the STRUCTURED TAG set adds an "
     "RFC1918 internal/external class that aligns with query phrasing ('internal hosts' / "
     "'external IPs'). BM25 is therefore the label-clean baseline; structured/rrf get that "
-    "one netops enrichment. Numbers are reported for all so the effect is visible."
+    "one network-domain enrichment. Numbers are reported for all so the effect is visible."
 )
 
 

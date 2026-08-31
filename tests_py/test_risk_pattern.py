@@ -37,7 +37,7 @@ def _event(
         source_ip=source_ip,
         target_account=account,
         target_service=service,
-        evidence_ref=f"netops.facts:{event_id}",
+        evidence_ref=f"autopoiesis.facts:{event_id}",
     )
 
 
@@ -197,7 +197,7 @@ def test_normalized_admin_event_keeps_attempted_account_dimension():
             "user": "mike",
             "provenance": "real",
         },
-        source_table="netops.security_events",
+        source_table="autopoiesis.security_events",
     )
 
     assert event is not None
@@ -253,12 +253,12 @@ def test_store_can_ingest_clickhouse_query_batches_directly():
     ]
     store = RiskPatternStore()
 
-    affected = store.ingest_clickhouse_rows(rows, source_table="netops.facts_7d")
+    affected = store.ingest_clickhouse_rows(rows, source_table="autopoiesis.facts_7d")
 
     assert len(affected) == 1
     assert affected[0].event_count == 1
     assert store.get(affected[0].pattern_id) is affected[0]
-    assert affected[0].evidence_query_ranges[0].source_table == "netops.facts_7d"
+    assert affected[0].evidence_query_ranges[0].source_table == "autopoiesis.facts_7d"
 
 
 def test_snapshot_round_trip_is_complete_deterministic_and_keeps_dedupe_state():
@@ -299,10 +299,10 @@ def test_evidence_range_and_search_are_usable_by_gateway_consumers():
     matched = store.search("mike 45.74.28")
     assert len(matched) == 1
     query_range = matched[0].evidence_query_ranges[0].to_dict()
-    assert query_range["source_table"] == "netops.facts"
+    assert query_range["source_table"] == "autopoiesis.facts"
     assert query_range["start_at"] == query_range["end_at"]
     assert query_range["filters"]["risk_type"] == "credential_attack"
-    assert query_range["sample_refs"] == ["netops.facts:login"]
+    assert query_range["sample_refs"] == ["autopoiesis.facts:login"]
     assert store.list_patterns(provenance="real", limit=1)[0] in store.list_patterns()
 
 

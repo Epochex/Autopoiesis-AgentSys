@@ -326,7 +326,7 @@ ARP_SNAPSHOT_STALE_SECONDS = 900
 _CH_URL = os.getenv("CLICKHOUSE_URL", "")
 _CH_USER = os.getenv("CLICKHOUSE_USER", "default")
 _CH_PASS = os.getenv("CLICKHOUSE_PASSWORD", "")
-_CH_DB = os.getenv("CLICKHOUSE_DB", "netops")
+_CH_DB = os.getenv("CLICKHOUSE_DB", "autopoiesis")
 
 # Beyond this, a "live" pipeline is not live; findings that depend on it can no
 # longer be re-verified and must say so instead of being silently trusted.
@@ -1587,7 +1587,7 @@ def source_registry(
         rows.append(
             {
                 "id": "flow_store",
-                "label": "ClickHouse netops.facts",
+                "label": "ClickHouse autopoiesis.facts",
                 "kind": "live",
                 "window_start": flow_store.get("window_start"),
                 "window_end": flow_store.get("window_end"),
@@ -1606,7 +1606,7 @@ def source_registry(
         rows.append(
             {
                 "id": "flow_store",
-                "label": "ClickHouse netops.facts",
+                "label": "ClickHouse autopoiesis.facts",
                 "kind": "live",
                 "window_start": None,
                 "window_end": None,

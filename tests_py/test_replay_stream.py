@@ -3,7 +3,7 @@
 These verify that (1) the scored trajectory is the REAL offline evolving run — its
 warm accuracy equals the authoritative /api/rca/evolution delta; (2) each case's
 replay burst is real-schema-shaped and clearly tagged; and (3) Redpanda production
-degrades gracefully (never raises) when kubectl/rpk is absent, as in CI/sandbox.
+    degrades gracefully when the Kafka endpoint is absent, as in CI/sandbox.
 """
 from __future__ import annotations
 
@@ -84,19 +84,18 @@ def test_admin_bruteforce_events_carry_login_failed_signal():
     assert any(ev["action"] == "login-disabled" for ev in events)  # the lockout tail
 
 
-def test_produce_replay_degrades_gracefully_without_rpk(monkeypatch):
-    # Force the kubectl binary to a name that does not exist -> FileNotFoundError path.
-    monkeypatch.setattr("core.evolve.replay_stream._KUBECTL", "kubectl-does-not-exist-xyz")
+def test_produce_replay_degrades_gracefully_without_kafka_endpoint(monkeypatch):
+    monkeypatch.setattr("core.evolve.replay_stream._KAFKA_BROKERS", "")
     result = produce_replay()  # must NOT raise
     assert result["ok"] is False
     assert result["degraded"] is True
     assert result["produced"] == 0
-    assert result["topic"] == "netops.facts.replay.v1"
-    assert "unavailable" in result["note"] or "failed" in result["note"]
+    assert result["topic"] == "autopoiesis.events.replay.v1"
+    assert "not configured" in result["note"]
 
 
-def test_topic_status_degrades_gracefully_without_rpk(monkeypatch):
-    monkeypatch.setattr("core.evolve.replay_stream._KUBECTL", "kubectl-does-not-exist-xyz")
+def test_topic_status_degrades_gracefully_without_kafka_endpoint(monkeypatch):
+    monkeypatch.setattr("core.evolve.replay_stream._KAFKA_BROKERS", "")
     status = topic_status()  # must NOT raise
     assert status["degraded"] is True
     assert status["events"] is None

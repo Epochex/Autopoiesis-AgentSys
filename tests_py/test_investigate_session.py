@@ -77,7 +77,7 @@ def test_a_writing_step_the_model_labelled_readonly_is_forced_to_gated(monkeypat
         "diagnosis": "见 [ev-001]",
         "citations": ["ev-001"],
         "runbook": [
-            {"n": 1, "risk": "readonly", "what": "重启采集器", "command": "systemctl restart netops-collector", "why": "x"},
+            {"n": 1, "risk": "readonly", "what": "重启采集器", "command": "systemctl restart autopoiesis-facts-ingest", "why": "x"},
         ],
     }))
     result = investigate.analyze(session_id)

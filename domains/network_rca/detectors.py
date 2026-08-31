@@ -22,7 +22,7 @@ from domains.network_rca.remediation import Command, PHYSICAL_NIC
 # Units the sentinel is allowed to notice at all. An allowlist rather than
 # "anything that is failed", because a failed unit somebody is mid-way through
 # debugging should not be restarted underneath them.
-WATCHED_UNIT_PREFIXES = ("netops-", "autopoiesis-", "demo-")
+WATCHED_UNIT_PREFIXES = ("autopoiesis-", "demo-")
 
 def _bruteforce_safety_reason(address: str) -> str:
     """State the unmet controls that keep a source block from auto-commit."""

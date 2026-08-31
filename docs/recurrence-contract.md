@@ -37,7 +37,7 @@ if verdict.get("outcome") == "passed":
 
 ## 数据来源:时间线就是事实源
 
-`/data/autopoiesis-runtime/sentinel-timeline.jsonl` 本来就是 append-only 的。
+`/data/autopoiesis-production/sentinel-timeline.jsonl` 本来就是 append-only 的。
 复发计数是它的**派生投影**,进程启动时重建,不新增存储。
 
 这样做的理由(MemSecBench, arXiv 2607.27080):记忆污染的选择性修复失败率

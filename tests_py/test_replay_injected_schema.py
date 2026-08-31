@@ -82,9 +82,8 @@ def test_stamped_event_ids_are_unique_nonempty_and_case_prefixed():
         assert ev["event_id"].startswith(ev["case_id"]), ev["event_id"]
 
 
-def test_produce_replay_degrades_cleanly_without_kubectl(monkeypatch):
-    # kubectl/rpk is unavailable in CI/sandbox: produce must degrade, never raise.
-    monkeypatch.setattr("core.evolve.replay_stream._KUBECTL", "kubectl-does-not-exist-xyz")
+def test_produce_replay_degrades_cleanly_without_kafka_endpoint(monkeypatch):
+    monkeypatch.setattr("core.evolve.replay_stream._KAFKA_BROKERS", "")
     result = produce_replay()
     assert result["ok"] is False
     assert result["degraded"] is True

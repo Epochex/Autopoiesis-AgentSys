@@ -506,7 +506,7 @@ async def rca_device_profile(ip: str, lang: str = "zh") -> dict[str, Any]:
 
 @app.get("/api/rca/device_history")
 async def rca_device_history(ip: str, days: int = 7, full: int = 0) -> dict[str, Any]:
-    """Historical portrait for one host over the last N days, from ClickHouse netops.facts."""
+    """Historical portrait for one host over the last N days, from ClickHouse autopoiesis.facts."""
     from .history import device_history
     out = await asyncio.to_thread(device_history, ip, days, bool(full))
     return out if out is not None else {"ok": False, "text": "history store unavailable"}
@@ -1867,10 +1867,7 @@ async def rca_benchmark(lang: str = "zh") -> dict[str, Any]:
 
 @app.get("/api/rca/live-situation")
 async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
-    # Read-only snapshot of NetOps landed sink files (alerts +
-    # AIOps suggestions + cluster-state). The gateway never joins the Redpanda topic;
-    # the two subsystems meet only at this disk boundary. Returns empty collections
-    # when the runtime dir is absent, so the panel reports no landed records.
+    # Read-only snapshot of the Autopoiesis event pipeline's landed alert feed.
     from .runtime_reader import load_runtime_snapshot
     from .sentinel_projection import merge_into_snapshot
     from .investigation_cases import sync_snapshot_cases
@@ -1940,11 +1937,9 @@ async def rca_open_investigation_case(
 
 @app.get("/api/rca/bench-live-situation")
 async def rca_bench_live_situation(lang: str = "zh") -> dict[str, Any]:
-    # Same reader as /api/rca/live-situation, pointed at the isolated benchmark directory
-    # dir written by the replay side-car pipeline (correlator-replay -> alerts-sink-replay
-    # -> aiops-agent-replay). Real running-pod output; the prod runtime dir is untouched.
+    # Same reader as /api/rca/live-situation, pointed at an isolated replay directory.
     from .runtime_reader import load_runtime_snapshot
-    base = settings.netops_runtime_dir
+    base = settings.stream_output_dir
     replay_dir = base.parent / (base.name + "-replay")
     return await asyncio.to_thread(load_runtime_snapshot, settings, lang, replay_dir)
 

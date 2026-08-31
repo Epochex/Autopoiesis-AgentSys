@@ -33,11 +33,8 @@ class Settings:
     investigation_case_store_path: Path
     investigation_session_store_dir: Path
     knowledge_corpus_path: Path | None
-    # Read-only mount of the NetOps real-time subsystem's landed output (alerts +
-    # AIOps suggestion JSONL sinks + cluster-state.json). The gateway TAILS these
-    # files; it never speaks Kafka/Redpanda and never shares process state with
-    # NetOps — the two subsystems stay decoupled by reading through the disk sink.
-    netops_runtime_dir: Path
+    # Autopoiesis-owned alert and investigation feed landed by the event pipeline.
+    stream_output_dir: Path
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -49,25 +46,25 @@ class Settings:
         trace_ledger_path = Path(
             autopoiesis_env(
                 "TRACE_LEDGER_PATH",
-                "/data/autopoiesis-runtime/network-rca-trace.jsonl",
+                "/data/autopoiesis-production/network-rca-trace.jsonl",
             )
         ).resolve()
         incident_disposition_ledger_path = Path(
             autopoiesis_env(
                 "INCIDENT_DISPOSITION_LEDGER_PATH",
-                "/data/autopoiesis-runtime/incidents/disposition.jsonl",
+                "/data/autopoiesis-production/incidents/disposition.jsonl",
             )
         ).resolve()
         investigation_case_store_path = Path(
             autopoiesis_env(
                 "INVESTIGATION_CASE_STORE_PATH",
-                "/data/autopoiesis-runtime/investigations/cases.sqlite3",
+                "/data/autopoiesis-production/investigations/cases.sqlite3",
             )
         ).resolve()
         investigation_session_store_dir = Path(
             autopoiesis_env(
                 "INVESTIGATION_SESSION_STORE_DIR",
-                "/data/autopoiesis-runtime/investigations/sessions",
+                "/data/autopoiesis-production/investigations/sessions",
             )
         ).resolve()
         knowledge_corpus_value = autopoiesis_env("KNOWLEDGE_CORPUS_PATH")
@@ -76,8 +73,8 @@ class Settings:
             if knowledge_corpus_value
             else None
         )
-        netops_runtime_dir = Path(
-            autopoiesis_env("NETOPS_RUNTIME_DIR", "/data/netops-runtime")
+        stream_output_dir = Path(
+            autopoiesis_env("STREAM_DIR", "/data/autopoiesis-production/stream")
         ).resolve()
         return cls(
             repo_root=repo_root,
@@ -88,5 +85,5 @@ class Settings:
             investigation_case_store_path=investigation_case_store_path,
             investigation_session_store_dir=investigation_session_store_dir,
             knowledge_corpus_path=knowledge_corpus_path,
-            netops_runtime_dir=netops_runtime_dir,
+            stream_output_dir=stream_output_dir,
         )

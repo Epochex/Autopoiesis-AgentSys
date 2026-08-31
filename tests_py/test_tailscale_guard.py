@@ -22,7 +22,7 @@ ON_THE_PATH = [
 ]
 
 OFF_THE_PATH = [
-    "eth0", "eth2", "eno1", "enp3s0", "netops-collector",
+    "eth0", "eth2", "eno1", "enp3s0", "autopoiesis-facts-ingest",
     "192.168.1.23", "10.42.0.1", "172.16.0.1", "100.63.255.255", "100.128.0.1",
     "", "lo", "docker0",
 ]

@@ -4,7 +4,7 @@
  *
  * They are separate rails because they are separate subsystems. A sentinel
  * chain never enters the correlator or the suggestions topic, so drawing it on
- * the NetOps rail would light stages that did not run. */
+ * the incident rail would light stages that did not run. */
 export const PIPELINE: { id: string; zh: string; en: string }[] = [
   { id: 'correlator', zh: '关联器', en: 'CORRELATOR' },
   { id: 'alerts-topic', zh: '告警流', en: 'ALERTS' },

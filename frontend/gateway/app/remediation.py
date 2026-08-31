@@ -71,7 +71,7 @@ def _runs_path() -> Path:
     # constant to the production path for the entire session.
     if "PYTEST_CURRENT_TEST" in os.environ:
         return Path(tempfile.gettempdir()) / "autopoiesis-remediation-test.jsonl"
-    return Path("/data/autopoiesis-runtime/remediation-runs.jsonl")
+    return Path("/data/autopoiesis-production/remediation-runs.jsonl")
 
 
 def _control_path() -> Path:
@@ -81,7 +81,7 @@ def _control_path() -> Path:
     test_root = os.getenv("AUTOPOIESIS_TEST_TMP")
     if test_root:
         return Path(test_root) / "remediation-emergency-stop.json"
-    return Path("/data/autopoiesis-runtime/remediation-emergency-stop.json")
+    return Path("/data/autopoiesis-production/remediation-emergency-stop.json")
 
 
 def _budget_path() -> Path:
@@ -91,7 +91,7 @@ def _budget_path() -> Path:
     test_root = os.getenv("AUTOPOIESIS_TEST_TMP")
     if test_root:
         return Path(test_root) / "remediation-budget.json"
-    return Path("/data/autopoiesis-runtime/remediation-budget.json")
+    return Path("/data/autopoiesis-production/remediation-budget.json")
 
 
 def emergency_stop() -> EmergencyStop:

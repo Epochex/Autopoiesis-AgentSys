@@ -190,7 +190,7 @@ def _print_modes(path: str | Path | None = None) -> None:
         res = run_skill_retrieval_eval(path, mode)
         r = {m: res["methods"][m][_HEADLINE_K]["recall_at_k"] for m in ("naive", "bm25", "structured", "rrf")}
         note = {"base": "no expansion", "stem": "symmetric stemming (general)",
-                "expand": "stem + netops synonyms (domain lexicon)"}[mode]
+                "expand": "stem + network-operation synonyms (domain lexicon)"}[mode]
         print(f"  {mode:<7} naive {r['naive']:.3f}  bm25 {r['bm25']:.3f}  "
               f"structured {r['structured']:.3f}  rrf {r['rrf']:.3f}   ({note})")
 

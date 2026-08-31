@@ -69,6 +69,7 @@ def build_network_rca_orchestrator(
     seed_memory: bool = True,
     context_strategy: str = "structured",
     memory_dsn: str | None = None,
+    memory_schema: str | None = None,
     # An empty dsn cannot express "deliberately no repository" because
     # `"" or env` falls straight back to the environment. Read-only callers
     # must pass False: repository construction runs initialize_schema(), and an
@@ -111,7 +112,15 @@ def build_network_rca_orchestrator(
     if resolved_memory_dsn:
         from core.memory.postgres_repository import PostgresMemoryRepository
 
-        repository = PostgresMemoryRepository(resolved_memory_dsn)
+        resolved_memory_schema = memory_schema
+        if resolved_memory_schema is None and use_env_memory_dsn:
+            resolved_memory_schema = autopoiesis_env(
+                "MEMORY_SCHEMA", "autopoiesis_production"
+            )
+        repository = PostgresMemoryRepository(
+            resolved_memory_dsn,
+            schema=resolved_memory_schema,
+        )
         repository.initialize_schema()
         memory = TieredMemoryStore.from_repository(repository, enabled=memory_enabled)
         # active(), not records(): the latter counts quarantined rows, and a

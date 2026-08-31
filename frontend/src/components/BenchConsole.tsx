@@ -23,7 +23,6 @@ export function BenchConsole({ lang }: { lang: Lang }) {
 
   useEffect(() => {
     let alive = true
-    setSt({ s: 'load' })
     fetch('/api/rca/bench-snapshot', { headers: { Accept: 'application/json' } })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error())))
       .then((d: Snap) => { if (alive) setSt(d && d.ok ? { s: 'ok', d } : { s: 'err' }) })

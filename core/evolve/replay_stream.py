@@ -1,32 +1,30 @@
 """Streaming fault-injection self-heal benchmark for the network-RCA system.
 
 This module replays representative FAULT scenarios for the six REAL R230 held-out
-cases through the ISOLATED Redpanda topic ``netops.facts.replay.v1`` and scores the
+cases through the isolated Redpanda topic ``autopoiesis.events.replay.v1`` and scores the
 self-heal + self-evolution loop by driving the REAL evolving stream
 (:func:`core.evolve.stream.run_evolving_stream`) over the same real cases.
 
 Honesty contract
 ----------------
 * The trajectory numbers are the *verbatim* output of the real offline run
-  (``compare_cold_vs_warm`` / ``run_evolving_stream``, ``reasoner_mode="rule"`` —
+  (``compare_cold_vs_warm`` / ``run_evolving_stream``, ``reasoner_mode="rule"``:
   fully OFFLINE, no LLM, no fabrication). If ``probes_saved_pct`` is 0 on this
   small six-case set, it stays 0; we do not spin it.
 * The replay events are *representative synthetic signals* for the demo. Every
   event is clearly tagged ``"replay": true`` and carries its ``case_id``, and they
-  are produced ONLY to the isolated ``netops.facts.replay.v1`` topic — never to the
-  production ``netops.facts.raw.v1``. Their field VALUES are shaped from the real
+  are produced only to ``autopoiesis.events.replay.v1``. Their field values follow the
+  production ``autopoiesis.events.raw.v1`` contract. The
   ``real_window_stats.json`` capture (top attacker/deny sources + ports), so they
   mirror the real signal without ever being replayed as current observations.
-* Producing shells out to ``kubectl … rpk topic produce`` inside the netops-core
-  pod. That is unavailable in the sandbox/CI, so every subprocess path DEGRADES
-  GRACEFULLY (``degraded: true``, ``produced: 0``) and NEVER raises — the offline
-  trajectory always returns.
+* Replay transport uses the Autopoiesis Kafka endpoint directly. When the
+  optional client or endpoint is unavailable, it returns a structured degraded
+  result and the offline trajectory remains available.
 """
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,16 +35,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FIXTURES = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real"
 _MANIFEST = _FIXTURES / "manifest.json"
 
-REPLAY_TOPIC = "netops.facts.replay.v1"
+REPLAY_TOPIC = "autopoiesis.events.replay.v1"
 
-# The netops-core Redpanda pod we produce into. Overridable by env so the same
-# code works from a differently-named cluster without a rebuild.
-_KUBECTL = os.getenv("NETOPS_KUBECTL", "kubectl")
-_NAMESPACE = os.getenv("NETOPS_NAMESPACE", "netops-core")
-_REDPANDA_POD = os.getenv("NETOPS_REDPANDA_POD", "netops-redpanda-0")
-_REDPANDA_CONTAINER = os.getenv("NETOPS_REDPANDA_CONTAINER", "redpanda")
+_KAFKA_BROKERS = os.getenv("AUTOPOIESIS_KAFKA_BROKERS", "")
 
-# The REAL netops.facts.raw.v1 fact schema (see frontend/gateway/ingest/facts_ingest.py).
+# The production event contract (see frontend/gateway/ingest/facts_ingest.py).
 # Every replay event fills all of these, plus the honesty markers replay + case_id.
 _SCHEMA_FIELDS: tuple[str, ...] = (
     "event_ts", "device_key", "srcip", "dstip", "dstport", "proto", "action",
@@ -57,7 +50,7 @@ _SCHEMA_FIELDS: tuple[str, ...] = (
 # Deterministic base clock so a burst is reproducible (tests + demo stability).
 _BASE = datetime(2026, 7, 27, 0, 0, 0)
 
-# Dahua camera/DVR SDK service ports — a denied flow to one of these is the
+# Dahua camera/DVR SDK service ports. A denied flow to one of these is the
 # device-port-probe signal (same set the real adapter documents).
 _DVR_PORTS: tuple[str, ...] = ("37777", "37809", "37810")
 
@@ -98,7 +91,7 @@ def _event(case_id: str, seq: int, **over: Any) -> dict[str, Any]:
         "sentbyte": 0, "rcvdbyte": 0,
     }
     ev.update(over)
-    # honesty markers — always last so a generator can never clobber them
+    # Honesty markers are always last so a generator can never clobber them.
     ev["replay"] = True
     ev["source_kind"] = "simulated"
     ev["case_id"] = case_id
@@ -225,7 +218,7 @@ def case_fault_events(case) -> list[dict[str, Any]]:
 
     The events represent the fault's observable signals, shaped from the case's real
     assets + root cause (matched on ``case.id``). Every event carries the full real
-    schema plus ``replay: true`` and ``case_id`` — clearly-tagged REPLAY signals bound
+    schema plus ``replay: true`` and ``case_id``: clearly tagged replay signals bound
     for the isolated topic, never the prod facts.raw.
     """
     cid = getattr(case, "id", "") or ""
@@ -264,19 +257,17 @@ def _load_cases(case_ids: Sequence[str] | None = None):
 
 
 # ── Redpanda production (best-effort; degrades gracefully) ───────────────────────
-def _rpk_produce_cmd(topic: str) -> list[str]:
-    return [
-        _KUBECTL, "-n", _NAMESPACE, "exec", "-i", _REDPANDA_POD,
-        "-c", _REDPANDA_CONTAINER, "--", "rpk", "topic", "produce", topic,
-    ]
+def _kafka_types() -> tuple[Any, Any, Any]:
+    from confluent_kafka import Consumer, Producer, TopicPartition
+
+    return Consumer, Producer, TopicPartition
 
 
 def produce_replay(case_ids: Sequence[str] | None = None, topic: str = REPLAY_TOPIC) -> dict[str, Any]:
     """Build replay events for the given (or all) real cases and produce them to `topic`.
 
-    Streams newline-delimited JSON to ``kubectl … rpk topic produce`` on stdin. On ANY
-    subprocess failure (kubectl/rpk missing, pod unreachable, timeout) returns
-    ``ok=false, degraded=true, produced=0`` and NEVER raises.
+    Publishes through the Autopoiesis Kafka endpoint. Missing dependencies,
+    endpoint failures and delivery failures return a structured degraded result.
     """
     cases, _gt = _load_cases(case_ids)
     events: list[dict[str, Any]] = []
@@ -299,7 +290,7 @@ def produce_tagged_replay(
 
     This shared transport lets dedicated incident replays reuse the same topic and
     graceful-degradation behavior as the benchmark replay. It rejects untagged or
-    non-simulated inputs before invoking kubectl, which prevents historical fixture
+    non-simulated inputs before opening Kafka, which prevents historical fixture
     records from being presented as current observations.
     """
     prepared = [dict(event) for event in events]
@@ -328,24 +319,38 @@ def produce_tagged_replay(
             "degraded": True, "note": "no replay events available",
         }
 
-    payload = "\n".join(json.dumps(ev, ensure_ascii=False) for ev in prepared) + "\n"
-    try:
-        proc = subprocess.run(
-            _rpk_produce_cmd(topic),
-            input=payload.encode("utf-8"),
-            capture_output=True,
-            timeout=30,
-        )
-    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+    if not _KAFKA_BROKERS:
         return {
             "ok": False, "topic": topic, "produced": 0, "cases": used_cases,
-            "degraded": True, "note": f"rpk/kubectl unavailable: {type(exc).__name__}: {exc}",
+            "degraded": True, "note": "AUTOPOIESIS_KAFKA_BROKERS is not configured",
         }
-    if proc.returncode != 0:
-        err = (proc.stderr or b"").decode("utf-8", errors="ignore").strip()[:300]
+    try:
+        _Consumer, Producer, _TopicPartition = _kafka_types()
+        producer = Producer({
+            "bootstrap.servers": _KAFKA_BROKERS,
+            "enable.idempotence": True,
+            "acks": "all",
+        })
+        failures: list[str] = []
+
+        def delivered(error: Any, _message: Any) -> None:
+            if error is not None:
+                failures.append(str(error))
+
+        for event in prepared:
+            producer.produce(
+                topic,
+                key=str(event["event_id"]).encode("utf-8"),
+                value=json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                on_delivery=delivered,
+            )
+        remaining = producer.flush(30)
+        if remaining or failures:
+            raise RuntimeError("; ".join(failures) or f"{remaining} messages unacknowledged")
+    except (ImportError, OSError, RuntimeError) as exc:
         return {
             "ok": False, "topic": topic, "produced": 0, "cases": used_cases,
-            "degraded": True, "note": f"rpk produce failed (rc={proc.returncode}): {err or 'no stderr'}",
+            "degraded": True, "note": f"Kafka unavailable: {type(exc).__name__}: {exc}",
         }
     return {
         "ok": True, "topic": topic, "produced": len(prepared), "cases": used_cases,
@@ -355,31 +360,33 @@ def produce_tagged_replay(
 
 
 def topic_status(topic: str = REPLAY_TOPIC) -> dict[str, Any]:
-    """Best-effort high-watermark for `topic` via ``rpk topic describe``.
+    """Best-effort high-watermark for `topic` through the Kafka protocol.
 
-    Returns ``{"events": int|None, "degraded": bool}`` — ``events`` is the summed
-    partition high-watermark, or ``None`` (degraded) when rpk/kubectl is unavailable.
+    Returns ``{"events": int|None, "degraded": bool}``; ``events`` is the summed
+    partition high-watermark, or ``None`` when the endpoint is unavailable.
     """
-    cmd = [
-        _KUBECTL, "-n", _NAMESPACE, "exec", "-i", _REDPANDA_POD,
-        "-c", _REDPANDA_CONTAINER, "--", "rpk", "topic", "describe", topic, "-p",
-    ]
+    if not _KAFKA_BROKERS:
+        return {"events": None, "degraded": True}
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=15)
-    except (FileNotFoundError, OSError, subprocess.SubprocessError):
-        return {"events": None, "degraded": True}
-    if proc.returncode != 0:
-        return {"events": None, "degraded": True}
-    out = (proc.stdout or b"").decode("utf-8", errors="ignore")
-    total = 0
-    found = False
-    for line in out.splitlines():
-        cols = line.split()
-        # partition rows look like: PARTITION LEADER EPOCH REPLICAS LOG-START-OFFSET HIGH-WATERMARK
-        if len(cols) >= 2 and cols[0].isdigit() and cols[-1].isdigit():
-            total += int(cols[-1])
-            found = True
-    if not found:
+        Consumer, _Producer, TopicPartition = _kafka_types()
+        consumer = Consumer({
+            "bootstrap.servers": _KAFKA_BROKERS,
+            "group.id": f"autopoiesis-replay-status-{uuid.uuid4().hex}",
+        })
+        try:
+            metadata = consumer.list_topics(topic=topic, timeout=10)
+            topic_metadata = metadata.topics.get(topic)
+            if topic_metadata is None or topic_metadata.error is not None:
+                raise RuntimeError("replay topic metadata unavailable")
+            total = sum(
+                consumer.get_watermark_offsets(
+                    TopicPartition(topic, partition), timeout=10, cached=False
+                )[1]
+                for partition in topic_metadata.partitions
+            )
+        finally:
+            consumer.close()
+    except (ImportError, OSError, RuntimeError):
         return {"events": None, "degraded": True}
     return {"events": total, "degraded": False}
 
@@ -389,7 +396,7 @@ def replay_trajectory(passes: int = 4, lang: str = "zh") -> dict[str, Any]:
     """Run the REAL evolving stream over the real cases and return a compact trajectory.
 
     Numbers are verbatim from ``compare_cold_vs_warm`` (which itself drives
-    ``run_evolving_stream`` with ``reasoner_mode="rule"`` — offline, no LLM). This is
+    ``run_evolving_stream`` with ``reasoner_mode="rule"`` (offline, no LLM). This is
     the single source of truth also served at ``/api/rca/evolution``.
     """
     from core.evolve.stream import compare_cold_vs_warm
@@ -419,7 +426,7 @@ def replay_trajectory(passes: int = 4, lang: str = "zh") -> dict[str, Any]:
     warm = res["warm"]
     warm_events = warm["per_event"]
 
-    # per-event projection (warm run) — the requested compact shape
+    # Per-event projection for the warm run, in the requested compact shape.
     per_event = [
         {
             "i": e["i"], "pass": e["pass"], "case": e["case"],
@@ -469,7 +476,7 @@ def replay_trajectory(passes: int = 4, lang: str = "zh") -> dict[str, Any]:
         "per_event": per_event,
         "summary": summary,
         "self_heal": self_heal,
-        # The SAME memory observatory the live 长轨迹 renders — this run IS the run
+        # The same memory observatory the live 长轨迹 renders; this run is the run.
         # served at /api/rca/evolution (same compare_cold_vs_warm, same rule
         # reasoner, same held-out cases). Exposed here so the benchmark 长轨迹 can
         # reuse the live MemoryObservatory (records/events/recall/context packet /
@@ -517,6 +524,6 @@ def _self_heal(per_event: list[dict[str, Any]], delta: dict[str, Any], n_cases: 
             "Every replayed fault was diagnosed correctly and verifier-passed; the warm "
             "store recognised recurrences on later passes (self-evolution). On this small "
             "six-case set the learned routing does not yet remove a probe the cold router "
-            "runs, so probes_saved_pct stays 0 — reported honestly, not spun."
+            "runs, so probes_saved_pct stays 0; the report keeps the measured zero."
         ),
     }

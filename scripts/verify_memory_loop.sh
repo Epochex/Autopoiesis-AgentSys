@@ -6,12 +6,12 @@
 # 更不会尝试删除已经写入的记忆。
 set -euo pipefail
 
-GATEWAY="netops-ops-console-backend"
+GATEWAY="autopoiesis-gateway"
 BASE_URL="http://127.0.0.1:8026"
 HEALTH_URL="${BASE_URL}/api/healthz"
 MEMORY_URL="${BASE_URL}/api/rca/memory"
-ENV_FILE="/etc/selfevo-console.env"
-TIMELINE_DEFAULT="/data/autopoiesis-runtime/sentinel-timeline.jsonl"
+ENV_FILE="/etc/autopoiesis.env"
+TIMELINE_DEFAULT="/data/autopoiesis-production/sentinel-timeline.jsonl"
 SUBJECT="demo-collector.service"
 QUERY="demo-collector.service"
 
@@ -102,7 +102,7 @@ import sys
 from core.memory.postgres_repository import PostgresMemoryRepository
 
 output = sys.argv[1]
-repository = PostgresMemoryRepository(os.environ["AUTOPOIESIS_MEMORY_DSN"])
+repository = PostgresMemoryRepository(os.environ["AUTOPOIESIS_MEMORY_DSN"], schema=os.environ.get("AUTOPOIESIS_MEMORY_SCHEMA", "autopoiesis_production"))
 records = repository.load_records(include_quarantined=True)
 records = [
     record for record in records
@@ -405,7 +405,7 @@ from core.memory.store import TieredMemoryStore
 ids_path, hits_path, query = sys.argv[1:]
 with open(ids_path, encoding="utf-8") as handle:
     new_ids = {line.strip() for line in handle if line.strip()}
-repository = PostgresMemoryRepository(os.environ["AUTOPOIESIS_MEMORY_DSN"])
+repository = PostgresMemoryRepository(os.environ["AUTOPOIESIS_MEMORY_DSN"], schema=os.environ.get("AUTOPOIESIS_MEMORY_SCHEMA", "autopoiesis_production"))
 # from_repository 只做 SELECT 并在本进程重建派生索引；不调用 flush，也不写数据库。
 store = TieredMemoryStore.from_repository(repository, enabled=True)
 result = store.retrieve([query], [], limit_per_tier=max(10, len(store.active())))
@@ -560,7 +560,7 @@ cd -- "$REPO_ROOT"
 DB_RECORDS=$(python3 - <<'PY'
 import os
 from core.memory.postgres_repository import PostgresMemoryRepository
-repository = PostgresMemoryRepository(os.environ["AUTOPOIESIS_MEMORY_DSN"])
+repository = PostgresMemoryRepository(os.environ["AUTOPOIESIS_MEMORY_DSN"], schema=os.environ.get("AUTOPOIESIS_MEMORY_SCHEMA", "autopoiesis_production"))
 print(len(repository.load_records(include_quarantined=True)))
 PY
 ) || die "PostgreSQL 记忆库不可读，无法完成后面的真实检索"

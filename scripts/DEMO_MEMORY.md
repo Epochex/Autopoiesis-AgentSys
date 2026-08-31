@@ -44,7 +44,7 @@ PY
 
 ./scripts/inject_incident.sh status
 
-gateway_pid=$(systemctl show netops-ops-console-backend -p MainPID --value)
+gateway_pid=$(systemctl show autopoiesis-gateway -p MainPID --value)
 tr '\0' '\n' < "/proc/${gateway_pid}/environ" | grep '^AUTOPOIESIS_SENTINEL=1$'
 ```
 
@@ -62,8 +62,8 @@ tr '\0' '\n' < "/proc/${gateway_pid}/environ" | grep '^AUTOPOIESIS_SENTINEL=1$'
 
 ```bash
 ./scripts/inject_incident.sh cleanup
-rm -f /data/autopoiesis-runtime/sentinel-timeline.jsonl
-systemctl restart netops-ops-console-backend
+rm -f /data/autopoiesis-production/sentinel-timeline.jsonl
+systemctl restart autopoiesis-gateway
 ```
 
 时间线是审计日志，这三行只用于开演前重置专用演示环境。`cleanup` 不会清在线记忆。
@@ -333,8 +333,8 @@ PY
 
 ```bash
 ./scripts/inject_incident.sh cleanup
-rm -f /data/autopoiesis-runtime/sentinel-timeline.jsonl
-systemctl restart netops-ops-console-backend
+rm -f /data/autopoiesis-production/sentinel-timeline.jsonl
+systemctl restart autopoiesis-gateway
 ./scripts/inject_incident.sh status
 ./scripts/inject_incident.sh recurring
 ```
@@ -552,7 +552,7 @@ GET /api/rca/evolution
 
 | 现象 | 当场判断 | 处理 |
 |---|---|---|
-| 「线上记忆」整屏读取失败 | 网关或页面代理不可用 | 查 `/api/healthz`，必要时重启 `netops-ops-console-backend` |
+| 「线上记忆」整屏读取失败 | 网关或页面代理不可用 | 查 `/api/healthz`，必要时重启 `autopoiesis-gateway` |
 | 页面显示「当前没有持久化线上记忆」 | 接口返回 `durable=false` | 停止第二幕，不做持续学习声明 |
 | 观测舱没有数据源横幅或链接不跳转 | 前端版本不对 | 停止演示，确认部署版本含 `#live-memory` |
 | 事故 `resolved` 后页面没变化 | 页面未重载、持久化写回失败或哨兵未接共享库 | 先刷新页面，再查七步脚本输出和网关日志 |

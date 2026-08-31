@@ -5,7 +5,7 @@
  * What it checks, in the order a person meets it:
  *   1. the situational page raises the alert on its own
  *   2. clicking it lands on 长轨迹 with that subject's card selected
- *   3. the card's rail is the sentinel loop, not the NetOps pipeline
+ *   3. the card's rail is the sentinel loop, not the event-detection chain
  *   4. the theater anchors the fault to a node and draws the chain to the rail
  *   5. the transcript shows the real commands and what they returned
  *   6. the incident's own path pulses, in phase, and nothing else does

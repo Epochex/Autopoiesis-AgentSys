@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: autopoiesis-redpanda-http
+  namespace: netops-core
+  labels:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/part-of: autopoiesis
+    app.kubernetes.io/component: event-stream
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/instance: netops-redpanda
+    app.kubernetes.io/component: redpanda-statefulset
+  ports:
+    - name: pandaproxy
+      protocol: TCP
+      port: 8082
+      targetPort: 8082
+    - name: kafka
+      protocol: TCP
+      port: 9093
+      targetPort: 9093
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autopoiesis-clickhouse
+  namespace: netops-core
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/part-of: autopoiesis
+    app.kubernetes.io/component: event-store
+spec:
+  type: ClusterIP
+  selector:
+    app: clickhouse
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8123
+      targetPort: 8123
+    - name: native
+      protocol: TCP
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autopoiesis-redpanda
+  namespace: autopoiesis
+  labels:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/part-of: autopoiesis
+    app.kubernetes.io/component: event-stream
+spec:
+  type: ExternalName
+  externalName: autopoiesis-redpanda-http.netops-core.svc.cluster.local
+  ports:
+    - name: pandaproxy
+      protocol: TCP
+      port: 8082
+      targetPort: 8082
+    - name: kafka
+      protocol: TCP
+      port: 9093
+      targetPort: 9093
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autopoiesis-clickhouse
+  namespace: autopoiesis
+  labels:
+    app.kubernetes.io/name: clickhouse
+    app.kubernetes.io/part-of: autopoiesis
+    app.kubernetes.io/component: event-store
+spec:
+  type: ExternalName
+  externalName: autopoiesis-clickhouse.netops-core.svc.cluster.local
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8123
+      targetPort: 8123
+    - name: native
+      protocol: TCP
+      port: 9000
+      targetPort: 9000

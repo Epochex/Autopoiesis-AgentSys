@@ -1,22 +1,9 @@
-"""Read landed detection output for the live-situation panel.
+"""Read Autopoiesis event-pipeline output for the live-situation panel.
 
-The NetOps stream processor (a separate set of `python -m core.*` consumers on the
-k3s `netops-core` namespace) de-Kafkas its two human-meaningful topics onto plain
-disk sinks:
-
-    netops.alerts.v1            → {runtime}/alerts/alerts-<YYYYMMDD-HH>.jsonl
-    netops.aiops.suggestions.v1 → {runtime}/aiops/suggestions-<YYYYMMDD-HH>.jsonl
-    (rolling window state)      → {runtime}/aiops/cluster-state.json
-
-This module TAILS those files. It never opens a Kafka/Redpanda client and never
-shares process state with NetOps — the Autopoiesis gateway and the NetOps pipeline
-stay two decoupled subsystems that meet only at the read-only disk sink. That
-boundary is deliberate (see RESUME_CLAIM_BANK): the two are one project, never one
-process.
-
-Everything surfaced here is a faithful projection of a landed record. The reader
-keeps detection facts and source identities. Investigation decisions are produced
-later by the case service after it has the exact incident fields.
+The event pipeline lands alert envelopes under ``{stream}/alerts``.  Optional
+case-candidate files under ``{stream}/aiops`` remain supported for isolated
+replay fixtures.  Production investigation decisions come from the durable case
+service after it receives the exact incident fields.
 """
 from __future__ import annotations
 
@@ -53,7 +40,7 @@ def _recent_files(directory: Path, prefix: str) -> list[Path]:
         return []
     dated: list[tuple[datetime, Path]] = []
     for path in candidates:
-        stamp = path.name.removeprefix(prefix).removesuffix(".jsonl")
+        stamp = path.name.removeprefix(prefix).removesuffix(".jsonl")[:11]
         try:
             dated.append((datetime.strptime(stamp, "%Y%m%d-%H"), path))
         except ValueError:
@@ -96,8 +83,10 @@ def _tail_records(path: Path, count: int) -> list[dict[str, Any]]:
 
 def _recent_records(directory: Path, prefix: str, count: int) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for path in _recent_files(directory, prefix):
-        records.extend(_tail_records(path, count))
+    for path in reversed(_recent_files(directory, prefix)):
+        records[:0] = _tail_records(path, count)
+        if len(records) >= count:
+            break
     return records[-count:]
 
 
@@ -142,7 +131,9 @@ def _data_classification(raw: dict[str, Any]) -> str:
         *(item.get("event_id") for item in history if isinstance(item, dict)),
     ]
     explicit_test_identity = any(
-        str(value or "").casefold().startswith(("controlled-", "redpanda-e2e-", "replay-"))
+        str(value or "").casefold().startswith(
+            ("controlled-", "redpanda-e2e-", "replay-", "bvaccept-", "autopoiesis-acceptance-")
+        )
         for value in identities
     )
     annotated_fault = bool(
@@ -306,15 +297,15 @@ def _cluster_watch(runtime_dir: Path, lang: str) -> list[dict[str, Any]]:
 def load_runtime_snapshot(
     settings: Settings, lang: str = "zh", runtime_dir: Path | None = None
 ) -> dict[str, Any]:
-    """A read-only snapshot of the NetOps live pipeline: feed, clusters, suggestions.
+    """A read-only snapshot of the Autopoiesis live event feed.
 
-    Returns empty collections (never raises) when the NetOps runtime dir is absent,
+    Returns empty collections (never raises) when the stream directory is absent,
     so the gateway degrades to "no live data" instead of failing the page.
 
     ``runtime_dir`` overrides the default prod dir so the benchmark scenario can point
-    the SAME reader at the isolated replay side-car output (netops-runtime-replay).
+    the same reader at the isolated replay side-car output.
     """
-    runtime_dir = runtime_dir if runtime_dir is not None else settings.netops_runtime_dir
+    runtime_dir = runtime_dir if runtime_dir is not None else settings.stream_output_dir
     alerts_dir = runtime_dir / "alerts"
     aiops_dir = runtime_dir / "aiops"
 

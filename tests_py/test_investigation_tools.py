@@ -54,7 +54,7 @@ def test_non_ip_subject_does_not_request_host_session_data() -> None:
         raise AssertionError("host-specific reader should not run")
 
     result = collect_fortigate_context(
-        "netops-ops-console-backend.service",
+        "autopoiesis-gateway.service",
         api_factory=_factory,
         device_status_reader=fail,
         live_flow_reader=fail,

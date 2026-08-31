@@ -1,8 +1,8 @@
-"""Historical device portrait from ClickHouse `netops.facts`.
+"""Historical device portrait from ClickHouse `autopoiesis.facts`.
 
 The live FortiGate REST API answers "what is this host doing right now"; this
-answers "what has it been doing over the last N days" — top destinations, daily
-activity, denied-flow pressure, bandwidth volume — read from the flows ingested
+answers "what has it been doing over the last N days": top destinations, daily
+activity, denied-flow pressure, and bandwidth volume read from the flows ingested
 off R230's full syslog (see ingest/facts_ingest.py). Read-only, short-cached.
 """
 from __future__ import annotations
@@ -11,14 +11,14 @@ import json
 import os
 import threading
 import time
-import urllib.parse
 import urllib.request
+import base64
 from typing import Any
 
 _CH_URL = os.getenv("CLICKHOUSE_URL", "http://10.43.125.243:8123")
-_CH_USER = os.getenv("CLICKHOUSE_USER", "netops")
-_CH_PASS = os.getenv("CLICKHOUSE_PASSWORD", "netops123")
-_CH_DB = os.getenv("CLICKHOUSE_DB", "netops")
+_CH_USER = os.getenv("CLICKHOUSE_USER", "default")
+_CH_PASS = os.getenv("CLICKHOUSE_PASSWORD", "")
+_CH_DB = os.getenv("CLICKHOUSE_DB", "autopoiesis")
 
 _lock = threading.Lock()
 _cache: dict[str, Any] = {}
@@ -30,8 +30,13 @@ _PROTO = {"1": "ICMP", "2": "IGMP", "6": "TCP", "17": "UDP", "47": "GRE", "50": 
 
 def _q(sql: str) -> list[dict]:
     """Run a read-only ClickHouse query, return rows as dicts (JSON format)."""
-    url = f"{_CH_URL}/?user={urllib.parse.quote(_CH_USER)}&password={urllib.parse.quote(_CH_PASS)}"
-    req = urllib.request.Request(url, data=(sql + " FORMAT JSON").encode("utf-8"), method="POST")
+    credentials = base64.b64encode(f"{_CH_USER}:{_CH_PASS}".encode()).decode()
+    req = urllib.request.Request(
+        f"{_CH_URL}/",
+        data=(sql + " FORMAT JSON").encode("utf-8"),
+        headers={"Authorization": f"Basic {credentials}"},
+        method="POST",
+    )
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read().decode("utf-8")).get("data", [])
 

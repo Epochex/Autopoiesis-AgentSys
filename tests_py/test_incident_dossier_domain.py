@@ -150,7 +150,7 @@ def test_real_risk_pattern_opens_unconfirmed_investigation_dossier() -> None:
             source_ip="198.51.100.7",
             provenance="real",
             evidence_ref="event_id=security-1",
-            source_table="netops.security_events",
+            source_table="autopoiesis.security_events",
         )
     )
     assert pattern is not None

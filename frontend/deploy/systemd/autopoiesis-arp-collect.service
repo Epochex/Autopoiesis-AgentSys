@@ -1,0 +1,10 @@
+[Unit]
+Description=Autopoiesis L2 identity capture
+Documentation=file:///data/Autopoiesis-AgentSys/domains/network_rca/collect_arp.py
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/data/Autopoiesis-AgentSys
+ExecStart=/usr/bin/python3 -m domains.network_rca.collect_arp /data/autopoiesis-production/arp-snapshot.txt --ledger /data/autopoiesis-production/l2-identity-history.jsonl

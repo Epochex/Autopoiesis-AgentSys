@@ -32,7 +32,7 @@ jobs:
       - name: Roll out to live
         env:
           APP_DIR: /data/Autopoiesis-AgentSys
-          SERVICE: netops-ops-console-backend
+          SERVICE: autopoiesis-gateway
           HEALTH_URL: http://127.0.0.1:8026/api/healthz
           ALLOW_DIRTY: ${{ inputs.allow_dirty && '1' || '0' }}
         run: bash "$APP_DIR/frontend/script/deploy.sh"

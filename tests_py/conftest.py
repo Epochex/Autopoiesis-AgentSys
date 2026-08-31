@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 
-_PRODUCTION_ROOT = Path("/data/autopoiesis-runtime")
+_PRODUCTION_ROOT = Path("/data/autopoiesis-production")
 _TEST_ROOT = Path(tempfile.mkdtemp(prefix="autopoiesis-pytest-"))
 atexit.register(shutil.rmtree, _TEST_ROOT, ignore_errors=True)
 _POLLUTED_FILES = (
@@ -41,6 +41,7 @@ _PATH_ENV = {
 def _redirect_paths() -> None:
     os.environ["AUTOPOIESIS_TEST_TMP"] = str(_TEST_ROOT)
     os.environ["AUTOPOIESIS_MEMORY_DSN"] = ""
+    os.environ["AUTOPOIESIS_MEMORY_SCHEMA"] = ""
     for name, path in _PATH_ENV.items():
         os.environ[name] = str(path)
     # Production intentionally fails closed when the independent control file

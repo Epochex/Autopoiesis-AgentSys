@@ -268,11 +268,11 @@ def test_create_and_insert_security_events_use_independent_table(monkeypatch):
 
     ddl, _ = posts[0]
     insert, payload = posts[1]
-    assert "CREATE TABLE IF NOT EXISTS netops.security_events" in ddl
+    assert "CREATE TABLE IF NOT EXISTS autopoiesis.security_events" in ddl
     assert "provenance Enum8('real' = 1, 'replay' = 2, 'drill' = 3)" in ddl
     assert "ENGINE = ReplacingMergeTree(ingested_at)" in ddl
     assert "ORDER BY event_id" in ddl
-    assert insert.startswith("INSERT INTO netops.security_events")
+    assert insert.startswith("INSERT INTO autopoiesis.security_events")
     assert payload is not None and b"admin_login_failed" in payload
 
 
@@ -563,23 +563,23 @@ def test_ssh_command_is_detached_from_standard_input():
 def test_systemd_unit_routes_standard_streams_and_restarts_only_on_failure():
     unit = (
         facts_ingest.Path(__file__).parents[1]
-        / "frontend/deploy/systemd/netops-facts-ingest.service"
+        / "frontend/deploy/systemd/autopoiesis-facts-ingest.service"
     ).read_text(encoding="utf-8")
 
     assert "StandardInput=null" in unit
     assert "StandardOutput=journal" in unit
     assert "StandardError=journal" in unit
     assert "Restart=on-failure" in unit
-    assert "StateDirectory=netops-facts-ingest" in unit
+    assert "StateDirectory=autopoiesis-facts-ingest" in unit
 
 
 def test_redpanda_http_service_targets_the_brokers():
     manifest = (
         facts_ingest.Path(__file__).parents[1]
-        / "frontend/deployments/11-redpanda-http-proxy-service.yaml"
+        / "frontend/deployments/11-data-plane-services.yaml"
     ).read_text(encoding="utf-8")
 
-    assert "name: netops-redpanda-http" in manifest
+    assert "name: autopoiesis-redpanda-http" in manifest
     assert "port: 8082" in manifest
     assert "targetPort: 8082" in manifest
     assert "app.kubernetes.io/component: redpanda-statefulset" in manifest

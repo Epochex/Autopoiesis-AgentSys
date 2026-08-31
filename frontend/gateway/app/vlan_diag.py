@@ -2,14 +2,14 @@
 
 Two clearly-separated layers, because the passive telemetry has NO timing:
 
-  Layer 1 — PASSIVE congestion/pressure aggregate (real, from ClickHouse
-  ``netops.facts``). The FortiGate syslog carries no latency/RTT/jitter and the
+  Layer 1: PASSIVE congestion/pressure aggregate (real, from ClickHouse
+  ``autopoiesis.facts``). The FortiGate syslog carries no latency/RTT/jitter and the
   facts pipeline drops ``duration``, so this layer is explicitly NOT latency: it
-  is traffic volume, deny-rate and activity spread — a congestion/pressure
+  is traffic volume, deny-rate and activity spread, a congestion/pressure
   signal. Mirrors ``history.py`` (same ``_q`` helper, same env, same read-only
   never-raises contract, same short TTL cache).
 
-  Layer 2 — ACTIVE latency probe (real RTT via ICMP ``ping``, on-demand only).
+  Layer 2: ACTIVE latency probe (real RTT via ICMP ``ping``, on-demand only).
   This is the only place actual round-trip time is measured, and only when a
   request explicitly asks for it.
 """
@@ -25,14 +25,14 @@ from typing import Any
 
 from .history import _q  # reuse the exact ClickHouse query helper / conventions
 
-_CH_DB = os.getenv("CLICKHOUSE_DB", "netops")
+_CH_DB = os.getenv("CLICKHOUSE_DB", "autopoiesis")
 
 _lock = threading.Lock()
 _cache: dict[str, Any] = {}
 _TTL = 120
 
 # ---------------------------------------------------------------------------
-# Layer 1 — passive congestion/pressure aggregate (NOT latency)
+# Layer 1: passive congestion/pressure aggregate (NOT latency)
 # ---------------------------------------------------------------------------
 
 _CIDR_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$")
@@ -52,9 +52,9 @@ def _prefix24(cidr: str) -> str | None:
 
 
 def vlan_diag(cidr: str, days: int = 7) -> dict[str, Any] | None:
-    """Passive /24 congestion/pressure portrait from ClickHouse ``netops.facts``.
+    """Passive /24 congestion/pressure portrait from ClickHouse ``autopoiesis.facts``.
 
-    NOT network latency — this is traffic volume, deny-rate and activity spread.
+    This is traffic volume, deny-rate and activity spread, with no latency claim.
     Returns None if ClickHouse is unreachable (console then hides this layer).
     """
     prefix = _prefix24(cidr)
@@ -132,7 +132,7 @@ def vlan_diag(cidr: str, days: int = 7) -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
-# Layer 2 — active ICMP latency probe (real RTT, on-demand only)
+# Layer 2: active ICMP latency probe (real RTT, on-demand only)
 # ---------------------------------------------------------------------------
 
 _IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
