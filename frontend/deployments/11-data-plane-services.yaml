@@ -26,6 +26,25 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: autopoiesis-redpanda-admin
+  namespace: netops-core
+  labels:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/part-of: autopoiesis
+    app.kubernetes.io/component: event-stream-admin
+spec:
+  type: ClusterIP
+  selector:
+    statefulset.kubernetes.io/pod-name: netops-redpanda-0
+  ports:
+    - name: admin
+      protocol: TCP
+      port: 9644
+      targetPort: 9644
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: autopoiesis-clickhouse
   namespace: netops-core
   labels:
@@ -67,6 +86,24 @@ spec:
       protocol: TCP
       port: 9093
       targetPort: 9093
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autopoiesis-redpanda-admin
+  namespace: autopoiesis
+  labels:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/part-of: autopoiesis
+    app.kubernetes.io/component: event-stream-admin
+spec:
+  type: ExternalName
+  externalName: autopoiesis-redpanda-admin.netops-core.svc.cluster.local
+  ports:
+    - name: admin
+      protocol: TCP
+      port: 9644
+      targetPort: 9644
 ---
 apiVersion: v1
 kind: Service

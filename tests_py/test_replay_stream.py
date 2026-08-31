@@ -91,7 +91,7 @@ def test_produce_replay_degrades_gracefully_without_kafka_endpoint(monkeypatch):
     assert result["degraded"] is True
     assert result["produced"] == 0
     assert result["topic"] == "autopoiesis.events.replay.v1"
-    assert "not configured" in result["note"]
+    assert "no replay transport endpoint" in result["note"]
 
 
 def test_topic_status_degrades_gracefully_without_kafka_endpoint(monkeypatch):

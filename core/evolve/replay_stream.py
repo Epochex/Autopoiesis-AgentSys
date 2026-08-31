@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -38,6 +41,8 @@ _MANIFEST = _FIXTURES / "manifest.json"
 REPLAY_TOPIC = "autopoiesis.events.replay.v1"
 
 _KAFKA_BROKERS = os.getenv("AUTOPOIESIS_KAFKA_BROKERS", "")
+_REDPANDA_PROXY_URL = os.getenv("AUTOPOIESIS_REDPANDA_PROXY_URL", "").rstrip("/")
+_REDPANDA_ADMIN_URL = os.getenv("AUTOPOIESIS_REDPANDA_ADMIN_URL", "").rstrip("/")
 
 # The production event contract (see frontend/gateway/ingest/facts_ingest.py).
 # Every replay event fills all of these, plus the honesty markers replay + case_id.
@@ -319,12 +324,40 @@ def produce_tagged_replay(
             "degraded": True, "note": "no replay events available",
         }
 
-    if not _KAFKA_BROKERS:
+    if not _REDPANDA_PROXY_URL and not _KAFKA_BROKERS:
         return {
             "ok": False, "topic": topic, "produced": 0, "cases": used_cases,
-            "degraded": True, "note": "AUTOPOIESIS_KAFKA_BROKERS is not configured",
+            "degraded": True, "note": "no replay transport endpoint is configured",
         }
     try:
+        if _REDPANDA_PROXY_URL:
+            body = json.dumps({
+                "records": [
+                    {"key": event["event_id"], "value": event}
+                    for event in prepared
+                ]
+            }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            request = urllib.request.Request(
+                f"{_REDPANDA_PROXY_URL}/topics/{urllib.parse.quote(topic, safe='')}",
+                data=body,
+                method="POST",
+                headers={
+                    "Accept": "application/vnd.kafka.v2+json",
+                    "Content-Type": "application/vnd.kafka.json.v2+json",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            offsets = result.get("offsets") or []
+            errors = [row for row in offsets if row.get("error_code") not in (None, 0)]
+            if errors or len(offsets) != len(prepared):
+                raise RuntimeError("Redpanda HTTP proxy did not acknowledge every replay event")
+            return {
+                "ok": True, "topic": topic, "produced": len(prepared), "cases": used_cases,
+                "degraded": False,
+                "note": f"produced {len(prepared)} replay:true events for {len(used_cases)} cases to {topic}",
+            }
+
         _Consumer, Producer, _TopicPartition = _kafka_types()
         producer = Producer({
             "bootstrap.servers": _KAFKA_BROKERS,
@@ -347,10 +380,10 @@ def produce_tagged_replay(
         remaining = producer.flush(30)
         if remaining or failures:
             raise RuntimeError("; ".join(failures) or f"{remaining} messages unacknowledged")
-    except (ImportError, OSError, RuntimeError) as exc:
+    except (ImportError, OSError, RuntimeError, ValueError, urllib.error.URLError) as exc:
         return {
             "ok": False, "topic": topic, "produced": 0, "cases": used_cases,
-            "degraded": True, "note": f"Kafka unavailable: {type(exc).__name__}: {exc}",
+            "degraded": True, "note": f"Replay transport unavailable: {type(exc).__name__}: {exc}",
         }
     return {
         "ok": True, "topic": topic, "produced": len(prepared), "cases": used_cases,
@@ -365,6 +398,26 @@ def topic_status(topic: str = REPLAY_TOPIC) -> dict[str, Any]:
     Returns ``{"events": int|None, "degraded": bool}``; ``events`` is the summed
     partition high-watermark, or ``None`` when the endpoint is unavailable.
     """
+    if _REDPANDA_ADMIN_URL:
+        try:
+            request = urllib.request.Request(
+                f"{_REDPANDA_ADMIN_URL}/public_metrics",
+                headers={"Accept": "text/plain"},
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                metrics = response.read().decode("utf-8")
+            topic_label = f'redpanda_topic="{topic}"'
+            offsets = [
+                int(float(line.rsplit(" ", 1)[1]))
+                for line in metrics.splitlines()
+                if line.startswith("redpanda_kafka_max_offset{") and topic_label in line
+            ]
+            if not offsets:
+                raise RuntimeError("replay topic metric unavailable")
+            return {"events": sum(offsets), "degraded": False}
+        except (OSError, RuntimeError, ValueError, urllib.error.URLError):
+            return {"events": None, "degraded": True}
+
     if not _KAFKA_BROKERS:
         return {"events": None, "degraded": True}
     try:
