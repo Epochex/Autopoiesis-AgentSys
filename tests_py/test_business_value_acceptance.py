@@ -265,3 +265,68 @@ def test_only_latest_controlled_acceptance_run_contributes() -> None:
     assert report["cohortPolicy"]["supersededAcceptanceCasesExcluded"] == 1
     assert report["cohortPolicy"]["productionCasesExcluded"] == 1
     assert report["cohortPolicy"]["acceptanceOnly"] is True
+
+
+def test_production_cohort_excludes_controlled_acceptance_cases() -> None:
+    cases = [
+        {
+            "caseId": "controlled",
+            "sourcePayload": {"acceptanceRunId": "run-1"},
+            "timeline": [{
+                "kind": "investigation_session_started",
+                "autoStarted": True,
+                "scopeQuality": "exact",
+                "faultDomain": "asset:test",
+                "managedAssets": ["test"],
+            }],
+        },
+        {
+            "caseId": "production",
+            "sourcePayload": {},
+            "timeline": [],
+        },
+    ]
+
+    report = evaluate_business_value(cases, [], production_only=True)
+
+    assert report["caseCount"] == 1
+    assert report["cohortPolicy"]["productionOnly"] is True
+    assert next(
+        row for row in report["rows"] if row["key"] == "automatic_incident_takeover"
+    )["status"] == "not_observed"
+
+
+def test_sentinel_action_is_grounded_and_recovery_is_counted_from_one_case_chain() -> None:
+    evidence_id = "sev-current"
+    action_ready = {
+        "state": "action_ready",
+        "classification": "service_failed",
+        "evidence": [{"evidenceId": evidence_id}],
+    }
+    final = {
+        "state": "resolved",
+        "classification": "service_failed",
+        "evidence": [{"evidenceId": evidence_id}],
+        "readback": {"outcome": "passed"},
+    }
+    case = {
+        "caseId": "case-sentinel",
+        "sourcePayload": {
+            "dataClassification": "observed",
+            "incidentFacts": {"sentinelEvidenceId": evidence_id},
+        },
+        "businessDecision": final,
+        "timeline": [
+            {"kind": "business_decision_recorded", "decision": action_ready},
+            {"kind": "remediation_started"},
+            {"kind": "remediation_completed", "outcome": "passed"},
+            {"kind": "business_decision_recorded", "decision": final},
+        ],
+    }
+
+    rows = {
+        row["key"]: row for row in evaluate_business_value([case], [], production_only=True)["rows"]
+    }
+
+    assert rows["grounded_decisions"]["status"] == "proven"
+    assert rows["action_and_recovery_readback"]["status"] == "proven"

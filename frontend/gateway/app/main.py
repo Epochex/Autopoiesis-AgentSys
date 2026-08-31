@@ -335,24 +335,50 @@ async def _lifespan(app: FastAPI):
         """Create cases from landed stream output without depending on a browser poll."""
         from datetime import datetime, timezone
 
-        from .investigation_cases import auto_start_pending_cases, sync_snapshot_cases
+        from domains.network_rca.environment import build_environment_report
+        from .investigation_cases import (
+            auto_start_pending_cases,
+            resolve_routine_observations,
+            sync_environment_cases,
+            sync_snapshot_cases,
+        )
         from .runtime_reader import load_runtime_snapshot
         from .sentinel_projection import merge_into_snapshot
 
         interval = max(2.0, float(os.getenv("AUTOPOIESIS_CASE_SYNC_INTERVAL", "5")))
+        environment_interval = max(30.0, float(os.getenv(
+            "AUTOPOIESIS_ENVIRONMENT_CASE_SYNC_INTERVAL", "60",
+        )))
+        environment_due_at = 0.0
         while not stop_event.is_set():
             try:
                 snapshot = load_runtime_snapshot(settings, "zh")
                 snapshot = merge_into_snapshot(snapshot, "zh")
                 sync_snapshot_cases(snapshot, _case_repository())
+                routine_resolved = resolve_routine_observations(_case_repository())
+                environment_case_ids: set[str] = set()
+                if time.monotonic() >= environment_due_at:
+                    report = build_environment_report()
+                    environment_case_ids.update(
+                        sync_environment_cases(report, _case_repository())
+                    )
+                    global _environment_report, _environment_loaded_at
+                    _environment_report = report
+                    _environment_loaded_at = time.monotonic()
+                    environment_due_at = time.monotonic() + environment_interval
                 auto_started = []
                 if os.getenv("AUTOPOIESIS_AUTO_INVESTIGATE", "1") != "0":
-                    auto_started = auto_start_pending_cases(_case_repository(), limit=4)
+                    auto_started = auto_start_pending_cases(
+                        _case_repository(),
+                        limit=4,
+                        case_ids=environment_case_ids or None,
+                    )
                 _case_sync_health.update({
                     "lastSyncAt": datetime.now(timezone.utc).isoformat(),
                     "lastError": None,
                     "caseCount": len(_case_repository().list(limit=500)),
                     "autoStarted": len(auto_started),
+                    "routineObservationsResolved": routine_resolved,
                 })
             except Exception as error:
                 _case_sync_health.update({
@@ -2209,7 +2235,9 @@ async def investigate_evaluate_pair(request: InvestigatePairRequest) -> dict[str
 
 @app.get("/api/rca/investigate/business-value")
 async def investigate_business_value(
-    cohort: str = Query(default="all", pattern="^(all|latest_acceptance)$"),
+    cohort: str = Query(
+        default="production", pattern="^(production|all|latest_acceptance)$",
+    ),
 ) -> dict[str, Any]:
     """Report only business claims demonstrated by durable executed cases."""
     from core.eval.business_value_acceptance import evaluate_business_value
@@ -2223,6 +2251,7 @@ async def investigate_business_value(
             cases,
             sessions,
             acceptance_only=cohort == "latest_acceptance",
+            production_only=cohort == "production",
         ),
     }
 

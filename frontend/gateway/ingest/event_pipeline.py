@@ -82,6 +82,11 @@ class PipelineConfig:
                 deny_threshold=int(os.getenv("AUTOPOIESIS_DENY_THRESHOLD", "30")),
                 byte_window_seconds=int(os.getenv("AUTOPOIESIS_BYTE_WINDOW_SECONDS", "300")),
                 byte_threshold=int(os.getenv("AUTOPOIESIS_BYTE_THRESHOLD", "20000000")),
+                auth_window_seconds=int(os.getenv("AUTOPOIESIS_AUTH_WINDOW_SECONDS", "60")),
+                auth_failure_threshold=int(os.getenv("AUTOPOIESIS_AUTH_FAILURE_THRESHOLD", "12")),
+                auth_distinct_source_threshold=int(os.getenv(
+                    "AUTOPOIESIS_AUTH_DISTINCT_SOURCE_THRESHOLD", "5",
+                )),
                 cooldown_seconds=int(os.getenv("AUTOPOIESIS_ALERT_COOLDOWN_SECONDS", "60")),
             ),
         )

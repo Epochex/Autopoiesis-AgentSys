@@ -194,6 +194,7 @@ def evaluate_business_value(
     sessions: Sequence[Mapping[str, Any]],
     *,
     acceptance_only: bool = False,
+    production_only: bool = False,
 ) -> dict[str, Any]:
     """Return value claims backed only by completed case/session artifacts."""
 
@@ -218,12 +219,16 @@ def evaluate_business_value(
         for case in supplied_cases
         if not dict(case.get("sourcePayload") or {}).get("acceptanceRunId")
     ) if acceptance_only else 0
+    if acceptance_only and production_only:
+        raise ValueError("acceptance_only and production_only are mutually exclusive")
     cases = [
         case for case in supplied_cases
         if (
             str(dict(case.get("sourcePayload") or {}).get("acceptanceRunId") or "")
             == latest_acceptance_run
             if acceptance_only
+            else (not dict(case.get("sourcePayload") or {}).get("acceptanceRunId"))
+            if production_only
             else (
                 not dict(case.get("sourcePayload") or {}).get("acceptanceRunId")
                 or str(dict(case.get("sourcePayload") or {}).get("acceptanceRunId"))
@@ -297,7 +302,7 @@ def evaluate_business_value(
         classification = str(decision.get("classification") or "")
         if classification and classification not in {
             "incident_scope_unresolved", "open_root_required", "root_cause_unresolved",
-            "policy_outcome_unresolved",
+            "policy_outcome_unresolved", "routine_observation_suppressed",
         }:
             grounded_eligible.append(case_id)
             if classification == "blocked_external_probe":
@@ -305,10 +310,23 @@ def evaluate_business_value(
                 if decision.get("evidence") and is_terminal_local_in_deny(dict(facts)):
                     grounded_passed.append(case_id)
             else:
-                for session in case_sessions:
-                    if _confirmed_decision_is_grounded(case, session, decision):
-                        grounded_passed.append(case_id)
-                        break
+                facts = dict(case.get("sourcePayload") or {}).get("incidentFacts") or {}
+                sentinel_evidence_id = str(dict(facts).get("sentinelEvidenceId") or "")
+                cited = {
+                    str(item.get("evidenceId") or "")
+                    for item in decision.get("evidence") or ()
+                    if isinstance(item, Mapping)
+                }
+                sentinel_grounded = bool(
+                    sentinel_evidence_id and sentinel_evidence_id in cited
+                )
+                if sentinel_grounded:
+                    grounded_passed.append(case_id)
+                else:
+                    for session in case_sessions:
+                        if _confirmed_decision_is_grounded(case, session, decision):
+                            grounded_passed.append(case_id)
+                            break
 
         action_ready = any(
             event.get("kind") == "business_decision_recorded"
@@ -462,6 +480,7 @@ def evaluate_business_value(
         "sessionCount": len(sessions),
         "cohortPolicy": {
             "acceptanceOnly": acceptance_only,
+            "productionOnly": production_only,
             "latestAcceptanceRunId": latest_acceptance_run,
             "supersededAcceptanceCasesExcluded": superseded_acceptance_count,
             "productionCasesExcluded": production_excluded_count,

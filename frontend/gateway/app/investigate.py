@@ -67,6 +67,7 @@ from core.trace.events import TraceEvent
 # Opening probes per fault family. These run before the model sees anything, so
 # the first thing it reads is what the box actually said.
 FAMILY_PROBES: dict[str, list[str]] = {
+    "fam-management-auth": ["adapter:admin_auth_window"],
     "fam-host-config-drift": [
         "ip -br link show",
         "ip -br addr show",
@@ -80,9 +81,9 @@ FAMILY_PROBES: dict[str, list[str]] = {
         "free -m",
     ],
     "fam-address-ownership": [
+        "adapter:environment_finding",
         "ip neigh show",
         "ip -br addr show",
-        "arp -n",
     ],
     "fam-exposure": [
         "ss -tulpn",
@@ -346,6 +347,8 @@ _READONLY_ADAPTER_PROBES = frozenset({
     "adapter:case_flow_window",
     "adapter:device_history",
     "adapter:live_flows",
+    "adapter:environment_finding",
+    "adapter:admin_auth_window",
 })
 
 
@@ -365,6 +368,10 @@ def _diagnostic_signal_family(command: str) -> str | None:
         return "flow_window"
     if command == "adapter:fortigate_context":
         return "device_configuration"
+    if command == "adapter:environment_finding":
+        return "address_ownership_ledger"
+    if command == "adapter:admin_auth_window":
+        return "gateway_auth_events"
     if command in {"adapter:device_history", "adapter:live_flows"}:
         return "device_telemetry"
     prefixes = (
@@ -398,6 +405,26 @@ def _execute_readonly_probe(session: "Session", command: str) -> dict[str, Any]:
 
             payload = collect_fortigate_context(session.subject)
             ok = not bool(payload.get("degraded"))
+        elif command == "adapter:environment_finding":
+            from .investigation_tools import collect_environment_finding
+
+            payload = collect_environment_finding(
+                str(session.incident_facts.get("environmentFindingId") or ""),
+                session.subject,
+            )
+            ok = bool(payload.get("available"))
+        elif command == "adapter:admin_auth_window":
+            from .investigation_tools import collect_admin_auth_window
+
+            payload = collect_admin_auth_window(
+                session.incident_start,
+                session.incident_end,
+                failure_threshold=int(session.incident_facts.get("threshold") or 12),
+                distinct_source_threshold=int(
+                    session.incident_facts.get("distinctSourceThreshold") or 5
+                ),
+            )
+            ok = bool(payload.get("available"))
         elif command == "adapter:case_flow_window":
             from .investigation_tools import collect_case_flow_window
 
@@ -715,14 +742,22 @@ def _root_keys(record: MemoryRecord) -> list[str]:
     return [tag[len("root:"):] for tag in record.tags if tag.startswith("root:") and len(tag) > 5]
 
 
+def _memory_eligible_probes() -> set[str]:
+    return {
+        *TRIAGE_PROBES,
+        *(spec.probe for spec in _ACTIVE_ROOTS.values()),
+    }
+
+
 def _record_probes(record: MemoryRecord) -> tuple[list[str], list[str]]:
-    """Resolve only known triage probes, preserving the memory's declared order."""
+    """Resolve only registered read-only probes, preserving the declared order."""
     commands: list[str] = []
     skills: list[str] = []
+    eligible = _memory_eligible_probes()
     for tag in record.tags:
         if tag.startswith("probe:"):
             command = tag[len("probe:"):]
-            if command in TRIAGE_PROBES:
+            if command in eligible:
                 commands.append(command)
             continue
         if not tag.startswith("skill:"):
@@ -742,6 +777,7 @@ def _probe_prior(
     memory: TieredMemoryStore | None,
     *,
     as_of: datetime | None = None,
+    candidate_probes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Return a full triage permutation plus the memories that earned its prefix.
 
@@ -749,8 +785,9 @@ def _probe_prior(
     zero routing weight.  Partly stale records keep a proportionally smaller vote;
     this uses the shared lifecycle contract rather than inventing a second clock.
     """
+    catalogue = list(candidate_probes or TRIAGE_PROBES)
     empty = {
-        "ordered": list(TRIAGE_PROBES),
+        "ordered": catalogue,
         "preferred": [],
         "skills": [],
         "memory_ids": [],
@@ -928,14 +965,15 @@ def _probe_prior(
 
     # Naming the whole sweep supplies no choice. Preserve the original order and
     # emit no shortcut attribution in that case; claiming savings would be fiction.
-    strictly_narrowed = bool(preferred) and set(preferred) < set(TRIAGE_PROBES)
+    preferred = [command for command in preferred if command in catalogue]
+    strictly_narrowed = bool(preferred) and set(preferred) < set(catalogue)
     if not strictly_narrowed:
         return {
             **empty,
             "considered": considered,
             "retrieval_results": retrieval_results,
         }
-    ordered = preferred + [command for command in TRIAGE_PROBES if command not in preferred]
+    ordered = preferred + [command for command in catalogue if command not in preferred]
     attributed = [*procedures, *semantics]
     for item in considered:
         item["influenced_order"] = item["memory_id"] in attributed
@@ -982,7 +1020,9 @@ def _confirmed_root_keys(evidence: list[dict[str, Any]], subject: str | None) ->
 
     neighbours = _output_for(evidence, "ip neigh show")
     if subject and neighbours is not None and any(
-        subject in line and re.search(r"\bFAILED\b", line) for line in neighbours.splitlines()
+        line.split(maxsplit=1)[0] == subject and re.search(r"\bFAILED\b", line)
+        for line in neighbours.splitlines()
+        if line.split()
     ):
         confirmed.add("neighbor_unreachable")
 
@@ -2015,6 +2055,7 @@ def start(
             datetime.fromisoformat(session.incident_end.replace("Z", "+00:00"))
             if session.incident_end else None
         ),
+        candidate_probes=list(TRIAGE_PROBES if uses_triage else extra),
     )
     if uses_triage:
         prior = memory_prior
@@ -2084,6 +2125,7 @@ def start(
     )
     if (
         not case_driven_policy
+        and family != "fam-address-ownership"
         and subject
         and not unit_subject
         and re.fullmatch(r"[\w.:-]{1,64}", subject)
@@ -2766,7 +2808,7 @@ def _remember_confirmed_procedure(
         str(item.get("command") or "")
         for item in session.evidence
         if item.get("evidence_id") in evidence_ids
-        and str(item.get("command") or "") in TRIAGE_PROBES
+        and str(item.get("command") or "") in _memory_eligible_probes()
     ))
     if not commands:
         return None
@@ -3105,6 +3147,76 @@ def _evidence_for_root(
     )
 
 
+def _confirmed_root_business_text(
+    session: Session,
+    root: Mapping[str, Any],
+    *,
+    memory_shortcut: bool,
+    action_eligible: bool,
+) -> tuple[str, str, str]:
+    """Translate a confirmed mechanism into the concrete operator decision."""
+    root_id = str(root.get("hypothesis_id") or "confirmed_root")
+    subject = session.subject or "受管对象"
+    facts = dict(session.incident_facts or {})
+    if root_id == "duplicate_ip_static":
+        measured = dict(facts.get("measured") or {})
+        verification = dict(facts.get("verification") or {})
+        macs = [str(value) for value in measured.get("macs") or ()]
+        handovers = int(measured.get("handovers") or 0)
+        summary = str(verification.get("note_zh") or verification.get("note") or "").strip()
+        if not summary:
+            summary = (
+                f"{subject} 在 {len(macs)} 个 MAC 间发生 {handovers} 次归属切换，"
+                "当前 L2 采集与 DHCP 绑定不一致。"
+            )
+        return (
+            f"已确认 {subject} 存在地址归属冲突",
+            summary,
+            (
+                "按记录中的冲突 MAC 查询交换机端口，确认合法设备后调整静态地址或 DHCP 保留；"
+                "变更完成后重新采集 ARP、DHCP 与连续 L2 归属。"
+            ),
+        )
+    if root_id == "admin_bruteforce_lockout":
+        output = _output_for(session.evidence, "adapter:admin_auth_window") or "{}"
+        try:
+            measured = dict(json.loads(output))
+        except (TypeError, ValueError):
+            measured = {}
+        failures = int(measured.get("failed_logins") or facts.get("failedLogins") or 0)
+        distinct = int(measured.get("distinct_sources") or facts.get("distinctSources") or 0)
+        lockouts = int(measured.get("lockouts") or facts.get("lockouts") or 0)
+        return (
+            "已确认防火墙管理口遭遇分布式登录攻击",
+            f"事件窗口内记录 {failures} 次失败登录，来自 {distinct} 个来源地址，触发 {lockouts} 次锁定。",
+            (
+                "由设备负责人确认合法管理来源，收紧管理账户 trusthost 或关闭公网管理入口；"
+                "策略提交后重新查询失败登录、锁定与管理口放行记录。"
+            ),
+        )
+    labels = {
+        "carrier_down": "受管物理网口失去载波",
+        "default_route_missing": "主机缺少可用默认路由",
+        "neighbor_unreachable": "目标地址当前无法完成邻居解析",
+        "service_failed": "受管服务进入失败状态",
+        "disk_pressure": "可写文件系统达到容量阈值",
+        "memory_pressure": "主机可用内存低于阈值",
+        "healthcheck_failed": "调查服务健康检查失败",
+    }
+    headline = f"已确认：{labels.get(root_id, str(root.get('statement') or root_id))}"
+    summary = (
+        "复发记忆把已验证探针排到首位，当前读数再次确认同一根因。"
+        if memory_shortcut
+        else "当前只读观察完成候选原因排查，并确认该故障条件。"
+    )
+    disposition = (
+        "允许执行已通过前置检查的单一动作，动作完成后回读原系统。"
+        if action_eligible
+        else "当前动作目录没有适用的安全操作，案件携带已确认根因转交责任人。"
+    )
+    return headline, summary, disposition
+
+
 def complete(session_id: str) -> dict[str, Any]:
     """Advance a session until it has a business decision or an exact next probe."""
     from domains.network_rca.business_decision import (
@@ -3247,22 +3359,20 @@ def complete(session_id: str) -> dict[str, Any]:
             procedure_memory_id = _remember_confirmed_procedure(session, root)
         candidate = action_candidate(session.session_id)
         eligible = bool(candidate.get("eligible"))
+        headline, summary, disposition = _confirmed_root_business_text(
+            session,
+            root,
+            memory_shortcut=shortcut_root is not None,
+            action_eligible=eligible,
+        )
         decision = BusinessDecision(
             case_id=case_key,
             session_id=session.session_id,
             state="action_ready" if eligible else "escalated",
             classification=str(root.get("hypothesis_id") or "confirmed_root"),
-            headline=f"已确认：{root.get('statement') or root.get('hypothesis_id')}",
-            summary=(
-                "复发记忆命中同一受管对象，记忆指定的首项探针已用当前读数再次确认根因。"
-                if shortcut_root is not None
-                else "当前只读观察已排除竞争原因，并确认一个根因。"
-            ),
-            disposition=(
-                "允许执行已通过前置检查的单一动作，完成后必须回读原系统。"
-                if eligible
-                else "根因已确认，当前动作白名单没有适用操作，案件升级到明确责任人。"
-            ),
+            headline=headline,
+            summary=summary,
+            disposition=disposition,
             action=(
                 f"{candidate.get('action')} {candidate.get('target')}"
                 if eligible else "不执行自动动作"
@@ -3272,6 +3382,11 @@ def complete(session_id: str) -> dict[str, Any]:
         )
     elif len(confirmed) > 1:
         ids = [str(item.get("hypothesis_id") or "") for item in confirmed]
+        supporting_ids = list(dict.fromkeys(
+            str(evidence_id)
+            for item in confirmed
+            for evidence_id in item.get("supporting_evidence_ids") or ()
+        ))
         decision = BusinessDecision(
             case_id=case_key,
             session_id=session.session_id,
@@ -3282,15 +3397,7 @@ def complete(session_id: str) -> dict[str, Any]:
             disposition="拆分动作并逐项回读，任何一项失败都保留原案件。",
             action="等待按故障条件生成独立动作",
             impacted_assets=tuple(session.asset_ids),
-            evidence=tuple(
-                DecisionEvidence(
-                    evidence_id=f"root:{root_id}",
-                    label="已确认故障条件",
-                    value=root_id,
-                    source="deterministic hypothesis loop",
-                )
-                for root_id in ids
-            ),
+            evidence=_evidence_for_root(session, supporting_ids),
         )
     else:
         decision = BusinessDecision(

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import hashlib
+import ipaddress
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -33,15 +34,94 @@ def _managed_gateway() -> str:
 
 def _case_family(rule_id: str, service: str, summary: str) -> str | None:
     text = " ".join((rule_id, service, summary)).casefold()
+    if any(marker in text for marker in ("bruteforce", "login", "lockout", "admin_auth")):
+        return "fam-management-auth"
     if any(marker in text for marker in ("deny", "policy", "firewall", "拒绝", "策略")):
         return "fam-policy-reachability"
-    if any(marker in text for marker in ("arp", "dhcp", "address", "mac", "地址")):
+    if any(marker in text for marker in (
+        "arp", "dhcp", "address", "mac", "identity", "ownership", "duplicate_ip", "地址",
+    )):
         return "fam-address-ownership"
     if any(marker in text for marker in ("service", "health", "cpu", "memory", "服务", "内存")):
         return "fam-perception-selfheal"
     if any(marker in text for marker in ("exposure", "port", "listen", "暴露", "端口")):
         return "fam-exposure"
     return None
+
+
+def _bounded_environment_facts(finding: dict[str, Any], checked_at: str) -> dict[str, Any]:
+    """Keep the current measurements needed by a probe, without copying a whole sweep."""
+    measured = dict(finding.get("measured") or {})
+    transitions = list(measured.get("transitions") or ())
+    if len(transitions) > 24:
+        measured["transitions"] = [*transitions[:4], *transitions[-20:]]
+        measured["transitions_truncated"] = max(
+            int(measured.get("transitions_truncated") or 0), len(transitions) - 24,
+        )
+    verification = dict(finding.get("verification") or {})
+    return {
+        "dataClassification": "observed",
+        "observedAt": checked_at,
+        "environmentFindingId": str(finding.get("finding_id") or ""),
+        "detector": str(finding.get("detector") or ""),
+        "faultClass": str(finding.get("fault_class") or ""),
+        "segment": str(finding.get("segment") or ""),
+        "subjectKind": str(finding.get("subject_kind") or ""),
+        "confidence": finding.get("confidence"),
+        "measured": measured,
+        "verification": verification,
+        "cannotProve": list(finding.get("cannot_prove") or ()),
+        "nextProbe": str(finding.get("next_probe") or ""),
+        "evidenceSource": str(dict(finding.get("evidence") or {}).get("source") or ""),
+    }
+
+
+def sync_environment_cases(
+    report: dict[str, Any], repository: InvestigationCaseRepository,
+) -> list[str]:
+    """Promote fresh, confirmed environment contradictions into durable cases.
+
+    Medium inventory gaps stay in the environment report.  Automatic investigation
+    is reserved for a high-impact condition that a current source has confirmed,
+    which prevents the address inventory from becoming a second alert flood.
+    """
+    checked_at = str(report.get("checked_at") or "").strip()
+    if not checked_at:
+        return []
+    case_ids: list[str] = []
+    for finding in report.get("findings") or ():
+        if not isinstance(finding, dict):
+            continue
+        verification = dict(finding.get("verification") or {})
+        severity = str(finding.get("severity") or "").casefold()
+        source_id = str(finding.get("finding_id") or "").strip()
+        subject = str(finding.get("subject") or "").strip()
+        if (
+            verification.get("state") != "confirmed"
+            or severity not in {"high", "critical"}
+            or not source_id
+            or not subject
+        ):
+            continue
+        facts = _bounded_environment_facts(finding, checked_at)
+        headline = str(finding.get("headline") or source_id)
+        case = repository.ingest(CaseObservation(
+            source=SourceReference("environment_finding", source_id),
+            occurred_at=checked_at,
+            severity=severity,
+            subject=subject,
+            service=str(finding.get("fault_class") or "environment"),
+            rule_id=str(finding.get("detector") or "environment_sweep"),
+            scope=str(finding.get("segment") or "environment"),
+            summary=headline,
+            payload={
+                "dataClassification": "observed",
+                "headline": headline,
+                "incidentFacts": facts,
+            },
+        ))
+        case_ids.append(case.case_id)
+    return case_ids
 
 
 def derive_investigation_scope(case: Any) -> dict[str, Any]:
@@ -115,6 +195,62 @@ def _prior_recurrence(
     )
 
 
+def _is_routine_lan_broadcast(facts: dict[str, Any]) -> bool:
+    source = str(facts.get("sourceIp") or "")
+    destination = str(facts.get("destinationIp") or "")
+    try:
+        source_ip = ipaddress.ip_address(source)
+        destination_ip = ipaddress.ip_address(destination)
+    except ValueError:
+        return False
+    return bool(
+        source_ip.is_private
+        and str(facts.get("sourceInterfaceRole") or "").casefold() == "lan"
+        and str(facts.get("trafficSubtype") or "").casefold() == "local"
+        and str(facts.get("action") or "").casefold() == "deny"
+        and (destination_ip.is_multicast or destination.endswith(".255"))
+    )
+
+
+def resolve_routine_observations(
+    repository: InvestigationCaseRepository, *, limit: int = 500,
+) -> int:
+    """Close already-landed LAN group traffic without creating Agent sessions."""
+    resolved = 0
+    for case in repository.list(status="open", limit=limit):
+        facts = dict(case.source_payload.get("incidentFacts") or {})
+        if not _is_routine_lan_broadcast(facts):
+            continue
+        decision = {
+            "caseId": case.case_id,
+            "sessionId": "",
+            "state": "resolved",
+            "classification": "routine_observation_suppressed",
+            "headline": "内网组播或广播拒绝记录保留为观测，不启动事故调查",
+            "summary": (
+                f"{facts.get('sourceIp')} 发往 {facts.get('destinationIp')} 的 "
+                f"{facts.get('service') or '组流量'} 已由本机策略拒绝。"
+            ),
+            "disposition": "保留源记录用于趋势统计；只有目标变为单播资产或影响业务时重新开案。",
+            "action": "不执行操作",
+            "impactedAssets": [],
+            "evidence": [],
+            "missingObservations": [],
+            "nextProbe": None,
+            "readback": None,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        repository.append_event(
+            case.case_id,
+            kind="business_decision_recorded",
+            payload={"decision": decision},
+            status="resolved",
+            event_id=f"{case.case_id}:routine-observation-suppressed",
+        )
+        resolved += 1
+    return resolved
+
+
 def auto_start_pending_cases(
     repository: InvestigationCaseRepository,
     *,
@@ -184,7 +320,7 @@ def auto_start_pending_cases(
         )
         if age_seconds < -60 or age_seconds > allowed_age:
             continue
-        actionable = bool(case.latest_suggestion_id) or case.severity.casefold() in {
+        actionable = deterministic_backfill or bool(case.latest_suggestion_id) or case.severity.casefold() in {
             "high", "critical", "error",
         }
         if not actionable:
@@ -343,7 +479,13 @@ def _merge_incident_facts(
 
 def _detection_summary(item: dict[str, Any]) -> str:
     facts = dict(item.get("incidentFacts") or {})
-    if not facts:
+    if not facts or not any(
+        facts.get(field) not in (None, "")
+        for field in (
+            "destinationIp", "destinationPort", "policyId", "policyType",
+            "denyCount", "trafficSubtype",
+        )
+    ):
         return str(item.get("summary") or item.get("scenario") or "")
     source = str(facts.get("sourceIp") or item.get("deviceKey") or "未知来源")
     destination = str(facts.get("destinationIp") or "未知目标")
@@ -377,7 +519,7 @@ def sync_snapshot_cases(
         if not source_id or not occurred_at:
             continue
         alert_facts[source_id] = dict(item.get("incidentFacts") or {})
-        repository.ingest(CaseObservation(
+        case = repository.ingest(CaseObservation(
             source=SourceReference("alert", source_id),
             occurred_at=occurred_at,
             severity=str(item.get("severity") or ""),
@@ -406,7 +548,7 @@ def sync_snapshot_cases(
         incident_ref = str(item.get("incidentRef") or "").strip()
         if incident_ref:
             related.append(SourceReference("incident", incident_ref))
-        repository.ingest(CaseObservation(
+        case = repository.ingest(CaseObservation(
             source=SourceReference("suggestion", source_id),
             occurred_at=occurred_at,
             severity=str(item.get("severity") or ""),
@@ -420,6 +562,26 @@ def sync_snapshot_cases(
             timeline=(),
             payload=dict(item),
         ))
+        for transition in item.get("businessTransitions") or ():
+            if not isinstance(transition, dict):
+                continue
+            transition_payload = {
+                key: value for key, value in transition.items()
+                if key not in {"kind", "ts", "eventId", "caseStatus"}
+            }
+            if isinstance(transition_payload.get("decision"), dict):
+                transition_payload["decision"] = {
+                    **transition_payload["decision"],
+                    "caseId": case.case_id,
+                }
+            repository.append_event(
+                case.case_id,
+                kind=str(transition.get("kind") or "source_transition"),
+                payload=transition_payload,
+                status=str(transition.get("caseStatus") or "investigating"),
+                occurred_at=str(transition.get("ts") or occurred_at),
+                event_id=str(transition.get("eventId") or "") or None,
+            )
 
     # Alert source rows may carry exact fields that were absent from an older
     # suggestion projection. Rebuild the case projection after both inputs land.
@@ -452,4 +614,53 @@ def sync_snapshot_cases(
                 item["caseDecision"] = (
                     case.as_dict().get("businessDecision") if case is not None else None
                 )
+    existing_case_ids = {
+        str(item.get("caseId") or "")
+        for item in snapshot.get("suggestions") or ()
+        if item.get("caseId")
+    }
+    projected: list[dict[str, Any]] = []
+    cutoff = datetime.now(timezone.utc).timestamp() - 48 * 3600
+    for case in repository.list(limit=100):
+        if case.case_id in existing_case_ids:
+            continue
+        if str(case.source_payload.get("dataClassification") or "observed") != "observed":
+            continue
+        try:
+            if _at(case.last_seen_at).timestamp() < cutoff:
+                continue
+        except ValueError:
+            continue
+        decision = case.as_dict().get("businessDecision")
+        classification = str(dict(decision or {}).get("classification") or "")
+        if classification == "routine_observation_suppressed":
+            continue
+        if case.severity.casefold() not in {"high", "critical", "error"} and not decision:
+            continue
+        priority = "P1" if case.severity.casefold() in {"critical", "error"} else "P2"
+        projected.append({
+            "id": f"durable-{case.case_id}",
+            "ts": case.last_seen_at,
+            "scope": case.scope or "investigation-case",
+            "severity": case.severity,
+            "priority": priority,
+            "summary": case.summary,
+            "caseId": case.case_id,
+            "service": case.service,
+            "device": case.subject,
+            "deviceKey": case.subject,
+            "clusterSize": case.occurrence_count,
+            "incidentFacts": dict(case.source_payload.get("incidentFacts") or {}),
+            "caseDecision": decision,
+            "dataClassification": "observed",
+        })
+    if projected:
+        suggestions = [*(snapshot.get("suggestions") or []), *projected]
+        suggestions.sort(key=lambda item: str(item.get("ts") or ""), reverse=True)
+        snapshot["suggestions"] = suggestions[:20]
+        snapshot["ready"] = True
+        snapshot["defaultSuggestionId"] = str(snapshot["suggestions"][0].get("id") or "")
+        runtime = dict(snapshot.get("runtime") or {})
+        runtime["latestSuggestionTs"] = str(snapshot["suggestions"][0].get("ts") or "")
+        snapshot["runtime"] = runtime
     return snapshot

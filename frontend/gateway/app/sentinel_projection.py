@@ -439,9 +439,122 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         for cycle in ((escalated or {}).get("prior_cycles") or [])
         if isinstance(cycle, dict)
     ]
+    cycle_opened_at = next(
+        (str(event.get("at") or "") for event in chain if event.get("kind") == "detected"),
+        str(detection.get("at") or ""),
+    )
+    evidence_id = "sev-" + _stable_id(
+        subject,
+        str(detection.get("detector") or ""),
+        cycle_opened_at,
+        evidence_line,
+    )[:16]
+    classification = {
+        "failed_units": "service_failed",
+        "dead_interfaces": "carrier_down",
+        "admin_bruteforce": "admin_bruteforce",
+    }.get(str(detection.get("detector") or ""), str(detection.get("detector") or "sentinel"))
+    managed_target = host_address() or subject
+    incident_facts = {
+        "dataClassification": _data_classification(subject, detection),
+        "observedAt": str(detection.get("at") or ""),
+        "detector": str(detection.get("detector") or ""),
+        "family": str(detection.get("family") or ""),
+        "managedTarget": managed_target,
+        "sourceIp": subject if _is_ipv4(subject) else "",
+        "service": subject if not _is_ipv4(subject) else "ssh",
+        "action": action,
+        "sentinelEvidenceId": evidence_id,
+        "sentinelEvidence": dict(detection.get("evidence") or {}),
+    }
+    decision_evidence = [{
+        "evidenceId": evidence_id,
+        "label": "巡检当前读数" if not en else "current detector reading",
+        "value": evidence_line or statement,
+        "source": f"sentinel:{detection.get('detector') or 'detector'}",
+        "observedAt": str(detection.get("at") or ""),
+    }]
+
+    def decision(state: str, *, readback: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "caseId": "",
+            "sessionId": "",
+            "state": state,
+            "classification": classification,
+            "headline": statement,
+            "summary": statement,
+            "disposition": (
+                str((escalated or {}).get("reason") or no_action_reason)
+                if state == "escalated"
+                else str((resolved or {}).get("note") or (remediated or {}).get("detail") or disposition)
+            ),
+            "action": action_text if action else candidate_action_text or "不执行操作",
+            "service": subject,
+            "impactedAssets": [managed_target],
+            "evidence": decision_evidence,
+            "missingObservations": [],
+            "nextProbe": None,
+            "readback": readback,
+            "generatedAt": last_ts,
+        }
+
+    business_transitions: list[dict[str, Any]] = []
+    if action and preflight and preflight.get("eligible") is not False:
+        business_transitions.append({
+            "kind": "business_decision_recorded",
+            "ts": str(preflight.get("at") or last_ts),
+            "eventId": f"{evidence_id}:action-ready",
+            "caseStatus": "waiting",
+            "decision": decision("action_ready"),
+        })
+    if committed or remediated:
+        action_started_at = str((committed or preflight or detection).get("at") or last_ts)
+        business_transitions.append({
+            "kind": "remediation_started",
+            "ts": action_started_at,
+            "eventId": f"{evidence_id}:remediation-started",
+            "caseStatus": "waiting",
+            "action": action,
+            "target": subject,
+        })
+    if remediated:
+        business_transitions.append({
+            "kind": "remediation_completed",
+            "ts": str(remediated.get("at") or last_ts),
+            "eventId": f"{evidence_id}:remediation-completed",
+            "caseStatus": "resolved" if not remediated.get("needs_human") else "escalated",
+            "action": action,
+            "target": subject,
+            "outcome": str(remediated.get("outcome") or ""),
+        })
+    final_state = (
+        "escalated" if verdict_status in {"escalated", "needs_human", "reported", "declined"}
+        else "resolved" if verdict_status == "closed"
+        else "observing" if disposition in {"observing", "acting"}
+        else "investigating"
+    )
+    readback = None
+    if remediated or resolved:
+        readback = {
+            "outcome": str((remediated or {}).get("outcome") or "passed"),
+            "samples": int((remediated or {}).get("samples") or 0),
+            "detail": str((resolved or {}).get("note") or (remediated or {}).get("detail") or ""),
+            "observedAt": str((resolved or remediated or {}).get("at") or last_ts),
+        }
+    business_transitions.append({
+        "kind": "business_decision_recorded",
+        "ts": last_ts,
+        "eventId": f"{evidence_id}:decision:{final_state}",
+        "caseStatus": {
+            "resolved": "resolved",
+            "escalated": "escalated",
+            "observing": "waiting",
+        }.get(final_state, "investigating"),
+        "decision": decision(final_state, readback=readback),
+    })
 
     return {
-        "id": f"sentinel-{_stable_id(subject)[:16]}",
+        "id": f"sentinel-{_stable_id(subject, cycle_opened_at)[:16]}",
         "dataClassification": _data_classification(subject, detection),
         "incidentRef": incident_ref(chain) if any(
             row.get("kind") == "detected" for row in chain
@@ -453,6 +566,9 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         "priority": priority,
         "summary": statement,
         "service": subject,
+        "ruleId": f"sentinel:{detection.get('detector') or 'detector'}",
+        "incidentFacts": incident_facts,
+        "businessTransitions": business_transitions,
         # deviceKey is what the theater passes to the live-progress panel, so it
         # must be the sentinel's own subject string verbatim.
         "device": subject,

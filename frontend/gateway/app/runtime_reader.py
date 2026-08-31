@@ -221,8 +221,18 @@ def _alert_incident_facts(raw: dict[str, Any]) -> dict[str, Any]:
         "destinationInterface": str(event.get("dstintf") or ""),
         "destinationInterfaceRole": str(event.get("dstintfrole") or ""),
         "denyCount": metrics.get("deny_count"),
-        "threshold": metrics.get("threshold"),
+        "threshold": metrics.get("threshold") or metrics.get("failure_threshold"),
         "windowSeconds": metrics.get("window_sec"),
+        "failedLogins": metrics.get("failed_logins"),
+        "distinctSources": metrics.get("distinct_sources"),
+        "distinctSourceThreshold": metrics.get("distinct_source_threshold"),
+        "lockouts": metrics.get("lockouts"),
+        "topSources": list(metrics.get("top_sources") or ()),
+        "username": str(event.get("user") or ""),
+        "authMethod": str(event.get("method") or ""),
+        "authStatus": str(event.get("event_status") or ""),
+        "authReason": str(event.get("reason") or ""),
+        "managedDevice": str(event.get("device_key") or raw.get("src_device_key") or ""),
     }
 
 

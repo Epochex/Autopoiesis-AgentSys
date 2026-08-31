@@ -144,4 +144,96 @@ def collect_case_flow_window(
     }
 
 
-__all__ = ["collect_case_flow_window", "collect_fortigate_context"]
+def collect_environment_finding(finding_id: str, subject: str | None) -> dict[str, Any]:
+    """Re-read one environment finding from the latest source-backed sweep."""
+    from domains.network_rca.environment import build_environment_report
+
+    report = build_environment_report()
+    finding = next(
+        (
+            dict(item) for item in report.get("findings") or ()
+            if str(item.get("finding_id") or "") == finding_id
+            and (not subject or str(item.get("subject") or "") == subject)
+        ),
+        None,
+    )
+    if finding is None:
+        return {
+            "available": True,
+            "checked_at": report.get("checked_at"),
+            "finding_id": finding_id,
+            "subject": subject,
+            "verification": {"state": "cleared"},
+        }
+    measured = dict(finding.get("measured") or {})
+    transitions = list(measured.get("transitions") or ())
+    if len(transitions) > 24:
+        measured["transitions"] = [*transitions[:4], *transitions[-20:]]
+        measured["transitions_truncated"] = len(transitions) - 24
+    return {
+        "available": True,
+        "checked_at": report.get("checked_at"),
+        "finding_id": finding_id,
+        "subject": finding.get("subject"),
+        "fault_class": finding.get("fault_class"),
+        "severity": finding.get("severity"),
+        "measured": measured,
+        "verification": dict(finding.get("verification") or {}),
+        "evidence": dict(finding.get("evidence") or {}),
+        "cannot_prove": list(finding.get("cannot_prove") or ()),
+    }
+
+
+def collect_admin_auth_window(
+    incident_start: str | None, incident_end: str | None,
+    *,
+    failure_threshold: int = 12,
+    distinct_source_threshold: int = 5,
+) -> dict[str, Any]:
+    """Read the exact gateway authentication window from ClickHouse."""
+    from .history import _CH_DB, _q
+
+    try:
+        start = datetime.fromisoformat(str(incident_start or "").replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(incident_end or "").replace("Z", "+00:00"))
+    except ValueError:
+        return {"available": False, "reason": "incident_window_required"}
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    start_text = start.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    end_text = end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    rows = _q(
+        "SELECT countIf(event_type='admin_login_failed') AS failed_logins, "
+        "uniqExactIf(srcip, event_type='admin_login_failed' AND srcip!='') AS distinct_sources, "
+        "countIf(event_type='admin_login_lockout') AS lockouts, "
+        "groupUniqArrayIf(12)(srcip, event_type='admin_login_failed' AND srcip!='') AS sources, "
+        "groupUniqArrayIf(12)(username, username!='') AS usernames, "
+        "min(event_ts) AS first_seen, max(event_ts) AS last_seen "
+        f"FROM {_CH_DB}.security_events "
+        f"WHERE event_ts >= toDateTime64('{start_text}',3) "
+        f"AND event_ts <= toDateTime64('{end_text}',3)"
+    )
+    row = rows[0] if rows else {}
+    return {
+        "available": True,
+        "failure_threshold": max(1, int(failure_threshold)),
+        "distinct_source_threshold": max(1, int(distinct_source_threshold)),
+        "query_scope": {"start": start.isoformat(), "end": end.isoformat()},
+        "failed_logins": int(row.get("failed_logins") or 0),
+        "distinct_sources": int(row.get("distinct_sources") or 0),
+        "lockouts": int(row.get("lockouts") or 0),
+        "sources": list(row.get("sources") or ()),
+        "usernames": list(row.get("usernames") or ()),
+        "first_seen": row.get("first_seen"),
+        "last_seen": row.get("last_seen"),
+    }
+
+
+__all__ = [
+    "collect_case_flow_window",
+    "collect_admin_auth_window",
+    "collect_environment_finding",
+    "collect_fortigate_context",
+]

@@ -8,6 +8,7 @@ fields are intentionally outside this production detector.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,9 @@ class DetectionPolicy:
     deny_threshold: int = 30
     byte_window_seconds: int = 300
     byte_threshold: int = 20_000_000
+    auth_window_seconds: int = 60
+    auth_failure_threshold: int = 12
+    auth_distinct_source_threshold: int = 5
     cooldown_seconds: int = 60
     accepted_source_kinds: tuple[str, ...] = ("real",)
 
@@ -57,7 +61,10 @@ class EventDetector:
     def __init__(self, policy: DetectionPolicy | None = None):
         self.policy = policy or DetectionPolicy()
         self._deny: dict[tuple[str, ...], deque[datetime]] = defaultdict(deque)
+        self._deny_alerted: set[tuple[str, ...]] = set()
         self._byte: dict[str, deque[tuple[datetime, int]]] = defaultdict(deque)
+        self._auth: dict[str, deque[tuple[datetime, str, str, str]]] = defaultdict(deque)
+        self._auth_alerted: set[str] = set()
         self._last_alert: dict[str, datetime] = {}
 
     def process(self, event: dict[str, Any]) -> list[dict[str, Any]]:
@@ -71,10 +78,91 @@ class EventDetector:
         byte = self._byte_spike(event, observed_at)
         if byte is not None:
             alerts.append(byte)
+        auth = self._admin_auth_attack(event, observed_at)
+        if auth is not None:
+            alerts.append(auth)
         return alerts
+
+    def _admin_auth_attack(
+        self, event: dict[str, Any], now: datetime,
+    ) -> dict[str, Any] | None:
+        if str(event.get("type") or "").casefold() != "event":
+            return None
+        combined = " ".join(str(event.get(field) or "") for field in (
+            "logdesc", "msg", "action", "event_status", "reason",
+        )).casefold()
+        login = "login" in combined or str(event.get("action") or "").casefold() == "login"
+        failed = login and any(
+            marker in combined
+            for marker in ("failed", "failure", "invalid", "exceed_limit", "lockout", "disabled")
+        )
+        if not failed:
+            return None
+        device = str(event.get("device_key") or event.get("devname") or "fortigate")
+        source = str(event.get("srcip") or "unknown")
+        user = str(event.get("user") or "")
+        reason = str(event.get("reason") or "")
+        bucket = self._auth[device]
+        cutoff = now - timedelta(seconds=self.policy.auth_window_seconds)
+        while bucket and bucket[0][0] < cutoff:
+            bucket.popleft()
+        if not bucket:
+            self._auth_alerted.discard(device)
+        bucket.append((now, source, user, reason))
+        sources = {row[1] for row in bucket if row[1] not in {"", "unknown"}}
+        lockouts = sum(
+            1 for row in bucket
+            if any(marker in row[3].casefold() for marker in ("exceed_limit", "lockout"))
+        )
+        threshold_met = bool(
+            len(bucket) >= self.policy.auth_failure_threshold
+            and len(sources) >= self.policy.auth_distinct_source_threshold
+        )
+        if not threshold_met and lockouts == 0:
+            return None
+        if device in self._auth_alerted:
+            return None
+        if not self._cooldown(f"admin_auth_attack|{device}", now):
+            return None
+        self._auth_alerted.add(device)
+        source_counts: dict[str, int] = {}
+        for _at, address, _user, _reason in bucket:
+            source_counts[address] = source_counts.get(address, 0) + 1
+        top_sources = sorted(source_counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+        result = _alert(
+            "admin_auth_attack_v1",
+            "critical",
+            event,
+            now,
+            {"managed_device": device, "method": str(event.get("method") or "")},
+            {
+                "failed_logins": len(bucket),
+                "distinct_sources": len(sources),
+                "lockouts": lockouts,
+                "top_sources": top_sources,
+                "window_sec": self.policy.auth_window_seconds,
+                "failure_threshold": self.policy.auth_failure_threshold,
+                "distinct_source_threshold": self.policy.auth_distinct_source_threshold,
+            },
+        )
+        result["src_device_key"] = device
+        result["event_excerpt"]["service"] = "fortigate-admin"
+        return result
 
     def _deny_burst(self, event: dict[str, Any], now: datetime) -> dict[str, Any] | None:
         if str(event.get("action") or "").casefold() != "deny":
+            return None
+        destination = str(event.get("dstip") or "")
+        try:
+            destination_ip = ipaddress.ip_address(destination)
+        except ValueError:
+            destination_ip = None
+        if (
+            str(event.get("subtype") or "").casefold() == "local"
+            and str(event.get("srcintfrole") or "").casefold() == "lan"
+            and destination_ip is not None
+            and (destination_ip.is_multicast or destination.endswith(".255"))
+        ):
             return None
         key = tuple(str(event.get(field) or "") for field in (
             "srcip", "dstip", "dstport", "service", "policyid", "subtype",
@@ -83,12 +171,17 @@ class EventDetector:
         cutoff = now - timedelta(seconds=self.policy.deny_window_seconds)
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
+        if not bucket:
+            self._deny_alerted.discard(key)
         bucket.append(now)
         if len(bucket) < self.policy.deny_threshold:
+            return None
+        if key in self._deny_alerted:
             return None
         alert_key = "deny_burst|" + "|".join(key)
         if not self._cooldown(alert_key, now):
             return None
+        self._deny_alerted.add(key)
         return _alert(
             "deny_burst_v2",
             "warning",
@@ -169,6 +262,7 @@ def _alert(
         "dstport", "dstintf", "dstintfrole", "service", "src_device_key", "srcmac",
         "mastersrcmac", "devname", "srcname", "devtype", "srchwvendor", "srcfamily",
         "srchwversion", "appcat", "bytes_total", "pkts_total",
+        "device_key", "user", "method", "event_status", "reason", "logdesc", "msg",
     )
     excerpt = {field: event.get(field) for field in excerpt_fields}
     source = event.get("source")

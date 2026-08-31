@@ -25,7 +25,7 @@ spec:
         fsGroup: 65532
       containers:
         - name: event-pipeline
-          image: autopoiesis-event-pipeline:v8
+          image: autopoiesis-event-pipeline:v9
           imagePullPolicy: IfNotPresent
           env:
             - name: AUTOPOIESIS_KAFKA_BROKERS
@@ -56,6 +56,12 @@ spec:
               value: /data/autopoiesis-production/status/event-pipeline.json
             - name: AUTOPOIESIS_OFFSET_RESET
               value: earliest
+            - name: AUTOPOIESIS_AUTH_WINDOW_SECONDS
+              value: "60"
+            - name: AUTOPOIESIS_AUTH_FAILURE_THRESHOLD
+              value: "12"
+            - name: AUTOPOIESIS_AUTH_DISTINCT_SOURCE_THRESHOLD
+              value: "5"
           resources:
             requests:
               cpu: 50m

@@ -103,6 +103,11 @@ def test_a_healed_chain_becomes_one_closed_card(tmp_path, monkeypatch):
     # every recorded step survives into the card the operator clicks
     assert [s["kind"] for s in card["timeline"]] == [e["kind"] for e in HEALED[2:]]
     assert card["runbookDraft"]["planStatus"] == "executed"
+    transitions = card["businessTransitions"]
+    assert transitions[0]["decision"]["state"] == "action_ready"
+    assert transitions[-1]["decision"]["state"] == "resolved"
+    assert transitions[-1]["decision"]["readback"]["outcome"] == "passed"
+    assert transitions[-1]["decision"]["evidence"][0]["evidenceId"] == card["incidentFacts"]["sentinelEvidenceId"]
 
 
 def test_acceptance_unit_is_excluded_from_production_classification(tmp_path, monkeypatch):
@@ -311,6 +316,23 @@ def test_the_card_id_is_stable_across_polls(tmp_path, monkeypatch):
     # a changing id would re-mount the detail pane mid-incident and lose the
     # operator's place every time the chain advanced
     assert early == late
+
+
+def test_new_cycle_gets_a_new_case_source_id(tmp_path, monkeypatch):
+    _write(tmp_path, HEALED, monkeypatch)
+    first = sentinel_cards("zh", now=NOW + 200)[0]["id"]
+    next_cycle = [
+        *HEALED,
+        {"kind": "detected", "at": _at(180), "subject": "demo.service", "severity": "high",
+         "detector": "failed_units", "action": "restart_unit", "family": "fam-perception-selfheal",
+         "summary": "demo.service 又挂了。", "evidence": {"line": "demo.service failed"}, "streak": 2},
+        {"kind": "cooldown", "at": _at(181), "subject": "demo.service",
+         "action": "restart_unit", "remaining_sec": 419},
+    ]
+    _write(tmp_path, next_cycle, monkeypatch)
+    second = sentinel_cards("zh", now=NOW + 200)[0]["id"]
+
+    assert second != first
 
 
 @pytest.mark.parametrize("lang", ["zh", "en"])

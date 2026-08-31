@@ -5,7 +5,11 @@ from domains.network_rca.investigation_case import (
     InvestigationCaseRepository,
     SourceReference,
 )
-from frontend.gateway.app.investigation_cases import sync_snapshot_cases
+from frontend.gateway.app.investigation_cases import (
+    resolve_routine_observations,
+    sync_environment_cases,
+    sync_snapshot_cases,
+)
 
 
 def _repository(tmp_path) -> InvestigationCaseRepository:
@@ -29,6 +33,192 @@ def test_repository_recovers_the_same_case_after_reconstruction(tmp_path) -> Non
     assert recovered.case_id == created.case_id
     assert recovered.sources == (SourceReference("alert", "alert-1"),)
     assert recovered.status == "open"
+
+
+def test_confirmed_high_impact_environment_finding_becomes_one_durable_case(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    report = {
+        "checked_at": "2026-08-31T20:00:00Z",
+        "findings": [
+            {
+                "finding_id": "env-l2_ownership_drift-192.168.1.11",
+                "detector": "l2_ownership_drift",
+                "fault_class": "duplicate_ip_static",
+                "severity": "critical",
+                "subject": "192.168.1.11",
+                "segment": "192.168.1.0/24",
+                "headline": "192.168.1.11 changed owner between two MACs",
+                "confidence": 0.97,
+                "measured": {"handovers": 1, "macs": ["aa", "bb"]},
+                "verification": {
+                    "state": "confirmed",
+                    "source": "l2_identity_history",
+                    "checked_at": "2026-08-31T20:00:00Z",
+                },
+            },
+            {
+                "finding_id": "env-unmanaged_address-192.168.1.12",
+                "detector": "unmanaged_address",
+                "fault_class": "address_unmanaged",
+                "severity": "medium",
+                "subject": "192.168.1.12",
+                "verification": {"state": "confirmed"},
+            },
+        ],
+    }
+
+    first = sync_environment_cases(report, repository)
+    second = sync_environment_cases(report, repository)
+
+    assert first == second
+    assert len(repository.list()) == 1
+    case = repository.get(first[0])
+    assert case is not None
+    assert case.subject == "192.168.1.11"
+    assert case.source_payload["incidentFacts"]["faultClass"] == "duplicate_ip_static"
+    assert case.occurrence_count == 1
+
+
+def test_routine_lan_broadcast_case_is_closed_without_an_investigation(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "lan-broadcast"),
+        occurred_at="2026-08-31T20:00:00Z",
+        severity="warning",
+        rule_id="deny_burst_v2",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "sourceIp": "192.168.16.130",
+                "destinationIp": "255.255.255.255",
+                "service": "udp/22222",
+                "action": "deny",
+                "trafficSubtype": "local",
+                "sourceInterfaceRole": "lan",
+            },
+        },
+    ))
+
+    assert resolve_routine_observations(repository) == 1
+    assert resolve_routine_observations(repository) == 0
+    stored = repository.get(case.case_id)
+    assert stored is not None and stored.status == "resolved"
+    assert stored.as_dict()["businessDecision"]["classification"] == "routine_observation_suppressed"
+    assert stored.latest_event("investigation_session_started") is None
+
+
+def test_high_impact_durable_case_is_projected_into_live_business_ledger(tmp_path) -> None:
+    from datetime import datetime, timezone
+
+    repository = _repository(tmp_path)
+    now = datetime.now(timezone.utc).isoformat()
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("environment_finding", "env-conflict-11"),
+        occurred_at=now,
+        severity="critical",
+        subject="192.168.1.11",
+        service="duplicate_ip_static",
+        rule_id="l2_ownership_drift",
+        scope="192.168.1.0/24",
+        summary="192.168.1.11 changed owner between two MACs",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "faultClass": "duplicate_ip_static",
+                "observedAt": now,
+            },
+        },
+    ))
+
+    snapshot = sync_snapshot_cases(
+        {"ready": False, "feed": [], "suggestions": [], "runtime": {}},
+        repository,
+    )
+
+    assert snapshot["ready"] is True
+    row = snapshot["suggestions"][0]
+    assert row["caseId"] == case.case_id
+    assert row["deviceKey"] == "192.168.1.11"
+    assert row["incidentFacts"]["faultClass"] == "duplicate_ip_static"
+    assert snapshot["defaultSuggestionId"] == row["id"]
+
+
+def test_sentinel_business_transitions_join_action_and_readback_to_the_case(tmp_path) -> None:
+    from datetime import datetime, timezone
+
+    repository = _repository(tmp_path)
+    now = datetime.now(timezone.utc).isoformat()
+    evidence_id = "sev-service-failed"
+    final = {
+        "caseId": "",
+        "sessionId": "",
+        "state": "resolved",
+        "classification": "service_failed",
+        "headline": "collector.service 已恢复",
+        "summary": "当前回读通过",
+        "disposition": "关闭案件",
+        "action": "restart_unit",
+        "service": "collector.service",
+        "impactedAssets": ["collector.service"],
+        "evidence": [{"evidenceId": evidence_id}],
+        "missingObservations": [],
+        "readback": {"outcome": "passed"},
+        "generatedAt": now,
+    }
+    snapshot = {
+        "ready": True,
+        "feed": [],
+        "runtime": {},
+        "suggestions": [{
+            "id": "sentinel-cycle-1",
+            "ts": now,
+            "scope": "sentinel",
+            "severity": "high",
+            "deviceKey": "collector.service",
+            "service": "collector.service",
+            "ruleId": "sentinel:failed_units",
+            "summary": "collector.service failed and recovered",
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "observedAt": now,
+                "sentinelEvidenceId": evidence_id,
+            },
+            "businessTransitions": [
+                {
+                    "kind": "business_decision_recorded", "ts": now,
+                    "eventId": "ready", "caseStatus": "waiting",
+                    "decision": {**final, "state": "action_ready", "readback": None},
+                },
+                {
+                    "kind": "remediation_started", "ts": now,
+                    "eventId": "started", "caseStatus": "waiting",
+                },
+                {
+                    "kind": "remediation_completed", "ts": now,
+                    "eventId": "completed", "caseStatus": "resolved", "outcome": "passed",
+                },
+                {
+                    "kind": "business_decision_recorded", "ts": now,
+                    "eventId": "final", "caseStatus": "resolved", "decision": final,
+                },
+            ],
+        }],
+    }
+
+    projected = sync_snapshot_cases(snapshot, repository)
+    case_id = projected["suggestions"][0]["caseId"]
+    stored = repository.get(case_id)
+
+    assert stored is not None and stored.status == "resolved"
+    assert stored.as_dict()["businessDecision"]["caseId"] == case_id
+    assert stored.as_dict()["businessDecision"]["readback"]["outcome"] == "passed"
+    assert [item["kind"] for item in stored.timeline][-4:] == [
+        "business_decision_recorded", "remediation_started",
+        "remediation_completed", "business_decision_recorded",
+    ]
 
 
 def test_repeated_delivery_is_idempotent(tmp_path) -> None:

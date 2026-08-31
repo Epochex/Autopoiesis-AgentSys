@@ -49,3 +49,46 @@ def test_alert_identity_is_stable_for_retry():
     first = EventDetector(policy).process(_event(1))[0]
     second = EventDetector(policy).process(_event(1))[0]
     assert first["alert_id"] == second["alert_id"]
+
+
+def test_routine_lan_broadcast_deny_is_not_promoted_to_an_incident():
+    detector = EventDetector(DetectionPolicy(deny_threshold=1, cooldown_seconds=0))
+
+    assert detector.process(_event(
+        1,
+        srcip="192.168.16.130",
+        dstip="255.255.255.255",
+        dstport=22222,
+        srcintfrole="lan",
+        subtype="local",
+    )) == []
+
+
+def test_one_continuous_admin_auth_campaign_emits_one_critical_incident():
+    detector = EventDetector(DetectionPolicy(
+        auth_failure_threshold=3,
+        auth_distinct_source_threshold=2,
+        cooldown_seconds=0,
+    ))
+    events = [
+        _event(
+            index,
+            type="event",
+            subtype="system",
+            action="login",
+            event_status="failed",
+            logdesc="Admin login failed",
+            srcip=f"198.51.100.{index}",
+            user="admin",
+            device_key="FGT-1",
+        )
+        for index in range(1, 6)
+    ]
+
+    alerts = [alert for event in events for alert in detector.process(event)]
+
+    assert len(alerts) == 1
+    assert alerts[0]["rule_id"] == "admin_auth_attack_v1"
+    assert alerts[0]["severity"] == "critical"
+    assert alerts[0]["src_device_key"] == "FGT-1"
+    assert alerts[0]["metrics"]["distinct_sources"] == 3

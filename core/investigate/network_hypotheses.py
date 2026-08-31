@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -23,6 +24,18 @@ class NetworkHypothesisSpec:
 
 
 ACTIVE_ROOTS: dict[str, NetworkHypothesisSpec] = {
+    "admin_bruteforce_lockout": NetworkHypothesisSpec(
+        "The managed gateway is receiving a distributed administrator login attack with failed authentication or lockout events.",
+        "adapter:admin_auth_window",
+        frozenset({"admin", "login", "authentication", "bruteforce", "lockout", "管理", "登录"}),
+        True,
+    ),
+    "duplicate_ip_static": NetworkHypothesisSpec(
+        "The address is currently held by a MAC that conflicts with its DHCP or observed ownership history.",
+        "adapter:environment_finding",
+        frozenset({"address", "ownership", "dhcp", "arp", "duplicate", "地址", "归属"}),
+        True,
+    ),
     "carrier_down": NetworkHypothesisSpec(
         "A required physical interface has lost carrier.",
         "ip -br link show",
@@ -76,13 +89,14 @@ ACTIVE_ROOTS: dict[str, NetworkHypothesisSpec] = {
 }
 
 FAMILY_ACTIVE_ROOTS: dict[str, tuple[str, ...]] = {
+    "fam-management-auth": ("admin_bruteforce_lockout",),
     "fam-host-config-drift": (
         "carrier_down", "default_route_missing", "neighbor_unreachable",
     ),
     "fam-perception-selfheal": (
         "service_failed", "disk_pressure", "memory_pressure", "healthcheck_failed",
     ),
-    "fam-address-ownership": ("neighbor_unreachable",),
+    "fam-address-ownership": ("duplicate_ip_static",),
     "fam-policy-reachability": (
         "carrier_down", "default_route_missing", "neighbor_unreachable",
     ),
@@ -186,6 +200,39 @@ def probe_observation(
         return "neutral", False, "tool_failed"
     output = str(item.get("output") or "")
 
+    if root_id == "duplicate_ip_static":
+        try:
+            payload = json.loads(output)
+        except (TypeError, ValueError):
+            return "neutral", False, "observed"
+        verification = dict(payload.get("verification") or {})
+        finding_subject = str(payload.get("subject") or "")
+        matched_subject = not subject or finding_subject == subject
+        supported = bool(
+            payload.get("fault_class") == "duplicate_ip_static"
+            and verification.get("state") == "confirmed"
+            and matched_subject
+        )
+        return ("supports" if supported else "opposes"), True, "observed"
+    if root_id == "admin_bruteforce_lockout":
+        try:
+            payload = json.loads(output)
+        except (TypeError, ValueError):
+            return "neutral", False, "observed"
+        failures = int(payload.get("failed_logins") or 0)
+        distinct = int(payload.get("distinct_sources") or 0)
+        lockouts = int(payload.get("lockouts") or 0)
+        failure_threshold = int(payload.get("failure_threshold") or 12)
+        distinct_threshold = int(payload.get("distinct_source_threshold") or 5)
+        supported = bool(
+            payload.get("available")
+            and (
+                (failures >= failure_threshold and distinct >= distinct_threshold)
+                or lockouts > 0
+            )
+        )
+        return ("supports" if supported else "opposes"), True, "observed"
+
     if root_id == "carrier_down":
         down = False
         for line in output.splitlines():
@@ -215,8 +262,9 @@ def probe_observation(
         if not subject or re.fullmatch(r"\d+(?:\.\d+){3}", subject) is None:
             return "neutral", False, "observed"
         failed = any(
-            subject in line and re.search(r"\bFAILED\b", line)
+            line.split(maxsplit=1)[0] == subject and re.search(r"\bFAILED\b", line)
             for line in output.splitlines()
+            if line.split()
         )
         return ("supports" if failed else "opposes"), True, "observed"
     if root_id == "service_failed":

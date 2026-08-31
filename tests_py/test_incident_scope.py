@@ -110,3 +110,43 @@ def test_ipv6_local_in_scope_terminates_on_managed_gateway() -> None:
     assert scope.managed_assets == ("192.168.1.1",)
     assert scope.fault_domain == "gateway-control-plane:192.168.1.1:port5"
     assert scope.quality == "exact"
+
+
+def test_environment_segment_identifier_does_not_become_a_managed_host() -> None:
+    now = datetime(2026, 8, 31, 20, 0, tzinfo=timezone.utc).isoformat()
+    scope = derive_incident_scope(
+        subject="192.168.1.11",
+        service="duplicate_ip_static",
+        first_seen_at=now,
+        last_seen_at=now,
+        facts={"observedAt": now, "segment": "192.168.1.0/24"},
+        managed_gateway="192.168.1.1",
+        fault_family="fam-address-ownership",
+        topology=TOPOLOGY,
+        textual_identifiers=("192.168.1.11", "192.168.1.0"),
+    )
+
+    assert scope.managed_assets == ("192.168.1.11",)
+
+
+def test_management_auth_event_targets_gateway_and_keeps_attacker_external() -> None:
+    now = datetime(2026, 8, 31, 20, 0, tzinfo=timezone.utc).isoformat()
+    scope = derive_incident_scope(
+        subject="FGT-1",
+        service="fortigate-admin",
+        first_seen_at=now,
+        last_seen_at=now,
+        facts={
+            "observedAt": now,
+            "windowSeconds": 60,
+            "sourceIp": "8.8.8.8",
+            "failedLogins": 44,
+        },
+        managed_gateway="192.168.1.1",
+        fault_family="fam-management-auth",
+        topology=TOPOLOGY,
+    )
+
+    assert scope.managed_assets == ("192.168.1.1",)
+    assert scope.external_actors == ("8.8.8.8",)
+    assert scope.fault_domain == "gateway-management-plane:192.168.1.1"

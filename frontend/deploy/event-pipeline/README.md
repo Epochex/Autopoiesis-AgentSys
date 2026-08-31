@@ -4,9 +4,9 @@ Build and import the image on the K3s node that runs the event pipeline:
 
 ```bash
 cd /data/Autopoiesis-AgentSys
-docker build -t autopoiesis-event-pipeline:v8 \
+docker build -t autopoiesis-event-pipeline:v9 \
   -f frontend/deploy/event-pipeline/Dockerfile .
-docker save autopoiesis-event-pipeline:v8 | sudo k3s ctr images import -
+docker save autopoiesis-event-pipeline:v9 | sudo k3s ctr images import -
 ```
 
 Create the ClickHouse credential from the current production secret source. Keep the values out of shell history and source control:

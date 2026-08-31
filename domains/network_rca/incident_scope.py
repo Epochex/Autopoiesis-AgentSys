@@ -168,16 +168,21 @@ def derive_incident_scope(
             or str(subject or "").casefold() in {"r230", "fortigate", "gateway"}
         )
     )
-    if local_in or gateway_policy_scope:
+    management_auth_scope = fault_family == "fam-management-auth"
+    if local_in or gateway_policy_scope or management_auth_scope:
         add_managed(
             managed_gateway,
             (
+                "authentication event belongs to the managed gateway"
+                if management_auth_scope else
                 "local-in traffic terminates on the managed gateway"
                 if local_in
                 else "policy alert is inspected on the managed gateway"
             ),
         )
         fault_domain = (
+            f"gateway-management-plane:{managed_gateway}"
+            if management_auth_scope else
             f"gateway-control-plane:{managed_gateway}:{ingress or 'unknown-interface'}"
             if local_in
             else f"gateway-policy:{managed_gateway}:{ingress or 'unknown-interface'}"
@@ -218,7 +223,13 @@ def derive_incident_scope(
     # are present in the observed topology. It never turns a public mention into
     # a probe target.
     for value in textual_identifiers:
-        if _private(value) and _network_for(value, topology):
+        located = _network_for(value, topology)
+        address = _ip(value)
+        names_host = False
+        if located is not None and address is not None:
+            network = ipaddress.ip_network(located[0], strict=False)
+            names_host = address not in {network.network_address, network.broadcast_address}
+        if _private(value) and located and names_host:
             add_managed(value, "private identifier in source record belongs to observed topology")
 
     if not managed:

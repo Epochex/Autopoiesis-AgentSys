@@ -31,6 +31,16 @@ interface IncidentFacts {
   windowSeconds?: number
   recentSimilar1h?: number
   clusterSize?: number
+  environmentFindingId?: string
+  faultClass?: string
+  segment?: string
+  measured?: Record<string, unknown>
+  verification?: { state?: string; source?: string; note?: string; note_zh?: string }
+  failedLogins?: number
+  distinctSources?: number
+  distinctSourceThreshold?: number
+  lockouts?: number
+  managedDevice?: string
 }
 
 interface DecisionEvidence {
@@ -212,6 +222,27 @@ export function LiveSituation({
   const activeStep = stateStep(selected?.caseDecision?.state)
   const facts = selected?.incidentFacts ?? {}
   const decision = selected?.caseDecision ?? null
+  const measured = facts.measured ?? {}
+  const factRows: Array<[string, string]> = facts.faultClass === 'duplicate_ip_static'
+    ? [
+        [zh ? '对象' : 'ASSET', selected?.deviceKey || 'N/A'],
+        [zh ? '故障' : 'FAULT', zh ? '地址归属冲突' : 'ADDRESS OWNERSHIP CONFLICT'],
+        [zh ? '归属切换' : 'HANDOVERS', String(measured.handovers ?? 'N/A')],
+        [zh ? '当前复核' : 'CURRENT CHECK', facts.verification?.state || 'N/A'],
+      ]
+    : facts.failedLogins != null
+      ? [
+          [zh ? '受管设备' : 'MANAGED DEVICE', facts.managedDevice || selected?.deviceKey || 'N/A'],
+          [zh ? '失败登录' : 'FAILED LOGINS', String(facts.failedLogins)],
+          [zh ? '来源地址' : 'SOURCE ADDRESSES', String(facts.distinctSources ?? 'N/A')],
+          [zh ? '账户锁定' : 'LOCKOUTS', String(facts.lockouts ?? 0)],
+        ]
+      : [
+          [zh ? '来源' : 'SOURCE', facts.sourceIp || selected?.device || 'N/A'],
+          [zh ? '目标' : 'TARGET', `${facts.destinationIp || 'N/A'}${facts.destinationPort ? `:${facts.destinationPort}` : ''}`],
+          [zh ? '服务' : 'SERVICE', facts.service || selected?.service || 'N/A'],
+          [zh ? '设备结果' : 'DEVICE RESULT', `${facts.action || 'N/A'}${facts.policyType ? ` · ${facts.policyType}` : ''}`],
+        ]
 
   const openCase = () => {
     if (!selected) return
@@ -280,10 +311,9 @@ export function LiveSituation({
               </div>
 
               <dl className="ls-fact-line">
-                <div><dt>{zh ? '来源' : 'SOURCE'}</dt><dd>{facts.sourceIp || selected.device}</dd></div>
-                <div><dt>{zh ? '目标' : 'TARGET'}</dt><dd>{facts.destinationIp || 'N/A'}{facts.destinationPort ? `:${facts.destinationPort}` : ''}</dd></div>
-                <div><dt>{zh ? '服务' : 'SERVICE'}</dt><dd>{facts.service || selected.service || 'N/A'}</dd></div>
-                <div><dt>{zh ? '设备结果' : 'DEVICE RESULT'}</dt><dd>{facts.action || 'N/A'}{facts.policyType ? ` · ${facts.policyType}` : ''}</dd></div>
+                {factRows.map(([label, value]) => (
+                  <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+                ))}
               </dl>
 
               {decision ? (
