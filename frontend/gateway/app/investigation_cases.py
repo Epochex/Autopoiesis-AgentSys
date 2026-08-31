@@ -218,9 +218,11 @@ def resolve_routine_observations(
 ) -> int:
     """Close already-landed LAN group traffic without creating Agent sessions."""
     transitions: list[CaseEvent] = []
-    for case in repository.list(limit=limit):
-        if case.status not in {"open", "investigating"}:
-            continue
+    candidates = [
+        *repository.list(status="open", limit=limit),
+        *repository.list(status="investigating", limit=limit),
+    ]
+    for case in candidates:
         facts = dict(case.source_payload.get("incidentFacts") or {})
         if not _is_routine_lan_broadcast(facts):
             continue
