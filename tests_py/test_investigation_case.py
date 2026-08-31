@@ -135,6 +135,13 @@ def test_routine_observation_recovers_from_an_accidental_reopen(tmp_path) -> Non
         payload={"sessionId": "accidental"},
         status="investigating",
     )
+    repository.append_event(
+        case.case_id,
+        kind="business_decision_recorded",
+        payload={"decision": {"classification": "policy_outcome_unresolved"}},
+        status="investigating",
+        event_id=f"{case.case_id}:accidental-decision",
+    )
 
     assert resolve_routine_observations(repository) == 1
     stored = repository.get(case.case_id)
@@ -144,8 +151,10 @@ def test_routine_observation_recovers_from_an_accidental_reopen(tmp_path) -> Non
     )
     assert len([
         item for item in stored.timeline
-        if item.get("eventId") == f"{case.case_id}:routine-observation-suppressed"
-    ]) == 1
+        if str(item.get("eventId") or "").startswith(
+            f"{case.case_id}:routine-observation-suppressed"
+        )
+    ]) == 2
 
 
 def test_case_events_batch_commits_multiple_cases_and_is_idempotent(tmp_path) -> None:

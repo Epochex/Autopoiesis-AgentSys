@@ -330,3 +330,36 @@ def test_sentinel_action_is_grounded_and_recovery_is_counted_from_one_case_chain
 
     assert rows["grounded_decisions"]["status"] == "proven"
     assert rows["action_and_recovery_readback"]["status"] == "proven"
+
+
+def test_suppressed_routine_observation_is_not_a_takeover_sample() -> None:
+    case = {
+        "caseId": "routine-group-traffic",
+        "businessDecision": {
+            "state": "resolved",
+            "classification": "routine_observation_suppressed",
+        },
+        "timeline": [
+            {
+                "kind": "investigation_session_started",
+                "autoStarted": True,
+                "scopeQuality": "exact",
+                "faultDomain": "gateway-control-plane",
+                "managedAssets": ["192.168.1.1"],
+            },
+            {
+                "kind": "business_decision_recorded",
+                "decision": {
+                    "state": "resolved",
+                    "classification": "routine_observation_suppressed",
+                },
+            },
+        ],
+    }
+
+    rows = {
+        row["key"]: row for row in evaluate_business_value([case], [])["rows"]
+    }
+
+    assert rows["automatic_incident_takeover"]["status"] == "not_observed"
+    assert rows["grounded_decisions"]["status"] == "not_observed"

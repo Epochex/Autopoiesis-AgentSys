@@ -275,6 +275,11 @@ def evaluate_business_value(
             if event.get("kind") == "investigation_session_started"
             and event.get("autoStarted") is True
         ]
+        latest_classification = str(
+            _latest_decision(case).get("classification") or ""
+        )
+        if latest_classification == "routine_observation_suppressed":
+            started = []
         if started:
             auto_eligible.append(case_id)
             if any(

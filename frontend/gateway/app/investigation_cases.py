@@ -245,12 +245,26 @@ def resolve_routine_observations(
             "readback": None,
             "generatedAt": datetime.now(timezone.utc).isoformat(),
         }
+        latest_decision = case.latest_event("business_decision_recorded") or {}
+        latest_classification = str(
+            dict(latest_decision.get("decision") or {}).get("classification") or ""
+        )
+        transition_id = f"{case.case_id}:routine-observation-suppressed"
+        if latest_classification and latest_classification != "routine_observation_suppressed":
+            marker = hashlib.sha256(
+                str(
+                    latest_decision.get("eventId")
+                    or latest_decision.get("ts")
+                    or case.version
+                ).encode("utf-8")
+            ).hexdigest()[:12]
+            transition_id += f":restore:{marker}"
         transitions.append(CaseEvent(
             case_id=case.case_id,
             kind="business_decision_recorded",
             payload={"decision": decision},
             status="resolved",
-            event_id=f"{case.case_id}:routine-observation-suppressed",
+            event_id=transition_id,
         ))
     return repository.append_events(transitions)
 
