@@ -221,6 +221,7 @@ def resolve_routine_observations(
     candidates = [
         *repository.list(status="open", limit=limit),
         *repository.list(status="investigating", limit=limit),
+        *repository.list(status="resolved", limit=limit),
     ]
     for case in candidates:
         facts = dict(case.source_payload.get("incidentFacts") or {})
