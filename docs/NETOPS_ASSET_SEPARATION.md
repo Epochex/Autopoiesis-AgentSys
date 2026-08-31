@@ -19,7 +19,7 @@ NetOps tag:       netops-paper-freeze-20260831T124059Z
 
 冻结目录包含两套 Git bundle、NetOps 未提交补丁与未跟踪论文文件、K3s 资源和受保护 Secret 清单、自建镜像、ClickHouse shadow 快照、Redpanda 两个数据卷的停机快照、主题与消费者位点，以及两台节点的数据目录清单。旧 ClickHouse 和 Redpanda 卷的回收策略已设为 `Retain`。
 
-切换完成后，旧 `netops.*` 主题、ClickHouse `netops` 数据库、NetOps 应用 Pod、systemd 单元和自建镜像已从在线环境退出。生产 PostgreSQL 记忆对象写入 `autopoiesis_production` schema，不再读写旧 `public` schema 中的记忆表。
+切换完成后，旧 `netops.*` 主题、ClickHouse `netops` 数据库、NetOps 应用 Pod、空的 `edge` namespace、systemd 单元和两台节点上的自建镜像已从在线环境退出。两台节点的 NetOps 工作树已移入冻结区，活动源码入口只保留 Autopoiesis。生产 PostgreSQL 记忆对象写入 `autopoiesis_production` schema，不再读写旧 `public` schema 中的记忆表。
 
 Redpanda 和 ClickHouse 的 StatefulSet、头部 Service 及 PVC 保留创建时的 K3s 对象名，这些对象承载现有数据盘和稳定网络身份。它们已标记 `app.kubernetes.io/part-of=autopoiesis` 与 `asset.autopoiesis.io/origin=netops-frozen`。Autopoiesis 应用只连接 `autopoiesis-redpanda` 和 `autopoiesis-clickhouse` 适配服务，旧对象名不再构成应用契约。
 
@@ -97,6 +97,6 @@ ClickHouse 生产身份、K3s Secret、StatefulSet 初始化参数、网关和�
 3. 同一受控真实日志批次在新链产生稳定告警标识，并同时到达主题、ClickHouse 和页面文件。
 4. 网关健康接口正常，真实案件自动建立，测试案件不进入默认列表。
 5. 旧 NetOps 应用 Pod 停止后，新主题、数据库和页面时间戳继续前进。
-6. 源码、systemd、K3s 应用配置和输出目录不再引用 NetOps 应用名、主题、数据库或旧写入路径。
+6. 源码、systemd、K3s 应用配置和输出目录不再引用 NetOps 应用名、主题、数据库或旧写入路径。设备真实主机名与创建时绑定数据盘的 K3s 对象名作为现场身份保留，它们不参与 Autopoiesis 应用连接契约。
 
 回退时先停止 Autopoiesis 采集和事件处理，恢复切割前 systemd 单元与 K3s 清单，再从冻结清单核对主题位点。源码可直接从两个 tag 或 bundle 恢复；数据库可从 ClickHouse shadow 快照恢复；旧持久卷保持 `Retain`。
