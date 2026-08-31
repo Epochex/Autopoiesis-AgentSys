@@ -112,7 +112,7 @@
       "question": "这台机器叫什么名字，开了多久",
       "family": null,
       "expects_evidence": [
-        "autopoiesis-node1",
+        "netops-node1",
         "up"
       ],
       "must_not_be_runnable": [],
@@ -139,7 +139,7 @@
       "question": "Tailscale 通道现在通不通",
       "family": null,
       "expects_evidence": [
-        "autopoiesis-node1"
+        "netops-node1"
       ],
       "must_not_be_runnable": [
         "systemctl restart tailscaled",
