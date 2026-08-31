@@ -110,6 +110,39 @@ def test_routine_lan_broadcast_case_is_closed_without_an_investigation(tmp_path)
     assert stored.latest_event("investigation_session_started") is None
 
 
+def test_routine_observation_recovers_from_an_accidental_reopen(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "ipv6-multicast"),
+        occurred_at="2026-08-31T20:00:00Z",
+        severity="warning",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "sourceIp": "fe80::1",
+                "destinationIp": "ff02::1:3",
+                "service": "udp/5355",
+                "action": "deny",
+                "trafficSubtype": "local",
+                "sourceInterfaceRole": "lan",
+            },
+        },
+    ))
+    repository.append_event(
+        case.case_id,
+        kind="investigation_session_started",
+        payload={"sessionId": "accidental"},
+        status="investigating",
+    )
+
+    assert resolve_routine_observations(repository) == 1
+    stored = repository.get(case.case_id)
+    assert stored is not None and stored.status == "resolved"
+    assert stored.as_dict()["businessDecision"]["classification"] == (
+        "routine_observation_suppressed"
+    )
+
+
 def test_case_events_batch_commits_multiple_cases_and_is_idempotent(tmp_path) -> None:
     repository = _repository(tmp_path)
     cases = [

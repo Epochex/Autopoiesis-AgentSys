@@ -258,17 +258,6 @@ class CodexCLIClient:
         return payload
 
 
-def _refresh_ipv6_takeover() -> str | None:
-    for case in main._case_repository().list(limit=500):
-        facts = dict(case.source_payload.get("incidentFacts") or {})
-        if str(facts.get("policyType") or "").casefold() != "local-in-policy6":
-            continue
-        opened = investigate.start("", None, None, case.case_id, auto_started=True)
-        investigate.complete(str(opened["session_id"]))
-        return case.case_id
-    return None
-
-
 def _session_snapshots() -> list[dict[str, Any]]:
     return investigate._session_store().recent(limit=100)
 
@@ -299,8 +288,6 @@ def run() -> dict[str, Any]:
         "emergency_stop": stop_state.to_dict(),
     }
     try:
-        evidence["ipv6_takeover_case_id"] = _refresh_ipv6_takeover()
-
         # Keep the targets outside the autonomous sentinel's watched prefixes.
         # The acceptance driver must be the only writer; otherwise an
         # independent recovery loop can restart a target between paired reads.
