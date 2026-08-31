@@ -2135,6 +2135,7 @@ class InvestigateStart(BaseModel):
     family: str | None = Field(default=None, max_length=64)
     subject: str | None = Field(default=None, max_length=64)
     case_id: str | None = Field(default=None, min_length=1, max_length=64)
+    new_session: bool = False
     lang: Literal["zh", "en"] = "zh"
 
 
@@ -2178,7 +2179,12 @@ async def investigate_start(request: InvestigateStart) -> dict[str, Any]:
 
     try:
         result = await asyncio.to_thread(
-            start, request.question, request.family, request.subject, request.case_id
+            start,
+            request.question,
+            request.family,
+            request.subject,
+            request.case_id,
+            restart_existing=request.new_session,
         )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from None

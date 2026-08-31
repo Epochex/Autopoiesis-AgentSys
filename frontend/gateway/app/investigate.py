@@ -1868,6 +1868,7 @@ def start(
     memory_enabled: bool = True,
     evaluation_only: bool = False,
     evaluation_strategy: str | None = None,
+    restart_existing: bool = False,
 ) -> dict[str, Any]:
     """Open a session and run its opening probes before anything reasons."""
     case = None
@@ -1885,7 +1886,7 @@ def start(
         subject = subject or case_scope.get("subject")
         latest = case.latest_event("investigation_session_started")
         existing_id = str((latest or {}).get("sessionId") or "")
-        if existing_id and not evaluation_only:
+        if existing_id and not evaluation_only and not restart_existing:
             try:
                 existing = get(existing_id)
                 refreshed_facts = dict(case_scope.get("incident_facts") or {})

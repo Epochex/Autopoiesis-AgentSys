@@ -160,6 +160,51 @@ def test_stale_critical_auth_case_is_backfilled_after_reader_recovery(tmp_path, 
     assert started[0]["decision"]["classification"] == "admin_bruteforce_lockout"
 
 
+def test_explicit_recheck_creates_a_new_session_and_preserves_the_first(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch)
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    now = datetime.now(timezone.utc).isoformat()
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "service-recheck"),
+        occurred_at=now,
+        severity="high",
+        subject="collector.service",
+        service="service-health",
+        rule_id="service-failed",
+        summary="collector service failed",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {"dataClassification": "observed", "observedAt": now},
+        },
+    ))
+    monkeypatch.setattr(main, "_investigation_case_repository", repository)
+    monkeypatch.setattr(
+        investigate,
+        "run",
+        lambda command: _execution(
+            command,
+            "collector.service loaded failed failed"
+            if command == "systemctl --failed --no-legend" else "ok",
+        ),
+    )
+
+    first = investigate.start("collector failed", case_id=case.case_id)
+    investigate.complete(first["session_id"])
+    second = investigate.start(
+        "recheck collector failure",
+        case_id=case.case_id,
+        restart_existing=True,
+    )
+
+    stored = repository.get(case.case_id)
+    assert first["session_id"] != second["session_id"]
+    assert stored is not None
+    assert len([
+        item for item in stored.timeline
+        if item.get("kind") == "investigation_session_started"
+    ]) == 2
+
+
 def test_delayed_exact_fields_replace_an_incomplete_policy_decision(tmp_path, monkeypatch) -> None:
     _isolate(monkeypatch)
     repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
