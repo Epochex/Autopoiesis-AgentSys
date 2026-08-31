@@ -294,6 +294,11 @@ def auto_start_pending_cases(
         deterministic_backfill = is_terminal_local_in_deny(
             dict(scope.get("incident_facts") or {})
         )
+        high_impact_backfill = bool(
+            scope.get("family") in {"fam-management-auth", "fam-address-ownership"}
+            and case.severity.casefold() in {"critical", "error"}
+            and scope.get("incident_facts")
+        )
         latest_decision_event = case.latest_event("business_decision_recorded") or {}
         latest_classification = str(
             dict(latest_decision_event.get("decision") or {}).get("classification") or ""
@@ -315,7 +320,7 @@ def auto_start_pending_cases(
         )
         allowed_age = (
             backfill_age
-            if deterministic_backfill or incomplete_policy_backfill
+            if deterministic_backfill or incomplete_policy_backfill or high_impact_backfill
             else max_age
         )
         if age_seconds < -60 or age_seconds > allowed_age:

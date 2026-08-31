@@ -113,6 +113,53 @@ def test_background_poller_does_not_race_controlled_acceptance_case(tmp_path, mo
     assert len(started) == 1
 
 
+def test_stale_critical_auth_case_is_backfilled_after_reader_recovery(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch)
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    observed_at = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "auth-window-delayed"),
+        occurred_at=observed_at,
+        severity="critical",
+        subject="gateway-device",
+        service="fortigate-admin",
+        rule_id="admin_auth_attack_v1",
+        summary="gateway authentication attack",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "observedAt": observed_at,
+                "managedDevice": "gateway-device",
+                "failedLogins": 18,
+                "distinctSources": 7,
+                "failureThreshold": 12,
+                "distinctSourceThreshold": 5,
+                "windowSeconds": 60,
+            },
+        },
+    ))
+    monkeypatch.setattr(main, "_investigation_case_repository", repository)
+    monkeypatch.setattr(
+        investigation_tools,
+        "collect_admin_auth_window",
+        lambda *_args, **_kwargs: {
+            "available": True,
+            "failed_logins": 18,
+            "distinct_sources": 7,
+            "lockouts": 0,
+            "failure_threshold": 12,
+            "distinct_source_threshold": 5,
+        },
+    )
+
+    started = investigation_cases.auto_start_pending_cases(repository)
+
+    assert len(started) == 1
+    assert started[0]["case_id"] == case.case_id
+    assert started[0]["decision"]["classification"] == "admin_bruteforce_lockout"
+
+
 def test_delayed_exact_fields_replace_an_incomplete_policy_decision(tmp_path, monkeypatch) -> None:
     _isolate(monkeypatch)
     repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
