@@ -10,10 +10,11 @@ raising.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from frontend.gateway.app.config import Settings
-from frontend.gateway.app.runtime_reader import load_runtime_snapshot
+from frontend.gateway.app.runtime_reader import _recent_records, load_runtime_snapshot
 
 
 def _write_jsonl(path: Path, record: dict) -> None:
@@ -124,3 +125,20 @@ def test_recent_rotated_sink_files_remain_visible_to_case_sync(tmp_path):
         "sugg-override-1", "sugg-override-2",
     }
     assert snapshot["defaultSuggestionId"] == "sugg-override-2"
+
+
+def test_same_hour_per_alert_files_return_the_newest_records(tmp_path):
+    alerts = tmp_path / "alerts"
+    for index in range(16):
+        path = alerts / f"alerts-20260831-20-{index:02d}.jsonl"
+        _write_jsonl(path, {
+            "alert_id": f"alert-{index:02d}",
+            "alert_ts": f"2026-08-31T20:00:{index:02d}+00:00",
+        })
+        os.utime(path, ns=(1_800_000_000_000_000_000 + index, 1_800_000_000_000_000_000 + index))
+
+    records = _recent_records(alerts, "alerts-", 12)
+
+    assert [item["alert_id"] for item in records] == [
+        f"alert-{index:02d}" for index in range(4, 16)
+    ]

@@ -48,7 +48,13 @@ def _recent_files(directory: Path, prefix: str) -> list[Path]:
     if dated:
         newest = max(stamp for stamp, _path in dated)
         cutoff = newest - timedelta(hours=_SINK_LOOKBACK_HOURS)
-        return [path for stamp, path in sorted(dated) if stamp >= cutoff]
+        return [
+            path for stamp, path in sorted(
+                dated,
+                key=lambda item: (item[0], item[1].stat().st_mtime_ns, item[1].name),
+            )
+            if stamp >= cutoff
+        ]
     return sorted(candidates, key=lambda p: p.stat().st_mtime)[-2:]
 
 
@@ -84,9 +90,16 @@ def _tail_records(path: Path, count: int) -> list[dict[str, Any]]:
 def _recent_records(directory: Path, prefix: str, count: int) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for path in reversed(_recent_files(directory, prefix)):
-        records[:0] = _tail_records(path, count)
+        records.extend(_tail_records(path, count))
         if len(records) >= count:
             break
+    records.sort(key=lambda item: str(
+        item.get("alert_ts")
+        or item.get("suggestion_ts")
+        or item.get("event_ts")
+        or item.get("ts")
+        or ""
+    ))
     return records[-count:]
 
 
