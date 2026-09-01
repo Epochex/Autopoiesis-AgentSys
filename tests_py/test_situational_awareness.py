@@ -112,11 +112,24 @@ def test_projection_uses_live_sources_and_keeps_test_cases_out(tmp_path, monkeyp
     }
     result = build_situational_overview(
         _Repository(), report, query=_query, router_factory=_Router,
+        identity_provider=lambda: {
+            "byMac": {"00:11:22:33:44:55": {
+                "hostname": "IPC-HFW-4", "vendor": "Dahua", "os": None,
+                "type": "IP Camera", "family": "IPC",
+            }},
+            "byIp": {}, "fresh": True,
+        },
         now=datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc),
     )
 
     assert result["mode"] == "production_observed"
     assert result["inventory"]["knownAssets"] == 2
+    fingerprinted = next(a for a in result["inventory"]["assets"] if a["ip"] == "192.168.1.4")
+    assert fingerprinted["name"] == "IPC-HFW-4"
+    assert fingerprinted["deviceClass"] == "camera"
+    assert fingerprinted["identity"] == {"vendor": "Dahua", "type": "IP Camera", "family": "IPC"}
+    untyped = next(a for a in result["inventory"]["assets"] if a["ip"] == "192.168.16.27")
+    assert "deviceClass" not in untyped and "identity" not in untyped
     assert result["inventory"]["active24h"] == 2
     assert result["behaviorDeviations"][0]["asset"] == "192.168.1.4"
     assert result["crossSegment"]["records"][0]["action"] == "deny"
@@ -150,6 +163,7 @@ def test_empty_optional_sources_stay_empty_instead_of_becoming_claims(tmp_path, 
 
     result = build_situational_overview(
         _Repository(), None, query=empty_query, router_factory=EmptyRouter,
+        identity_provider=lambda: {"byIp": {}, "byMac": {}, "fresh": False},
         now=datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc),
     )
     assert result["inventory"]["knownAssets"] == 0

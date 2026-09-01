@@ -23,6 +23,7 @@ from domains.network_rca.fortigate_api import FortiGateReadonlyAPI
 
 from .history import _CH_DB, _q
 from .investigation_cases import is_observed_case
+from .live_identity import identity_map as _live_identity_map, role_for_type
 
 
 _CACHE_TTL_SECONDS = 20.0
@@ -359,6 +360,7 @@ def _build(
     *,
     query: Callable[[str], list[dict[str, Any]]],
     router_factory: Callable[..., FortiGateReadonlyAPI],
+    identity_provider: Callable[[], dict[str, Any]],
     now: datetime,
 ) -> dict[str, Any]:
     router = _router_snapshot(router_factory)
@@ -649,16 +651,40 @@ def _build(
         reverse=True,
     )
 
+    # Live device fingerprints (hostname / vendor / OS / hardware type) from the
+    # router's own inventory. MAC first — DHCP reassigns IPs — then IP. Empty maps
+    # when the router is unreachable, so absence never becomes a claim.
+    try:
+        live_ids = identity_provider() or {}
+    except Exception:
+        live_ids = {}
+    ids_by_mac = live_ids.get("byMac") or {}
+    ids_by_ip = live_ids.get("byIp") or {}
+
     asset_rows = []
     for ip in set(device_by_ip) | set(active_by_ip):
         identity = device_by_ip.get(ip, {})
         activity = active_by_ip.get(ip)
-        asset_rows.append({
+        mac = str(identity.get("mac") or "").lower()
+        fingerprint = (ids_by_mac.get(mac) if mac else None) or ids_by_ip.get(ip)
+        row = {
             "ip": ip, "mac": identity.get("mac"), "name": identity.get("hostname") or ip,
             "segment": _segment_for(ip, catalog), "sources": identity.get("sources", []),
             "active24h": activity is not None, "activity": activity,
             "risk": next((item["severity"] for item in risk_assets if item["asset"] == ip), None),
-        })
+        }
+        if fingerprint:
+            if fingerprint.get("hostname"):
+                row["name"] = fingerprint["hostname"]
+            row["identity"] = {
+                key: fingerprint.get(key)
+                for key in ("vendor", "os", "type", "family")
+                if fingerprint.get(key)
+            }
+            device_class = role_for_type(fingerprint.get("type"))
+            if device_class:
+                row["deviceClass"] = device_class
+        asset_rows.append(row)
     asset_rows.sort(key=lambda item: (
         item["risk"] is not None, item["active24h"], str(dict(item.get("activity") or {}).get("lastSeenAt") or "")
     ), reverse=True)
@@ -709,6 +735,7 @@ def build_situational_overview(
     refresh: bool = False,
     query: Callable[[str], list[dict[str, Any]]] = _q,
     router_factory: Callable[..., FortiGateReadonlyAPI] = _DEFAULT_ROUTER_FACTORY,
+    identity_provider: Callable[[], dict[str, Any]] = _live_identity_map,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build and short-cache the production page contract."""
@@ -723,6 +750,7 @@ def build_situational_overview(
         environment_report,
         query=query,
         router_factory=router_factory,
+        identity_provider=identity_provider,
         now=now or datetime.now(timezone.utc),
     )
     if use_cache:

@@ -128,6 +128,11 @@ _TYPE_ROLE = {
 }
 
 
+def role_for_type(hardware_type: Any) -> str | None:
+    """Console role for a FortiGate hardware_type; None when the router didn't type it."""
+    return _TYPE_ROLE.get(str(hardware_type or "").lower())
+
+
 def _fetch() -> tuple[dict[str, Any], dict[str, Any]]:
     creds = _creds()
     if not creds:

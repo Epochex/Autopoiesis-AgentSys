@@ -41,6 +41,10 @@ interface Asset {
   active24h: boolean
   risk?: string | null
   activity?: Activity | null
+  /** FortiGate live fingerprint (vendor / os / hardware type), when the router typed it. */
+  identity?: { vendor?: string | null; os?: string | null; type?: string | null; family?: string | null } | null
+  /** Console role derived from the router's hardware_type (camera/mobile/workstation/server). */
+  deviceClass?: string | null
 }
 
 interface BoundaryRecord {
@@ -99,17 +103,41 @@ const stableUnit = (text: string, salt = 0): number => {
   return ((hash >>> 0) % 10_000) / 10_000
 }
 
-const graphDevice = (asset: Asset, index: number, total: number, peer = false): GraphDevice => {
-  const angle = (Math.PI * 2 * index) / Math.max(total, 1) + stableUnit(asset.ip, 17) * 0.32
-  const radius = peer ? 0.72 + stableUnit(asset.ip, 31) * 0.18 : 0.16 + Math.sqrt((index + 1) / Math.max(total, 1)) * 0.5
+/* ── device-type classification ──
+ * The router's live fingerprint (deviceClass) is authoritative. For hosts the
+ * FortiGate never typed, fall back to what the evidence itself shows: hostname
+ * conventions and NetBIOS chatter. Anything else stays 未识别 — an unlabelled
+ * dot is honest, a guessed icon is not. */
+const NAME_MOBILE = /iphone|ipad|xiaomi|redmi|poco[-_]|honor|iqoo|oppo|vivo[-_]|oneplus|galaxy|pixel[-_]|mate\s?\d|nova[-_ ]\d|noh-an|android|-phone/i
+const NAME_WORKSTATION = /^desktop-|^laptop-|^win(?![a-z])|-pc\b|^pc-|macbook|imac|thinkpad|-nb\b/i
+const NAME_SERVER = /dss|onebox|\bnvr\b|server|-srv\b|^srv|\bnas\b/i
+const NAME_CAMERA = /\bipc\b|ipc-|\bcam\b|camera|^dh-/i
+
+export const classifyAsset = (asset: Asset): string => {
+  if (asset.deviceClass) return asset.deviceClass
+  const name = asset.name && asset.name !== asset.ip ? asset.name : ''
+  if (name) {
+    if (NAME_MOBILE.test(name)) return 'mobile'
+    if (NAME_WORKSTATION.test(name)) return 'workstation'
+    if (NAME_SERVER.test(name)) return 'server'
+    if (NAME_CAMERA.test(name)) return 'camera'
+  }
+  const services = asset.activity?.observedOutboundServices ?? []
+  if (services.includes('udp/137') || services.includes('udp/138')) return 'workstation'
+  return 'unknown'
+}
+
+const CLASS_ORDER = ['workstation', 'mobile', 'camera', 'server', 'unknown']
+
+const baseDevice = (asset: Asset, role: string): Omit<GraphDevice, 'x' | 'y'> => {
   const activity = asset.activity
   return {
     ip: asset.ip,
     name: asset.name || asset.ip,
     mac: asset.mac ?? null,
-    vendor: 'observed asset',
-    os: null,
-    role: peer ? 'cross-segment peer' : 'asset',
+    vendor: asset.identity?.vendor ?? 'unknown',
+    os: asset.identity?.os ?? null,
+    role,
     intf: asset.segment,
     flows: activity?.flows24h ?? 0,
     deny: activity?.denied24h ?? 0,
@@ -118,8 +146,53 @@ const graphDevice = (asset: Asset, index: number, total: number, peer = false): 
     topPorts: [],
     threat: severityThreat(asset.risk),
     seenBy: 'traffic',
-    x: Math.cos(angle) * radius + (peer ? 0.08 : -0.08),
-    y: Math.sin(angle) * Math.min(radius, 0.82),
+  }
+}
+
+/* ── clustered layout ──
+ * One sunflower-packed disc per device class, discs ringed around the plate
+ * centre; boundary peers keep to an outer right-hand arc. Coordinates stay in
+ * the [-1,1] space SubnetGraphLayer scales onto the ellipse. Active hosts pack
+ * first (inner), silent ones drift to their disc's rim. */
+const GOLDEN_ANGLE = 2.399963
+const clusterDevices = (groups: [string, Asset[]][]): GraphDevice[] => {
+  const devices: GraphDevice[] = []
+  const n = groups.length
+  /* Class discs take the top→left→bottom arc; the right sector stays clear for
+   * the boundary-peer fan. Arc slots go to size-sorted groups end-in — largest
+   * at the top, runner-up at the bottom — so the two big discs never abut. */
+  const bySize = [...groups.keys()].sort((a, b) => groups[b][1].length - groups[a][1].length)
+  const slot = new Array<number>(n)
+  bySize.forEach((groupIndex, rank) => {
+    slot[groupIndex] = rank % 2 === 0 ? rank / 2 : n - 1 - (rank - 1) / 2
+  })
+  groups.forEach(([role, members], gi) => {
+    const single = n === 1
+    const angle = -Math.PI / 2 - (Math.PI * slot[gi]) / Math.max(n - 1, 1)
+    const cx = single ? 0 : Math.cos(angle) * 0.52
+    const cy = single ? 0 : Math.sin(angle) * 0.5
+    const R = Math.min(single ? 0.62 : 0.28, 0.08 + Math.sqrt(members.length) * (single ? 0.055 : 0.032))
+    const sorted = [...members].sort((a, b) => (b.activity?.flows24h ?? 0) - (a.activity?.flows24h ?? 0))
+    sorted.forEach((asset, i) => {
+      const r = R * Math.sqrt((i + 0.5) / sorted.length)
+      const th = i * GOLDEN_ANGLE + stableUnit(asset.ip, 7) * 0.3
+      devices.push({
+        ...baseDevice(asset, role),
+        x: cx + Math.cos(th) * r * 1.12,
+        y: cy + Math.sin(th) * r,
+      })
+    })
+  })
+  return devices
+}
+
+const peerDevice = (asset: Asset, index: number, total: number): GraphDevice => {
+  const arc = total > 1 ? -0.9 + (1.8 * index) / (total - 1) : 0
+  const radius = 0.88 + stableUnit(asset.ip, 31) * 0.07
+  return {
+    ...baseDevice(asset, 'cross-segment peer'),
+    x: Math.cos(arc) * radius,
+    y: Math.sin(arc) * radius * 0.9,
   }
 }
 
@@ -174,12 +247,23 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
     const native = data.inventory.assets.filter((asset) => asset.segment === segment.cidr)
     const boundary = data.crossSegment.records.filter((record) => record.sourceSegment === segment.cidr || record.destinationSegment === segment.cidr)
     const peerIps = [...new Set(boundary.map((record) => record.sourceSegment === segment.cidr ? record.destination : record.source))]
-    const peerAssets = peerIps.map((ip) => assets.get(ip) ?? ({ ip, name: ip, segment: 'cross-segment', active24h: true } as Asset))
+    const nativeIps = new Set(native.map((asset) => asset.ip))
+    const peerAssets = peerIps.filter((ip) => !nativeIps.has(ip)).map((ip) => assets.get(ip) ?? ({ ip, name: ip, segment: 'cross-segment', active24h: true } as Asset))
+
+    const byClass = new Map<string, Asset[]>()
+    for (const asset of native) {
+      const role = classifyAsset(asset)
+      byClass.set(role, [...(byClass.get(role) ?? []), asset])
+    }
+    const groups = [...byClass.entries()].sort(
+      (a, b) => (CLASS_ORDER.indexOf(a[0]) + 1 || 99) - (CLASS_ORDER.indexOf(b[0]) + 1 || 99),
+    )
     const devices = [
-      ...native.map((asset, index) => graphDevice(asset, index, native.length)),
-      ...peerAssets.map((asset, index) => graphDevice(asset, index, peerAssets.length, true)),
+      ...clusterDevices(groups),
+      ...peerAssets.map((asset, index) => peerDevice(asset, index, peerAssets.length)),
     ]
     const deviceIps = new Set(devices.map((device) => device.ip))
+
     const edges: GraphEdge[] = boundary
       .filter((record) => deviceIps.has(record.source) && deviceIps.has(record.destination))
       .map((record) => ({
@@ -191,13 +275,61 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
         evidence: `${record.action} · ${record.service || (record.port ? `:${record.port}` : 'service unknown')} · ${record.lastSeenAt}`,
         observed: true,
       }))
+
+    /* Same-destination inference: the FortiGate routes, so lateral L2 traffic
+     * never reaches the log — but two hosts measured against the SAME boundary
+     * destination+service are related, and that is exactly what codst asserts.
+     * Star per destination (hub = heaviest talker), dashed as inferred. */
+    const seen = new Set(edges.map((edge) => [edge.src, edge.dst].sort().join('|')))
+    const byDest = new Map<string, { src: string; flows: number }[]>()
+    for (const record of boundary) {
+      if (record.sourceSegment !== segment.cidr || !nativeIps.has(record.source)) continue
+      const key = `${record.destination} · ${record.service || (record.port ? `:${record.port}` : '')}`
+      byDest.set(key, [...(byDest.get(key) ?? []), { src: record.source, flows: record.flows }])
+    }
+    let inferredBudget = 60
+    for (const [dest, talkers] of byDest) {
+      const sources = [...new Map(talkers.map((t) => [t.src, t])).values()].sort((a, b) => b.flows - a.flows)
+      if (sources.length < 2) continue
+      const hub = sources[0]
+      for (const other of sources.slice(1, 5)) {
+        const pair = [hub.src, other.src].sort().join('|')
+        if (seen.has(pair) || inferredBudget <= 0) continue
+        seen.add(pair)
+        inferredBudget -= 1
+        edges.push({
+          src: hub.src,
+          dst: other.src,
+          kind: 'codst',
+          weight: Math.max(0.6, Math.min(2.2, Math.log10(Math.min(hub.flows, other.flows) + 1) * 0.7)),
+          hits: Math.min(hub.flows, other.flows),
+          evidence: `共同目的 ${dest}`,
+          observed: false,
+        })
+      }
+    }
+
+    const observedEdges = edges.filter((edge) => edge.observed).length
     const risky = devices.filter((device) => device.threat !== 'ok').map((device) => device.ip)
+    const vendors: Record<string, number> = {}
+    for (const asset of native) {
+      const vendor = asset.identity?.vendor
+      if (vendor) vendors[vendor] = (vendors[vendor] ?? 0) + 1
+    }
     graphs[segment.cidr] = {
       cidr: segment.cidr,
       devices,
       edges,
       clusters: [
-        { id: 'segment-assets', members: native.map((asset) => asset.ip), role: 'asset', vendor: segment.name, size: native.length, boundBy: [], deny: native.reduce((sum, asset) => sum + (asset.activity?.denied24h ?? 0), 0) },
+        ...groups.map(([role, members]) => ({
+          id: `class-${role}`,
+          members: members.map((asset) => asset.ip),
+          role,
+          vendor: '',
+          size: members.length,
+          boundBy: [],
+          deny: members.reduce((sum, asset) => sum + (asset.activity?.denied24h ?? 0), 0),
+        })),
         ...(peerAssets.length ? [{ id: 'boundary-peers', members: peerAssets.map((asset) => asset.ip), role: 'cross-segment', vendor: 'boundary peers', size: peerAssets.length, boundBy: ['codst' as const], deny: 0 }] : []),
       ],
       anomalies: risky.length ? [{ kind: 'production-risk', members: risky, detail: '当前风险融合或未关闭案件命中' }] : [],
@@ -206,10 +338,10 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
         withTraffic: devices.filter((device) => device.flows > 0).length,
         dhcpOnly: 0,
         edges: edges.length,
-        observedEdges: edges.length,
+        observedEdges,
         deny: devices.reduce((sum, device) => sum + device.deny, 0),
-        roles: { asset: native.length, 'cross-segment': peerAssets.length },
-        vendors: {},
+        roles: Object.fromEntries(groups.map(([role, members]) => [role, members.length])),
+        vendors,
       },
     }
   }
@@ -377,10 +509,12 @@ export function ProductionTopologyPage({ lang, onOpenCase }: { lang: Lang; onOpe
     const risky = current.devices.filter((device) => device.threat !== 'ok')
     setAnalysis({
       cidr,
-      summary: lang === 'zh' ? `${current.devices.length} 个可见资产，${current.edges.length} 条已观测跨区关系，${risky.length} 个风险命中。` : `${current.devices.length} visible assets, ${current.edges.length} observed boundary relations, ${risky.length} risk matches.`,
+      summary: lang === 'zh'
+        ? `${current.devices.length} 个可见资产，${current.stats.observedEdges} 条实测跨区关系 + ${current.edges.length - current.stats.observedEdges} 条同目的推断，${risky.length} 个风险命中。`
+        : `${current.devices.length} visible assets, ${current.stats.observedEdges} observed boundary relations + ${current.edges.length - current.stats.observedEdges} shared-destination inferences, ${risky.length} risk matches.`,
       communities: current.clusters.map((cluster) => ({ id: cluster.id, label: cluster.vendor, note: `${cluster.size}` })),
       patterns: risky.map((device) => ({ title: projection.risks[device.ip]?.reasons[0] ?? 'risk match', kind: 'production-risk', members: [device.ip], why: projection.risks[device.ip]?.reasons.join('；') ?? '', severity: device.threat === 'high' ? 'high' : 'medium' })),
-      corridors: current.edges.slice(0, 12).map((edge) => ({ src: edge.src, dst: edge.dst, why: edge.evidence })),
+      corridors: current.edges.filter((edge) => edge.observed).slice(0, 12).map((edge) => ({ src: edge.src, dst: edge.dst, why: edge.evidence })),
       flow: 'ClickHouse facts → production topology projection',
       blindSpot: lang === 'zh' ? '同网段横向通信需要交换机镜像、NetFlow 或端点网络探针。' : 'Same-segment movement requires switch telemetry or endpoint sensors.',
       actions: [],
