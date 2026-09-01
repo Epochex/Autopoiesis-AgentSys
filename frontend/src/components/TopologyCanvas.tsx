@@ -7,6 +7,14 @@ import { Analyzing, type Threat, type WanThreat } from './ThreatCard'
 import type { Lang } from '../i18n'
 
 type Pt = { x: number; y: number }
+export interface ProductionTopologyContext {
+  observedAt: string
+  lagSeconds: number | null
+  activeCases: number
+  changes: number
+  externalSources: { ip: string; events: number; eventTypes: string[] }[]
+  profiles: Record<string, DeviceProfile>
+}
 /* The plate is a ~1.9:1 letterbox at every supported viewport (1920x1006,
  * 1440x826). The old 1360x1000 viewBox (1.36:1) could only ever be fitted by
  * HEIGHT, so ~550px of the 1920 plate was structural letterboxing — the "dead
@@ -366,8 +374,20 @@ function CoreReticle({ core }: { core: Pt }) {
  *  trailing 48h from now — on 2026-07-17 it still reports 2026-06-16..17, a month
  *  stale. "LAST 48H" was simply false, and it was the page's loudest recency
  *  claim. It now prints the dates the payload actually carries. */
-function HudReadouts({ stats, meshCount, ifCount, subCount, lang }: { stats: DataStats; meshCount: number; ifCount: number; subCount: number; lang: Lang }) {
+function HudReadouts({ stats, meshCount, ifCount, subCount, lang, production }: { stats: DataStats; meshCount: number; ifCount: number; subCount: number; lang: Lang; production?: ProductionTopologyContext }) {
   const zh = lang === 'zh'
+  if (production) {
+    const stamp = production.observedAt ? new Date(production.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'N/A'
+    return (
+      <g className="hud-readouts" pointerEvents="none">
+        <g textAnchor="end">
+          <text x={VBW - 44} y={30} className="hud-r-dim">{zh ? '生产事实流' : 'PRODUCTION FACTS'} · {stamp} · {production.lagSeconds ?? 'N/A'}s</text>
+          <text x={VBW - 44} y={50} className="hud-r-line"><tspan className="hot">{production.activeCases}</tspan> {zh ? '起处理中案件' : 'active cases'} · <tspan className="hot">{production.changes}</tspan> {zh ? '项近期变化' : 'recent changes'}</text>
+          <text x={VBW - 44} y={67} className="hud-r-line"><tspan className="acc">{meshCount}</tspan> {zh ? '资产' : 'assets'} · {ifCount} {zh ? '接口' : 'interfaces'} · {subCount} {zh ? '网段' : 'segments'}</text>
+        </g>
+      </g>
+    )
+  }
   const days = stats.windowDays ?? []
   const window = days.length ? (days.length > 1 ? `${days[0]} → ${days[days.length - 1]}` : days[0]) : (zh ? '窗口未知' : 'WINDOW UNKNOWN')
   return (
@@ -395,8 +415,18 @@ function HudReadouts({ stats, meshCount, ifCount, subCount, lang }: { stats: Dat
  *  NOTE: the reasoner that produced the case diagnosis (`snapshot.reasonerMode`)
  *  would belong on this block, but it is not passed to this component and App.tsx
  *  is owned elsewhere. It is omitted rather than guessed. */
-function Thesis({ stats, lang }: { stats: DataStats; lang: Lang }) {
+function Thesis({ stats, lang, production }: { stats: DataStats; lang: Lang; production?: ProductionTopologyContext }) {
   const zh = lang === 'zh'
+  if (production) {
+    return (
+      <g className="thesis" pointerEvents="none">
+        <line x1={96} y1={772} x2={780} y2={772} className="th-rule" />
+        <text x={96} y={808} className="th-kicker">{zh ? '态势 · 生产观测图谱' : 'CONSOLE · PRODUCTION OBSERVATION MAP'}</text>
+        <text x={96} y={852} className="th-meta"><tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{stats.source}</text>
+        <text x={96} y={888} className="th-read">{zh ? '点网段 → 展开当前资产与跨区关系 · 点节点 → 资产画像与历史记录' : 'click a segment → observed assets and boundary relations · click a node → profile and history'}</text>
+      </g>
+    )
+  }
   const days = stats.windowDays ?? []
   const window = days.length > 1 ? `${days[0]} → ${days[days.length - 1]}` : days[0] ?? '—'
   return (
@@ -465,6 +495,7 @@ export function TopologyCanvas({
   allGraphs,
   onCloseTheater,
   onOpenTheater,
+  production,
 }: {
   topo: Topology
   stats: DataStats
@@ -501,6 +532,7 @@ export function TopologyCanvas({
   allGraphs?: Record<string, SubnetGraph>
   onCloseTheater?: () => void
   onOpenTheater?: () => void
+  production?: ProductionTopologyContext
 }) {
   const g = group(activeKey)
   /* Flow reads left→right across the full plate: WAN tally → admin target →
@@ -513,10 +545,11 @@ export function TopologyCanvas({
   const [asData, setAsData] = useState<AsData | null>(null)
   const [wanFocus, setWanFocus] = useState<WanFocus>(null)
   useEffect(() => {
+    if (production) return
     let gone = false
     fetch('/api/rca/attack_surface').then((r) => (r.ok ? r.json() : null)).then((d: AsData | null) => { if (!gone && d) setAsData(d) }).catch(() => {})
     return () => { gone = true }
-  }, [])
+  }, [production])
   const devByIp = useMemo(() => {
     const m = new Map<string, AsDevice & { cidr: string }>()
     for (const s of asData?.assetExposure.subnets ?? []) for (const e of s.exposed) m.set(e.ip, { ...e, cidr: s.cidr })
@@ -589,6 +622,11 @@ export function TopologyCanvas({
       queueMicrotask(() => { if (!gone) setProfile(null) })
       return () => { gone = true }
     }
+    if (production) {
+      const current = production.profiles[focusDev] ?? null
+      queueMicrotask(() => { if (!gone) setProfile(current) })
+      return () => { gone = true }
+    }
     // Bench memory node: a memory_id has no live traffic profile — skip the probe
     // entirely (it would 404) and let the memory-record panel render instead.
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -617,7 +655,7 @@ export function TopologyCanvas({
       gone = true
       if (timer) clearTimeout(timer)
     }
-  }, [focusDev, isMemNode, lang])
+  }, [focusDev, isMemNode, lang, production])
 
   // ── historical portrait (ClickHouse autopoiesis.facts, last 7 days). Fetched once
   //    per focus; independent of the live poll since history moves slowly.
@@ -725,9 +763,9 @@ export function TopologyCanvas({
     // named sources sit under their own tally, still in the WAN column
     const atk = stats.topAttackerSrc.slice(0, 3).map((d, i) => ({ ip: d[0], v: d[1], p: { x: 102, y: 468 + i * 46 } as Pt }))
     const lan = topo.interfaces.filter((it) => it.kind === 'lan')
-    const ys = [150, 330, 512, 692]
+    const count = Math.max(1, lan.length)
     const ifs = lan.map((it, i) => {
-      const p: Pt = { x: 1090, y: ys[i] ?? 150 + i * 182 }
+      const p: Pt = { x: 1090, y: count === 1 ? 430 : 105 + (i * 760) / (count - 1) }
       const sub = topo.subnets.find((s) => s.intf === it.name && s.hosts > 1)
       return { it, p, sub, subP: { x: 1350, y: p.y } as Pt }
     })
@@ -793,7 +831,28 @@ export function TopologyCanvas({
           />
         ) : null}
         {!drilled && !inTheater ? (
-          <WanSiege core={core} atk={layout.atk} asData={asData} wanFocus={wanFocus} setWanFocus={setWanFocus} devByIp={devByIp} distinctSrc={stats.distinctSrc} lockouts={stats.lockouts ?? 0} lang={lang} wan={wan} onWan={onWan} />
+          production ? (
+            <g className="ws-nodes">
+              <text x={96} y={172} className="ws-kicker">{lang === 'zh' ? '公网来源 · 近 24 小时生产观测' : 'EXTERNAL SOURCES · OBSERVED IN 24H'}</text>
+              {production.externalSources.slice(0, 14).map((source, i) => {
+                const x = 104 + (i % 4) * 126
+                const y = 218 + Math.floor(i / 4) * 76
+                const target = { x: core.x - 74, y: core.y }
+                return (
+                  <g key={source.ip} className="ws-node" style={{ cursor: 'pointer' }} onClick={() => onWan(source.ip)}>
+                    <path d={bez({ x, y }, target)} className="ws-vector" pointerEvents="none" />
+                    <rect x={x - 4} y={y - 4} width="8" height="8" className="ws-node-dot" />
+                    <text x={x + 12} y={y - 2} className="ws-node-ip">{source.ip}</text>
+                    <text x={x + 12} y={y + 12} className="ws-node-v">{short(source.events)} {lang === 'zh' ? '条事件' : 'events'} ▸</text>
+                    {/* The vector path stretches this group's bbox to the core, so the
+                        dot and labels are the only real target — pad them with a hit
+                        rect (same idiom as ws-tally-hit). */}
+                    <rect x={x - 10} y={y - 18} width={124} height={40} className="ws-tally-hit" />
+                  </g>
+                )
+              })}
+            </g>
+          ) : <WanSiege core={core} atk={layout.atk} asData={asData} wanFocus={wanFocus} setWanFocus={setWanFocus} devByIp={devByIp} distinctSrc={stats.distinctSrc} lockouts={stats.lockouts ?? 0} lang={lang} wan={wan} onWan={onWan} />
         ) : null}
         {!drilled && !inTheater
           ? layout.ifs.map((f, i) => {
@@ -882,7 +941,7 @@ export function TopologyCanvas({
 
         {/* The thesis owns the resting state's bottom band; an open analysis takes
             the same space, so they are mutually exclusive by construction. */}
-        {!drilled && !inTheater && !threat && !wan ? <Thesis stats={stats} lang={lang} /> : null}
+        {!drilled && !inTheater && !threat && !wan ? <Thesis stats={stats} lang={lang} production={production} /> : null}
 
         {layout.ifs.map((f, i) => {
           const focused = drillSub === f.sub?.cidr
@@ -1016,7 +1075,7 @@ export function TopologyCanvas({
         })}
 
         {/* 3D constellation portal — hidden while the WAN pivots or a segment mesh own the right field */}
-        {meshCount > 0 && !wan && !drilled && !inTheater ? (
+        {meshCount > 0 && !production && !wan && !drilled && !inTheater ? (
           <>
             {/* The connector paths used to live INSIDE the clickable group, which
                 stretched its bounding box from the segment nodes all the way to
@@ -1267,6 +1326,7 @@ export function TopologyCanvas({
             ifCount={layout.ifs.length}
             subCount={layout.ifs.filter((f) => f.sub).length}
             lang={lang}
+            production={production}
           />
         ) : null}
 

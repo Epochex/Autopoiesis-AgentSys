@@ -162,8 +162,11 @@ async function run() {
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()) })
   page.on('requestfailed', (r) => errs.push(`REQ ${r.url()} ${r.failure()?.errorText}`))
 
-  await page.goto(URL, { waitUntil: 'networkidle' })
-  await page.locator('header button, nav button').filter({ hasText: /^态势$/ }).first().click()
+  /* networkidle never settles now: the production page polls pulse/overview on
+   * a fixed cadence, so wait for the plate itself instead of network silence. */
+  await page.goto(URL, { waitUntil: 'domcontentloaded' })
+  await page.locator('header button, nav button').filter({ hasText: /^(实时图谱|态势)$/ }).first().click()
+  await page.waitForSelector('.flow-canvas', { timeout: 60000 })
   await page.waitForTimeout(4000)
 
   say('════ 0 · RESTING STATE ════')
@@ -216,7 +219,9 @@ async function run() {
 
   say('\n════ 4 · CLICK A WAN SOURCE (intrusion verdict · DeepSeek) ════')
   before = await probe(page)
-  await page.locator('.ws-node').first().click()
+  /* Click the node's hit rect, not the group: the group bbox includes the
+   * bezier vector to the core, so bbox-center lands on empty plate. */
+  await page.locator('.ws-node .ws-tally-hit').first().click()
   await page.waitForTimeout(1000)
   after = await probe(page)
   say(`  click WAN source → ${diff(before, after)}`)

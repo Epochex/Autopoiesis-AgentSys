@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 from .model_access import cache_get, cache_put, client_for, model_name, unavailable
@@ -37,30 +38,48 @@ def event_rate() -> dict[str, Any]:
 def _probe_rate() -> dict[str, Any]:
     ssh = os.getenv("R230_SSH")
     pw = os.getenv("R230_PASS")
-    log = os.getenv("R230_LOG", "/data/fortigate-runtime/input/fortigate.log")
+    log = os.getenv("FORTIGATE_LOG", os.getenv("R230_LOG", "/data/fortigate-runtime/input/fortigate.log"))
+    local_path = Path(log)
+    # Prefer the local receiver once it has a fresh file. During the network
+    # cutover a copied, frozen file may also exist locally, so freshness is the
+    # deciding signal and the remote reader remains a compatibility fallback.
+    if local_path.is_file():
+        try:
+            local = subprocess.run(
+                ["tail", "-n", "6000", str(local_path)],
+                capture_output=True, text=True, errors="replace", timeout=5, check=False,
+            )
+            value = _rate_from_lines(local.stdout.splitlines(), int(local_path.stat().st_mtime), "local")
+            if value["live"] or not ssh or not pw:
+                return value
+        except (OSError, subprocess.SubprocessError):
+            pass
     if not ssh or not pw:
-        return {"eventsPerSec": None, "lines": 0, "live": False}
-    # Read mtime plus the first/last timestamp in the tail. A rate calculated from
-    # an old frozen file is historical throughput, so it must never set live=true.
-    # match the HH:MM:SS value of " time=" (not "eventtime=" epoch); first+last of the tail
-    pat = "[^a-zA-Z]time=([0-9]{1,2}:[0-9]{2}:[0-9]{2})"
+        return {"eventsPerSec": None, "lines": 0, "live": False, "sourceMode": "unavailable"}
+    # Read mtime plus a bounded tail. A rate calculated from an old frozen file is
+    # historical throughput, so it must never set live=true.
     safe_log = shlex.quote(log)
-    remote = f"stat -c %Y {safe_log}; tail -n 6000 {safe_log} | sed -nE '1s/.*{pat}.*/\\1/p; $s/.*{pat}.*/\\1/p'"
+    remote = f"stat -c %Y {safe_log}; tail -n 6000 {safe_log}"
     try:
         out = subprocess.run(
             ["sshpass", "-p", pw, "ssh", "-o", "StrictHostKeyChecking=accept-new",
              "-o", "ConnectTimeout=6", ssh, remote],
-            capture_output=True, text=True, timeout=12,
+            capture_output=True, text=True, errors="replace", timeout=12,
         ).stdout.strip().splitlines()
     except Exception:
-        return {"eventsPerSec": None, "lines": 0, "live": False}
+        return {"eventsPerSec": None, "lines": 0, "live": False, "sourceMode": "remote"}
     try:
         modified_at = int(out[0])
     except (IndexError, ValueError):
-        return {"eventsPerSec": None, "lines": 0, "live": False}
-    times = [t for t in out[1:] if re.match(r"^\d+:\d+:\d+$", t)]
+        return {"eventsPerSec": None, "lines": 0, "live": False, "sourceMode": "remote"}
+    return _rate_from_lines(out[1:], modified_at, "remote")
+
+
+def _rate_from_lines(lines: list[str], modified_at: int, source_mode: str) -> dict[str, Any]:
+    pat = re.compile(r"[^a-zA-Z]time=([0-9]{1,2}:[0-9]{2}:[0-9]{2})")
+    times = [match.group(1) for line in lines if (match := pat.search(line))]
     if len(times) < 2:
-        return {"eventsPerSec": None, "lines": 0, "live": False}
+        return {"eventsPerSec": None, "lines": len(lines), "live": False, "sourceMode": source_mode}
 
     def secs(t: str) -> int:
         h, m, s = (int(x) for x in t.split(":"))
@@ -69,17 +88,19 @@ def _probe_rate() -> dict[str, Any]:
     span = secs(times[-1]) - secs(times[0])
     if span <= 0:
         span = 1
-    rate = round(6000 / span, 1)
+    line_count = len(lines)
+    rate = round(line_count / span, 1)
     age_sec = max(0, int(time.time()) - modified_at)
     fresh = age_sec <= _RATE_FRESHNESS_SEC
     return {
         "eventsPerSec": rate,
-        "lines": 6000,
+        "lines": line_count,
         "spanSec": span,
         "sourceModifiedAt": modified_at,
         "sourceAgeSec": age_sec,
         "freshnessThresholdSec": _RATE_FRESHNESS_SEC,
         "live": fresh,
+        "sourceMode": source_mode,
     }
 
 

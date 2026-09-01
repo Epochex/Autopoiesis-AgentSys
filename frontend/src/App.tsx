@@ -13,6 +13,7 @@ import { BenchConsole } from './components/BenchConsole'
 import { TopoSearch } from './components/TopoSearch'
 import { TrajectoryBench } from './components/TrajectoryBench'
 import { SituationalOverview } from './components/SituationalOverview'
+import { ProductionTopologyPage } from './components/ProductionTopologyPage'
 import { lazy, Suspense } from 'react'
 
 const Constellation3D = lazy(() => import('./components/Constellation3D').then((m) => ({ default: m.Constellation3D })))
@@ -23,7 +24,7 @@ type MeshModel = {
 }
 import type { DataStats, Device, GraphAnalysis, SubnetGraph, TheaterEvent, Topology } from './types'
 
-type View = 'console' | 'trajectory' | 'diagnose' | 'retrieval' | 'cost'
+type View = 'console' | 'overview' | 'trajectory' | 'diagnose' | 'retrieval' | 'cost'
 type Scenario = 'live' | 'bench'
 
 type State =
@@ -303,10 +304,11 @@ function App() {
         <div className="top-right">
           <div className="scen" role="group" aria-label={lang === 'zh' ? '场景切换' : 'scenario'}>
             <button className={scenario === 'live' ? 'on' : ''} onClick={() => setScenario('live')}>{lang === 'zh' ? '内网实时' : 'LIVE NET'}</button>
-            <button className={scenario === 'bench' ? 'on' : ''} onClick={() => setScenario('bench')}>{lang === 'zh' ? '基准 · ITBench+LME' : 'BENCHMARK'}</button>
+            <button className={scenario === 'bench' ? 'on' : ''} onClick={() => { setScenario('bench'); if (view === 'overview') setView('console') }}>{lang === 'zh' ? '基准 · ITBench+LME' : 'BENCHMARK'}</button>
           </div>
             <div className="pager">
-              <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '态势' : 'CONSOLE'}</button>
+              <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '实时图谱' : 'LIVE MAP'}</button>
+              {scenario === 'live' ? <button className={view === 'overview' ? 'on' : ''} onClick={() => setView('overview')}>{lang === 'zh' ? '事件总览' : 'OVERVIEW'}</button> : null}
               <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '多轮故障回放' : 'MULTI-RUN REPLAY'}</button>
               <button className={view === 'diagnose' ? 'on' : ''} onClick={() => setView('diagnose')}>{lang === 'zh' ? '诊断处置' : 'DIAGNOSE'}</button>
               <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '查资料' : 'FIND RECORDS'}</button>
@@ -352,6 +354,15 @@ function App() {
       </header>
 
       {view === 'console' && scenario === 'live' ? (
+        <ProductionTopologyPage
+          lang={lang}
+          onOpenCase={(subject, caseId) => {
+            setTraceSubject(subject)
+            setTraceCaseId(caseId ?? null)
+            setView('diagnose')
+          }}
+        />
+      ) : view === 'overview' && scenario === 'live' ? (
         <SituationalOverview
           lang={lang}
           onOpenCase={(subject, caseId) => {

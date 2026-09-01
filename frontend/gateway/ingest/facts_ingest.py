@@ -17,6 +17,7 @@ Two modes:
 
 Config via env (falls back to `/etc/autopoiesis.env` values):
   R230_SSH, R230_PASS, R230_LOG            — SSH target + live log path
+  FORTIGATE_SOURCE_LOCAL                   — run source file commands locally
   CLICKHOUSE_URL  (default http://10.43.125.243:8123)
   CLICKHOUSE_USER/PASSWORD/DB              - default user/db: autopoiesis/autopoiesis
   FACTS_LIVE_FLUSH_SECONDS                  — default 5
@@ -85,6 +86,9 @@ R230_SSH = _env("R230_SSH", "root@192.168.1.23")
 R230_PASS = _env("R230_PASS")
 R230_LOG = _env("R230_LOG", "/data/fortigate-runtime/input/fortigate.log")
 R230_DIR = os.path.dirname(R230_LOG)
+FORTIGATE_SOURCE_LOCAL = _env("FORTIGATE_SOURCE_LOCAL", "0").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 BATCH = int(_env("FACTS_BATCH", "5000"))
 LIVE_FLUSH_SECONDS = float(_env("FACTS_LIVE_FLUSH_SECONDS", "5"))
@@ -602,6 +606,8 @@ def ch_insert_security(rows: list[list]) -> None:
 
 
 def _ssh_cmd(remote_cmd: str) -> list[str]:
+    if FORTIGATE_SOURCE_LOCAL:
+        return ["bash", "-lc", remote_cmd]
     base = ["sshpass", "-e"] if R230_PASS else []
     return base + [
         "ssh", "-n", "-T", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
@@ -610,6 +616,8 @@ def _ssh_cmd(remote_cmd: str) -> list[str]:
 
 
 def _ssh_env() -> dict[str, str] | None:
+    if FORTIGATE_SOURCE_LOCAL:
+        return None
     if not R230_PASS:
         return None
     env = os.environ.copy()
