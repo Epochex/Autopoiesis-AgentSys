@@ -1811,6 +1811,21 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   fill: var(--net-ink); opacity: 1;
 }
 .sg-cluster.hot .sg-hull-label { fill: var(--wan-ink); opacity: 1; font-weight: 500; }
+/* Device-class band: a console panel, not an organic territory — solid faint
+   plate with a top-left header line, same teal/coral inks as the rest. */
+.sg-hull.band { fill: rgba(28, 143, 136, 0.045); stroke: rgba(28, 143, 136, 0.26); stroke-dasharray: none; }
+.sg-cluster.hot .sg-hull.band { fill: rgba(195, 56, 74, 0.055); stroke: rgba(195, 56, 74, 0.4); }
+.sg-band-t {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  fill: var(--ink);
+}
+.sg-band-s {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9px; letter-spacing: 0.08em;
+  fill: var(--net-ink);
+}
+.sg-cluster.hot .sg-band-s { fill: var(--wan-ink); }
 
 /* Relation evidence: the claim the map is entitled to make is OBSERVED vs
    INFERRED, and that is carried structurally (solid vs dashed) — it already was.

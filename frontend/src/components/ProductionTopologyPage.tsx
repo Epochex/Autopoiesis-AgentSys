@@ -97,12 +97,6 @@ const severityThreat = (value?: string | null): 'high' | 'watch' | 'ok' => {
   return 'ok'
 }
 
-const stableUnit = (text: string, salt = 0): number => {
-  let hash = 2166136261 ^ salt
-  for (let i = 0; i < text.length; i += 1) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619)
-  return ((hash >>> 0) % 10_000) / 10_000
-}
-
 /* ── device-type classification ──
  * The router's live fingerprint (deviceClass) is authoritative. For hosts the
  * FortiGate never typed, fall back to what the evidence itself shows: hostname
@@ -149,50 +143,60 @@ const baseDevice = (asset: Asset, role: string): Omit<GraphDevice, 'x' | 'y'> =>
   }
 }
 
-/* ── clustered layout ──
- * One sunflower-packed disc per device class, discs ringed around the plate
- * centre; boundary peers keep to an outer right-hand arc. Coordinates stay in
- * the [-1,1] space SubnetGraphLayer scales onto the ellipse. Active hosts pack
- * first (inner), silent ones drift to their disc's rim. */
-const GOLDEN_ANGLE = 2.399963
+/* ── banded layout ──
+ * A console board, not a scatter: each device class is a horizontal band (its
+ * header drawn by SubnetGraphLayer), hosts grid-aligned inside it — risky
+ * first, then active by traffic, silent hosts trailing — so reading order IS
+ * the priority order. Boundary peers hold a column on the right; the space
+ * between belongs to the boundary bus every cross-segment edge routes through.
+ * Coordinates stay in the [-1,1] space SubnetGraphLayer scales onto the plate. */
+const BAND_X0 = -0.92
+const BAND_X1 = 0.3
+export const PEER_X = 0.78
+
+const assetRank = (asset: Asset): number =>
+  (severityThreat(asset.risk) !== 'ok' ? 2 : 0) + (asset.active24h ? 1 : 0)
+
 const clusterDevices = (groups: [string, Asset[]][]): GraphDevice[] => {
   const devices: GraphDevice[] = []
-  const n = groups.length
-  /* Class discs take the top→left→bottom arc; the right sector stays clear for
-   * the boundary-peer fan. Arc slots go to size-sorted groups end-in — largest
-   * at the top, runner-up at the bottom — so the two big discs never abut. */
-  const bySize = [...groups.keys()].sort((a, b) => groups[b][1].length - groups[a][1].length)
-  const slot = new Array<number>(n)
-  bySize.forEach((groupIndex, rank) => {
-    slot[groupIndex] = rank % 2 === 0 ? rank / 2 : n - 1 - (rank - 1) / 2
-  })
-  groups.forEach(([role, members], gi) => {
-    const single = n === 1
-    const angle = -Math.PI / 2 - (Math.PI * slot[gi]) / Math.max(n - 1, 1)
-    const cx = single ? 0 : Math.cos(angle) * 0.52
-    const cy = single ? 0 : Math.sin(angle) * 0.5
-    const R = Math.min(single ? 0.62 : 0.28, 0.08 + Math.sqrt(members.length) * (single ? 0.055 : 0.032))
-    const sorted = [...members].sort((a, b) => (b.activity?.flows24h ?? 0) - (a.activity?.flows24h ?? 0))
+  if (!groups.length) return devices
+  const maxN = Math.max(...groups.map(([, members]) => members.length))
+  const cols = Math.max(8, Math.min(22, Math.ceil(Math.sqrt(maxN) * 2.6)))
+  const pitchX = (BAND_X1 - BAND_X0) / cols
+  const rowsFor = (n: number) => Math.ceil(n / cols)
+  const HEADER_UNITS = 0.7
+  const GAP_UNITS = 0.55
+  const totalUnits = groups.reduce((sum, [, members]) => sum + rowsFor(members.length) + HEADER_UNITS, 0)
+    + (groups.length - 1) * GAP_UNITS
+  const pitchY = Math.min(0.12, 1.72 / totalUnits)
+  let cursor = -(totalUnits * pitchY) / 2 + 0.04
+  for (const [role, members] of groups) {
+    cursor += HEADER_UNITS * pitchY
+    const sorted = [...members].sort(
+      (a, b) => assetRank(b) - assetRank(a) || (b.activity?.flows24h ?? 0) - (a.activity?.flows24h ?? 0),
+    )
     sorted.forEach((asset, i) => {
-      const r = R * Math.sqrt((i + 0.5) / sorted.length)
-      const th = i * GOLDEN_ANGLE + stableUnit(asset.ip, 7) * 0.3
       devices.push({
         ...baseDevice(asset, role),
-        x: cx + Math.cos(th) * r * 1.12,
-        y: cy + Math.sin(th) * r,
+        x: BAND_X0 + ((i % cols) + 0.5) * pitchX,
+        y: cursor + Math.floor(i / cols) * pitchY,
       })
     })
-  })
+    cursor += (rowsFor(sorted.length) + GAP_UNITS) * pitchY
+  }
   return devices
 }
 
 const peerDevice = (asset: Asset, index: number, total: number): GraphDevice => {
-  const arc = total > 1 ? -0.9 + (1.8 * index) / (total - 1) : 0
-  const radius = 0.88 + stableUnit(asset.ip, 31) * 0.07
+  const columns = total > 14 ? 2 : 1
+  const rows = Math.ceil(total / columns)
+  const pitch = Math.min(0.14, 1.68 / Math.max(rows, 1))
+  const column = Math.floor(index / rows)
+  const row = index % rows
   return {
     ...baseDevice(asset, 'cross-segment peer'),
-    x: Math.cos(arc) * radius,
-    y: Math.sin(arc) * radius * 0.9,
+    x: PEER_X + column * 0.12,
+    y: -((rows - 1) * pitch) / 2 + row * pitch,
   }
 }
 

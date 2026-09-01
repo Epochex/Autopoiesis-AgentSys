@@ -195,16 +195,44 @@ export function SubnetGraphLayer({
 
   return (
     <g className={`sg ${ego ? 'is-ego' : ''}`}>
-      {/* ── community territories ── */}
+      {/* ── community territories ──
+          Device-class bands (id `class-*`) read as console panels: hull around
+          the aligned grid, header top-left with the counts that rank the band
+          (risk hits · active · denied). Other clusters keep the centred label. */}
       {graph.clusters.map((c) => {
         const pts = c.members.map((m) => pos[m]).filter(Boolean)
         if (pts.length < 2) return null
+        const isBand = c.id.startsWith('class-') || c.id === 'boundary-peers'
         const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length
         const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length
         const label = labelOf[c.id] ?? `${c.vendor || (zh ? ROLE_ZH[c.role] ?? c.role : c.role)} ×${c.size}`
         const egoHome = ego ? c.members.some((m) => ego.members.has(m)) : false
+        const cls = `sg-cluster ${c.deny > 20000 ? 'hot' : ''} ${ego ? (egoHome ? 'ego-in' : 'ego-off') : ''}`
+        if (isBand) {
+          /* Grid clusters render as console panels — a rounded plate around the
+             aligned dots — not as convex hulls, which collapse into pointed
+             lenses on 1–3 aligned rows. */
+          const minX = Math.min(...pts.map((p) => p.x)) - 24
+          const maxX = Math.max(...pts.map((p) => p.x)) + 24
+          const minY = Math.min(...pts.map((p) => p.y)) - 22
+          const maxY = Math.max(...pts.map((p) => p.y)) + 22
+          const active = c.members.filter((m) => (dev[m]?.flows ?? 0) > 0).length
+          const flagged = c.members.filter((m) => dev[m]?.threat !== 'ok').length
+          const parts = [
+            `${active} ${zh ? '活跃' : 'active'}`,
+            ...(flagged ? [`${flagged} ${zh ? '风险' : 'flagged'}`] : []),
+            ...(c.deny > 0 ? [`${short(c.deny)} ${zh ? '拦截' : 'denied'}`] : []),
+          ]
+          return (
+            <g key={c.id} className={cls} pointerEvents="none">
+              <rect x={minX} y={minY} width={maxX - minX} height={maxY - minY} rx={9} className="sg-hull band" />
+              <text x={minX + 2} y={minY - 20} className="sg-band-t" textAnchor="start">{label}</text>
+              <text x={minX + 2} y={minY - 8} className="sg-band-s" textAnchor="start">{parts.join(' · ')}</text>
+            </g>
+          )
+        }
         return (
-          <g key={c.id} className={`sg-cluster ${c.deny > 20000 ? 'hot' : ''} ${ego ? (egoHome ? 'ego-in' : 'ego-off') : ''}`} pointerEvents="none">
+          <g key={c.id} className={cls} pointerEvents="none">
             <path d={hull(pts, 22)} className="sg-hull" />
             <text x={cx} y={cy - Math.max(30, radius * 0.06)} className="sg-hull-label" textAnchor="middle">
               {label}
@@ -222,9 +250,19 @@ export function SubnetGraphLayer({
           const touchesFocus = !!focusIp && (e.src === focusIp || e.dst === focusIp)
           const dim = (!ego && !!hoverIp && !(e.src === hoverIp || e.dst === hoverIp)) || (!!ego && !touchesFocus)
           const w = Math.max(0.5, Math.min(2.6, e.weight * 0.7)) * (touchesFocus ? 1.8 : 1)
-          const mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.09
-          const my = (a.y + b.y) / 2 - (b.x - a.x) * 0.09
-          const d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
+          /* Cross-segment edges route through the boundary bus between the class
+             bands and the peer column — every crossing reads as one corridor
+             through the gate instead of a free-angle fan over the bands. */
+          const crossing = dev[e.src]?.role === 'cross-segment peer' || dev[e.dst]?.role === 'cross-segment peer'
+          let mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.09
+          let my = (a.y + b.y) / 2 - (b.x - a.x) * 0.09
+          let d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
+          if (crossing) {
+            const busX = center.x + rx * 0.54
+            d = `M ${a.x} ${a.y} C ${busX} ${a.y} ${busX} ${b.y} ${b.x} ${b.y}`
+            mx = busX
+            my = (a.y + b.y) / 2
+          }
           return (
             <g key={i}>
               <path d={d} className={`sg-edge k-${e.kind} ${e.observed ? 'obs' : 'inf'} ${dim ? 'dim' : ''} ${touchesFocus ? 'ego-edge' : ''}`} style={{ strokeWidth: w }} />
@@ -272,7 +310,10 @@ export function SubnetGraphLayer({
           const mark = marks[d.ip]
           const fl = flagged[d.ip]
           const sev = fl?.sev ?? (mark?.severity === 'high' ? 'high' : mark?.severity === 'medium' ? 'medium' : '')
-          const labelled = d.threat !== 'ok' || selectedIp === d.ip || hoverIp === d.ip || (ego ? inEgo : false)
+          /* Only HIGH-severity hosts carry a standing label — a full row of
+             watch-level octets is exactly the kind of ink the grid removes;
+             watch state still reads from the dashed ring, and hover names it. */
+          const labelled = d.threat === 'high' || selectedIp === d.ip || hoverIp === d.ip || (ego ? inEgo : false)
           return (
             <g
               key={d.ip}
