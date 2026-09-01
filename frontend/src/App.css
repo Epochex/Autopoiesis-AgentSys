@@ -1812,19 +1812,44 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 }
 .sg-cluster.hot .sg-hull-label { fill: var(--wan-ink); opacity: 1; font-weight: 500; }
 /* Force-layout groups carry no container: membership is proximity, and the
-   only ink is a floating caption over each group. Node GLYPH encodes class
-   (square/triangle/diamond/circle; peers hollow), risk keeps its coral. */
-.sg-float-t {
+   only ink is a floating caption over each group — the class name on an ACID
+   highlight bar (the console's editorial register), the count as a bare bold
+   numeral, the ranking stats in mono below. Node GLYPH encodes class. */
+.sg-cap-fo { overflow: visible; }
+.sg-cap-wrap { text-align: center; }
+.sg-cap { display: flex; align-items: baseline; justify-content: center; gap: 7px; }
+.sg-cap-t {
+  display: inline-block; background: var(--acid); color: var(--acid-ink);
   font-family: var(--font-mono, 'IBM Plex Mono', monospace);
-  font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
-  fill: var(--ink);
+  font-size: 13px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 1px 8px 2px;
 }
-.sg-float-s {
+.sg-cap-n {
   font-family: var(--font-mono, 'IBM Plex Mono', monospace);
-  font-size: 9px; letter-spacing: 0.08em;
-  fill: var(--net-ink);
+  font-size: 14px; font-weight: 800; color: var(--ink);
 }
-.sg-float-s.risk { fill: var(--wan-ink); }
+.sg-cap-s {
+  margin-top: 3px;
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9px; letter-spacing: 0.08em; color: var(--net-ink);
+}
+.sg-cap-s.risk { color: var(--wan-ink); }
+/* editorial thesis block (production console) */
+.th-def {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 9.5px; letter-spacing: 0.12em; fill: var(--ink); opacity: 0.75;
+}
+.th-acid { fill: var(--acid); }
+.th-title {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 27px; font-weight: 800; letter-spacing: 0.1em; fill: var(--acid-ink);
+}
+.th-barcode rect { fill: var(--ink); }
+.th-code {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 10px; letter-spacing: 0.08em; fill: var(--ink); opacity: 0.7;
+}
+.reg-marks circle, .reg-marks path { fill: none; stroke: var(--ink); stroke-width: 1.2; opacity: 0.55; }
 .sg-node.traffic.r-cross-segment-peer .sg-dot { fill: var(--paper-2); stroke: var(--net); stroke-width: 1.6; }
 .sg-node.traffic.r-internet-endpoint .sg-dot { stroke: var(--ink); stroke-width: 1.6; paint-order: stroke; }
 .sg-lg-glyph {
@@ -1918,7 +1943,10 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 }
 
 .sg-head { font-family: var(--font-mono, 'IBM Plex Mono', monospace); }
-.sg-head-t { font-size: 15px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink); }
+.sg-head-t {
+  display: inline-block; font-size: 17px; font-weight: 800; letter-spacing: 0.06em;
+  color: var(--acid-ink); background: var(--acid); padding: 0 8px 1px;
+}
 .sg-head-s { font-size: 10px; color: var(--fog); line-height: 1.7; }
 .sg-head-s b { color: var(--ink); }
 .sg-cta {

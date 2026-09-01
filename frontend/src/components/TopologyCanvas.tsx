@@ -387,6 +387,13 @@ function HudReadouts({ stats, meshCount, ifCount, subCount, lang, production }: 
           <text x={VBW - 44} y={50} className="hud-r-line"><tspan className="hot">{production.activeCases}</tspan> {zh ? '起处理中案件' : 'active cases'} · <tspan className="hot">{production.changes}</tspan> {zh ? '项近期变化' : 'recent changes'}</text>
           <text x={VBW - 44} y={67} className="hud-r-line"><tspan className="acc">{meshCount}</tspan> {zh ? '资产' : 'assets'} · {ifCount} {zh ? '接口' : 'interfaces'} · {subCount} {zh ? '网段' : 'segments'}</text>
         </g>
+        {/* registration marks — the plate's print-sheet corners */}
+        <g className="reg-marks">
+          <circle cx={30} cy={26} r={7} />
+          <path d={`M 19 26 h 22 M 30 15 v 22`} />
+          <path d={`M ${VBW - 40} ${VBH - 34} h 14 v 14 h -14 Z M ${VBW - 40} ${VBH - 34} l 14 14 M ${VBW - 26} ${VBH - 34} l -14 14`} />
+          <path d={`M 22 ${VBH - 20} h 16 M 22 ${VBH - 26} v 12 M 38 ${VBH - 26} v 12`} />
+        </g>
       </g>
     )
   }
@@ -420,12 +427,39 @@ function HudReadouts({ stats, meshCount, ifCount, subCount, lang, production }: 
 function Thesis({ stats, lang, production }: { stats: DataStats; lang: Lang; production?: ProductionTopologyContext }) {
   const zh = lang === 'zh'
   if (production) {
+    /* Editorial block in the console's acid register: definition line, the
+       title on a highlight bar, then source + a barcode strip whose bars are
+       hashed from the payload's own source string — meta-information, not
+       decoration pretending to be data. */
+    const seedText = `${stats.source}|${(stats.windowDays ?? []).join(',')}`
+    let seed = 2166136261
+    for (let i = 0; i < seedText.length; i += 1) seed = Math.imul(seed ^ seedText.charCodeAt(i), 16777619)
+    const bars: number[] = []
+    let acc = seed >>> 0
+    for (let i = 0; i < 42; i += 1) {
+      acc = (Math.imul(acc, 1664525) + 1013904223) >>> 0
+      bars.push(1 + (acc % 4))
+    }
+    let bx = 96
     return (
       <g className="thesis" pointerEvents="none">
-        <line x1={96} y1={772} x2={780} y2={772} className="th-rule" />
-        <text x={96} y={808} className="th-kicker">{zh ? '态势 · 生产观测图谱' : 'CONSOLE · PRODUCTION OBSERVATION MAP'}</text>
-        <text x={96} y={852} className="th-meta"><tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{stats.source}</text>
-        <text x={96} y={888} className="th-read">{zh ? '点网段 → 展开当前资产与跨区关系 · 点节点 → 资产画像与历史记录' : 'click a segment → observed assets and boundary relations · click a node → profile and history'}</text>
+        <text x={96} y={772} className="th-def">
+          {zh
+            ? '由已落库的生产事实直接投影的内网观测图 — 不含回放数据 / 不含推演流量'
+            : 'PROJECTED DIRECTLY FROM LANDED PRODUCTION FACTS — NO REPLAY DATA / NO SYNTHETIC FLOWS'}
+        </text>
+        <rect x={90} y={784} width={zh ? 372 : 620} height={44} className="th-acid" />
+        <text x={102} y={817} className="th-title">{zh ? '生产观测图谱' : 'OBSERVATION MAP'}</text>
+        <text x={96} y={856} className="th-meta"><tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{stats.source}</text>
+        <g className="th-barcode">
+          {bars.map((w, i) => {
+            const r = <rect key={i} x={bx} y={868} width={w} height={16} />
+            bx += w + 2
+            return r
+          })}
+        </g>
+        <text x={bx + 10} y={881} className="th-code">{(seed >>> 0).toString(16).toUpperCase().padStart(8, '0')}</text>
+        <text x={96} y={912} className="th-read">{zh ? '点网段 → 展开当前资产与跨区关系 · 点节点 → 资产画像与历史记录' : 'click a segment → observed assets and boundary relations · click a node → profile and history'}</text>
       </g>
     )
   }

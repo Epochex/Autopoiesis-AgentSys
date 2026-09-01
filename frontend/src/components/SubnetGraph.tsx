@@ -30,18 +30,21 @@ const ROLE_ZH: Record<string, string> = {
 }
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
 
-/* Node glyph = device class, drawn as an icon silhouette that inherits the
-   threat coloring through .sg-dot: monitor-with-stand workstation, dome
-   camera, rack server, phone slab, meridian globe endpoint; peers stay a
-   hollow ring, untyped hosts a plain dot. Scaled by the node's own radius. */
+/* Node glyph = device class, drawn as a filled icon with interior cutouts
+   (even-odd: the cuts read as paper), inheriting threat coloring through
+   .sg-dot: monitor with screen + stand, phone with screen slab, dome camera
+   with lens, server tower with slots + LED, meridian globe endpoint; peers
+   stay a hollow ring, untyped hosts a plain dot. Scaled by node radius. */
 function DotShape({ role, x, y, r }: { role: string; x: number; y: number; r: number }) {
-  const s = Math.max(3.4, r)
+  const s = Math.max(3.6, r)
   if (role === 'workstation') {
     return (
       <path
         className="sg-dot"
-        d={`M ${x - 1.15 * s} ${y - 0.95 * s} h ${2.3 * s} v ${1.35 * s} h ${-2.3 * s} Z ` +
-          `M ${x - 0.42 * s} ${y + 0.4 * s} h ${0.84 * s} l ${0.3 * s} ${0.55 * s} h ${-1.44 * s} Z`}
+        fillRule="evenodd"
+        d={`M ${x - 1.2 * s} ${y - 1.0 * s} h ${2.4 * s} v ${1.5 * s} h ${-2.4 * s} Z ` +
+          `M ${x - 0.95 * s} ${y - 0.78 * s} h ${1.9 * s} v ${1.06 * s} h ${-1.9 * s} Z ` +
+          `M ${x - 0.34 * s} ${y + 0.5 * s} h ${0.68 * s} v ${0.3 * s} h ${0.42 * s} v ${0.26 * s} h ${-1.52 * s} v ${-0.26 * s} h ${0.42 * s} Z`}
       />
     )
   }
@@ -49,22 +52,35 @@ function DotShape({ role, x, y, r }: { role: string; x: number; y: number; r: nu
     return (
       <path
         className="sg-dot"
-        d={`M ${x - 0.85 * s} ${y + 0.05 * s} a ${0.85 * s} ${0.85 * s} 0 0 1 ${1.7 * s} 0 Z ` +
-          `M ${x - 1.1 * s} ${y + 0.25 * s} h ${2.2 * s} v ${0.4 * s} h ${-2.2 * s} Z ` +
-          `M ${x - 0.2 * s} ${y - 0.35 * s} a ${0.2 * s} ${0.2 * s} 0 1 0 ${0.4 * s} 0 a ${0.2 * s} ${0.2 * s} 0 1 0 ${-0.4 * s} 0`}
         fillRule="evenodd"
+        d={`M ${x - 0.95 * s} ${y + 0.15 * s} a ${0.95 * s} ${0.95 * s} 0 0 1 ${1.9 * s} 0 Z ` +
+          `M ${x - 0.3 * s} ${y - 0.28 * s} a ${0.3 * s} ${0.3 * s} 0 1 0 ${0.6 * s} 0 a ${0.3 * s} ${0.3 * s} 0 1 0 ${-0.6 * s} 0 ` +
+          `M ${x - 1.2 * s} ${y + 0.32 * s} h ${2.4 * s} v ${0.42 * s} h ${-2.4 * s} Z ` +
+          `M ${x - 0.85 * s} ${y + 0.42 * s} h ${0.5 * s} v ${0.22 * s} h ${-0.5 * s} Z ` +
+          `M ${x + 0.35 * s} ${y + 0.42 * s} h ${0.5 * s} v ${0.22 * s} h ${-0.5 * s} Z`}
       />
     )
   }
   if (role === 'mobile') {
-    return <rect x={x - 0.62 * s} y={y - 1.05 * s} width={1.24 * s} height={2.1 * s} rx={0.28 * s} className="sg-dot" />
+    return (
+      <path
+        className="sg-dot"
+        fillRule="evenodd"
+        d={`M ${x - 0.66 * s} ${y - 0.82 * s} a ${0.24 * s} ${0.24 * s} 0 0 1 ${0.24 * s} ${-0.24 * s} h ${0.84 * s} a ${0.24 * s} ${0.24 * s} 0 0 1 ${0.24 * s} ${0.24 * s} v ${1.64 * s} a ${0.24 * s} ${0.24 * s} 0 0 1 ${-0.24 * s} ${0.24 * s} h ${-0.84 * s} a ${0.24 * s} ${0.24 * s} 0 0 1 ${-0.24 * s} ${-0.24 * s} Z ` +
+          `M ${x - 0.44 * s} ${y - 0.68 * s} h ${0.88 * s} v ${1.18 * s} h ${-0.88 * s} Z ` +
+          `M ${x - 0.14 * s} ${y + 0.72 * s} h ${0.28 * s} v ${0.14 * s} h ${-0.28 * s} Z`}
+      />
+    )
   }
   if (role === 'server') {
     return (
       <path
         className="sg-dot"
-        d={`M ${x - 1.05 * s} ${y - 0.98 * s} h ${2.1 * s} v ${0.82 * s} h ${-2.1 * s} Z ` +
-          `M ${x - 1.05 * s} ${y + 0.16 * s} h ${2.1 * s} v ${0.82 * s} h ${-2.1 * s} Z`}
+        fillRule="evenodd"
+        d={`M ${x - 0.85 * s} ${y - 1.15 * s} h ${1.7 * s} v ${2.3 * s} h ${-1.7 * s} Z ` +
+          `M ${x - 0.55 * s} ${y - 0.85 * s} h ${1.1 * s} v ${0.22 * s} h ${-1.1 * s} Z ` +
+          `M ${x - 0.55 * s} ${y - 0.38 * s} h ${1.1 * s} v ${0.22 * s} h ${-1.1 * s} Z ` +
+          `M ${x + 0.22 * s} ${y + 0.55 * s} a ${0.16 * s} ${0.16 * s} 0 1 0 ${0.32 * s} 0 a ${0.16 * s} ${0.16 * s} 0 1 0 ${-0.32 * s} 0`}
       />
     )
   }
@@ -74,7 +90,10 @@ function DotShape({ role, x, y, r }: { role: string; x: number; y: number; r: nu
         <circle cx={x} cy={y} r={1.05 * s} className="sg-dot" />
         <path
           className="sg-cut"
-          d={`M ${x - 1.05 * s} ${y} h ${2.1 * s} M ${x} ${y - 1.05 * s} a ${0.5 * s} ${1.05 * s} 0 0 0 0 ${2.1 * s} a ${0.5 * s} ${1.05 * s} 0 0 0 0 ${-2.1 * s}`}
+          d={`M ${x - 1.05 * s} ${y} h ${2.1 * s} ` +
+            `M ${x - 0.9 * s} ${y - 0.52 * s} a ${1.5 * s} ${1.5 * s} 0 0 0 ${1.8 * s} 0 ` +
+            `M ${x - 0.9 * s} ${y + 0.52 * s} a ${1.5 * s} ${1.5 * s} 0 0 1 ${1.8 * s} 0 ` +
+            `M ${x} ${y - 1.05 * s} a ${0.5 * s} ${1.05 * s} 0 0 0 0 ${2.1 * s} a ${0.5 * s} ${1.05 * s} 0 0 0 0 ${-2.1 * s}`}
         />
       </g>
     )
@@ -272,8 +291,9 @@ export function SubnetGraphLayer({
         if (isBand) {
           /* Production groups draw NO container at all — the force layout makes
              membership legible as proximity, so ink is spent only on a floating
-             caption above the group: name ×count, then the counts that rank it.
-             An open ego net owns the field; captions yield entirely. */
+             caption above the group: the class name on an acid highlight bar
+             (the console's editorial register), count as a bare numeral, then
+             the counts that rank it. An open ego net owns the field. */
           if (ego) return null
           const topY = Math.min(...pts.map((p) => p.y))
           const active = c.members.filter((m) => (dev[m]?.flows ?? 0) > 0).length
@@ -283,11 +303,18 @@ export function SubnetGraphLayer({
             ...(flagged ? [`${flagged} ${zh ? '风险' : 'flagged'}`] : []),
             ...(c.deny > 0 ? [`${short(c.deny)} ${zh ? '拦截' : 'denied'}`] : []),
           ]
+          const name = c.id === 'boundary-peers'
+            ? (zh ? '边界对端' : 'BOUNDARY PEERS')
+            : c.id === 'internet-endpoints'
+              ? (zh ? '互联网去向' : 'INTERNET EGRESS')
+              : (zh ? ROLE_ZH[c.role] ?? c.role : c.role)
           return (
-            <g key={c.id} className={cls} pointerEvents="none">
-              <text x={cx} y={topY - 30} className="sg-float-t" textAnchor="middle">{label}</text>
-              <text x={cx} y={topY - 17} className={`sg-float-s ${flagged ? 'risk' : ''}`} textAnchor="middle">{parts.join(' · ')}</text>
-            </g>
+            <foreignObject key={c.id} x={cx - 150} y={topY - 66} width={300} height={56} className="sg-cap-fo" pointerEvents="none">
+              <div className="sg-cap-wrap">
+                <div className="sg-cap"><span className="sg-cap-t">{name}</span><span className="sg-cap-n">×{c.size}</span></div>
+                <div className={`sg-cap-s ${flagged ? 'risk' : ''}`}>{parts.join(' · ')}</div>
+              </div>
+            </foreignObject>
           )
         }
         return (
