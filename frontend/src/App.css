@@ -1811,34 +1811,26 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   fill: var(--net-ink); opacity: 1;
 }
 .sg-cluster.hot .sg-hull-label { fill: var(--wan-ink); opacity: 1; font-weight: 500; }
-/* Device-class band: an instrument plate in the reticle's drawing language —
-   sharp hairline frame + corner brackets on paper, an in-panel title bar closed
-   by a rule, a left-edge severity accent. Coral marks risk, never the plate. */
-.sg-plate { fill: rgba(18, 26, 24, 0.018); stroke: rgba(18, 26, 24, 0.28); stroke-width: 1; }
-.sg-plate-corner { fill: none; stroke: var(--ink); stroke-width: 1.6; }
-.sg-plate-rule { stroke: rgba(18, 26, 24, 0.22); stroke-width: 1; }
-.sg-plate-accent { fill: var(--net); opacity: 0.75; }
-.sg-plate-accent.risk { fill: var(--wan); }
-.sg-band-t {
+/* Force-layout groups carry no container: membership is proximity, and the
+   only ink is a floating caption over each group. Node GLYPH encodes class
+   (square/triangle/diamond/circle; peers hollow), risk keeps its coral. */
+.sg-float-t {
   font-family: var(--font-mono, 'IBM Plex Mono', monospace);
   font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
   fill: var(--ink);
 }
-.sg-band-s {
+.sg-float-s {
   font-family: var(--font-mono, 'IBM Plex Mono', monospace);
   font-size: 9px; letter-spacing: 0.08em;
   fill: var(--net-ink);
 }
-.sg-band-s.risk { fill: var(--wan-ink); }
-/* Bundled boundary corridor: device stubs converge on the band's egress port,
-   deduped trunks carry the crossing — width says flow volume, one hue only. */
-.sg-stub { fill: none; stroke: var(--net); stroke-width: 0.7; opacity: 0.3; transition: opacity 0.25s ease; }
-.sg-stub.dim { opacity: 0.05; }
-.sg-stub.lit { opacity: 0.85; stroke-width: 1.3; }
-.sg-port { fill: var(--paper-2); stroke: var(--net); stroke-width: 1.4; }
-.sg-trunk { fill: none; stroke: var(--net); stroke-linecap: round; opacity: 0.5; transition: opacity 0.25s ease; }
-.sg-trunk.dim { opacity: 0.06; }
-.sg-trunk.lit { opacity: 0.95; }
+.sg-float-s.risk { fill: var(--wan-ink); }
+.sg-node.traffic.r-cross-segment-peer .sg-dot { fill: var(--paper-2); stroke: var(--net); stroke-width: 1.6; }
+.sg-node.traffic.r-internet-endpoint .sg-dot { stroke: var(--ink); stroke-width: 1.6; paint-order: stroke; }
+.sg-lg-glyph {
+  display: inline-block; width: 16px; color: var(--net-ink);
+  font-size: 10px; text-align: center;
+}
 
 /* Relation evidence: the claim the map is entitled to make is OBSERVED vs
    INFERRED, and that is carried structurally (solid vs dashed) — it already was.

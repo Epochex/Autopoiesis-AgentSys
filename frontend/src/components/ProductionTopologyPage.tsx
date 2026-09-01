@@ -157,65 +157,116 @@ const baseDevice = (asset: Asset, role: string): Omit<GraphDevice, 'x' | 'y'> =>
   }
 }
 
-/* ── banded layout ──
- * A console board, not a scatter: each device class is a horizontal band (its
- * header drawn by SubnetGraphLayer), hosts grid-aligned inside it — risky
- * first, then active by traffic, silent hosts trailing — so reading order IS
- * the priority order. Boundary peers hold a column on the right; the space
- * between belongs to the boundary bus every cross-segment edge routes through.
- * Coordinates stay in the [-1,1] space SubnetGraphLayer scales onto the plate. */
-const BAND_X0 = -0.92
-const BAND_X1 = 0.42
-export const PEER_X = 0.68
+/* ── force layout ──
+ * Position IS the message: nodes that share measured or inferred relations
+ * pull together (spring), everything repels at short range, each device class
+ * coheres around its own drifting centroid, silent degree-0 hosts pack tight
+ * at their class core while active ones claim space. Deterministic — seeded
+ * from stable hashes, fixed iteration count — so the same payload always draws
+ * the same map. Output normalized into SubnetGraphLayer's [-1,1] plate space. */
+const stableUnit = (text: string, salt = 0): number => {
+  let hash = 2166136261 ^ salt
+  for (let i = 0; i < text.length; i += 1) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619)
+  return ((hash >>> 0) % 10_000) / 10_000
+}
 
-const assetRank = (asset: Asset): number =>
-  (severityThreat(asset.risk) !== 'ok' ? 2 : 0) + (asset.active24h ? 1 : 0)
+interface LayoutSpec {
+  ip: string
+  group: string
+  /** repulsion footprint — active/risky hosts claim space, silent ones pack */
+  mass: number
+}
 
-const clusterDevices = (groups: [string, Asset[]][]): GraphDevice[] => {
-  const devices: GraphDevice[] = []
-  if (!groups.length) return devices
-  const maxN = Math.max(...groups.map(([, members]) => members.length))
-  const cols = Math.max(8, Math.min(22, Math.ceil(Math.sqrt(maxN) * 2.6)))
-  const pitchX = (BAND_X1 - BAND_X0) / cols
-  const rowsFor = (n: number) => Math.ceil(n / cols)
-  const HEADER_UNITS = 1.05
-  const GAP_UNITS = 0.6
-  const totalUnits = groups.reduce((sum, [, members]) => sum + rowsFor(members.length) + HEADER_UNITS, 0)
-    + (groups.length - 1) * GAP_UNITS
-  const pitchY = Math.min(0.15, 1.78 / totalUnits)
-  let cursor = -(totalUnits * pitchY) / 2 + 0.04
-  for (const [role, members] of groups) {
-    cursor += HEADER_UNITS * pitchY
-    const sorted = [...members].sort(
-      (a, b) => assetRank(b) - assetRank(a) || (b.activity?.flows24h ?? 0) - (a.activity?.flows24h ?? 0),
-    )
-    sorted.forEach((asset, i) => {
-      devices.push({
-        ...baseDevice(asset, role),
-        x: BAND_X0 + ((i % cols) + 0.5) * pitchX,
-        y: cursor + Math.floor(i / cols) * pitchY,
+const forceLayout = (specs: LayoutSpec[], edges: GraphEdge[]): Map<string, { x: number; y: number }> => {
+  const n = specs.length
+  const out = new Map<string, { x: number; y: number }>()
+  if (!n) return out
+  if (n === 1) return out.set(specs[0].ip, { x: 0, y: 0 })
+  const index = new Map(specs.map((s, i) => [s.ip, i]))
+  const groupNames = [...new Set(specs.map((s) => s.group))]
+  const px = new Float64Array(n)
+  const py = new Float64Array(n)
+  specs.forEach((s, i) => {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * groupNames.indexOf(s.group)) / groupNames.length
+    px[i] = Math.cos(angle) * 0.45 + (stableUnit(s.ip, 11) - 0.5) * 0.55
+    py[i] = Math.sin(angle) * 0.4 + (stableUnit(s.ip, 23) - 0.5) * 0.45
+  })
+  const springs = edges
+    .map((e) => ({ a: index.get(e.src), b: index.get(e.dst), k: e.observed ? 0.055 : 0.02 }))
+    .filter((s): s is { a: number; b: number; k: number } => s.a !== undefined && s.b !== undefined)
+  const fx = new Float64Array(n)
+  const fy = new Float64Array(n)
+  for (let iter = 0; iter < 160; iter += 1) {
+    fx.fill(0)
+    fy.fill(0)
+    for (let i = 0; i < n; i += 1) {
+      for (let j = i + 1; j < n; j += 1) {
+        const dx = px[i] - px[j]
+        const dy = py[i] - py[j]
+        const d2 = dx * dx + dy * dy + 0.0008
+        const f = Math.min(0.05, (0.0011 * specs[i].mass * specs[j].mass) / d2)
+        const d = Math.sqrt(d2)
+        fx[i] += (dx / d) * f
+        fy[i] += (dy / d) * f
+        fx[j] -= (dx / d) * f
+        fy[j] -= (dy / d) * f
+      }
+    }
+    for (const s of springs) {
+      const dx = px[s.b] - px[s.a]
+      const dy = py[s.b] - py[s.a]
+      const d = Math.sqrt(dx * dx + dy * dy) || 0.001
+      const f = (d - 0.14) * s.k
+      fx[s.a] += (dx / d) * f
+      fy[s.a] += (dy / d) * f
+      fx[s.b] -= (dx / d) * f
+      fy[s.b] -= (dy / d) * f
+    }
+    for (const group of groupNames) {
+      let cx = 0
+      let cy = 0
+      let count = 0
+      specs.forEach((s, i) => {
+        if (s.group !== group) return
+        cx += px[i]
+        cy += py[i]
+        count += 1
       })
-    })
-    cursor += (rowsFor(sorted.length) + GAP_UNITS) * pitchY
+      if (!count) continue
+      cx /= count
+      cy /= count
+      specs.forEach((s, i) => {
+        if (s.group !== group) return
+        const pull = s.mass < 1 ? 0.11 : 0.055
+        fx[i] += (cx - px[i]) * pull
+        fy[i] += (cy - py[i]) * pull
+      })
+    }
+    const cool = 1 - iter / 160
+    for (let i = 0; i < n; i += 1) {
+      fx[i] -= px[i] * 0.008
+      fy[i] -= py[i] * 0.012
+      const step = Math.min(0.05, Math.hypot(fx[i], fy[i])) * (0.35 + 0.65 * cool)
+      const norm = Math.hypot(fx[i], fy[i]) || 1
+      px[i] += (fx[i] / norm) * step
+      py[i] += (fy[i] / norm) * step
+    }
   }
-  return devices
+  // normalize into the plate, stretching to the letterbox aspect
+  const minX = Math.min(...px)
+  const maxX = Math.max(...px)
+  const minY = Math.min(...py)
+  const maxY = Math.max(...py)
+  const sx = 1.76 / Math.max(0.05, maxX - minX)
+  const sy = 1.56 / Math.max(0.05, maxY - minY)
+  specs.forEach((s, i) => {
+    out.set(s.ip, {
+      x: -0.88 + (px[i] - minX) * sx,
+      y: -0.78 + (py[i] - minY) * sy,
+    })
+  })
+  return out
 }
-
-/* Right column, upper block: cross-segment peers. Lower block: internet
- * egress endpoints. Both share the corridor's trunk bundling. */
-const columnGrid = (index: number, total: number, yCenter: number, budget: number): { x: number; y: number } => {
-  const columns = total > 12 ? 2 : 1
-  const rows = Math.ceil(total / columns)
-  const pitch = Math.min(0.14, budget / Math.max(rows, 1))
-  const column = Math.floor(index / rows)
-  const row = index % rows
-  return { x: PEER_X + column * 0.12, y: yCenter - ((rows - 1) * pitch) / 2 + row * pitch }
-}
-
-const peerDevice = (asset: Asset, index: number, total: number, hasEndpoints: boolean): GraphDevice => ({
-  ...baseDevice(asset, 'cross-segment peer'),
-  ...columnGrid(index, total, hasEndpoints ? -0.34 : 0, hasEndpoints ? 1.0 : 1.68),
-})
 
 interface Endpoint {
   ip: string
@@ -227,27 +278,22 @@ interface Endpoint {
   talkers: Set<string>
 }
 
-const endpointDevice = (endpoint: Endpoint, index: number, total: number): GraphDevice => {
-  const p = columnGrid(index, total, 0.62, 0.55)
-  return {
-    ip: endpoint.ip,
-    name: [endpoint.service, endpoint.country].filter(Boolean).join(' · ') || endpoint.ip,
-    mac: null,
-    vendor: 'unknown',
-    os: null,
-    role: 'internet-endpoint',
-    intf: 'internet',
-    flows: endpoint.flows,
-    deny: endpoint.denied,
-    accept: Math.max(0, endpoint.flows - endpoint.denied),
-    leases: 0,
-    topPorts: [],
-    threat: 'ok',
-    seenBy: 'traffic',
-    x: p.x,
-    y: p.y,
-  }
-}
+const endpointBase = (endpoint: Endpoint): Omit<GraphDevice, 'x' | 'y'> => ({
+  ip: endpoint.ip,
+  name: [endpoint.service, endpoint.country].filter(Boolean).join(' · ') || endpoint.ip,
+  mac: null,
+  vendor: 'unknown',
+  os: null,
+  role: 'internet-endpoint',
+  intf: 'internet',
+  flows: endpoint.flows,
+  deny: endpoint.denied,
+  accept: Math.max(0, endpoint.flows - endpoint.denied),
+  leases: 0,
+  topPorts: [],
+  threat: 'ok',
+  seenBy: 'traffic',
+})
 
 const peerFrom = (record: BoundaryRecord, dir: 'in' | 'out'): ProfilePeer => ({
   ip: dir === 'out' ? record.destination : record.source,
@@ -311,24 +357,6 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
     const groups = [...byClass.entries()].sort(
       (a, b) => (CLASS_ORDER.indexOf(a[0]) + 1 || 99) - (CLASS_ORDER.indexOf(b[0]) + 1 || 99),
     )
-    const bandDevices = clusterDevices(groups)
-    /* Peers sort by the vertical position of their heaviest in-segment partner,
-     * so each band's trunk fan lands on a contiguous run of the peer column
-     * instead of criss-crossing the others'. */
-    const deviceY = new Map(bandDevices.map((device) => [device.ip, device.y]))
-    const partnerY = new Map<string, { y: number; flows: number }>()
-    for (const record of boundary) {
-      const peer = nativeIps.has(record.source) ? record.destination : record.source
-      const partner = nativeIps.has(record.source) ? record.source : record.destination
-      const y = deviceY.get(partner)
-      if (y === undefined) continue
-      const current = partnerY.get(peer)
-      if (!current || record.flows > current.flows) partnerY.set(peer, { y, flows: record.flows })
-    }
-    const sortedPeers = [...peerAssets].sort(
-      (a, b) => (partnerY.get(a.ip)?.y ?? 1) - (partnerY.get(b.ip)?.y ?? 1),
-    )
-
     /* Internet egress, clustered by destination: every measured private→public
      * pair from this segment rolls up into one endpoint node (country/service/
      * talker count), so N hosts sharing one destination read as one relation. */
@@ -351,12 +379,19 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
     const endpoints = [...endpointMap.values()].sort((a, b) => b.flows - a.flows).slice(0, 12)
     const endpointIps = new Set(endpoints.map((endpoint) => endpoint.ip))
 
-    const devices = [
-      ...bandDevices,
-      ...sortedPeers.map((asset, index) => peerDevice(asset, index, sortedPeers.length, endpoints.length > 0)),
-      ...endpoints.map((endpoint, index) => endpointDevice(endpoint, index, endpoints.length)),
+    /* Node roster first (no positions yet): the force layout needs the edge
+     * list, and edges only need IPs. Active/risky hosts get more repulsion
+     * mass than silent ones so the important dots claim space. */
+    const roster: { base: Omit<GraphDevice, 'x' | 'y'>; group: string; mass: number }[] = [
+      ...groups.flatMap(([role, members]) => members.map((asset) => ({
+        base: baseDevice(asset, role),
+        group: role,
+        mass: severityThreat(asset.risk) !== 'ok' ? 1.7 : asset.active24h ? 1.2 : 0.55,
+      }))),
+      ...peerAssets.map((asset) => ({ base: baseDevice(asset, 'cross-segment peer'), group: 'peers', mass: 1.1 })),
+      ...endpoints.map((endpoint) => ({ base: endpointBase(endpoint), group: 'wan', mass: 1.6 })),
     ]
-    const deviceIps = new Set(devices.map((device) => device.ip))
+    const deviceIps = new Set(roster.map((item) => item.base.ip))
 
     const edges: GraphEdge[] = boundary
       .filter((record) => deviceIps.has(record.source) && deviceIps.has(record.destination))
@@ -423,6 +458,15 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
         hits: pair.hits, evidence: pair.evidence, observed: true,
       })
     }
+
+    const positions = forceLayout(
+      roster.map((item) => ({ ip: item.base.ip, group: item.group, mass: item.mass })),
+      edges,
+    )
+    const devices: GraphDevice[] = roster.map((item) => ({
+      ...item.base,
+      ...(positions.get(item.base.ip) ?? { x: 0, y: 0 }),
+    }))
 
     const observedEdges = edges.filter((edge) => edge.observed).length
     const risky = devices.filter((device) => device.threat !== 'ok').map((device) => device.ip)

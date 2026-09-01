@@ -30,6 +30,22 @@ const ROLE_ZH: Record<string, string> = {
 }
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
 
+/* Node glyph = device class, so type reads per-dot without any container:
+   square workstation, triangle camera, diamond server / internet endpoint,
+   circle everything else (peers hollow via CSS). */
+function DotShape({ role, x, y, r }: { role: string; x: number; y: number; r: number }) {
+  if (role === 'workstation') {
+    return <rect x={x - r * 0.9} y={y - r * 0.9} width={r * 1.8} height={r * 1.8} className="sg-dot" />
+  }
+  if (role === 'camera') {
+    return <path d={`M ${x} ${y - r * 1.2} L ${x + r * 1.05} ${y + r * 0.85} L ${x - r * 1.05} ${y + r * 0.85} Z`} className="sg-dot" />
+  }
+  if (role === 'server' || role === 'internet-endpoint') {
+    return <rect x={x - r * 0.95} y={y - r * 0.95} width={r * 1.9} height={r * 1.9} className="sg-dot" transform={`rotate(45 ${x} ${y})`} />
+  }
+  return <circle cx={x} cy={y} r={r} className="sg-dot" />
+}
+
 /** Convex hull (monotone chain), pushed outward so it reads as a soft territory. */
 function hull(pts: Pt[], pad: number): string {
   if (pts.length < 3) {
@@ -167,67 +183,6 @@ export function SubnetGraphLayer({
     return Math.max(3.2, Math.min(11, 3.2 + mass * 1.9 + (degree[d.ip] ?? 0) * 0.22))
   }
 
-  /* ── hierarchical bundling for cross-segment edges (banded boards only) ──
-     Per-pair device→peer lines overlap into spaghetti the moment one host
-     talks to many destinations. Instead every band owns one egress port on its
-     right edge: devices reach it with short stubs, and one TRUNK per distinct
-     (band, peer) relation — width from summed flows — crosses the corridor.
-     Bench graphs have no 'cross-segment peer' role, so this stays null there. */
-  const bundle = useMemo(() => {
-    const isPeer = (ip: string) => dev[ip]?.role === 'cross-segment peer' || dev[ip]?.role === 'internet-endpoint'
-    const crossing = graph.edges.filter((e) => isPeer(e.src) !== isPeer(e.dst))
-    if (!crossing.length) return null
-    const bandOf: Record<string, string> = {}
-    const ports: Record<string, Pt> = {}
-    for (const c of graph.clusters) {
-      if (!c.id.startsWith('class-')) continue
-      for (const m of c.members) bandOf[m] = c.id
-      const pts = c.members.map((m) => pos[m]).filter(Boolean)
-      if (!pts.length) continue
-      ports[c.id] = {
-        x: Math.max(...pts.map((p) => p.x)) + 34,
-        y: (Math.min(...pts.map((p) => p.y)) + Math.max(...pts.map((p) => p.y))) / 2,
-      }
-    }
-    type Trunk = { port: Pt; peer: string; hits: number; weight: number; members: Set<string> }
-    const trunks = new Map<string, Trunk>()
-    const stubs = new Map<string, { from: Pt; to: Pt; ip: string; peers: Set<string> }>()
-    const rest: typeof graph.edges = []
-    for (const e of crossing) {
-      const peerIp = isPeer(e.src) ? e.src : e.dst
-      const devIp = peerIp === e.src ? e.dst : e.src
-      const band = bandOf[devIp]
-      const port = band ? ports[band] : undefined
-      const a = pos[devIp]
-      const b = pos[peerIp]
-      if (!a || !b || !port) {
-        rest.push(e)
-        continue
-      }
-      const key = `${band}|${peerIp}`
-      const trunk = trunks.get(key) ?? { port, peer: peerIp, hits: 0, weight: 0, members: new Set<string>() }
-      trunk.hits += e.hits
-      trunk.weight = Math.max(trunk.weight, e.weight)
-      trunk.members.add(devIp)
-      trunks.set(key, trunk)
-      const stub = stubs.get(`${devIp}|${band}`) ?? { from: a, to: port, ip: devIp, peers: new Set<string>() }
-      stub.peers.add(peerIp)
-      stubs.set(`${devIp}|${band}`, stub)
-    }
-    return {
-      trunks: [...trunks.values()],
-      stubs: [...stubs.values()],
-      ports: [...new Set([...trunks.values()].map((t) => t.port))],
-      rest,
-    }
-  }, [graph, dev, pos])
-  const bundled = useMemo(() => {
-    if (!bundle) return null
-    const set = new Set<(typeof graph.edges)[number]>()
-    const isPeer = (ip: string) => dev[ip]?.role === 'cross-segment peer' || dev[ip]?.role === 'internet-endpoint'
-    for (const e of graph.edges) if (isPeer(e.src) !== isPeer(e.dst) && !bundle.rest.includes(e)) set.add(e)
-    return set
-  }, [bundle, graph, dev])
 
   const hovered = hoverIp ? dev[hoverIp] : null
   const neighbours = useMemo(() => {
@@ -266,8 +221,9 @@ export function SubnetGraphLayer({
           (risk hits · active · denied). Other clusters keep the centred label. */}
       {graph.clusters.map((c) => {
         const pts = c.members.map((m) => pos[m]).filter(Boolean)
-        if (pts.length < 2) return null
         const isBand = c.id.startsWith('class-') || c.id === 'boundary-peers' || c.id === 'internet-endpoints'
+        // captions work from a single member; only hulls need three points
+        if (pts.length < (isBand ? 1 : 2)) return null
         const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length
         const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length
         const label = c.id === 'boundary-peers'
@@ -278,15 +234,10 @@ export function SubnetGraphLayer({
         const egoHome = ego ? c.members.some((m) => ego.members.has(m)) : false
         const cls = `sg-cluster ${c.deny > 20000 ? 'hot' : ''} ${ego ? (egoHome ? 'ego-in' : 'ego-off') : ''}`
         if (isBand) {
-          /* Grid clusters render as instrument plates, in the reticle's drawing
-             language: sharp hairline frame, corner brackets, an in-panel title
-             bar closed by a full-width rule, a severity accent on the left
-             edge. Coral is spent on risk signals only — the plate itself stays
-             paper. */
-          const x0 = Math.min(...pts.map((p) => p.x)) - 26
-          const x1 = Math.max(...pts.map((p) => p.x)) + 26
-          const y0 = Math.min(...pts.map((p) => p.y)) - 52
-          const y1 = Math.max(...pts.map((p) => p.y)) + 20
+          /* Production groups draw NO container at all — the force layout makes
+             membership legible as proximity, so ink is spent only on a floating
+             caption above the group: name ×count, then the counts that rank it. */
+          const topY = Math.min(...pts.map((p) => p.y))
           const active = c.members.filter((m) => (dev[m]?.flows ?? 0) > 0).length
           const flagged = c.members.filter((m) => dev[m]?.threat !== 'ok').length
           const parts = [
@@ -294,22 +245,10 @@ export function SubnetGraphLayer({
             ...(flagged ? [`${flagged} ${zh ? '风险' : 'flagged'}`] : []),
             ...(c.deny > 0 ? [`${short(c.deny)} ${zh ? '拦截' : 'denied'}`] : []),
           ]
-          const bk = 13
-          const corners =
-            `M ${x0} ${y0 + bk} L ${x0} ${y0} L ${x0 + bk} ${y0} ` +
-            `M ${x1 - bk} ${y0} L ${x1} ${y0} L ${x1} ${y0 + bk} ` +
-            `M ${x1} ${y1 - bk} L ${x1} ${y1} L ${x1 - bk} ${y1} ` +
-            `M ${x0 + bk} ${y1} L ${x0} ${y1} L ${x0} ${y1 - bk}`
           return (
             <g key={c.id} className={cls} pointerEvents="none">
-              <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} className="sg-plate" />
-              <path d={corners} className="sg-plate-corner" />
-              <rect x={x0} y={y0} width={3} height={y1 - y0} className={`sg-plate-accent ${flagged ? 'risk' : ''}`} />
-              <line x1={x0} y1={y0 + 30} x2={x1} y2={y0 + 30} className="sg-plate-rule" />
-              <text x={x0 + 14} y={y0 + 20} className="sg-band-t" textAnchor="start">{label}</text>
-              {x1 - x0 > 260 ? (
-                <text x={x1 - 12} y={y0 + 20} className={`sg-band-s ${flagged ? 'risk' : ''}`} textAnchor="end">{parts.join('  ·  ')}</text>
-              ) : null}
+              <text x={cx} y={topY - 30} className="sg-float-t" textAnchor="middle">{label}</text>
+              <text x={cx} y={topY - 17} className={`sg-float-s ${flagged ? 'risk' : ''}`} textAnchor="middle">{parts.join(' · ')}</text>
             </g>
           )
         }
@@ -326,7 +265,6 @@ export function SubnetGraphLayer({
       {/* ── capillaries: inferred relations sit behind observed flows ── */}
       <g className="sg-edges" pointerEvents="none">
         {graph.edges.map((e, i) => {
-          if (bundled?.has(e)) return null
           const a = pos[e.src]
           const b = pos[e.dst]
           if (!a || !b) return null
@@ -351,45 +289,6 @@ export function SubnetGraphLayer({
           )
         })}
       </g>
-
-      {/* ── bundled cross-segment corridor: stubs → band port → trunks ── */}
-      {bundle ? (
-        <g className="sg-bundle" pointerEvents="none">
-          {bundle.stubs.map((s) => {
-            const lit = (hoverIp && (s.ip === hoverIp || s.peers.has(hoverIp))) || (focusIp && (s.ip === focusIp || s.peers.has(focusIp)))
-            const dim = (hoverIp || ego) && !lit
-            return (
-              <path
-                key={`st${s.ip}`}
-                d={`M ${s.from.x} ${s.from.y} Q ${(s.from.x + s.to.x) / 2} ${s.from.y} ${s.to.x} ${s.to.y}`}
-                className={`sg-stub ${dim ? 'dim' : ''} ${lit ? 'lit' : ''}`}
-              />
-            )
-          })}
-          {bundle.ports.map((p, i) => (
-            <rect key={`pt${i}`} x={p.x - 3.4} y={p.y - 3.4} width="6.8" height="6.8" className="sg-port" transform={`rotate(45 ${p.x} ${p.y})`} />
-          ))}
-          {bundle.trunks.map((t) => {
-            const b = pos[t.peer]
-            if (!b) return null
-            const lit = (hoverIp && (t.members.has(hoverIp) || t.peer === hoverIp)) || (focusIp && (t.members.has(focusIp) || t.peer === focusIp))
-            const dim = (hoverIp || ego) && !lit
-            const midX = (t.port.x + b.x) / 2
-            const d = `M ${t.port.x} ${t.port.y} C ${midX} ${t.port.y} ${midX} ${b.y} ${b.x} ${b.y}`
-            const w = Math.max(0.8, Math.min(3.4, Math.log10(t.hits + 1) * 0.62))
-            return (
-              <g key={`tr${t.peer}${t.port.y}`}>
-                <path d={d} className={`sg-trunk ${dim ? 'dim' : ''} ${lit ? 'lit' : ''}`} style={{ strokeWidth: w }} />
-                {!dim ? (
-                  <circle r={1.9} className="sg-drip k-codst">
-                    <animateMotion dur={`${Math.max(1.8, 5.5 - Math.log10(t.hits + 1))}s`} repeatCount="indefinite" path={d} />
-                  </circle>
-                ) : null}
-              </g>
-            )
-          })}
-        </g>
-      ) : null}
 
       {/* ── agent-found pivot corridors ── */}
       {(analysis?.corridors ?? []).map((c, i) => {
@@ -429,7 +328,7 @@ export function SubnetGraphLayer({
           return (
             <g
               key={d.ip}
-              className={`sg-node t-${d.threat} ${d.seenBy} ${dim ? 'dim' : ''} ${selectedIp === d.ip ? 'sel' : ''} ${egoCls}`}
+              className={`sg-node t-${d.threat} ${d.seenBy} r-${d.role.replace(/\s+/g, '-')} ${dim ? 'dim' : ''} ${selectedIp === d.ip ? 'sel' : ''} ${egoCls}`}
               onMouseEnter={() => onHover(d.ip)}
               onMouseLeave={() => onHover(null)}
               onClick={(e) => {
@@ -441,7 +340,7 @@ export function SubnetGraphLayer({
               {isFocus ? <circle cx={p.x} cy={p.y} r={r + 9} className="sg-focus-ring" /> : null}
               {sev ? <circle cx={p.x} cy={p.y} r={r + 6} className={`sg-flag sev-${sev}`} /> : null}
               {anomalyIps.has(d.ip) ? <circle cx={p.x} cy={p.y} r={r + 3.5} className="sg-anom" /> : null}
-              <circle cx={p.x} cy={p.y} r={r} className="sg-dot" />
+              <DotShape role={d.role} x={p.x} y={p.y} r={r} />
               {labelled ? (
                 <text x={p.x + r + 5} y={p.y + 3} className="sg-ip">{isFocus ? d.ip : d.ip.split('.').slice(-1)[0]}</text>
               ) : null}
@@ -681,8 +580,26 @@ export function SubnetGraphLayer({
           (solid vs dashed). The kinds are listed as words under each class rather
           than each getting its own hue. */}
       {!ego ? (
-      <foreignObject x={vbw - 232} y={vbh - 150} width={218} height={132} className="sg-tip-fo">
+      <foreignObject x={20} y={vbh - 238} width={218} height={220} className="sg-tip-fo">
         <div className="sg-legend">
+          {(() => {
+            const roles = new Set(graph.devices.map((d) => d.role))
+            const rows: [string, string][] = []
+            if (roles.has('workstation')) rows.push(['■', zh ? '工作站' : 'workstation'])
+            if (roles.has('camera')) rows.push(['▲', zh ? '摄像头' : 'camera'])
+            if (roles.has('server') || roles.has('internet-endpoint')) rows.push(['◆', zh ? '服务器 / 互联网端点' : 'server / internet endpoint'])
+            if (roles.has('mobile') || roles.has('unknown')) rows.push(['●', zh ? '移动端 / 未识别' : 'mobile / untyped'])
+            if (roles.has('cross-segment peer')) rows.push(['○', zh ? '跨段对端' : 'cross-segment peer'])
+            if (rows.length < 2) return null
+            return (
+              <>
+                <div className="sg-lg-t">{zh ? '节点形状' : 'NODE GLYPH'}</div>
+                {rows.map(([glyph, name]) => (
+                  <div key={glyph} className="sg-lg-r"><span className="sg-lg-glyph">{glyph}</span>{name}</div>
+                ))}
+              </>
+            )
+          })()}
           <div className="sg-lg-t">{zh ? '关联证据' : 'RELATION EVIDENCE'}</div>
           {kindsPresent.obs.length ? (
             <>
