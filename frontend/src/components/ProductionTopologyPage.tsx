@@ -40,6 +40,9 @@ interface Asset {
   segment: string
   active24h: boolean
   risk?: string | null
+  /** the mark's justification, carried on the row because riskFusion is capped */
+  riskReasons?: string[]
+  riskCaseIds?: string[]
   activity?: Activity | null
   /** FortiGate live fingerprint (vendor / os / hardware type), when the router typed it. */
   identity?: { vendor?: string | null; os?: string | null; type?: string | null; family?: string | null } | null
@@ -347,6 +350,22 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
   for (const [ip, risk] of Object.entries(risks)) {
     const asset = assets.get(ip)
     if (asset) asset.risk = risk.severity
+  }
+  /* riskFusion ships capped; any flagged asset it dropped still carries its
+   * own reasons on the row. Merge those in so every visible mark can explain
+   * itself — a ring without a basis was exactly the confusion this fixes. */
+  for (const asset of data.inventory.assets) {
+    if (asset.risk && !risks[asset.ip]) {
+      risks[asset.ip] = {
+        asset: asset.ip,
+        name: asset.name,
+        segment: asset.segment,
+        severity: asset.risk,
+        reasons: asset.riskReasons ?? [],
+        caseIds: asset.riskCaseIds ?? [],
+        activity: asset.activity,
+      }
+    }
   }
 
   const interfaces = data.inventory.segments.map((segment, index) => ({

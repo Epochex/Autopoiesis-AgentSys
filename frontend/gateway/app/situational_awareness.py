@@ -688,11 +688,17 @@ def _build(
         activity = active_by_ip.get(ip)
         mac = str(identity.get("mac") or "").lower()
         fingerprint = (ids_by_mac.get(mac) if mac else None) or ids_by_ip.get(ip)
+        # The shipped riskFusion list is capped, so the mark AND its basis must
+        # travel on the asset row itself — a severity whose justification was
+        # truncated away renders as an unexplainable ring.
+        risk_entry = next((item for item in risk_assets if item["asset"] == ip), None)
         row = {
             "ip": ip, "mac": identity.get("mac"), "name": identity.get("hostname") or ip,
             "segment": _segment_for(ip, catalog), "sources": identity.get("sources", []),
             "active24h": activity is not None, "activity": activity,
-            "risk": next((item["severity"] for item in risk_assets if item["asset"] == ip), None),
+            "risk": risk_entry["severity"] if risk_entry else None,
+            "riskReasons": risk_entry["reasons"] if risk_entry else [],
+            "riskCaseIds": risk_entry["caseIds"] if risk_entry else [],
         }
         if fingerprint:
             if fingerprint.get("hostname"):
