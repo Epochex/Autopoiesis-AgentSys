@@ -59,6 +59,19 @@ interface BoundaryRecord {
   lastSeenAt: string
 }
 
+interface EgressRecord {
+  source: string
+  sourceSegment: string
+  destination: string
+  country?: string
+  service: string
+  port?: number | null
+  action: string
+  flows: number
+  bytes: number
+  lastSeenAt?: string
+}
+
 interface RiskAsset {
   asset: string
   name: string
@@ -77,6 +90,7 @@ interface ProductionOverview {
   inventory: { knownAssets: number; active24h: number; segments: Segment[]; assets: Asset[] }
   changes: { id: string; asset: string; severity: string; title: string }[]
   crossSegment: { records: BoundaryRecord[] }
+  internetOutbound?: { records: EgressRecord[] }
   riskFusion: RiskAsset[]
   externalSources: { ip: string; events: number; eventTypes: string[]; ports: number[]; lastSeenAt: string }[]
   cases: { caseId: string; status: string; severity: string; subject: string; title: string }[]
@@ -164,11 +178,11 @@ const clusterDevices = (groups: [string, Asset[]][]): GraphDevice[] => {
   const cols = Math.max(8, Math.min(22, Math.ceil(Math.sqrt(maxN) * 2.6)))
   const pitchX = (BAND_X1 - BAND_X0) / cols
   const rowsFor = (n: number) => Math.ceil(n / cols)
-  const HEADER_UNITS = 0.7
-  const GAP_UNITS = 0.55
+  const HEADER_UNITS = 1.05
+  const GAP_UNITS = 0.6
   const totalUnits = groups.reduce((sum, [, members]) => sum + rowsFor(members.length) + HEADER_UNITS, 0)
     + (groups.length - 1) * GAP_UNITS
-  const pitchY = Math.min(0.12, 1.72 / totalUnits)
+  const pitchY = Math.min(0.15, 1.78 / totalUnits)
   let cursor = -(totalUnits * pitchY) / 2 + 0.04
   for (const [role, members] of groups) {
     cursor += HEADER_UNITS * pitchY
@@ -187,16 +201,51 @@ const clusterDevices = (groups: [string, Asset[]][]): GraphDevice[] => {
   return devices
 }
 
-const peerDevice = (asset: Asset, index: number, total: number): GraphDevice => {
-  const columns = total > 14 ? 2 : 1
+/* Right column, upper block: cross-segment peers. Lower block: internet
+ * egress endpoints. Both share the corridor's trunk bundling. */
+const columnGrid = (index: number, total: number, yCenter: number, budget: number): { x: number; y: number } => {
+  const columns = total > 12 ? 2 : 1
   const rows = Math.ceil(total / columns)
-  const pitch = Math.min(0.14, 1.68 / Math.max(rows, 1))
+  const pitch = Math.min(0.14, budget / Math.max(rows, 1))
   const column = Math.floor(index / rows)
   const row = index % rows
+  return { x: PEER_X + column * 0.12, y: yCenter - ((rows - 1) * pitch) / 2 + row * pitch }
+}
+
+const peerDevice = (asset: Asset, index: number, total: number, hasEndpoints: boolean): GraphDevice => ({
+  ...baseDevice(asset, 'cross-segment peer'),
+  ...columnGrid(index, total, hasEndpoints ? -0.34 : 0, hasEndpoints ? 1.0 : 1.68),
+})
+
+interface Endpoint {
+  ip: string
+  country: string
+  service: string
+  flows: number
+  denied: number
+  bytes: number
+  talkers: Set<string>
+}
+
+const endpointDevice = (endpoint: Endpoint, index: number, total: number): GraphDevice => {
+  const p = columnGrid(index, total, 0.62, 0.55)
   return {
-    ...baseDevice(asset, 'cross-segment peer'),
-    x: PEER_X + column * 0.12,
-    y: -((rows - 1) * pitch) / 2 + row * pitch,
+    ip: endpoint.ip,
+    name: [endpoint.service, endpoint.country].filter(Boolean).join(' · ') || endpoint.ip,
+    mac: null,
+    vendor: 'unknown',
+    os: null,
+    role: 'internet-endpoint',
+    intf: 'internet',
+    flows: endpoint.flows,
+    deny: endpoint.denied,
+    accept: Math.max(0, endpoint.flows - endpoint.denied),
+    leases: 0,
+    topPorts: [],
+    threat: 'ok',
+    seenBy: 'traffic',
+    x: p.x,
+    y: p.y,
   }
 }
 
@@ -279,9 +328,33 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
     const sortedPeers = [...peerAssets].sort(
       (a, b) => (partnerY.get(a.ip)?.y ?? 1) - (partnerY.get(b.ip)?.y ?? 1),
     )
+
+    /* Internet egress, clustered by destination: every measured private→public
+     * pair from this segment rolls up into one endpoint node (country/service/
+     * talker count), so N hosts sharing one destination read as one relation. */
+    const egress = (data.internetOutbound?.records ?? []).filter((record) => nativeIps.has(record.source))
+    const endpointMap = new Map<string, Endpoint>()
+    for (const record of egress) {
+      const endpoint = endpointMap.get(record.destination) ?? {
+        ip: record.destination,
+        country: record.country ?? '',
+        service: record.service || (record.port ? `:${record.port}` : ''),
+        flows: 0, denied: 0, bytes: 0, talkers: new Set<string>(),
+      }
+      endpoint.flows += record.flows
+      endpoint.bytes += record.bytes
+      if (['deny', 'blocked', 'reject'].includes(record.action)) endpoint.denied += record.flows
+      if (!endpoint.country && record.country) endpoint.country = record.country
+      endpoint.talkers.add(record.source)
+      endpointMap.set(record.destination, endpoint)
+    }
+    const endpoints = [...endpointMap.values()].sort((a, b) => b.flows - a.flows).slice(0, 12)
+    const endpointIps = new Set(endpoints.map((endpoint) => endpoint.ip))
+
     const devices = [
       ...bandDevices,
-      ...sortedPeers.map((asset, index) => peerDevice(asset, index, sortedPeers.length)),
+      ...sortedPeers.map((asset, index) => peerDevice(asset, index, sortedPeers.length, endpoints.length > 0)),
+      ...endpoints.map((endpoint, index) => endpointDevice(endpoint, index, endpoints.length)),
     ]
     const deviceIps = new Set(devices.map((device) => device.ip))
 
@@ -330,6 +403,27 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
       }
     }
 
+    /* Measured internet egress edges — merged per (host, endpoint). */
+    const wanPairs = new Map<string, { src: string; dst: string; hits: number; evidence: string }>()
+    for (const record of egress) {
+      if (!endpointIps.has(record.destination)) continue
+      const key = `${record.source}|${record.destination}`
+      const svc = record.service || (record.port ? `:${record.port}` : '')
+      const pair = wanPairs.get(key) ?? {
+        src: record.source, dst: record.destination, hits: 0,
+        evidence: `${record.action} · ${svc}${record.country ? ` · ${record.country}` : ''} · ${record.lastSeenAt ?? ''}`,
+      }
+      pair.hits += record.flows
+      wanPairs.set(key, pair)
+    }
+    for (const pair of wanPairs.values()) {
+      edges.push({
+        src: pair.src, dst: pair.dst, kind: 'wan',
+        weight: Math.max(0.7, Math.min(4, Math.log10(pair.hits + 1))),
+        hits: pair.hits, evidence: pair.evidence, observed: true,
+      })
+    }
+
     const observedEdges = edges.filter((edge) => edge.observed).length
     const risky = devices.filter((device) => device.threat !== 'ok').map((device) => device.ip)
     const vendors: Record<string, number> = {}
@@ -352,6 +446,7 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
           deny: members.reduce((sum, asset) => sum + (asset.activity?.denied24h ?? 0), 0),
         })),
         ...(peerAssets.length ? [{ id: 'boundary-peers', members: peerAssets.map((asset) => asset.ip), role: 'cross-segment', vendor: 'boundary peers', size: peerAssets.length, boundBy: ['codst' as const], deny: 0 }] : []),
+        ...(endpoints.length ? [{ id: 'internet-endpoints', members: endpoints.map((endpoint) => endpoint.ip), role: 'internet', vendor: '', size: endpoints.length, boundBy: ['wan' as const], deny: endpoints.reduce((sum, endpoint) => sum + endpoint.denied, 0) }] : []),
       ],
       anomalies: risky.length ? [{ kind: 'production-risk', members: risky, detail: '当前风险融合或未关闭案件命中' }] : [],
       stats: {
@@ -369,7 +464,28 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
 
   const profiles: Record<string, DeviceProfile> = {}
   for (const asset of data.inventory.assets) {
-    const outbound = data.crossSegment.records.filter((record) => record.source === asset.ip).map((record) => peerFrom(record, 'out'))
+    /* The traffic portrait lists internet destinations next to boundary peers —
+     * measured private→public pairs with country/service, marked external so
+     * the ego overlay fans them into its WAN column. */
+    const egressPeers = (data.internetOutbound?.records ?? [])
+      .filter((record) => record.source === asset.ip)
+      .map((record): ProfilePeer => ({
+        ip: record.destination,
+        hits: record.flows,
+        accept: ['accept', 'allow', 'pass', 'close'].includes(record.action) ? record.flows : 0,
+        deny: ['deny', 'blocked', 'reject'].includes(record.action) ? record.flows : 0,
+        bytes: record.bytes,
+        ports: record.port ? [record.port] : [],
+        services: record.service ? [record.service] : [],
+        country: record.country || null,
+        external: true,
+        kind: 'host',
+        dir: 'out',
+      }))
+    const outbound = [
+      ...data.crossSegment.records.filter((record) => record.source === asset.ip).map((record) => peerFrom(record, 'out')),
+      ...egressPeers,
+    ]
     const inbound = data.crossSegment.records.filter((record) => record.destination === asset.ip).map((record) => peerFrom(record, 'in'))
     const graphDev = Object.values(graphs).flatMap((graph) => graph.devices).find((device) => device.ip === asset.ip)
     profiles[asset.ip] = {
@@ -386,8 +502,8 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
         outHits: outbound.reduce((sum, peer) => sum + peer.hits, 0),
         inHits: inbound.reduce((sum, peer) => sum + peer.hits, 0),
         bytes: asset.activity?.bytes24h ?? 0,
-        extPeers: 0,
-        intPeers: new Set([...outbound, ...inbound].map((peer) => peer.ip)).size,
+        extPeers: new Set(egressPeers.map((peer) => peer.ip)).size,
+        intPeers: new Set([...outbound, ...inbound].filter((peer) => !peer.external).map((peer) => peer.ip)).size,
       },
       window: { from: 'latest 24h', to: data.observedAt },
       sampled: false,

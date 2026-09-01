@@ -1811,13 +1811,17 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   fill: var(--net-ink); opacity: 1;
 }
 .sg-cluster.hot .sg-hull-label { fill: var(--wan-ink); opacity: 1; font-weight: 500; }
-/* Device-class band: a console panel, not an organic territory — solid faint
-   plate with a top-left header line, same teal/coral inks as the rest. */
-.sg-hull.band { fill: rgba(28, 143, 136, 0.045); stroke: rgba(28, 143, 136, 0.26); stroke-dasharray: none; }
-.sg-cluster.hot .sg-hull.band { fill: rgba(195, 56, 74, 0.055); stroke: rgba(195, 56, 74, 0.4); }
+/* Device-class band: an instrument plate in the reticle's drawing language —
+   sharp hairline frame + corner brackets on paper, an in-panel title bar closed
+   by a rule, a left-edge severity accent. Coral marks risk, never the plate. */
+.sg-plate { fill: rgba(18, 26, 24, 0.018); stroke: rgba(18, 26, 24, 0.28); stroke-width: 1; }
+.sg-plate-corner { fill: none; stroke: var(--ink); stroke-width: 1.6; }
+.sg-plate-rule { stroke: rgba(18, 26, 24, 0.22); stroke-width: 1; }
+.sg-plate-accent { fill: var(--net); opacity: 0.75; }
+.sg-plate-accent.risk { fill: var(--wan); }
 .sg-band-t {
   font-family: var(--font-mono, 'IBM Plex Mono', monospace);
-  font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
   fill: var(--ink);
 }
 .sg-band-s {
@@ -1825,7 +1829,7 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   font-size: 9px; letter-spacing: 0.08em;
   fill: var(--net-ink);
 }
-.sg-cluster.hot .sg-band-s { fill: var(--wan-ink); }
+.sg-band-s.risk { fill: var(--wan-ink); }
 /* Bundled boundary corridor: device stubs converge on the band's egress port,
    deduped trunks carry the crossing — width says flow volume, one hue only. */
 .sg-stub { fill: none; stroke: var(--net); stroke-width: 0.7; opacity: 0.3; transition: opacity 0.25s ease; }

@@ -71,13 +71,18 @@ describe('production topology projection', () => {
         { source: '192.168.16.10', destination: '192.168.2.1', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.2.0/24', service: 'DNS', port: 53, action: 'deny', flows: 20, lastSeenAt: 't' },
         { source: '192.168.16.11', destination: '192.168.2.1', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.2.0/24', service: 'DNS', port: 53, action: 'deny', flows: 5, lastSeenAt: 't' },
       ] },
+      internetOutbound: { records: [
+        { source: '192.168.16.10', sourceSegment: '192.168.16.0/20', destination: '77.236.99.122', country: 'France', service: 'udp/41641', port: 41641, action: 'accept', flows: 900, bytes: 5000, lastSeenAt: 't' },
+        { source: '192.168.16.12', sourceSegment: '192.168.16.0/20', destination: '77.236.99.122', country: 'France', service: 'udp/41641', port: 41641, action: 'accept', flows: 100, bytes: 800, lastSeenAt: 't' },
+      ] },
       riskFusion: [],
       externalSources: [],
       cases: [],
       funnel: { facts: 1, security_events: 0, alerts: 0, cases: 0 },
     } as Parameters<typeof projectProductionOverview>[0]
 
-    const graph = projectProductionOverview(overview).graphs['192.168.16.0/20']
+    const projection = projectProductionOverview(overview)
+    const graph = projection.graphs['192.168.16.0/20']
     const classHulls = graph.clusters.filter((cluster) => cluster.id.startsWith('class-'))
     expect(classHulls.map((cluster) => cluster.role).sort()).toEqual(['camera', 'mobile', 'workstation'])
     expect(classHulls.find((cluster) => cluster.role === 'workstation')?.members.sort()).toEqual(['192.168.16.10', '192.168.16.11'])
@@ -92,5 +97,20 @@ describe('production topology projection', () => {
       expect(Math.abs(device.x)).toBeLessThan(1)
       expect(Math.abs(device.y)).toBeLessThan(1)
     }
+
+    // internet egress: one endpoint node clusters both talkers, edges measured
+    const endpoint = graph.devices.find((device) => device.ip === '77.236.99.122')
+    expect(endpoint?.role).toBe('internet-endpoint')
+    expect(endpoint?.name).toBe('udp/41641 · France')
+    expect(graph.clusters.find((cluster) => cluster.id === 'internet-endpoints')?.members).toEqual(['77.236.99.122'])
+    const wanEdges = graph.edges.filter((edge) => edge.kind === 'wan')
+    expect(wanEdges.map((edge) => edge.src).sort()).toEqual(['192.168.16.10', '192.168.16.12'])
+    expect(wanEdges.every((edge) => edge.observed)).toBe(true)
+    const profile = projection.context.profiles['192.168.16.10']
+    const external = profile.outbound.filter((peer) => peer.external)
+    expect(external).toHaveLength(1)
+    expect(external[0].ip).toBe('77.236.99.122')
+    expect(external[0].country).toBe('France')
+    expect(profile.totals.extPeers).toBe(1)
   })
 })

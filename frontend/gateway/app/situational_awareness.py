@@ -216,6 +216,7 @@ def _cross_segment_rows(query: Callable[[str], list[dict[str, Any]]]) -> list[di
         query,
         "WITH (SELECT max(event_ts) FROM {db}.facts) AS anchor "
         "SELECT srcip, dstip, action, srcintf, dstintf, service, dstport, "
+        "anyLast(dstcountry) AS country, "
         "count() AS flows, sum(sentbyte + rcvdbyte) AS bytes, "
         "toString(min(event_ts)) AS first_seen, toString(max(event_ts)) AS last_seen "
         "FROM {db}.facts WHERE event_ts >= anchor - INTERVAL 24 HOUR "
@@ -492,6 +493,26 @@ def _build(
     cross_segment.sort(key=lambda item: item["flows"], reverse=True)
     cross_segment = cross_segment[:30]
 
+    # Internet egress pairs live in the same measured rows: private source,
+    # public destination. Multicast/broadcast never qualifies (_public_ip).
+    internet_outbound: list[dict[str, Any]] = []
+    for row in cross_rows:
+        source = str(row.get("srcip") or "")
+        destination = str(row.get("dstip") or "")
+        if _private_ip(source) is None or not _public_ip(destination):
+            continue
+        action = str(row.get("action") or "unknown").casefold()
+        internet_outbound.append({
+            "id": f"egress:{source}:{destination}:{row.get('dstport')}:{action}",
+            "source": source, "sourceSegment": _segment_for(source, catalog),
+            "destination": destination, "country": str(row.get("country") or ""),
+            "service": str(row.get("service") or ""), "port": _number(row.get("dstport")) or None,
+            "action": action, "flows": _number(row.get("flows")), "bytes": _number(row.get("bytes")),
+            "lastSeenAt": row.get("last_seen"),
+        })
+    internet_outbound.sort(key=lambda item: item["flows"], reverse=True)
+    internet_outbound = internet_outbound[:200]
+
     environment_findings = [
         dict(item) for item in (environment_report or {}).get("findings") or ()
         if str(dict(item).get("verification", {}).get("state") or "") == "confirmed"
@@ -710,6 +731,7 @@ def _build(
             "acceptedVisible": has_allowed_cross_segment,
             "sameSegmentVisible": False,
         },
+        "internetOutbound": {"records": internet_outbound},
         "riskFusion": risk_assets[:30],
         "candidatePaths": paths,
         "externalSources": external_sources,

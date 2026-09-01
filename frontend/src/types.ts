@@ -125,7 +125,7 @@ export interface GraphDevice {
     quarantined: boolean
   } | null
 }
-export type EdgeKind = 'clash' | 'bcast' | 'codst' | 'fleet' | 'family' | 'lease' | 'portfp'
+export type EdgeKind = 'clash' | 'bcast' | 'codst' | 'fleet' | 'family' | 'lease' | 'portfp' | 'wan'
 export interface GraphEdge {
   src: string
   dst: string

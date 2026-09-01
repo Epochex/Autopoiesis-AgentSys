@@ -12,6 +12,7 @@ const KIND_ZH: Record<string, string> = {
   family: '同命名族',
   lease: 'DHCP 同步续约',
   portfp: '端口指纹相同',
+  wan: '互联网外联',
 }
 const KIND_EN: Record<string, string> = {
   clash: 'session clash / dup IP',
@@ -21,9 +22,11 @@ const KIND_EN: Record<string, string> = {
   family: 'hostname family',
   lease: 'DHCP lockstep',
   portfp: 'port fingerprint',
+  wan: 'internet egress',
 }
 const ROLE_ZH: Record<string, string> = {
   camera: '摄像头', intercom: '门禁对讲', mobile: '移动端', workstation: '工作站', server: '服务器', unknown: '未识别',
+  'cross-segment peer': '跨段对端', 'internet-endpoint': '互联网端点',
 }
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
 
@@ -171,7 +174,7 @@ export function SubnetGraphLayer({
      (band, peer) relation — width from summed flows — crosses the corridor.
      Bench graphs have no 'cross-segment peer' role, so this stays null there. */
   const bundle = useMemo(() => {
-    const isPeer = (ip: string) => dev[ip]?.role === 'cross-segment peer'
+    const isPeer = (ip: string) => dev[ip]?.role === 'cross-segment peer' || dev[ip]?.role === 'internet-endpoint'
     const crossing = graph.edges.filter((e) => isPeer(e.src) !== isPeer(e.dst))
     if (!crossing.length) return null
     const bandOf: Record<string, string> = {}
@@ -221,7 +224,7 @@ export function SubnetGraphLayer({
   const bundled = useMemo(() => {
     if (!bundle) return null
     const set = new Set<(typeof graph.edges)[number]>()
-    const isPeer = (ip: string) => dev[ip]?.role === 'cross-segment peer'
+    const isPeer = (ip: string) => dev[ip]?.role === 'cross-segment peer' || dev[ip]?.role === 'internet-endpoint'
     for (const e of graph.edges) if (isPeer(e.src) !== isPeer(e.dst) && !bundle.rest.includes(e)) set.add(e)
     return set
   }, [bundle, graph, dev])
@@ -264,20 +267,26 @@ export function SubnetGraphLayer({
       {graph.clusters.map((c) => {
         const pts = c.members.map((m) => pos[m]).filter(Boolean)
         if (pts.length < 2) return null
-        const isBand = c.id.startsWith('class-') || c.id === 'boundary-peers'
+        const isBand = c.id.startsWith('class-') || c.id === 'boundary-peers' || c.id === 'internet-endpoints'
         const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length
         const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length
-        const label = labelOf[c.id] ?? `${c.vendor || (zh ? ROLE_ZH[c.role] ?? c.role : c.role)} ×${c.size}`
+        const label = c.id === 'boundary-peers'
+          ? `${zh ? '边界对端' : 'BOUNDARY PEERS'} ×${c.size}`
+          : c.id === 'internet-endpoints'
+            ? `${zh ? '互联网去向' : 'INTERNET EGRESS'} ×${c.size}`
+            : labelOf[c.id] ?? `${c.vendor || (zh ? ROLE_ZH[c.role] ?? c.role : c.role)} ×${c.size}`
         const egoHome = ego ? c.members.some((m) => ego.members.has(m)) : false
         const cls = `sg-cluster ${c.deny > 20000 ? 'hot' : ''} ${ego ? (egoHome ? 'ego-in' : 'ego-off') : ''}`
         if (isBand) {
-          /* Grid clusters render as console panels — a rounded plate around the
-             aligned dots — not as convex hulls, which collapse into pointed
-             lenses on 1–3 aligned rows. */
-          const minX = Math.min(...pts.map((p) => p.x)) - 24
-          const maxX = Math.max(...pts.map((p) => p.x)) + 24
-          const minY = Math.min(...pts.map((p) => p.y)) - 22
-          const maxY = Math.max(...pts.map((p) => p.y)) + 22
+          /* Grid clusters render as instrument plates, in the reticle's drawing
+             language: sharp hairline frame, corner brackets, an in-panel title
+             bar closed by a full-width rule, a severity accent on the left
+             edge. Coral is spent on risk signals only — the plate itself stays
+             paper. */
+          const x0 = Math.min(...pts.map((p) => p.x)) - 26
+          const x1 = Math.max(...pts.map((p) => p.x)) + 26
+          const y0 = Math.min(...pts.map((p) => p.y)) - 52
+          const y1 = Math.max(...pts.map((p) => p.y)) + 20
           const active = c.members.filter((m) => (dev[m]?.flows ?? 0) > 0).length
           const flagged = c.members.filter((m) => dev[m]?.threat !== 'ok').length
           const parts = [
@@ -285,11 +294,22 @@ export function SubnetGraphLayer({
             ...(flagged ? [`${flagged} ${zh ? '风险' : 'flagged'}`] : []),
             ...(c.deny > 0 ? [`${short(c.deny)} ${zh ? '拦截' : 'denied'}`] : []),
           ]
+          const bk = 13
+          const corners =
+            `M ${x0} ${y0 + bk} L ${x0} ${y0} L ${x0 + bk} ${y0} ` +
+            `M ${x1 - bk} ${y0} L ${x1} ${y0} L ${x1} ${y0 + bk} ` +
+            `M ${x1} ${y1 - bk} L ${x1} ${y1} L ${x1 - bk} ${y1} ` +
+            `M ${x0 + bk} ${y1} L ${x0} ${y1} L ${x0} ${y1 - bk}`
           return (
             <g key={c.id} className={cls} pointerEvents="none">
-              <rect x={minX} y={minY} width={maxX - minX} height={maxY - minY} rx={9} className="sg-hull band" />
-              <text x={minX + 2} y={minY - 20} className="sg-band-t" textAnchor="start">{label}</text>
-              <text x={minX + 2} y={minY - 8} className="sg-band-s" textAnchor="start">{parts.join(' · ')}</text>
+              <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} className="sg-plate" />
+              <path d={corners} className="sg-plate-corner" />
+              <rect x={x0} y={y0} width={3} height={y1 - y0} className={`sg-plate-accent ${flagged ? 'risk' : ''}`} />
+              <line x1={x0} y1={y0 + 30} x2={x1} y2={y0 + 30} className="sg-plate-rule" />
+              <text x={x0 + 14} y={y0 + 20} className="sg-band-t" textAnchor="start">{label}</text>
+              {x1 - x0 > 260 ? (
+                <text x={x1 - 12} y={y0 + 20} className={`sg-band-s ${flagged ? 'risk' : ''}`} textAnchor="end">{parts.join('  ·  ')}</text>
+              ) : null}
             </g>
           )
         }
