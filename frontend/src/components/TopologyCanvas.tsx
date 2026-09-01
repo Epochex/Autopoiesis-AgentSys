@@ -14,6 +14,8 @@ export interface ProductionTopologyContext {
   changes: number
   externalSources: { ip: string; events: number; eventTypes: string[] }[]
   profiles: Record<string, DeviceProfile>
+  /** why an asset carries its risk mark — fused reasons + open case ids */
+  risks: Record<string, { severity: string; reasons: string[]; caseIds: string[] }>
 }
 /* The plate is a ~1.9:1 letterbox at every supported viewport (1920x1006,
  * 1440x826). The old 1360x1000 viewBox (1.36:1) could only ever be fitted by
@@ -1372,6 +1374,17 @@ export function TopologyCanvas({
                       ? (lang === 'zh' ? '静默(仅DHCP)' : 'silent (DHCP)')
                       : `${short(f.deny)} ${lang === 'zh' ? '拦截' : 'blocked'}`}
                   </div>
+                  {production?.risks[f.ip]?.reasons.length ? (
+                    <div className={`sg-ego-risk sev-${production.risks[f.ip].severity}`}>
+                      <div className="sg-ego-risk-h">{lang === 'zh' ? `风险依据 · ${production.risks[f.ip].severity}` : `RISK BASIS · ${production.risks[f.ip].severity}`}</div>
+                      {production.risks[f.ip].reasons.map((reason, i) => (
+                        <div key={i} className="sg-ego-risk-r">{reason}</div>
+                      ))}
+                      {production.risks[f.ip].caseIds.length ? (
+                        <div className="sg-ego-risk-c">{lang === 'zh' ? '关联案件 ' : 'cases '}{production.risks[f.ip].caseIds.join(' · ')}</div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="sg-ego-rel-h">{rel.length} {lang === 'zh' ? '条关联 · 点击跳转' : 'relations · click to pivot'}</div>
                   <div className="sg-ego-rels">
                     {rel.length === 0 ? (
@@ -1456,6 +1469,17 @@ export function TopologyCanvas({
                           <span key={i} className="dp-tag">{t}</span>
                         ))}
                       </div>
+                      {production?.risks[p.ip]?.reasons.length ? (
+                        <div className={`dp-risk sev-${production.risks[p.ip].severity}`}>
+                          <div className="dp-sec risk">{lang === 'zh' ? '风险依据 · 对照 7 天行为基线' : 'RISK BASIS · VS 7-DAY BASELINE'}</div>
+                          {production.risks[p.ip].reasons.map((reason, i) => (
+                            <div key={i} className="dp-risk-r">{reason}</div>
+                          ))}
+                          {production.risks[p.ip].caseIds.length ? (
+                            <div className="dp-risk-c">{lang === 'zh' ? '关联案件 ' : 'cases '}{production.risks[p.ip].caseIds.join(' · ')}</div>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {p.live && p.live.destinations.length ? (
                         <>
                           <div className="dp-sec live">

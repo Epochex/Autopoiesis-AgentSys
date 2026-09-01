@@ -580,6 +580,10 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
       changes: data.changes.length,
       externalSources: data.externalSources,
       profiles,
+      risks: Object.fromEntries(Object.entries(risks).map(([ip, risk]) => [
+        ip,
+        { severity: risk.severity, reasons: risk.reasons, caseIds: risk.caseIds },
+      ])),
     },
   }
 }

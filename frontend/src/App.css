@@ -1831,6 +1831,19 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   display: inline-block; width: 16px; color: var(--net-ink);
   font-size: 10px; text-align: center;
 }
+/* Risk basis: the sentence that justifies the mark, shown wherever the mark is.
+   A coral hairline block — evidence text, not decoration. */
+.sg-ego-risk, .dp-risk {
+  margin: 6px 0 4px; padding: 6px 8px;
+  border-left: 2px solid var(--wan);
+  background: rgba(195, 56, 74, 0.05);
+}
+.sg-ego-risk-h, .dp-sec.risk {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--wan-ink); margin-bottom: 3px;
+}
+.sg-ego-risk-r, .dp-risk-r { font-size: 10.5px; line-height: 1.45; color: var(--ink); }
+.sg-ego-risk-c, .dp-risk-c { font-size: 9.5px; margin-top: 3px; color: var(--wan-ink); }
 
 /* Relation evidence: the claim the map is entitled to make is OBSERVED vs
    INFERRED, and that is carried structurally (solid vs dashed) — it already was.
