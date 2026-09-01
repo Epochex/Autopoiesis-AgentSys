@@ -121,17 +121,42 @@ const NAME_WORKSTATION = /^desktop-|^laptop-|^win(?![a-z])|-pc\b|^pc-|macbook|im
 const NAME_SERVER = /dss|onebox|\bnvr\b|server|-srv\b|^srv|\bnas\b/i
 const NAME_CAMERA = /\bipc\b|ipc-|\bcam\b|camera|^dh-/i
 
+const OS_MOBILE = /ios|ipados|android|harmony/i
+const OS_WORKSTATION = /windows|mac\s?os|macos/i
+const VENDOR_CAMERA = /dahua|hikvision|axis comm|uniview/i
+const VENDOR_MOBILE = /xiaomi|huawei|honor|oppo|vivo|oneplus|samsung|realme|meizu|motorola/i
+const VENDOR_WORKSTATION = /dell|lenovo|hewlett|hp inc|asus|acer|micro-star|gigabyte|intel corporate|microsoft/i
+const NAME_APPLE_PC = /macbook|imac|mac[-_ ]?mini|\bmbp\b/i
+
 export const classifyAsset = (asset: Asset): string => {
   if (asset.deviceClass) return asset.deviceClass
   const name = asset.name && asset.name !== asset.ip ? asset.name : ''
+  const os = asset.identity?.os ?? ''
+  const vendor = asset.identity?.vendor ?? ''
+  if (os) {
+    if (OS_MOBILE.test(os)) return 'mobile'
+    if (OS_WORKSTATION.test(os)) return 'workstation'
+  }
   if (name) {
     if (NAME_MOBILE.test(name)) return 'mobile'
     if (NAME_WORKSTATION.test(name)) return 'workstation'
     if (NAME_SERVER.test(name)) return 'server'
     if (NAME_CAMERA.test(name)) return 'camera'
   }
+  if (vendor) {
+    if (VENDOR_CAMERA.test(vendor)) return 'camera'
+    // Apple splits on the evidence at hand: a Mac-style hostname or macOS says
+    // computer, otherwise the fleet is overwhelmingly handheld.
+    if (/apple/i.test(vendor)) return NAME_APPLE_PC.test(name) ? 'workstation' : 'mobile'
+    if (VENDOR_WORKSTATION.test(vendor)) return 'workstation'
+    if (VENDOR_MOBILE.test(vendor)) return 'mobile'
+  }
   const services = asset.activity?.observedOutboundServices ?? []
   if (services.includes('udp/137') || services.includes('udp/138')) return 'workstation'
+  // A locally-administered MAC (bit 2 of the first octet) is the signature of
+  // a phone's per-network randomized address — no other class does this here.
+  const mac = asset.mac ?? ''
+  if (mac.length >= 2 && (parseInt(mac[1], 16) & 2) !== 0) return 'mobile'
   return 'unknown'
 }
 
@@ -260,10 +285,17 @@ const forceLayout = (specs: LayoutSpec[], edges: GraphEdge[]): Map<string, { x: 
   const sx = 1.76 / Math.max(0.05, maxX - minX)
   const sy = 1.56 / Math.max(0.05, maxY - minY)
   specs.forEach((s, i) => {
-    out.set(s.ip, {
-      x: -0.88 + (px[i] - minX) * sx,
-      y: -0.78 + (py[i] - minY) * sy,
-    })
+    let x = -0.88 + (px[i] - minX) * sx
+    const y = -0.78 + (py[i] - minY) * sy
+    /* The segment-diagnosis overlay owns the plate's left middle band; nodes
+     * whose row falls behind it slide right, with a smooth falloff so a group
+     * straddling the band edge never tears. */
+    const band = Math.max(0, 1 - Math.max(0, Math.abs(y + 0.12) - 0.42) / 0.18)
+    if (band > 0) {
+      const compressed = -0.4 + ((x + 0.88) * 1.32) / 1.76
+      x += (compressed - x) * band
+    }
+    out.set(s.ip, { x, y })
   })
   return out
 }

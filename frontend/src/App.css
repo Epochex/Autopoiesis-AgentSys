@@ -1831,6 +1831,8 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
   display: inline-block; width: 16px; color: var(--net-ink);
   font-size: 10px; text-align: center;
 }
+/* globe meridians carved out of the endpoint icon in paper */
+.sg-cut { fill: none; stroke: var(--paper-2); stroke-width: 1; pointer-events: none; }
 /* Risk basis: the sentence that justifies the mark, shown wherever the mark is.
    A coral hairline block — evidence text, not decoration. */
 .sg-ego-risk, .dp-risk {

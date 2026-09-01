@@ -30,18 +30,54 @@ const ROLE_ZH: Record<string, string> = {
 }
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
 
-/* Node glyph = device class, so type reads per-dot without any container:
-   square workstation, triangle camera, diamond server / internet endpoint,
-   circle everything else (peers hollow via CSS). */
+/* Node glyph = device class, drawn as an icon silhouette that inherits the
+   threat coloring through .sg-dot: monitor-with-stand workstation, dome
+   camera, rack server, phone slab, meridian globe endpoint; peers stay a
+   hollow ring, untyped hosts a plain dot. Scaled by the node's own radius. */
 function DotShape({ role, x, y, r }: { role: string; x: number; y: number; r: number }) {
+  const s = Math.max(3.4, r)
   if (role === 'workstation') {
-    return <rect x={x - r * 0.9} y={y - r * 0.9} width={r * 1.8} height={r * 1.8} className="sg-dot" />
+    return (
+      <path
+        className="sg-dot"
+        d={`M ${x - 1.15 * s} ${y - 0.95 * s} h ${2.3 * s} v ${1.35 * s} h ${-2.3 * s} Z ` +
+          `M ${x - 0.42 * s} ${y + 0.4 * s} h ${0.84 * s} l ${0.3 * s} ${0.55 * s} h ${-1.44 * s} Z`}
+      />
+    )
   }
   if (role === 'camera') {
-    return <path d={`M ${x} ${y - r * 1.2} L ${x + r * 1.05} ${y + r * 0.85} L ${x - r * 1.05} ${y + r * 0.85} Z`} className="sg-dot" />
+    return (
+      <path
+        className="sg-dot"
+        d={`M ${x - 0.85 * s} ${y + 0.05 * s} a ${0.85 * s} ${0.85 * s} 0 0 1 ${1.7 * s} 0 Z ` +
+          `M ${x - 1.1 * s} ${y + 0.25 * s} h ${2.2 * s} v ${0.4 * s} h ${-2.2 * s} Z ` +
+          `M ${x - 0.2 * s} ${y - 0.35 * s} a ${0.2 * s} ${0.2 * s} 0 1 0 ${0.4 * s} 0 a ${0.2 * s} ${0.2 * s} 0 1 0 ${-0.4 * s} 0`}
+        fillRule="evenodd"
+      />
+    )
   }
-  if (role === 'server' || role === 'internet-endpoint') {
-    return <rect x={x - r * 0.95} y={y - r * 0.95} width={r * 1.9} height={r * 1.9} className="sg-dot" transform={`rotate(45 ${x} ${y})`} />
+  if (role === 'mobile') {
+    return <rect x={x - 0.62 * s} y={y - 1.05 * s} width={1.24 * s} height={2.1 * s} rx={0.28 * s} className="sg-dot" />
+  }
+  if (role === 'server') {
+    return (
+      <path
+        className="sg-dot"
+        d={`M ${x - 1.05 * s} ${y - 0.98 * s} h ${2.1 * s} v ${0.82 * s} h ${-2.1 * s} Z ` +
+          `M ${x - 1.05 * s} ${y + 0.16 * s} h ${2.1 * s} v ${0.82 * s} h ${-2.1 * s} Z`}
+      />
+    )
+  }
+  if (role === 'internet-endpoint') {
+    return (
+      <g>
+        <circle cx={x} cy={y} r={1.05 * s} className="sg-dot" />
+        <path
+          className="sg-cut"
+          d={`M ${x - 1.05 * s} ${y} h ${2.1 * s} M ${x} ${y - 1.05 * s} a ${0.5 * s} ${1.05 * s} 0 0 0 0 ${2.1 * s} a ${0.5 * s} ${1.05 * s} 0 0 0 0 ${-2.1 * s}`}
+        />
+      </g>
+    )
   }
   return <circle cx={x} cy={y} r={r} className="sg-dot" />
 }
@@ -236,7 +272,9 @@ export function SubnetGraphLayer({
         if (isBand) {
           /* Production groups draw NO container at all — the force layout makes
              membership legible as proximity, so ink is spent only on a floating
-             caption above the group: name ×count, then the counts that rank it. */
+             caption above the group: name ×count, then the counts that rank it.
+             An open ego net owns the field; captions yield entirely. */
+          if (ego) return null
           const topY = Math.min(...pts.map((p) => p.y))
           const active = c.members.filter((m) => (dev[m]?.flows ?? 0) > 0).length
           const flagged = c.members.filter((m) => dev[m]?.threat !== 'ok').length
@@ -262,28 +300,30 @@ export function SubnetGraphLayer({
         )
       })}
 
-      {/* ── capillaries: inferred relations sit behind observed flows ── */}
+      {/* ── capillaries ──
+          The resting map is a clustered census, not a wiring diagram: no edge
+          draws until the reader asks — hover lights a host's relations, click
+          promotes them to the ego net. Evidence text lives in the ego panel,
+          not on the lines (forty on-line labels was the mess this replaces). */}
       <g className="sg-edges" pointerEvents="none">
         {graph.edges.map((e, i) => {
           const a = pos[e.src]
           const b = pos[e.dst]
           if (!a || !b) return null
           const touchesFocus = !!focusIp && (e.src === focusIp || e.dst === focusIp)
-          const dim = (!ego && !!hoverIp && !(e.src === hoverIp || e.dst === hoverIp)) || (!!ego && !touchesFocus)
+          const touchesHover = !!hoverIp && (e.src === hoverIp || e.dst === hoverIp)
+          if (ego ? !touchesFocus : !touchesHover) return null
           const w = Math.max(0.5, Math.min(2.6, e.weight * 0.7)) * (touchesFocus ? 1.8 : 1)
           const mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.09
           const my = (a.y + b.y) / 2 - (b.x - a.x) * 0.09
           const d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
           return (
             <g key={i}>
-              <path d={d} className={`sg-edge k-${e.kind} ${e.observed ? 'obs' : 'inf'} ${dim ? 'dim' : ''} ${touchesFocus ? 'ego-edge' : ''}`} style={{ strokeWidth: w }} />
-              {(e.observed && !dim) || touchesFocus ? (
+              <path d={d} className={`sg-edge k-${e.kind} ${e.observed ? 'obs' : 'inf'} ${touchesFocus ? 'ego-edge' : ''}`} style={{ strokeWidth: w }} />
+              {e.observed ? (
                 <circle r={touchesFocus ? 2.4 : 1.7} className={`sg-drip k-${e.kind} ${touchesFocus ? 'ego-edge' : ''}`}>
                   <animateMotion dur={`${Math.max(1.6, 5 - e.weight)}s`} repeatCount="indefinite" path={d} />
                 </circle>
-              ) : null}
-              {touchesFocus && e.observed ? (
-                <text x={mx} y={my - 3} className="sg-edge-lbl" textAnchor="middle">{kindLabel[e.kind]}</text>
               ) : null}
             </g>
           )
@@ -361,6 +401,12 @@ export function SubnetGraphLayer({
         const clampY = (y: number) => Math.max(40, Math.min(vbh - 40, y))
         const intOut = profile.outbound.filter((r) => r.kind === 'host' && !r.external && pos[r.ip])
         const intIn = profile.inbound.filter((r) => r.kind === 'host' && !r.external && pos[r.ip])
+        /* Lines draw for every peer; per-line captions only for the loudest —
+           a hub with forty peers is a star, not forty sentences. The full list
+           lives in the ego panel. */
+        const labelled = new Set(
+          [...intOut, ...intIn].sort((a, b) => b.hits - a.hits).slice(0, 8).map((r) => r.ip),
+        )
         const extOut = profile.outbound.filter((r) => r.external).slice(0, 6)
         const extIn = profile.inbound.filter((r) => r.external).slice(0, 4)
         const bcast = profile.outbound.filter((r) => r.kind === 'bcast')
@@ -396,12 +442,12 @@ export function SubnetGraphLayer({
           <g className="fp-layer" pointerEvents="none">
             {intOut.map((r) => flow(pf, pos[r.ip], r, `io${r.ip}`))}
             {intIn.map((r) => flow(pos[r.ip], pf, r, `ii${r.ip}`))}
-            {intOut.map((r) => (
+            {intOut.filter((r) => labelled.has(r.ip)).map((r) => (
               <text key={`iol${r.ip}`} x={pos[r.ip].x} y={pos[r.ip].y - 12} className="fp-lbl" textAnchor="middle">
                 ▸ {svc(r)} · {short(r.hits)}
               </text>
             ))}
-            {intIn.map((r) => (
+            {intIn.filter((r) => labelled.has(r.ip)).map((r) => (
               <text key={`iil${r.ip}`} x={pos[r.ip].x} y={pos[r.ip].y + 20} className="fp-lbl in" textAnchor="middle">
                 ◂ {svc(r)} · {short(r.hits)}
               </text>
@@ -585,10 +631,12 @@ export function SubnetGraphLayer({
           {(() => {
             const roles = new Set(graph.devices.map((d) => d.role))
             const rows: [string, string][] = []
-            if (roles.has('workstation')) rows.push(['■', zh ? '工作站' : 'workstation'])
-            if (roles.has('camera')) rows.push(['▲', zh ? '摄像头' : 'camera'])
-            if (roles.has('server') || roles.has('internet-endpoint')) rows.push(['◆', zh ? '服务器 / 互联网端点' : 'server / internet endpoint'])
-            if (roles.has('mobile') || roles.has('unknown')) rows.push(['●', zh ? '移动端 / 未识别' : 'mobile / untyped'])
+            if (roles.has('workstation')) rows.push(['▭', zh ? '工作站' : 'workstation'])
+            if (roles.has('mobile')) rows.push(['▯', zh ? '移动端' : 'mobile'])
+            if (roles.has('camera')) rows.push(['◠', zh ? '摄像头' : 'camera'])
+            if (roles.has('server')) rows.push(['≡', zh ? '服务器' : 'server'])
+            if (roles.has('internet-endpoint')) rows.push(['⊕', zh ? '互联网端点' : 'internet endpoint'])
+            if (roles.has('unknown')) rows.push(['●', zh ? '未识别' : 'untyped'])
             if (roles.has('cross-segment peer')) rows.push(['○', zh ? '跨段对端' : 'cross-segment peer'])
             if (rows.length < 2) return null
             return (
