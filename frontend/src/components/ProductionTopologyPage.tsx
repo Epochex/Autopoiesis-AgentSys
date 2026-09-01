@@ -151,8 +151,8 @@ const baseDevice = (asset: Asset, role: string): Omit<GraphDevice, 'x' | 'y'> =>
  * between belongs to the boundary bus every cross-segment edge routes through.
  * Coordinates stay in the [-1,1] space SubnetGraphLayer scales onto the plate. */
 const BAND_X0 = -0.92
-const BAND_X1 = 0.3
-export const PEER_X = 0.78
+const BAND_X1 = 0.42
+export const PEER_X = 0.68
 
 const assetRank = (asset: Asset): number =>
   (severityThreat(asset.risk) !== 'ok' ? 2 : 0) + (asset.active24h ? 1 : 0)
@@ -262,9 +262,26 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
     const groups = [...byClass.entries()].sort(
       (a, b) => (CLASS_ORDER.indexOf(a[0]) + 1 || 99) - (CLASS_ORDER.indexOf(b[0]) + 1 || 99),
     )
+    const bandDevices = clusterDevices(groups)
+    /* Peers sort by the vertical position of their heaviest in-segment partner,
+     * so each band's trunk fan lands on a contiguous run of the peer column
+     * instead of criss-crossing the others'. */
+    const deviceY = new Map(bandDevices.map((device) => [device.ip, device.y]))
+    const partnerY = new Map<string, { y: number; flows: number }>()
+    for (const record of boundary) {
+      const peer = nativeIps.has(record.source) ? record.destination : record.source
+      const partner = nativeIps.has(record.source) ? record.source : record.destination
+      const y = deviceY.get(partner)
+      if (y === undefined) continue
+      const current = partnerY.get(peer)
+      if (!current || record.flows > current.flows) partnerY.set(peer, { y, flows: record.flows })
+    }
+    const sortedPeers = [...peerAssets].sort(
+      (a, b) => (partnerY.get(a.ip)?.y ?? 1) - (partnerY.get(b.ip)?.y ?? 1),
+    )
     const devices = [
-      ...clusterDevices(groups),
-      ...peerAssets.map((asset, index) => peerDevice(asset, index, peerAssets.length)),
+      ...bandDevices,
+      ...sortedPeers.map((asset, index) => peerDevice(asset, index, sortedPeers.length)),
     ]
     const deviceIps = new Set(devices.map((device) => device.ip))
 

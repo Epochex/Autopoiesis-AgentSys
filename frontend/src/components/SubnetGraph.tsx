@@ -164,6 +164,68 @@ export function SubnetGraphLayer({
     return Math.max(3.2, Math.min(11, 3.2 + mass * 1.9 + (degree[d.ip] ?? 0) * 0.22))
   }
 
+  /* ── hierarchical bundling for cross-segment edges (banded boards only) ──
+     Per-pair device→peer lines overlap into spaghetti the moment one host
+     talks to many destinations. Instead every band owns one egress port on its
+     right edge: devices reach it with short stubs, and one TRUNK per distinct
+     (band, peer) relation — width from summed flows — crosses the corridor.
+     Bench graphs have no 'cross-segment peer' role, so this stays null there. */
+  const bundle = useMemo(() => {
+    const isPeer = (ip: string) => dev[ip]?.role === 'cross-segment peer'
+    const crossing = graph.edges.filter((e) => isPeer(e.src) !== isPeer(e.dst))
+    if (!crossing.length) return null
+    const bandOf: Record<string, string> = {}
+    const ports: Record<string, Pt> = {}
+    for (const c of graph.clusters) {
+      if (!c.id.startsWith('class-')) continue
+      for (const m of c.members) bandOf[m] = c.id
+      const pts = c.members.map((m) => pos[m]).filter(Boolean)
+      if (!pts.length) continue
+      ports[c.id] = {
+        x: Math.max(...pts.map((p) => p.x)) + 34,
+        y: (Math.min(...pts.map((p) => p.y)) + Math.max(...pts.map((p) => p.y))) / 2,
+      }
+    }
+    type Trunk = { port: Pt; peer: string; hits: number; weight: number; members: Set<string> }
+    const trunks = new Map<string, Trunk>()
+    const stubs = new Map<string, { from: Pt; to: Pt; ip: string; peers: Set<string> }>()
+    const rest: typeof graph.edges = []
+    for (const e of crossing) {
+      const peerIp = isPeer(e.src) ? e.src : e.dst
+      const devIp = peerIp === e.src ? e.dst : e.src
+      const band = bandOf[devIp]
+      const port = band ? ports[band] : undefined
+      const a = pos[devIp]
+      const b = pos[peerIp]
+      if (!a || !b || !port) {
+        rest.push(e)
+        continue
+      }
+      const key = `${band}|${peerIp}`
+      const trunk = trunks.get(key) ?? { port, peer: peerIp, hits: 0, weight: 0, members: new Set<string>() }
+      trunk.hits += e.hits
+      trunk.weight = Math.max(trunk.weight, e.weight)
+      trunk.members.add(devIp)
+      trunks.set(key, trunk)
+      const stub = stubs.get(`${devIp}|${band}`) ?? { from: a, to: port, ip: devIp, peers: new Set<string>() }
+      stub.peers.add(peerIp)
+      stubs.set(`${devIp}|${band}`, stub)
+    }
+    return {
+      trunks: [...trunks.values()],
+      stubs: [...stubs.values()],
+      ports: [...new Set([...trunks.values()].map((t) => t.port))],
+      rest,
+    }
+  }, [graph, dev, pos])
+  const bundled = useMemo(() => {
+    if (!bundle) return null
+    const set = new Set<(typeof graph.edges)[number]>()
+    const isPeer = (ip: string) => dev[ip]?.role === 'cross-segment peer'
+    for (const e of graph.edges) if (isPeer(e.src) !== isPeer(e.dst) && !bundle.rest.includes(e)) set.add(e)
+    return set
+  }, [bundle, graph, dev])
+
   const hovered = hoverIp ? dev[hoverIp] : null
   const neighbours = useMemo(() => {
     if (!hoverIp) return null
@@ -244,25 +306,16 @@ export function SubnetGraphLayer({
       {/* ── capillaries: inferred relations sit behind observed flows ── */}
       <g className="sg-edges" pointerEvents="none">
         {graph.edges.map((e, i) => {
+          if (bundled?.has(e)) return null
           const a = pos[e.src]
           const b = pos[e.dst]
           if (!a || !b) return null
           const touchesFocus = !!focusIp && (e.src === focusIp || e.dst === focusIp)
           const dim = (!ego && !!hoverIp && !(e.src === hoverIp || e.dst === hoverIp)) || (!!ego && !touchesFocus)
           const w = Math.max(0.5, Math.min(2.6, e.weight * 0.7)) * (touchesFocus ? 1.8 : 1)
-          /* Cross-segment edges route through the boundary bus between the class
-             bands and the peer column — every crossing reads as one corridor
-             through the gate instead of a free-angle fan over the bands. */
-          const crossing = dev[e.src]?.role === 'cross-segment peer' || dev[e.dst]?.role === 'cross-segment peer'
-          let mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.09
-          let my = (a.y + b.y) / 2 - (b.x - a.x) * 0.09
-          let d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
-          if (crossing) {
-            const busX = center.x + rx * 0.54
-            d = `M ${a.x} ${a.y} C ${busX} ${a.y} ${busX} ${b.y} ${b.x} ${b.y}`
-            mx = busX
-            my = (a.y + b.y) / 2
-          }
+          const mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.09
+          const my = (a.y + b.y) / 2 - (b.x - a.x) * 0.09
+          const d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
           return (
             <g key={i}>
               <path d={d} className={`sg-edge k-${e.kind} ${e.observed ? 'obs' : 'inf'} ${dim ? 'dim' : ''} ${touchesFocus ? 'ego-edge' : ''}`} style={{ strokeWidth: w }} />
@@ -278,6 +331,45 @@ export function SubnetGraphLayer({
           )
         })}
       </g>
+
+      {/* ── bundled cross-segment corridor: stubs → band port → trunks ── */}
+      {bundle ? (
+        <g className="sg-bundle" pointerEvents="none">
+          {bundle.stubs.map((s) => {
+            const lit = (hoverIp && (s.ip === hoverIp || s.peers.has(hoverIp))) || (focusIp && (s.ip === focusIp || s.peers.has(focusIp)))
+            const dim = (hoverIp || ego) && !lit
+            return (
+              <path
+                key={`st${s.ip}`}
+                d={`M ${s.from.x} ${s.from.y} Q ${(s.from.x + s.to.x) / 2} ${s.from.y} ${s.to.x} ${s.to.y}`}
+                className={`sg-stub ${dim ? 'dim' : ''} ${lit ? 'lit' : ''}`}
+              />
+            )
+          })}
+          {bundle.ports.map((p, i) => (
+            <rect key={`pt${i}`} x={p.x - 3.4} y={p.y - 3.4} width="6.8" height="6.8" className="sg-port" transform={`rotate(45 ${p.x} ${p.y})`} />
+          ))}
+          {bundle.trunks.map((t) => {
+            const b = pos[t.peer]
+            if (!b) return null
+            const lit = (hoverIp && (t.members.has(hoverIp) || t.peer === hoverIp)) || (focusIp && (t.members.has(focusIp) || t.peer === focusIp))
+            const dim = (hoverIp || ego) && !lit
+            const midX = (t.port.x + b.x) / 2
+            const d = `M ${t.port.x} ${t.port.y} C ${midX} ${t.port.y} ${midX} ${b.y} ${b.x} ${b.y}`
+            const w = Math.max(0.8, Math.min(3.4, Math.log10(t.hits + 1) * 0.62))
+            return (
+              <g key={`tr${t.peer}${t.port.y}`}>
+                <path d={d} className={`sg-trunk ${dim ? 'dim' : ''} ${lit ? 'lit' : ''}`} style={{ strokeWidth: w }} />
+                {!dim ? (
+                  <circle r={1.9} className="sg-drip k-codst">
+                    <animateMotion dur={`${Math.max(1.8, 5.5 - Math.log10(t.hits + 1))}s`} repeatCount="indefinite" path={d} />
+                  </circle>
+                ) : null}
+              </g>
+            )
+          })}
+        </g>
+      ) : null}
 
       {/* ── agent-found pivot corridors ── */}
       {(analysis?.corridors ?? []).map((c, i) => {
