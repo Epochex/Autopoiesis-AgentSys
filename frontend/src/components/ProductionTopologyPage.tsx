@@ -5,20 +5,20 @@ import type {
   DataStats,
   Device,
   DeviceProfile,
-  GraphAnalysis,
   GraphDevice,
   GraphEdge,
   MeshNode,
   ProfilePeer,
-  Subnet,
   SubnetGraph,
   TheaterEvent,
   Topology,
 } from '../types'
 import { LiveAlerts } from './LiveAlerts'
-import { TopologyCanvas, type ProductionTopologyContext } from './TopologyCanvas'
+import { NetworkWorkspace } from './NetworkWorkspace'
+import type { ManagedDevice } from './network-model'
+import { type ProductionTopologyContext } from './TopologyCanvas'
 import { readAnalysis, type AnalysisMode } from './analysis-read'
-import { ThreatCard, type Threat, type WanThreat } from './ThreatCard'
+import { ThreatCard, type Threat } from './ThreatCard'
 import type { InvestigationSourceEventInput } from './investigation-context'
 
 const Constellation3D = lazy(() => import('./Constellation3D').then((module) => ({ default: module.Constellation3D })))
@@ -108,7 +108,7 @@ interface ProductionOverview {
   mode: 'production_observed'
   observedAt: string
   freshness: { lagSeconds?: number | null }
-  inventory: { knownAssets: number; active24h: number; segments: Segment[]; assets: Asset[] }
+  inventory: { managedDevices?: ManagedDevice[]; knownAssets: number; active24h: number; segments: Segment[]; assets: Asset[] }
   changes: { id: string; asset: string; severity: string; title: string }[]
   crossSegment: { records: BoundaryRecord[] }
   internetOutbound?: { records: EgressRecord[] }
@@ -683,21 +683,6 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
   }
 }
 
-function ProductionSearch({ data, onPick, lang }: { data: ProductionOverview; onPick: (ip: string, cidr: string) => void; lang: Lang }) {
-  const [query, setQuery] = useState('')
-  const hits = useMemo(() => {
-    const value = query.trim().toLowerCase()
-    if (!value) return []
-    return data.inventory.assets.filter((asset) => `${asset.ip} ${asset.name} ${asset.mac ?? ''} ${asset.segment}`.toLowerCase().includes(value)).slice(0, 12)
-  }, [data, query])
-  return (
-    <div className="topo-search">
-      <div className="ts-box"><span className="ts-ico">⌕</span><input className="ts-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={lang === 'zh' ? '搜索当前资产 · IP / 主机名 / MAC / 网段' : 'search current assets'} /></div>
-      {query && hits.length ? <div className="ts-results">{hits.map((asset) => <button key={asset.ip} className={`ts-hit t-${severityThreat(asset.risk)}`} onClick={() => { onPick(asset.ip, asset.segment); setQuery('') }}><span className="ts-hit-ip">{asset.ip}</span><span className="ts-hit-name">{asset.name}</span><span className="ts-hit-meta">{asset.segment} · {asset.activity?.flows24h ?? 0} flows/24h</span><span className="ts-hit-th">{asset.risk ?? 'observed'}</span></button>)}</div> : null}
-    </div>
-  )
-}
-
 function ProductionImpactStrip({
   theater,
   data,
@@ -742,7 +727,6 @@ export function ProductionTopologyPage({
   lang,
   onOpenCase,
   onTrackIncident,
-  onOpenExposure,
   focusSubject,
   showConstellation = false,
   onShowConstellation,
@@ -762,17 +746,11 @@ export function ProductionTopologyPage({
   const [usingCache, setUsingCache] = useState(
     () => readProductionOverviewCache<ProductionOverview>() !== null,
   )
-  const [drillSub, setDrillSub] = useState<string | null>(null)
-  const [drillDev, setDrillDev] = useState<string | null>(null)
-  const [hoverDev, setHoverDev] = useState<string | null>(null)
-  const [analysis, setAnalysis] = useState<GraphAnalysis | null>(null)
   const [threat, setThreat] = useState<Threat | null>(null)
-  const [wan, setWan] = useState<WanThreat | null>(null)
-  const [marks, setMarks] = useState<Record<string, { severity: string; verdict: string }>>({})
   const [rate, setRate] = useState<number | null>(null)
   const [theater, setTheater] = useState<TheaterEvent | null>(null)
   const [hover3D, setHover3D] = useState<string | null>(null)
-  const savedAnalyses = useRef(new Map<string, Threat | WanThreat | GraphAnalysis>())
+  const savedAnalyses = useRef(new Map<string, Threat>())
   const analysisSequence = useRef({ host: 0, wan: 0, subnet: 0 })
   useEffect(() => {
     const sequence = analysisSequence.current
@@ -837,7 +815,7 @@ export function ProductionTopologyPage({
     return () => { active = false; window.clearInterval(timer) }
   }, [])
 
-  const projection = useMemo(() => data ? projectProductionOverview(data) : null, [data])
+  const projection = useMemo(() => data && showConstellation ? projectProductionOverview(data) : null, [data, showConstellation])
   const constellationMeshes = useMemo<Record<string, MeshNode[]>>(() => {
     if (!projection) return {}
     return Object.fromEntries(Object.entries(projection.graphs).map(([cidr, current]) => [
@@ -881,10 +859,8 @@ export function ProductionTopologyPage({
     ))
     return { links, nodes }
   }, [constellationMeshes, projection])
-  const graph = drillSub && projection ? projection.graphs[drillSub] ?? null : null
-  const tempo = rate == null ? 1 : Math.max(0.6, Math.min(3, rate / 12))
 
-  if (!data || !projection) return <div className={`boot ${error ? 'err' : ''}`}>{error ? (lang === 'zh' ? '生产态势接口不可达' : 'PRODUCTION SITUATION UNREACHABLE') : <span className="orbit" />}</div>
+  if (!data || (showConstellation && !projection)) return <div className={`boot ${error ? 'err' : ''}`}>{error ? (lang === 'zh' ? '生产态势接口不可达' : 'PRODUCTION SITUATION UNREACHABLE') : <span className="orbit" />}</div>
 
   const hostBaseline = (ip: string): Threat => {
     const asset = data.inventory.assets.find(row => row.ip === ip)
@@ -894,25 +870,9 @@ export function ProductionTopologyPage({
       analysis: asset ? `${asset.name} · ${asset.segment}${activity ? ` · ${activity.flows24h} ${lang === 'zh' ? '条流量记录' : 'flow records'} · ${activity.denied24h} ${lang === 'zh' ? '条拒绝记录' : 'denied records'}` : ''}` : (lang === 'zh' ? '当前资产目录未返回此设备的详细观测。' : 'The current inventory contains no detailed observations for this device.'),
       facts: { asset: asset?.name, segment: asset?.segment, activity: activity ?? null } }
   }
-  const wanBaseline = (ip: string): WanThreat => {
-    const source = data.externalSources.find(row => row.ip === ip)
-    return { ip, loading: false, analysisState: 'baseline', analysisAvailable: false, sourceMode: 'production_observed',
-      eventCount: source?.events, observedAt: source?.lastSeenAt,
-      verdict: lang === 'zh' ? '公网来源观测' : 'Observed public source',
-      campaign: source ? `${source.eventTypes.join(' · ')} · ${source.events} ${lang === 'zh' ? '条事件' : 'events'} · ${source.lastSeenAt}` : (lang === 'zh' ? '当前快照未记录此来源的事件数量。' : 'The current snapshot does not record an event count for this source.'),
-      facts: { eventTypes: source?.eventTypes ?? [], ports: source?.ports ?? [], eventCount: source?.events, observedAt: source?.lastSeenAt } }
-  }
-  const subnetBaseline = (cidr: string): GraphAnalysis => {
-    const current = projection.graphs[cidr]
-    const segment = data.inventory.segments.find(row => row.cidr === cidr)
-    return { cidr, loading: false, analysisState: 'baseline', analysisAvailable: false,
-      summary: `${segment?.name ?? cidr} · ${current?.devices.length ?? segment?.assetCount ?? (lang === 'zh' ? '未知' : 'Unknown')} ${lang === 'zh' ? '台设备' : 'devices'}`,
-      facts: { assetCount: segment?.assetCount, active24h: segment?.active24h, role: segment?.role } }
-  }
-  const inspectRisk = async (device: Device | GraphDevice | null, cidr?: string, mode: AnalysisMode = 'read', force = false) => {
+  const inspectRisk = async (device: Device | GraphDevice | null, mode: AnalysisMode = 'read', force = false) => {
     if (!device) { setThreat(null); return }
     const ip = device.ip
-    if (cidr) setDrillSub(cidr)
     const key = `host:${lang}:${ip}`
     const baseline = hostBaseline(ip)
     setThreat(current => ({ ...baseline, ...(savedAnalyses.current.get(key) as Threat | undefined), ...(current?.ip === ip ? current : {}), loading: mode === 'analyze', cacheReading: mode === 'read', error: undefined, analysisError: undefined }))
@@ -926,41 +886,9 @@ export function ProductionTopologyPage({
       if (sequence === analysisSequence.current.host) setThreat(current => current?.ip === ip ? { ...current, loading: false, cacheReading: false, error: error instanceof Error ? error.message : String(error) } : current)
     }
   }
-  const inspectExternal = async (ip: string, mode: AnalysisMode = 'read', force = false) => {
-    const key = `wan:${lang}:${ip}`
-    const baseline = wanBaseline(ip)
-    setWan(current => ({ ...baseline, ...(savedAnalyses.current.get(key) as WanThreat | undefined), ...(current?.ip === ip ? current : {}), loading: mode === 'analyze', cacheReading: mode === 'read', error: undefined, analysisError: undefined }))
-    const sequence = ++analysisSequence.current.wan
-    try {
-      const result = await readAnalysis('wan', ip, lang, mode, force)
-      const next = { ...baseline, ...result, ip, loading: false, cacheReading: false }
-      savedAnalyses.current.set(key, next)
-      if (sequence === analysisSequence.current.wan) setWan(current => current?.ip === ip ? next : current)
-    } catch (error) {
-      if (sequence === analysisSequence.current.wan) setWan(current => current?.ip === ip ? { ...current, loading: false, cacheReading: false, error: error instanceof Error ? error.message : String(error) } : current)
-    }
-  }
-  const inspectSubnet = async (cidr: string, mode: AnalysisMode = 'read', force = false) => {
-    const key = `subnet:${lang}:${cidr}`
-    const baseline = subnetBaseline(cidr)
-    setAnalysis(current => ({ ...baseline, ...(savedAnalyses.current.get(key) as GraphAnalysis | undefined), ...(current?.cidr === cidr ? current : {}), loading: mode === 'analyze', cacheReading: mode === 'read', error: undefined, analysisError: undefined }))
-    const sequence = ++analysisSequence.current.subnet
-    try {
-      const result = await readAnalysis('subnet', cidr, lang, mode, force)
-      const next = { ...baseline, ...result, cidr, loading: false, cacheReading: false }
-      savedAnalyses.current.set(key, next)
-      if (sequence === analysisSequence.current.subnet) setAnalysis(current => current?.cidr === cidr ? next : current)
-    } catch (error) {
-      if (sequence === analysisSequence.current.subnet) setAnalysis(current => current?.cidr === cidr ? { ...current, loading: false, cacheReading: false, error: error instanceof Error ? error.message : String(error) } : current)
-    }
-  }
-  const openSubnet = (subnet: Subnet | null) => {
-    setDrillSub(subnet?.cidr ?? null); setDrillDev(null); setThreat(null); setWan(null); setAnalysis(null)
-    if (subnet) void inspectSubnet(subnet.cidr)
-  }
   const analyzeHost = (ip: string, force = false) => {
-    const device = Object.values(projection.graphs).flatMap(current => current.devices).find(row => row.ip === ip)
-    if (device) void inspectRisk(device, undefined, 'analyze', force)
+    const device = Object.values(projection?.graphs ?? {}).flatMap(current => current.devices).find(row => row.ip === ip)
+    if (device) void inspectRisk(device, 'analyze', force)
   }
 
   return (
@@ -974,89 +902,21 @@ export function ProductionTopologyPage({
         onOpen={(subject, event, caseId, origin) => {
           setTheater({ ...event, caseId: caseId ?? event.caseId })
           if (origin !== 'focus') onTrackIncident?.(subject, event, caseId)
-          setDrillSub(null)
-          setDrillDev(null)
           setThreat(null)
-          setWan(null)
-          setAnalysis(null)
         }}
       />
       {usingCache ? (
         <div className="production-source-state" role="status">
           <strong>{lang === 'zh' ? '数据源状态' : 'SOURCE STATUS'}</strong>
           <span>{lang === 'zh' ? '缓存快照' : 'CACHED SNAPSHOT'}</span>
-          <small>{lang === 'zh' ? '后台重连中，页面保留最近一次成功观测' : 'reconnecting; the latest successful observation remains visible'}</small>
+          <small>{lang === 'zh' ? '正在刷新目录，当前显示最近一次成功观测' : 'Refreshing inventory; showing the latest successful observation'}</small>
         </div>
       ) : null}
-      {theater && theater.kind !== 'browse' ? <ProductionImpactStrip theater={theater} data={data} lang={lang} /> : null}
-      <section className={`canvas-wrap ${theater ? 'theater-mode ' : ''}${showConstellation ? 'full3d' : threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>
-        {!showConstellation ? <ProductionSearch data={data} lang={lang} onPick={(ip, cidr) => { setDrillSub(cidr); setDrillDev(ip); const device = projection.graphs[cidr]?.devices.find(row => row.ip === ip); if (device) void inspectRisk(device, cidr) }} /> : null}
-        {!showConstellation ? <TopologyCanvas
-          topo={projection.topology}
-          stats={projection.stats}
-          activeKey="production_observed"
-          drillSub={drillSub}
-          drillDev={drillDev}
-          tempo={tempo}
-          marks={marks}
-          threat={threat}
-          lang={lang}
-          meshCount={data.inventory.knownAssets}
-          meshLoading={false}
-          hover3D={null}
-          hover3DCidr={null}
-          topoAlert={null}
-          wan={wan}
-          graph={graph}
-          graphAnalysis={analysis}
-          hoverDev={hoverDev}
-          onHoverDev={setHoverDev}
-          onGraphAnalyze={(cidr, force) => void inspectSubnet(cidr, 'analyze', force)}
-          onAnalyzeWan={(ip, force) => void inspectExternal(ip, 'analyze', force)}
-          onAnalyzeHost={analyzeHost}
-          onCloseGraphAnalysis={() => setAnalysis(null)}
-          onWan={inspectExternal}
-          onCloseWan={() => setWan(null)}
-          onOpen3D={() => onShowConstellation?.(true)}
-          onCloseThreat={() => setThreat(null)}
-          onSub={openSubnet}
-          onDev={(device) => inspectRisk(device)}
-          onBatch={(cidr) => {
-            const next = { ...marks }
-            for (const device of projection.graphs[cidr]?.devices ?? []) {
-              const risk = projection.risks[device.ip]
-              if (risk) next[device.ip] = { severity: risk.severity, verdict: risk.reasons[0] ?? risk.severity }
-            }
-            setMarks(next)
-          }}
-          onDiagnose={() => {
-            if (wan) { onOpenExposure?.(); return }
-            if (theater) onOpenCase(theater.device, theater.caseId, {
-              id: theater.id,
-              kind: theater.kind,
-              observedAt: theater.ts,
-              summary: theater.summary,
-              severity: theater.severity,
-              scope: theater.scope,
-            })
-            else if (threat) {
-              const risk = projection.risks[threat.ip]
-              const caseId = risk?.caseIds[0]
-              onOpenCase(threat.ip, caseId, {
-                id: caseId,
-                kind: 'topology_risk',
-                summary: risk?.reasons[0] ?? threat.verdict,
-                severity: risk?.severity,
-                scope: risk?.segment,
-              })
-            }
-          }}
-          theater={theater}
-          allGraphs={projection.graphs}
-          onCloseTheater={() => setTheater(null)}
-          production={projection.context}
-        /> : (
-          <>
+      {theater && theater.kind !== 'browse' ? <><ProductionImpactStrip theater={theater} data={data} lang={lang} /><div className="production-source-state"><button onClick={() => onOpenCase(theater.device, theater.caseId, { id: theater.id, kind: theater.kind, summary: theater.summary, severity: theater.severity, scope: theater.scope })}>{lang === 'zh' ? '查看事件调查' : 'Open investigation'}</button><button onClick={() => setTheater(null)}>{lang === 'zh' ? '收起事件' : 'Close event'}</button></div></> : null}
+      {!showConstellation ? <NetworkWorkspace data={data} lang={lang} rate={rate} onInvestigate={ip => {
+        const risk = data.riskFusion.find(item => item.asset === ip)
+        onOpenCase(ip, risk?.caseIds[0], { kind: 'device_profile', summary: risk?.reasons[0], scope: risk?.segment })
+      }} /> : projection && <section className="canvas-wrap full3d">
             <Suspense fallback={<div className="c3d-inline c3d-booting">3D…</div>}>
               <Constellation3D
                 topo={projection.topology}
@@ -1071,8 +931,6 @@ export function ProductionTopologyPage({
                 }}
                 onHoverIp={setHover3D}
                 onClickIp={(ip, cidr) => {
-                  setDrillSub(cidr)
-                  setDrillDev(ip)
                   const device = projection.graphs[cidr]?.devices.find((item) => item.ip === ip)
                   if (device) inspectRisk({
                     ip: device.ip,
@@ -1081,17 +939,15 @@ export function ProductionTopologyPage({
                     accept: device.accept,
                     threat: device.threat,
                     top_ports: device.topPorts,
-                  }, cidr)
+                  })
                 }}
                 focusCidr={null}
               />
             </Suspense>
             {threat ? <div className="c3d-threat"><ThreatCard th={threat} lang={lang} onAnalyze={force => analyzeHost(threat.ip, force)} onClose={() => setThreat(null)} /></div> : null}
-          </>
-        )}
-        {rate !== null ? <div className="live-rate"><span className="rate-dot" />{rate}/s · {lang === 'zh' ? '生产事实流' : 'PRODUCTION FACTS'}</div> : null}
-        {showConstellation && hover3D ? <div className="production-cache-state">{lang === 'zh' ? `当前资产 · ${hover3D}` : `ASSET · ${hover3D}`}</div> : null}
-      </section>
+        {hover3D ? <div className="production-cache-state">{lang === 'zh' ? `当前资产 · ${hover3D}` : `ASSET · ${hover3D}`}</div> : null}
+      </section>}
+
     </>
   )
 }

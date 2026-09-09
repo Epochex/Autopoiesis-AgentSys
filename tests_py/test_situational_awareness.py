@@ -74,6 +74,27 @@ class _Router:
         }
 
 
+def test_gateway_interface_aliases_do_not_become_terminal_or_public_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPOIESIS_INTEL_FEED", str(tmp_path / "missing.jsonl"))
+    class Router(_Router):
+        def fetch_all(self):
+            snapshot = super().fetch_all()
+            snapshot['identity'] = {'items': [{'serial': 'FG-OWNED', 'model': 'FG100E'}]}
+            snapshot['interfaces']['items'].append({'name': 'wan1', 'ip': '77.236.99.122 255.255.255.248', 'role': 'wan'})
+            snapshot['devices']['items'].append({'ip': '192.168.1.1', 'hostname': 'gateway', 'sources': ['known_device']})
+            return snapshot
+    def query(sql):
+        rows = _query(sql)
+        if 'internet_outbound' in sql:
+            rows.append(dict(rows[0], dstip='77.236.99.122'))
+        return rows
+    result = build_situational_overview(_Repository(), {}, query=query, router_factory=Router,
+                                       identity_provider=lambda: {}, now=datetime(2026, 9, 9, tzinfo=timezone.utc))
+    assert result['inventory']['managedDevices'][0]['serial'] == 'FG-OWNED'
+    assert '192.168.1.1' not in {a['ip'] for a in result['inventory']['assets']}
+    assert '77.236.99.122' not in {r['destination'] for r in result['internetOutbound']['records']}
+
+
 def _query(sql: str) -> list[dict[str, Any]]:
     if "count() AS retained" in sql:
         return [{"latest": "2026-08-31 11:59:50.000", "retained": 1000}]

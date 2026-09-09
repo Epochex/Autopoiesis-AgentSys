@@ -629,6 +629,26 @@ async def rca_device_profile(ip: str, lang: str = "zh") -> dict[str, Any]:
     return await asyncio.to_thread(device_profile, ip, lang)
 
 
+@app.get("/api/rca/interface-traffic")
+async def rca_interface_traffic(device_id: str, interface_id: str, days: int = 1) -> dict[str, Any]:
+    from .network_inventory import interface_traffic
+    from .situational_awareness import cached_situational_overview
+    overview, _ = cached_situational_overview()
+    devices = (overview or {}).get("inventory", {}).get("managedDevices", [])
+    device = next((d for d in devices if d["id"] == device_id), None)
+    interface = next((i for i in (device or {}).get("interfaces", []) if i["id"] == interface_id), None)
+    if not device or not interface:
+        raise HTTPException(status_code=404, detail="Device/interface not present in current inventory")
+    if len(devices) != 1:
+        raise HTTPException(status_code=409, detail="Flow store requires collector identity for multiple devices")
+    try:
+        return await asyncio.to_thread(interface_traffic, device, interface, days)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Interface flow history unavailable") from error
+
+
 @app.get("/api/rca/device_history")
 async def rca_device_history(ip: str, days: int = 7, full: int = 0) -> dict[str, Any]:
     """Historical portrait for one host over the last N days from the configured fact table."""

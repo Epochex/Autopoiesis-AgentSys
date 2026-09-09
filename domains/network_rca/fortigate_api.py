@@ -552,6 +552,14 @@ def _interface_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "parent_interface": _first_text(row, "interface", "parent", "parent_interface"),
     }
     item["missing_fields"] = _missing_fields(item, ("name", "status", "ip", "role", "vlan_id"))
+    for key in ("type", "vdom"):
+        if row.get(key):
+            item[key] = row[key]
+    if row.get("member"):
+        item["members"] = _names(row["member"])
+    if row.get("secondaryip") and row.get("secondary-IP") != "disable":
+        item["secondary_ips"] = [_ip_value(value.get("ip")) for value in row["secondaryip"]
+                                 if isinstance(value, Mapping) and value.get("ip")]
     return item
 
 

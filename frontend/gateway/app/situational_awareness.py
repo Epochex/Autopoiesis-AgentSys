@@ -87,7 +87,7 @@ def _private_ip(value: Any) -> ipaddress.IPv4Address | None:
         return None
     if not isinstance(parsed, ipaddress.IPv4Address) or not parsed.is_private:
         return None
-    if parsed.is_unspecified or parsed.is_multicast or parsed.is_reserved:
+    if parsed.is_unspecified or parsed.is_multicast or parsed.is_reserved or parsed.is_loopback:
         return None
     if parsed == ipaddress.IPv4Address("255.255.255.255"):
         return None
@@ -505,11 +505,14 @@ def _build(
     devices = list(router.get("devices", {}).get("items") or ())
     policies = list(router.get("policies", {}).get("items") or ())
     catalog = _segment_catalog(interfaces)
+    from .network_inventory import managed_devices, owned_addresses
+    managed = managed_devices(router)
+    gateway_addresses = owned_addresses(managed)
 
     device_by_ip: dict[str, dict[str, Any]] = {}
     for item in devices:
         ip = str(item.get("ip") or "")
-        if _private_ip(ip) is None:
+        if _private_ip(ip) is None or ip in gateway_addresses:
             continue
         existing = device_by_ip.setdefault(ip, {"ip": ip, "sources": []})
         for field in ("mac", "hostname"):
@@ -520,7 +523,7 @@ def _build(
     active_by_ip: dict[str, dict[str, Any]] = {}
     for row in activity_rows:
         ip = str(row.get("srcip") or "")
-        if _private_ip(ip) is None:
+        if _private_ip(ip) is None or ip in gateway_addresses:
             continue
         active_by_ip[ip] = {
             "flows24h": _number(row.get("flows")),
@@ -628,7 +631,7 @@ def _build(
     for row in internet_rows:
         source = str(row.get("srcip") or "")
         destination = str(row.get("dstip") or "")
-        if _private_ip(source) is None or not _public_ip(destination):
+        if _private_ip(source) is None or not _public_ip(destination) or destination in gateway_addresses:
             continue
         action = str(row.get("action") or "unknown").casefold()
         if action in {"deny", "blocked", "reject"} and _number(row.get("bytes")) <= 0:
@@ -879,9 +882,10 @@ def _build(
             "routerDegraded": bool(router.get("degraded")),
         },
         "inventory": {
+            "managedDevices": managed,
             "knownAssets": len(set(device_by_ip) | set(active_by_ip)),
             "active24h": len(active_by_ip), "segments": segments,
-            "assets": asset_rows[:300],
+            "assets": asset_rows,
         },
         "changes": changes[:30],
         "behaviorDeviations": behaviors[:30],
