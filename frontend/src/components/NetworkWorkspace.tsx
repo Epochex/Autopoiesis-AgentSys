@@ -45,11 +45,11 @@ function EndpointContext({ endpoint, managed, zh, onSelect }: { endpoint: Endpoi
     {reasons.length > 0 && <section className="nw-section"><h3>{zh ? '需要关注的观测' : 'Observations to review'}</h3><ul>{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul></section>}</>
 }
 
-export function NetworkWorkspace({ data, lang, rate, onInvestigate }: { data: NetworkData; lang: Lang; rate: number | null; onInvestigate: (ip: string) => void }) {
+export function NetworkWorkspace({ data, lang, rate, onInvestigate, initialSelection = null, detailOnly = false }: { data: NetworkData; lang: Lang; rate: number | null; onInvestigate: (ip: string) => void; initialSelection?: Selection | null; detailOnly?: boolean }) {
   const zh = lang === 'zh'
   const managed = useMemo(() => data.inventory.managedDevices ?? [], [data.inventory.managedDevices])
   const endpoints = useMemo(() => endpointDevices(data.inventory.assets, managed), [data.inventory.assets, managed])
-  const [selection, setSelection] = useState<Selection | null>(null)
+  const [selection, setSelection] = useState<Selection | null>(initialSelection)
   const [search, setSearch] = useState('')
   const [showUnaddressed, setShowUnaddressed] = useState(false)
   const selectedId = selection?.deviceId ?? managed[0]?.id ?? endpoints[0]?.id
@@ -67,7 +67,7 @@ export function NetworkWorkspace({ data, lang, rate, onInvestigate }: { data: Ne
   const attached = (host: EndpointDevice) => intf && host.addresses.some(a => a.activity?.sourceInterface === intf.name || intf.addresses.some(address => address.network === a.segment))
   const attachedHosts = endpoints.filter(attached)
   const ip = selection?.ip ?? endpoint?.addresses[0]?.ip
-  return <div className="nw-workspace">
+  return <div className={`nw-workspace ${detailOnly ? 'nw-detail-only' : ''}`}>
     <header className="nw-header" role="group" aria-label={zh ? '设备目录概览' : 'Device inventory summary'}><div><span className="nw-eyebrow">{zh ? '网络态势 / 设备目录' : 'NETWORK / DEVICE INVENTORY'}</span><h2>{zh ? '从设备看清每个接口' : 'Devices and their interfaces'}</h2></div><div className="nw-header-meta"><span>{managed.length} {zh ? '受管设备' : 'managed'} · {endpoints.length} {zh ? '终端身份' : 'endpoint identities'}</span><small>{zh ? '目录观测' : 'Inventory observed'} {formatTime(data.observedAt)} UTC</small>{rate != null && <small>{rate}/s · {zh ? '日志接收速率' : 'Log ingestion rate'}</small>}</div></header>
     <div className="nw-layout"><aside className="nw-directory"><label className="nw-search"><span>{zh ? '查找设备、接口或地址' : 'Find device, interface or address'}</span><input value={search} onChange={e => setSearch(e.target.value)} placeholder="IP / MAC / 名称 / 接口 / 网段" /></label>
       <div className="nw-nav-heading">{zh ? '受管网络设备' : 'Managed network devices'}</div>

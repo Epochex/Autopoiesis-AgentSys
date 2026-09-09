@@ -5,29 +5,27 @@ Pre-refactor checkpoint: `83e5c5b`.
 ## Ownership and navigation
 
 `ProductionTopologyPage` owns polling, current source status, incident navigation,
-and the separately routed 3D view. Its production 2D view now mounts
-`NetworkWorkspace`; the previous IP scatter canvas and automatic subnet analysis
-popup are removed from this route. `TopologyCanvas` remains a shared component
-for other views.
+and the separately routed 3D view. The production UI retains the interactive mesh:
+`ManagedNetworkGraph` displays serial-owned interfaces and attached terminals in
+the all-network view. Clicking a LAN interface opens the original `TopologyCanvas`
+subnet mesh; clicking an endpoint focuses its original relationship and traffic
+portrait. `NetworkWorkspace` is used only inside a closable node-details drawer.
+Ordinary browsing does not open baseline risk-assessment cards.
 
 Component tree:
 
 ```text
 ProductionTopologyPage
   LiveAlerts
-  NetworkWorkspace
-    Device directory and interface navigation
-    Managed device overview
-      Interface ownership map
-      InterfaceTable
-    Selected interface
-      TrafficPanel
-      Attached terminal directory
-    Selected terminal/address
-      AddressPortrait
-        Current FortiView destinations
-        Historical destinations
-        Sampled inbound initiators
+  ManagedNetworkGraph (all-network view)
+    Serial-owned device node
+    Interface nodes with primary and secondary IP labels
+    MAC-associated terminal nodes and attachment edges
+  TopologyCanvas (expanded subnet / endpoint)
+    Original endpoint glyphs, mesh, pan/zoom and flow portrait
+  Node-details drawer (explicit selection only)
+    NetworkWorkspace
+      InterfaceTable / TrafficPanel / AddressPortrait
 ```
 
 Files:
@@ -43,7 +41,13 @@ Files:
   grouping by observed MAC. Hostnames alone never merge devices. Addresses without
   MAC evidence remain explicitly unconfirmed identities.
 - `frontend/src/components/NetworkWorkspace.tsx` and `network-workspace.css`:
-  production hierarchy, selection, traffic views, search and responsive layout.
+  node details, interface selection and responsive detail layout.
+- `frontend/src/components/ManagedNetworkGraph.tsx` and `managed-network-graph.css`:
+  interactive all-network mesh and the drawer integration. Solid edges mean
+  ownership; dashed edges mean attachment inferred from logs or configured subnet.
+  Multi-address terminal identities have one glyph and multiple attachment edges.
+- `frontend/src/components/TopologyCanvas.tsx`: retains the original subnet and
+  terminal relationship UX; external search selections now open the ego portrait.
 - `frontend/src/components/NetworkTrafficViews.tsx` and `network-read.ts`:
   interface and address portraits; cancellable reads, timeout/retry handling,
   and non-overlapping thirty-second refreshes.
@@ -65,7 +69,8 @@ collector serial/VDOM columns. The endpoint rejects multiple managed devices and
 ambiguous interface names across VDOMs. Additional collectors require these
 dimensions to be retained in the traffic store before their totals can be served.
 
-Empty WAN forwarding evidence is shown as unavailable office-total coverage.
+An interface with no recorded traffic shows one empty-state message without
+zero-byte metric tiles. Empty WAN forwarding evidence is shown as unavailable office-total coverage.
 FortiView current objects have no per-destination timestamps in the present adapter;
 the UI labels that boundary. Historical objects use the recorded latest timestamps.
 The existing history endpoint can widen an empty window to retained history; the

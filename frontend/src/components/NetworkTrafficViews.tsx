@@ -24,7 +24,7 @@ export function TrafficPanel({ device, intf, zh, onAddress }: { device: ManagedD
   const rows = read.data?.records.filter(row => (scope === 'all' || (scope === 'forward' ? row.subtype === 'forward' : row.subtype !== 'forward')) && `${row.srcip} ${row.dstip} ${row.country} ${row.services.join(' ')}`.toLowerCase().includes(search.toLowerCase())) ?? []
   return <section className="nw-section">
     <div className="nw-section-head"><h3>{zh ? '接口承载的流量' : 'Interface traffic'}</h3><select aria-label="流量时间范围" value={days} onChange={e => setDays(Number(e.target.value))}><option value={1}>{zh ? '最近 24 小时' : 'Last 24 hours'}</option><option value={7}>{zh ? '最近 7 天' : 'Last 7 days'}</option></select><button onClick={read.retry}>{zh ? '刷新' : 'Refresh'}</button></div>
-    {read.data ? <>
+    {read.data ? read.data.records.length === 0 ? <p className="nw-empty">{zh ? '所选时间范围内未观测到此接口的流量记录。' : 'No traffic records were observed for this interface in the selected window.'}</p> : <>
       <div className="nw-metrics"><div><span>{zh ? '接口接收 RX' : 'Received RX'}</span><strong>{formatBytes(read.data.totals.rx)}</strong><small>{intf.role === 'wan' ? (zh ? '从外网进入此接口' : 'Internet → interface') : (zh ? '从连接网络进入此接口' : 'Network → interface')}</small></div>
         <div><span>{zh ? '接口发送 TX' : 'Sent TX'}</span><strong>{formatBytes(read.data.totals.tx)}</strong><small>{intf.role === 'wan' ? (zh ? '经此接口发往外网' : 'Interface → Internet') : (zh ? '从此接口发往连接网络' : 'Interface → network')}</small></div>
         <div><span>{zh ? '转发业务收发量' : 'Forwarded traffic'}</span><strong>{formatBytes(read.data.totals.forwardBytes)}</strong><small>{zh ? '经过防火墙的业务会话' : 'Sessions through the firewall'}</small></div>

@@ -785,14 +785,14 @@ export function TopologyCanvas({
     setPrevTheater(theater?.id ?? null)
     if (view.k !== 1 || view.x !== 0 || view.y !== 0) setView({ k: 1, x: 0, y: 0 })
   }
-  const focusOn = (ip: string | null, pos: Record<string, Pt>) => {
+  const focusOn = useCallback((ip: string | null, pos: Record<string, Pt>) => {
     setFocusDev(ip)
     // Focusing a host opens its traffic portrait. Risk assessment is a separate,
     // explicit action below; opening every host used to manufacture an empty
     // "pending verification" card even when no assessment existed.
     onCloseThreat()
     if (!ip || !graph) {
-      resetView()
+      setView({ k: 1, x: 0, y: 0 })
       return
     }
     const ego = new Set<string>([ip])
@@ -815,7 +815,7 @@ export function TopologyCanvas({
     const bh = Math.max(Math.max(...ys) - Math.min(...ys) + pad * 2, 260)
     const k = Math.max(0.6, Math.min(3.4, Math.min(VBW / bw, VBH / bh)))
     setView({ k, x: VBW / 2 - cx * k, y: VBH / 2 - cy * k })
-  }
+  }, [graph, onCloseThreat])
 
   const zoomBy = (f: number) =>
     setView((v) => {
@@ -849,17 +849,35 @@ export function TopologyCanvas({
   const meshCenter: Pt = { x: 1016, y: 424 }
   const meshRX = 830
   const meshRY = 368
-  const devPos: Record<string, Pt> = {}
-  if (drilled && graph) {
-    for (const dv of graph.devices) {
-      devPos[dv.ip] = { x: meshCenter.x + dv.x * meshRX, y: meshCenter.y + dv.y * meshRY }
+  const devPos = useMemo(() => {
+    const positions: Record<string, Pt> = {}
+    if (drilled && graph) {
+      for (const dv of graph.devices) {
+        positions[dv.ip] = { x: meshCenter.x + dv.x * meshRX, y: meshCenter.y + dv.y * meshRY }
+      }
+    } else if (openSub) {
+      ;(openSub.devices ?? []).slice(0, 7).forEach((dv, j) => {
+        positions[dv.ip] = { x: 1560 + (THREAT_DX[dv.threat] ?? 40), y: 90 + j * 80 }
+      })
     }
-  } else if (openSub) {
-    ;(openSub.devices ?? []).slice(0, 7).forEach((dv, j) => {
-      devPos[dv.ip] = { x: 1560 + (THREAT_DX[dv.threat] ?? 40), y: 90 + j * 80 }
-    })
-  }
+    return positions
+  }, [drilled, graph, openSub, meshCenter.x, meshCenter.y])
   const anchor = threat ? devPos[threat.ip] : undefined
+  // Search and the all-network hierarchy request the same ego view as a click
+  // on a subnet node. Remember the request so closing that view stays closed.
+  const lastRequestedFocus = useRef('')
+  useEffect(() => {
+    if (!drillDev || !graph) { lastRequestedFocus.current = ''; return }
+    const requestKey = `${drillSub}:${drillDev}`
+    if (lastRequestedFocus.current === requestKey || !devPos[drillDev]) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      lastRequestedFocus.current = requestKey
+      focusOn(drillDev, devPos)
+    })
+    return () => { cancelled = true }
+  }, [drillDev, drillSub, graph, devPos, focusOn])
 
   return (
     <svg
