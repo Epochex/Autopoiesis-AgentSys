@@ -160,7 +160,7 @@ def test_optional_faiss_hnsw_index_constructs():
     assert retriever.dense_index.index_type == "hnsw"
 
 
-def test_default_dense_builder_requests_exact_flat(monkeypatch):
+def test_default_dense_builder_requests_scale_aware_index(monkeypatch):
     from core.eval import dense_retrieval
 
     sentinel = _FixedDense(["a"])
@@ -175,7 +175,7 @@ def test_default_dense_builder_requests_exact_flat(monkeypatch):
         {"a": "alpha"}, fusion=True, rerank=False,
     )
     assert retriever.dense_index is sentinel
-    assert seen["index_type"] == "flat"
+    assert seen["index_type"] == "auto"
 
 
 def test_cross_encoder_is_disabled_by_default():

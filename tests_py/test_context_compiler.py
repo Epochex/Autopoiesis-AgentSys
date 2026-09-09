@@ -124,6 +124,17 @@ def test_custom_token_counter_is_used_for_budgeting():
     assert packet.estimated_tokens_before == 2
 
 
+def test_adaptive_context_omits_empty_slots_and_spends_budget_on_real_content():
+    compiler = ContextCompiler(token_budget=80, strategy="adaptive")
+    evidence = [{"evidence_id": "ev-1", "source": "live", "summary": "route changed"}]
+
+    packet = compiler.compile("case", "diagnose route", {}, evidence, ["ev-1"])
+
+    assert packet.compiler_mode == "adaptive"
+    assert [section.name for section in packet.sections] == ["Task Spec", "Evidence"]
+    assert "## Errors & Corrections" not in packet.summary
+
+
 def test_seed_smoke_comparison_uses_equal_inputs_and_preserves_quality():
     rows = compare_context_strategies(load_seed_cases(), load_ground_truth())
     by_strategy = {row.strategy: row for row in rows}

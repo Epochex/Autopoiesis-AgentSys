@@ -5,6 +5,8 @@ import os
 import re
 import hashlib
 import ipaddress
+import queue
+import threading
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -25,10 +27,14 @@ _CONTROLLED_IDENTITY_PREFIXES = (
     "bvaccept-",
     "controlled-",
     "managed-host-",
-    "redpanda-e2e-",
     "replay-",
     "synthetic-",
 )
+
+_PRESENTATION_ONLY_FIELDS = {
+    "adaptiveMode", "triggerReasons", "impactLevel", "stageTelemetry",
+    "hypothesisSet", "runbookDraft", "reviewVerdict", "timeline",
+}
 
 
 def is_controlled_identity(value: Any) -> bool:
@@ -61,6 +67,16 @@ def is_observed_case(case: Any) -> bool:
     return classification == "observed" and not any(
         is_controlled_identity(identity) for identity in identities
     )
+
+
+def _has_observed_classification(case: Any) -> bool:
+    payload = dict(getattr(case, "source_payload", {}) or {})
+    facts = dict(payload.get("incidentFacts") or {})
+    return str(
+        payload.get("dataClassification")
+        or facts.get("dataClassification")
+        or "observed"
+    ).casefold() == "observed"
 
 
 def _at(value: str) -> datetime:
@@ -331,10 +347,14 @@ def auto_start_pending_cases(
         "AUTOPOIESIS_DECISION_BACKFILL_MAX_AGE_SECONDS", "86400"
     )))
     now = datetime.now(timezone.utc)
+    source_candidates = (
+        [case for case_id in case_ids if (case := repository.get(case_id)) is not None]
+        if case_ids is not None
+        else repository.list(limit=max(1, limit * 6))
+    )
     candidates = [
-        case for case in repository.list(limit=max(1, limit * 6))
+        case for case in source_candidates
         if case.status in {"open", "investigating"}
-        and (case_ids is None or case.case_id in case_ids)
         # Controlled fault cases have their own single consumer.  Letting the
         # deployed background poller race the acceptance driver can recover a
         # service between paired reads and turn the comparison into two
@@ -345,7 +365,11 @@ def auto_start_pending_cases(
         )
     ]
     for case in candidates:
-        if not is_observed_case(case):
+        if not (
+            _has_observed_classification(case)
+            if case_ids is not None
+            else is_observed_case(case)
+        ):
             continue
         try:
             age_seconds = (now - _at(case.last_seen_at)).total_seconds()
@@ -368,10 +392,21 @@ def auto_start_pending_cases(
             latest_classification == "incident_scope_unresolved"
             and scope.get("scope_quality") != "unresolved"
         )
+        resumable_bounded_investigation = latest_classification in {
+            "open_root_required",
+            "root_cause_unresolved",
+            "incident_scope_unresolved",
+        }
+        latest_session = case.latest_event("investigation_session_started") or {}
+        abandoned_auto_session = bool(
+            not latest_classification and latest_session.get("autoStarted") is True
+        )
         if (
             case.status == "investigating"
             and not deterministic_backfill
             and not scope_became_actionable
+            and not resumable_bounded_investigation
+            and not abandoned_auto_session
         ):
             continue
         incomplete_policy_backfill = bool(
@@ -379,11 +414,15 @@ def auto_start_pending_cases(
             and case.latest_suggestion_id
             and not scope.get("incident_facts")
         )
-        allowed_age = (
-            backfill_age
-            if deterministic_backfill or incomplete_policy_backfill or high_impact_backfill
-            else max_age
-        )
+        if resumable_bounded_investigation or abandoned_auto_session:
+            # An already-started unattended goal remains owed a terminal result
+            # regardless of the alert's age. Age limits govern new takeover,
+            # not completion of work the service already accepted.
+            allowed_age = float("inf")
+        elif deterministic_backfill or incomplete_policy_backfill or high_impact_backfill:
+            allowed_age = backfill_age
+        else:
+            allowed_age = max_age
         if age_seconds < -60 or age_seconds > allowed_age:
             continue
         actionable = deterministic_backfill or bool(case.latest_suggestion_id) or case.severity.casefold() in {
@@ -401,7 +440,9 @@ def auto_start_pending_cases(
         finished = complete(str(opened["session_id"]))
         decision = dict(finished.get("decision") or {})
         if (
-            decision.get("classification") == "open_root_required"
+            decision.get("classification") in {
+                "open_root_required", "root_cause_unresolved",
+            }
             and os.getenv("AUTOPOIESIS_AUTO_OPEN_INVESTIGATION", "1") != "0"
         ):
             finished = analyze(str(opened["session_id"]))
@@ -409,8 +450,18 @@ def auto_start_pending_cases(
         candidate = dict(finished.get("action_candidate") or {})
         current_case = repository.get(case.case_id)
         prior_case = _prior_recurrence(repository, current_case) if current_case else None
+        recurrence_ineligible_classifications = {
+            "authentication_evidence_conflict",
+            "bounded_investigation_exhausted",
+            "incident_scope_data_gap",
+            "incident_scope_unresolved",
+            "open_root_required",
+            "root_cause_unresolved",
+            "policy_outcome_unresolved",
+        }
         if (
             prior_case is not None
+            and decision.get("classification") not in recurrence_ineligible_classifications
             and os.getenv("AUTOPOIESIS_AUTO_EVALUATE_RECURRENCE", "1") != "0"
         ):
             try:
@@ -508,10 +559,239 @@ def auto_start_pending_cases(
             and os.getenv("AUTOPOIESIS_AUTO_REMEDIATE", "1") != "0"
         ):
             finished = remediate(str(opened["session_id"]))
+        else:
+            try:
+                from .change_routes import propose_investigation_change
+                proposal = propose_investigation_change(str(opened["session_id"]))
+                if proposal:
+                    finished['configuration_change_id'] = proposal['id']
+                    repository.append_event(case.case_id, kind='configuration_change_proposed',
+                        payload={'change_id': proposal['id'], 'session_id': opened['session_id'], 'status': proposal['status']},
+                        event_id='configuration-change:' + proposal['id'], status='waiting')
+            except Exception as error:
+                finished['configuration_change_error'] = type(error).__name__ + ':' + str(error)[:200]
         started.append({**opened, **finished})
         if len(started) >= limit:
             break
     return started
+
+
+class AutoInvestigationDispatcher:
+    """Run bounded case goals on daemon workers without blocking event intake."""
+
+    def __init__(
+        self,
+        repository: InvestigationCaseRepository,
+        *,
+        workers: int = 2,
+        retry_interval_seconds: float = 30.0,
+    ) -> None:
+        self.repository = repository
+        self.workers = max(1, min(8, int(workers)))
+        self.retry_interval_seconds = max(1.0, float(retry_interval_seconds))
+        self._queue: queue.Queue[str | None] = queue.Queue(maxsize=self.workers * 2)
+        self._lock = threading.Lock()
+        self._claimed: set[str] = set()
+        self._last_attempt: dict[str, float] = {}
+        self._submitted = 0
+        self._completed_cases = 0
+        self._failed_jobs = 0
+        self._last_age_filtered = 0
+        self._last_error: str | None = None
+        self._last_completion_at: str | None = None
+        self._closed = False
+        self._threads = [
+            threading.Thread(
+                target=self._worker,
+                name=f"auto-investigation-{index + 1}",
+                daemon=True,
+            )
+            for index in range(self.workers)
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def dispatch(self, *, limit: int = 4) -> int:
+        """Claim recent unresolved cases and return immediately."""
+        if self._closed:
+            return 0
+        now = datetime.now(timezone.utc).timestamp()
+        with self._lock:
+            available_capacity = max(0, self.workers * 2 - len(self._claimed))
+        if available_capacity == 0:
+            return 0
+        limit = min(max(1, int(limit)), available_capacity)
+        from domains.network_rca.business_decision import is_terminal_local_in_deny
+
+        max_age = max(30.0, float(os.getenv(
+            "AUTOPOIESIS_AUTO_INVESTIGATE_MAX_AGE_SECONDS", "300"
+        )))
+        backfill_age = max(max_age, float(os.getenv(
+            "AUTOPOIESIS_DECISION_BACKFILL_MAX_AGE_SECONDS", "86400"
+        )))
+        observed_now = datetime.now(timezone.utc)
+
+        unresolved = [
+            *self.repository.list(status="investigating", limit=5_000),
+            *self.repository.list(status="open", limit=5_000),
+        ]
+        candidates = [
+            case for case in unresolved
+            if not case.source_payload.get("acceptanceRunId")
+            and is_observed_case(case)
+        ]
+        eligible: list[Any] = []
+        age_filtered = 0
+        for case in candidates:
+            scope = derive_investigation_scope(case)
+            facts = dict(scope.get("incident_facts") or {})
+            deterministic = is_terminal_local_in_deny(facts)
+            latest = case.latest_event("business_decision_recorded") or {}
+            classification = str(
+                dict(latest.get("decision") or {}).get("classification") or ""
+            )
+            latest_session = case.latest_event("investigation_session_started") or {}
+            abandoned_auto = bool(
+                not classification and latest_session.get("autoStarted") is True
+            )
+            resumable = classification in {
+                "open_root_required",
+                "root_cause_unresolved",
+                "incident_scope_unresolved",
+            }
+            high_impact_backfill = bool(
+                scope.get("family") in {"fam-management-auth", "fam-address-ownership"}
+                and case.severity.casefold() in {"critical", "error"}
+                and facts
+            )
+            incomplete_policy_backfill = bool(
+                scope.get("family") == "fam-policy-reachability"
+                and case.latest_suggestion_id
+                and not facts
+            )
+            allowed_age = (
+                float("inf")
+                if resumable or abandoned_auto
+                else backfill_age
+                if deterministic or incomplete_policy_backfill or high_impact_backfill
+                else max_age
+            )
+            try:
+                age_seconds = (observed_now - _at(case.last_seen_at)).total_seconds()
+            except ValueError:
+                age_filtered += 1
+                continue
+            if age_seconds < -60 or age_seconds > allowed_age:
+                age_filtered += 1
+                continue
+            if case.status == "investigating" and not (
+                deterministic
+                or resumable
+                or abandoned_auto
+            ):
+                continue
+            if not (
+                deterministic
+                or case.latest_suggestion_id
+                or case.severity.casefold() in {"high", "critical", "error"}
+            ):
+                continue
+            eligible.append(case)
+        with self._lock:
+            self._last_age_filtered = age_filtered
+        severity_rank = {"critical": 0, "error": 1, "high": 2}
+
+        def completion_priority(case: Any) -> int:
+            latest = case.latest_event("business_decision_recorded") or {}
+            classification = str(
+                dict(latest.get("decision") or {}).get("classification") or ""
+            )
+            if classification == "incident_scope_unresolved":
+                return 0
+            if not classification:
+                return 1
+            return 2
+
+        candidates = sorted(
+            eligible,
+            key=lambda case: (
+                0 if case.status == "investigating" else 1,
+                completion_priority(case),
+                severity_rank.get(case.severity.casefold(), 3),
+                -_at(case.last_seen_at).timestamp(),
+            ),
+        )
+        submitted = 0
+        for case in candidates:
+            if submitted >= limit:
+                break
+            with self._lock:
+                last_attempt = self._last_attempt.get(case.case_id, 0.0)
+                if (
+                    case.case_id in self._claimed
+                    or now - last_attempt < self.retry_interval_seconds
+                ):
+                    continue
+                self._claimed.add(case.case_id)
+                self._last_attempt[case.case_id] = now
+            try:
+                self._queue.put_nowait(case.case_id)
+            except queue.Full:
+                with self._lock:
+                    self._claimed.discard(case.case_id)
+                break
+            with self._lock:
+                self._submitted += 1
+            submitted += 1
+        return submitted
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "workers": self.workers,
+                "inFlight": len(self._claimed),
+                "queued": self._queue.qsize(),
+                "submitted": self._submitted,
+                "completedCases": self._completed_cases,
+                "failedJobs": self._failed_jobs,
+                "lastAgeFiltered": self._last_age_filtered,
+                "lastError": self._last_error,
+                "lastCompletionAt": self._last_completion_at,
+            }
+
+    def close(self) -> None:
+        self._closed = True
+        for _thread in self._threads:
+            try:
+                self._queue.put_nowait(None)
+            except queue.Full:
+                break
+
+    def _worker(self) -> None:
+        while True:
+            case_id = self._queue.get()
+            if case_id is None:
+                self._queue.task_done()
+                return
+            try:
+                results = auto_start_pending_cases(
+                    self.repository,
+                    limit=1,
+                    case_ids={case_id},
+                )
+                with self._lock:
+                    self._completed_cases += len(results)
+                    self._last_error = None
+                    self._last_completion_at = datetime.now(timezone.utc).isoformat()
+            except Exception as error:  # one case cannot stop the remaining queue
+                with self._lock:
+                    self._failed_jobs += 1
+                    self._last_error = f"{type(error).__name__}: {error}"[:300]
+                    self._last_completion_at = datetime.now(timezone.utc).isoformat()
+            finally:
+                with self._lock:
+                    self._claimed.discard(case_id)
+                self._queue.task_done()
 
 
 def _alert_id(feed_item: dict[str, Any]) -> str:
@@ -540,6 +820,44 @@ def _observed(item: dict[str, Any]) -> bool:
     return classification == "observed" and not any(
         is_controlled_identity(identity) for identity in identities
     )
+
+
+def _case_source_payload(item: dict[str, Any]) -> dict[str, Any]:
+    """Keep durable facts and decisions, leaving card-only projections in the response."""
+    return {
+        key: value for key, value in item.items()
+        if key not in _PRESENTATION_ONLY_FIELDS
+    }
+
+
+def _continuing_sentinel_sources(
+    item: dict[str, Any], repository: InvestigationCaseRepository,
+) -> tuple[SourceReference, ...]:
+    """Join legacy per-poll cases for one still-active Sentinel condition.
+
+    Earlier projections treated every safety-gated poll as a new incident. The
+    current card has a stable cycle id, but the already-landed rows still need a
+    bridge into one canonical case. Only unresolved cases with the same exact
+    detector, subject and service qualify, so a recovered condition can open a
+    fresh case when it returns.
+    """
+    if str(item.get("scope") or "") != "sentinel":
+        return ()
+    subject = str(item.get("deviceKey") or item.get("device") or "")
+    service = str(item.get("service") or "")
+    rule_id = str(item.get("ruleId") or "")
+    refs: list[SourceReference] = []
+    for case in repository.list(limit=500):
+        if (
+            case.status not in {"open", "investigating", "waiting", "escalated"}
+            or case.subject != subject
+            or case.service != service
+            or case.rule_id != rule_id
+        ):
+            continue
+        if case.sources:
+            refs.append(case.sources[0])
+    return tuple(refs)
 
 
 def _merge_incident_facts(
@@ -581,6 +899,19 @@ def _detection_summary(item: dict[str, Any]) -> str:
     return f"{source} -> {destination} · {service} · {action} · {volume}"
 
 
+def prepare_case_repository(repository: InvestigationCaseRepository) -> dict[str, Any]:
+    """Apply bounded projection migrations once before the live sync loop starts."""
+    try:
+        removed = repository.remove_legacy_reasoning_projection()
+    except Exception as error:
+        return {
+            "status": "failed",
+            "removed": 0,
+            "error": f"{type(error).__name__}: {error}"[:300],
+        }
+    return {"status": "completed", "removed": removed, "error": None}
+
+
 def sync_snapshot_cases(
     snapshot: dict[str, Any], repository: InvestigationCaseRepository
 ) -> dict[str, Any]:
@@ -591,7 +922,6 @@ def sync_snapshot_cases(
     Finally every visible row resolves through the source index, so the UI never has
     to reproduce the grouping rule.
     """
-    repository.remove_legacy_reasoning_projection()
     alert_facts: dict[str, dict[str, Any]] = {}
     for item in snapshot.get("feed") or []:
         if item.get("kind") != "alert":
@@ -603,8 +933,14 @@ def sync_snapshot_cases(
         if not source_id or not occurred_at:
             continue
         alert_facts[source_id] = dict(item.get("incidentFacts") or {})
+        alert_ref = SourceReference("alert", source_id)
+        # Alert ids name immutable landed events. Once indexed, replaying the
+        # same feed row cannot add information and should not acquire a SQLite
+        # write lock on every UI poll.
+        if repository.case_id_for(alert_ref):
+            continue
         case = repository.ingest(CaseObservation(
-            source=SourceReference("alert", source_id),
+            source=alert_ref,
             occurred_at=occurred_at,
             severity=str(item.get("severity") or ""),
             subject=str(item.get("deviceKey") or item.get("device") or ""),
@@ -632,6 +968,7 @@ def sync_snapshot_cases(
         incident_ref = str(item.get("incidentRef") or "").strip()
         if incident_ref:
             related.append(SourceReference("incident", incident_ref))
+        related.extend(_continuing_sentinel_sources(item, repository))
         case = repository.ingest(CaseObservation(
             source=SourceReference("suggestion", source_id),
             occurred_at=occurred_at,
@@ -644,7 +981,7 @@ def sync_snapshot_cases(
             related_sources=tuple(related),
             hypotheses={},
             timeline=(),
-            payload=dict(item),
+            payload=_case_source_payload(item),
         ))
         for transition in item.get("businessTransitions") or ():
             if not isinstance(transition, dict):
@@ -667,9 +1004,18 @@ def sync_snapshot_cases(
                 event_id=str(transition.get("eventId") or "") or None,
             )
 
-    # Alert source rows may carry exact fields that were absent from an older
-    # suggestion projection. Rebuild the case projection after both inputs land.
-    repository.remove_legacy_reasoning_projection()
+    return annotate_snapshot_cases(snapshot, repository)
+
+
+def annotate_snapshot_cases(
+    snapshot: dict[str, Any], repository: InvestigationCaseRepository,
+) -> dict[str, Any]:
+    """Attach durable case ids and recent case-only rows without writing.
+
+    The background case synchronizer owns persistence. HTTP readers use this
+    projection so a five-second page poll never competes with that writer or
+    waits for a filesystem commit.
+    """
 
     for item in snapshot.get("suggestions") or []:
         if not _observed(item):

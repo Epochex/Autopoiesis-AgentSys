@@ -53,7 +53,7 @@ class InvestigationSessionStore:
         return payload
 
     def recent(self, limit: int = 20) -> list[dict[str, Any]]:
-        limit = max(1, min(int(limit), 100))
+        limit = max(1, min(int(limit), 5_000))
         paths = sorted(
             self.root.glob("*.json"),
             key=lambda path: path.stat().st_mtime_ns,

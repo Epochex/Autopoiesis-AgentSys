@@ -1,0 +1,13 @@
+.ip-resolution { border-block: 1px solid var(--ink, #111); padding: 20px 0; margin-block: 20px; color: var(--ink, #111); }
+.ip-resolution header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.ip-resolution h3 { margin: 0; font-size: 22px; }
+.ip-resolution h3 code { font-size: 16px; }
+.ip-resolution p { max-width: 1100px; line-height: 1.6; }
+.ip-resolution fieldset { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-block: 18px; border: 1px solid var(--rule, #aaa); }
+.ip-resolution-candidate { display: flex; align-items: start; gap: 10px; padding: 12px; border: 1px solid var(--rule, #aaa); cursor: pointer; }
+.ip-resolution-candidate:has(input:checked) { border-color: var(--ink, #111); background: var(--paper-2, #efeee9); }
+.ip-resolution-candidate span { display: grid; gap: 7px; }
+.ip-resolution-reason { display: grid; gap: 6px; margin-bottom: 12px; max-width: 900px; }
+.ip-resolution-reason input { padding: 10px; }
+.ip-resolution-steps { padding-left: 22px; display: grid; gap: 14px; }
+.ip-resolution pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper-2, #efeee9); padding: 12px; }

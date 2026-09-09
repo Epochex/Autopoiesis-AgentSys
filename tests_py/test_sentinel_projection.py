@@ -167,6 +167,40 @@ def test_report_only_chain_is_not_dressed_up_as_a_fix(tmp_path, monkeypatch):
     assert "超时自动回滚" in reason
 
 
+def test_repeated_safety_gate_stays_one_live_incident_until_condition_clears(tmp_path, monkeypatch):
+    repeated = [
+        *REPORTED,
+        {**REPORTED[0], "at": _at(45), "streak": 3},
+        {**REPORTED[1], "at": _at(46)},
+    ]
+    _write(tmp_path, repeated, monkeypatch)
+    first = sentinel_cards("zh", now=NOW + 60)[0]
+
+    assert first["timeline"][0]["ts"] == _at(30)
+    assert first["timeline"][-1]["ts"] == _at(46)
+
+    cleared = [
+        *repeated,
+        {"kind": "condition_cleared", "at": _at(60), "subject": "203.0.113.77",
+         "detector": "admin_bruteforce", "action": None,
+         "note": "当前巡检已不再发现该条件，持续事件结束"},
+    ]
+    _write(tmp_path, cleared, monkeypatch)
+    closed = sentinel_cards("zh", now=NOW + 70)[0]
+    assert closed["id"] == first["id"]
+    assert closed["reviewVerdict"]["verdictStatus"] == "closed"
+    assert closed["businessTransitions"][-1]["decision"]["state"] == "resolved"
+
+    returned = [
+        *cleared,
+        {**REPORTED[0], "at": _at(90), "streak": 1},
+        {**REPORTED[1], "at": _at(91)},
+    ]
+    _write(tmp_path, returned, monkeypatch)
+    next_card = sentinel_cards("zh", now=NOW + 100)[0]
+    assert next_card["id"] != first["id"]
+
+
 def test_escalation_outranks_the_successes_that_caused_it(tmp_path, monkeypatch):
     """The same chain, with and without the refusal on the end.
 
@@ -318,6 +352,26 @@ def test_the_card_id_is_stable_across_polls(tmp_path, monkeypatch):
     assert early == late
 
 
+def test_cycle_anchor_survives_when_the_first_detection_falls_out_of_the_tail(tmp_path, monkeypatch):
+    opened_at = _at(10)
+    early_events = [
+        {**REPORTED[0], "cycle_opened_at": opened_at},
+        REPORTED[1],
+    ]
+    _write(tmp_path, early_events, monkeypatch)
+    early = sentinel_cards("zh", now=NOW + 40)[0]
+
+    later_events = [
+        {**REPORTED[0], "at": _at(300), "streak": 20, "cycle_opened_at": opened_at},
+        {**REPORTED[1], "at": _at(301)},
+    ]
+    _write(tmp_path, later_events, monkeypatch)
+    later = sentinel_cards("zh", now=NOW + 320)[0]
+
+    assert later["id"] == early["id"]
+    assert later["incidentRef"] == early["incidentRef"]
+
+
 def test_new_cycle_gets_a_new_case_source_id(tmp_path, monkeypatch):
     _write(tmp_path, HEALED, monkeypatch)
     first = sentinel_cards("zh", now=NOW + 200)[0]["id"]
@@ -428,3 +482,48 @@ def test_a_clearance_from_an_earlier_escalation_does_not_lift_a_later_one(tmp_pa
     _write(tmp_path, events, monkeypatch)
     card = sentinel_cards("zh", now=NOW + 10_300)[0]
     assert card["reviewVerdict"]["verdictStatus"] == "escalated"
+
+
+def test_command_receipts_are_retained_and_joined_without_guessing_completion(tmp_path, monkeypatch):
+    events = HEALED[2:6] + [
+        {'kind': 'command', 'at': _at(27), 'subject': 'demo.service', 'command_id': 'one', 'phase': 'started', 'argv': ['systemctl', 'restart', 'demo.service'], 'rc': None},
+    ]
+    _write(tmp_path, events, monkeypatch)
+    telemetry = sentinel_cards('en', now=NOW + 60)[0]['executionTelemetry']
+    assert telemetry['currentCommand']['command_id'] == 'one'
+    assert telemetry['verification']['status'] == 'pending'
+    events.append({'kind': 'command', 'at': _at(28), 'subject': 'demo.service', 'command_id': 'one', 'phase': 'error', 'rc': None, 'error': 'FileNotFoundError: systemctl'})
+    events.append({'kind': 'execution_error', 'at': _at(29), 'subject': 'demo.service', 'stage': 'execution', 'error': 'FileNotFoundError: systemctl'})
+    _write(tmp_path, events, monkeypatch)
+    card = sentinel_cards('en', now=NOW + 60)[0]
+    assert card['executionTelemetry']['currentCommand'] is None
+    assert len(card['executionTelemetry']['commands']) == 1
+    assert card['executionTelemetry']['commands'][0]['argv'][0] == 'systemctl'
+    assert card['reviewVerdict']['verdictStatus'] == 'needs_human'
+    assert card['stageTelemetry'][-1]['detail'] == 'FileNotFoundError: systemctl'
+
+
+@pytest.mark.parametrize('outcome,samples', [('refused', 0), ('unknown', 0), ('not_committed', 0), ('reverted', 3), ('passed', 0)])
+def test_unverified_action_never_closes_case(tmp_path, monkeypatch, outcome, samples):
+    events = HEALED[2:6] + [{'kind': 'remediated', 'at': _at(27), 'subject': 'demo.service', 'outcome': outcome, 'samples': samples, 'needs_human': False}]
+    _write(tmp_path, events, monkeypatch)
+    card = sentinel_cards('en', now=NOW + 60)[0]
+    assert card['reviewVerdict']['verdictStatus'] != 'closed'
+    assert all(row.get('caseStatus') != 'resolved' for row in card['businessTransitions'])
+
+
+def test_completed_history_does_not_show_prior_pause_as_current_gate(tmp_path, monkeypatch):
+    events = HEALED[:6] + [{'kind': 'declined', 'at': _at(26), 'subject': 'demo.service', 'reason': 'global remediation pause is active'}] + HEALED[6:]
+    _write(tmp_path, events, monkeypatch)
+    card = sentinel_cards('en', now=NOW + 200)[0]
+    assert card['reviewVerdict']['verdictStatus'] == 'closed'
+    assert not any(row['stageId'] == 'gate' for row in card['stageTelemetry'])
+    assert any(row['kind'] == 'declined' for row in card['timeline'])
+
+
+def test_later_execution_error_overrides_historical_success(tmp_path, monkeypatch):
+    events = HEALED + [{'kind': 'execution_error', 'at': _at(125), 'subject': 'demo.service', 'stage': 'execution', 'error': 'readback unavailable'}]
+    _write(tmp_path, events, monkeypatch)
+    card = sentinel_cards('en', now=NOW + 200)[0]
+    assert card['reviewVerdict']['verdictStatus'] == 'needs_human'
+    assert card['businessTransitions'][-1]['caseStatus'] == 'escalated'

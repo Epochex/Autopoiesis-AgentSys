@@ -15,9 +15,11 @@
  * Honesty: on the R230 held-out set retrieval is asset+structural driven, so
  * lexical/vector are 0 for most rows. That is shown, not hidden — it is the true
  * shape of how this context gets built. */
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { MemCapabilities, MemRecall, MemRecord, MemTier } from '../types'
 import { ContextFull } from './ContextFull'
+import { OnlineContextPacket } from './OnlineContext'
+import type { OnlineContextData } from './OnlineContext'
 import './context-packet.css'
 
 const TIER: Record<MemTier, [string, string]> = {
@@ -28,17 +30,17 @@ const TIER: Record<MemTier, [string, string]> = {
 }
 
 const L = (zh: boolean) => ({
-  title: zh ? '本次排查用到的记录' : 'RECORDS USED FOR THIS CHECK',
-  sub: zh ? '跟随回放，显示每轮找到了什么、采用了什么，以及和上轮有什么变化' : 'Follows the replay: what each run found, what it used, and what changed since the last run',
+  title: zh ? '本轮上下文记录' : 'CONTEXT RECORDS',
+  sub: zh ? '检索排序、上下文收录及同案例上一轮差异' : 'Retrieval ranking, context inclusion and changes from the previous pass of this case',
   none: zh ? '当前位置只有写入动作，本次排查没有读取已有记录。' : 'This position only writes a record; no existing records were read for the check.',
   empty: zh ? '当前没有可用的已有记录，回放刚开始时会出现这种情况。' : 'No existing records are available yet. This is expected at the start of the replay.',
   case: zh ? '案例' : 'CASE', pass: zh ? '轮次' : 'PASS',
-  packet: zh ? '实际采用' : 'USED',
-  grew: zh ? '较上次' : 'vs last',
-  same: zh ? '与上次持平' : 'unchanged vs last',
+  packet: zh ? '纳入上下文' : 'IN CONTEXT',
+  grew: zh ? '较同案例上一轮' : 'vs previous case pass',
+  same: zh ? '与同案例上一轮持平' : 'unchanged vs previous case pass',
   first: zh ? '首次查找' : 'first lookup',
   newRow: zh ? '本次新进' : 'NEW',
-  dropped: zh ? '找到但没采用' : 'FOUND BUT NOT USED',
+  dropped: zh ? '未纳入上下文' : 'EXCLUDED FROM CONTEXT',
   score: zh ? '最终得分' : 'final',
   asset: zh ? '设备匹配' : 'asset match', prior: zh ? '固定加分' : 'fixed boost', hop: zh ? '关系距离' : 'link distance',
   lex: zh ? '文字匹配' : 'text match', vec: zh ? '意思相近' : 'meaning match',
@@ -48,7 +50,15 @@ const L = (zh: boolean) => ({
     : 'On these held-out cases, records are found mainly through asset matches and fixed boosts; text and meaning-match scores are mostly 0.',
 })
 
-export function ContextPacket({
+export function ContextPacket(props: Parameters<typeof BenchmarkContextPacket>[0] | { online: OnlineContextData }) {
+  return 'online' in props ? <LivePacket data={props.online}/> : <BenchmarkContextPacket {...props}/>
+}
+function LivePacket({ data }: { data: OnlineContextData }) {
+  const [full, setFull] = useState(false)
+  const close = useCallback(() => setFull(false), [])
+  return <><OnlineContextPacket data={data} onFull={() => setFull(true)}/>{full && <ContextFull online={{...data, onSelect: id => { data.onSelect(id); close() }}} onClose={close}/>}</>
+}
+function BenchmarkContextPacket({
   recall, prevRecall, records, capabilities, caseRoot, zh,
 }: {
   recall: MemRecall | null
@@ -95,7 +105,7 @@ export function ContextPacket({
             <span className="cp-meta">{l.pass} {recall.pass}</span>
             <span className="cp-count"><b>{recall.included_memory_ids.length}</b> {l.packet}</span>
             <span className={`cp-delta ${delta && delta > 0 ? 'up' : ''}`}>
-              {delta === null ? l.first : delta > 0 ? `${l.grew} +${delta}` : l.same}
+              {delta === null ? l.first : delta !== 0 ? `${l.grew} ${delta > 0 ? '+' : ''}${delta}` : l.same}
             </span>
             {recall.shortcut && <span className="cp-badge">{l.shortcut}</span>}
             <span className="cp-badge dim">{l.probes} {recall.probes}</span>

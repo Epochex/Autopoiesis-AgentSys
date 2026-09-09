@@ -48,6 +48,19 @@
    diagnosed right now" to "how this store learned over time". */
 .traj-page .tp-seam { margin: 22px 0 8px; border-top: 1.5px solid var(--ink); display: flex; justify-content: center; }
 .traj-page .tp-seam span { transform: translateY(-50%); background: var(--paper); padding: 0 14px; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gray); }
+.traj-page .tp-no-focus { display: flex; align-items: baseline; gap: 18px; margin: 8px 0 16px; padding: 16px; border: 1.5px solid var(--ink); background: var(--paper-2); }
+.traj-page .tp-no-focus b { font: 700 13px var(--font-display); color: var(--ink); }
+.traj-page .tp-no-focus span { font: 9px/1.5 var(--font-mono); color: var(--gray); }
+.traj-page .tp-benchmark { margin: 8px 0 24px; border: 1.5px solid var(--ink); background: var(--paper-2); }
+.traj-page .tp-benchmark > summary { display: grid; grid-template-columns: minmax(220px, .45fr) 1fr auto; align-items: center; gap: 18px; min-height: 54px; padding: 10px 14px; cursor: pointer; list-style: none; }
+.traj-page .tp-benchmark > summary::-webkit-details-marker { display: none; }
+.traj-page .tp-benchmark > summary::after { content: '+'; font: 700 20px/1 var(--font-mono); }
+.traj-page .tp-benchmark[open] > summary::after { content: '−'; }
+.traj-page .tp-benchmark > summary b { font: 700 13px var(--font-display); letter-spacing: .02em; text-transform: uppercase; }
+.traj-page .tp-benchmark > summary span { font: 9px/1.45 var(--font-mono); color: var(--gray); }
+.traj-page .tp-benchmark[open] > summary { border-bottom: 1.5px solid var(--ink); }
+.traj-page .tp-benchmark > .fx-mast,
+.traj-page .tp-benchmark > .fx-first { margin-left: 12px; margin-right: 12px; }
 .traj-page .fx-first-wait {
   display: grid; place-items: center; border: var(--frame); background: var(--paper-2);
   font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gray);

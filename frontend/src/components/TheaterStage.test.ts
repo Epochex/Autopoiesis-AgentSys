@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { theaterRailPresentation } from './TheaterStage'
+import { stageIdForEvent } from './autopoiesis-pipeline'
 import type { ChainStep } from './use-sentinel-chain'
 
 const ACTION = ['detector', 'confirm', 'preflight', 'act', 'watch', 'verify']
@@ -19,6 +20,17 @@ const statuses = (timeline: ChainStep[]) => theaterRailPresentation({
 }).stages.map(({ status }) => status)
 
 describe('theater sentinel rail projection', () => {
+  it('maps case and command facts onto the same drillable response rail', () => {
+    expect(stageIdForEvent('detected')).toBe('detector')
+    expect(stageIdForEvent('no_safe_action')).toBe('gate')
+    expect(stageIdForEvent('business_decision_recorded', {
+      decision: { state: 'escalated' },
+    })).toBe('handoff')
+    expect(stageIdForEvent('remediation_committed')).toBe('act')
+    expect(stageIdForEvent('bakein_sampled')).toBe('watch')
+    expect(stageIdForEvent('resolved')).toBe('verify')
+  })
+
   it('advances a service-down chain one visible stage at a time from ledger rows', () => {
     expect(statuses([step('detected', { streak: 1, need: 2 })])).toEqual([
       'current', 'pending', 'pending', 'pending', 'pending', 'pending',

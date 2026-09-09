@@ -1,4 +1,4 @@
-"""Compute the six business-value acceptance results from executed case records.
+"""Compute business-value acceptance results from executed case records.
 
 This report does not infer product value from code presence or unit-test names.
 Each row names the durable event or session state that must exist in an actual
@@ -260,6 +260,9 @@ def evaluate_business_value(
     pair_passed: list[str] = []
     recurrence_eligible: list[str] = []
     recurrence_passed: list[str] = []
+    terminal_eligible: list[str] = []
+    terminal_passed: list[str] = []
+    terminal_state_counts = {"resolved": 0, "escalated": 0}
     probe_deltas: list[int] = []
     speed_no_headroom = 0
     speed_no_baseline_confirmation = 0
@@ -282,6 +285,7 @@ def evaluate_business_value(
             started = []
         if started:
             auto_eligible.append(case_id)
+            terminal_eligible.append(case_id)
             if any(
                 event.get("scopeQuality") in {"exact", "partial"}
                 and event.get("faultDomain")
@@ -289,6 +293,10 @@ def evaluate_business_value(
                 for event in started
             ):
                 auto_passed.append(case_id)
+            terminal_state = str(_latest_decision(case).get("state") or "")
+            if terminal_state in terminal_state_counts:
+                terminal_state_counts[terminal_state] += 1
+                terminal_passed.append(case_id)
 
         for session in case_sessions:
             hypotheses = list(dict(session.get("hypothesis_state") or {}).get("hypotheses") or ())
@@ -313,6 +321,13 @@ def evaluate_business_value(
             if classification == "blocked_external_probe":
                 facts = dict(case.get("sourcePayload") or {}).get("incidentFacts") or {}
                 if decision.get("evidence") and is_terminal_local_in_deny(dict(facts)):
+                    grounded_passed.append(case_id)
+            elif classification in {
+                "authentication_evidence_conflict",
+                "bounded_investigation_exhausted",
+                "incident_scope_data_gap",
+            }:
+                if decision.get("evidence") and decision.get("missingObservations"):
                     grounded_passed.append(case_id)
             else:
                 facts = dict(case.get("sourcePayload") or {}).get("incidentFacts") or {}
@@ -419,6 +434,23 @@ def evaluate_business_value(
             case_ids=auto_passed,
             measured={"scopedAutoStartedCases": len(auto_passed)},
             requirement="auto-started case has a managed asset, bounded scope and fault domain",
+        ),
+        _row(
+            key="auditable_terminal_outcome",
+            eligible=len(set(terminal_eligible)),
+            passed=len(set(terminal_passed)),
+            case_ids=terminal_passed,
+            measured={
+                "terminalOutcomeRate": (
+                    round(len(set(terminal_passed)) / len(set(terminal_eligible)), 4)
+                    if terminal_eligible else None
+                ),
+                "resolvedCases": terminal_state_counts["resolved"],
+                "escalatedCases": terminal_state_counts["escalated"],
+            },
+            requirement=(
+                "every auto-started case ends resolved or escalated with its durable decision"
+            ),
         ),
         _row(
             key="open_fault_investigation",

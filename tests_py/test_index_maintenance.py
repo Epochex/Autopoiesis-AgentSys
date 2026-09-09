@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from core.memory.index_maintenance import IndexMaintenanceWorker
 
@@ -50,4 +51,27 @@ def test_background_trigger_runs_and_stops_cleanly():
     worker.trigger()
     assert completed.wait(1)
     assert worker.stop(timeout=1)
+    assert worker.stats()["completed"] == 1
+
+
+def test_event_driven_worker_does_not_poll_until_dirty():
+    due = False
+    completed = threading.Event()
+    worker = IndexMaintenanceWorker(
+        lambda: due,
+        lambda: completed.set() or 1,
+        check_interval_seconds=None,
+    )
+    worker.start()
+    time.sleep(0.05)
+
+    assert worker.stats()["checks"] == 0
+    assert not worker.trigger_if_due()
+    assert worker.stats()["checks"] == 0
+
+    due = True
+    assert worker.trigger_if_due()
+    assert completed.wait(1)
+    assert worker.stop(timeout=1)
+    assert worker.stats()["checks"] == 1
     assert worker.stats()["completed"] == 1

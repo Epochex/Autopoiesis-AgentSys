@@ -1,15 +1,16 @@
 import './diagnose.css'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import type { EnvFinding, EnvironmentReport, IncidentSummary, OwnershipProbeResult, SubnetGraph } from '../types'
 import type { Finding, ScanResp } from './scan-data'
 import { isDocRange, kindLabel, portsOf } from './scan-data'
 import { AttackSurfaceGraph } from './surface-graph'
 import { AddressSpace, CoverageRail, OwnershipContention, OwnershipStable, ScopeStrip } from './environment-blocks'
-import { InvestigateChat } from './InvestigateChat'
-import { OperationalMemoryPanel } from './OperationalMemoryPanel'
 import { SentinelTimeline } from './SentinelTimeline'
-import { FAULT_LABEL, VERIFY_LABEL, pick } from './environment-labels'
+import { ChangeWorkbench } from './ChangeWorkbench'
+import { IpConflictResolution } from './IpConflictResolution'
+import { useInvestigationCase } from './investigation-case'
+import { FAULT_LABEL, VERIFY_LABEL, ageText, pick } from './environment-labels'
 import {
   AUTOMATION_LABEL,
   FAULT_CATALOG,
@@ -18,6 +19,7 @@ import {
   TAILSCALE_GUARD,
   type FaultFamily,
 } from './fault-catalog'
+import type { InvestigationIntent } from './investigation-context'
 
 /* ── 诊断处置 · the one page that answers "what is wrong on this network, and
  * who is allowed to fix it" ───────────────────────────────────────────────────
@@ -34,6 +36,7 @@ import {
  * firing right now — never which ones exist. */
 
 type St = { s: 'load' } | { s: 'err'; m: string } | { s: 'ok'; d: ScanResp }
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/
 
 /** One ledger row: a catalog family joined with whatever the sources currently
  * confirm inside it. */
@@ -51,37 +54,44 @@ const RUNNABLE = /^(nc|nmap|curl|openssl)\s/
 
 const T = (zh: boolean) => ({
   codeMock: zh ? '模拟靶场 · 只读扫描' : 'MOCK RANGE · READ-ONLY SCAN',
-  codeReal: zh ? '内网真实资产 · 实时 + 全历史 · 只读' : 'REAL INTERNAL ASSETS · LIVE + FULL HISTORY · READ-ONLY',
+  codeReal: zh ? '生产资产 · 实时观测与历史事实' : 'CURRENT INTERNAL ASSETS · LIVE AND HISTORICAL FACTS',
   codeBench: zh ? 'ITBench · CISO 合规基准 · 公开定义' : 'ITBench · CISO COMPLIANCE · PUBLISHED DEFS',
   loading: zh ? '读取报告…' : 'READING REPORT…',
   offline: zh ? '报告不可用' : 'REPORT UNAVAILABLE',
   thesis: zh
-    ? '这个网络会出的问题分成九族,按严重程度排下来。每族写清楚三件事:怎么确认它真的发生了、谁来修(系统自己修 / 有条件自动 / 必须人工)、以及具体每一步跑什么。系统只跑过只读的检查;所有会改状态的动作都停在审批之前。'
-    : 'Every fault this network can have, folded into nine families and ranked by how badly each one hurts. Each says three things: how a hit gets confirmed, who is allowed to fix it (the system, the system under conditions, or a person), and the exact steps. Only read-only checks have ever run; everything that changes state stops before approval.',
+    ? '汇总当前确认的故障、受影响资产和可执行边界。先完成只读取证，确认对象归属后，再按审批条件执行变更和结果回读。'
+    : 'Current confirmed faults, affected assets, and action boundaries. Collect read-only evidence first, confirm ownership, then execute approved changes and verify the result.',
+  focusThesis: zh
+    ? '沿着当前事件展示已确认事实、调查过程、处置边界和当前结果。原始命令、候选判断与历史检索统一收在调查细节中。'
+    : 'Follow the current event through confirmed facts, investigation, handling boundary, and outcome. Raw commands, hypotheses, and retrieval stay inside investigation detail.',
   rfc: zh ? 'RFC 5737 文档保留网段 · 不可路由' : 'RFC 5737 DOC RANGE · NOT ROUTABLE',
   assets: zh ? '资产' : 'ASSETS',
   finds: zh ? '结论' : 'FINDINGS',
   confirmed: zh ? '实时确认' : 'CONFIRMED LIVE',
   retired: zh ? '已消失·移除' : 'RETIRED',
   blind: zh ? '盲区故障类' : 'BLIND CLASSES',
-  surface: zh ? '开着哪些端口 · 资产' : 'OPEN PORTS BY ASSET',
+  surface: zh ? '资产开放端口' : 'OPEN PORTS BY ASSET',
   space: zh ? '地址空间占用' : 'ADDRESS-SPACE OCCUPANCY',
-  ledger: zh ? '故障族 · 按严重程度排 · 点开看怎么确认、谁来修' : 'FAULT FAMILIES · WORST FIRST · EXPAND FOR HOW TO CONFIRM AND WHO FIXES IT',
-  cov: zh ? '传感器覆盖 · 检测不到的必须点名' : 'SENSOR COVERAGE · WHAT CANNOT BE DETECTED IS NAMED',
-  chat: zh ? '问一个具体问题 · 先自动取证,再给方案' : 'ASK ABOUT ONE FAULT · EVIDENCE FIRST, THEN A PLAN',
-  acted: zh ? '系统自己做过什么 · 发现 → 判断 → 动手 → 验证' : 'WHAT THE SYSTEM DID ON ITS OWN',
-  standby: zh ? '目前没发生' : 'NOT HAPPENING NOW',
-  liveHits: zh ? '现在查到' : 'FOUND NOW',
-  exposureHits: zh ? '扫到敞开的' : 'FOUND OPEN',
-  archivedHits: zh ? '以前出过' : 'HAPPENED BEFORE',
-  rationale: zh ? '为什么这么定' : 'WHY',
-  protectedK: zh ? '不许动' : 'DO NOT TOUCH',
+  networkContext: zh ? '网络上下文 · 端口与地址空间' : 'NETWORK CONTEXT · PORTS AND ADDRESS SPACE',
+  autoRefresh: zh ? '每 60 秒自动复查' : 'AUTO-CHECK EVERY 60S',
+  refresh: zh ? '立即刷新' : 'REFRESH NOW',
+  refreshing: zh ? '正在刷新…' : 'REFRESHING…',
+  ledger: zh ? '故障清单 · 按影响排序并标明责任人' : 'CURRENT FAULTS BY IMPACT · OPEN FOR EVIDENCE AND OWNER',
+  cov: zh ? '观测覆盖与缺失数据' : 'SENSOR COVERAGE · WHAT CANNOT BE DETECTED IS NAMED',
+  chat: zh ? '单事件调查 · 自动取证并形成处置方案' : 'ASK ABOUT ONE FAULT · EVIDENCE FIRST, THEN A PLAN',
+  acted: zh ? '已执行的处置及结果回读' : 'EXECUTED ACTIONS AND RESULT READBACK',
+  standby: zh ? '本轮未观测' : 'NOT HAPPENING NOW',
+  liveHits: zh ? '本轮确认' : 'FOUND NOW',
+  exposureHits: zh ? '发现开放端口' : 'FOUND OPEN',
+  archivedHits: zh ? '历史记录' : 'HAPPENED BEFORE',
+  rationale: zh ? '判定依据' : 'WHY',
+  protectedK: zh ? '禁止自动变更' : 'DO NOT TOUCH',
   probe: zh ? '运行归属探测' : 'RUN OWNERSHIP PROBE',
   probing: zh ? '探测中…' : 'PROBING…',
   run: zh ? '执行' : 'RUN',
   running: zh ? '执行中…' : 'RUNNING…',
   retiredNote: (n: number) =>
-    zh ? `${n} 条以前的判定,这次复查已经不在了,从列表里去掉` : `${n} FINDINGS GONE ON RE-CHECK, DROPPED FROM THE LIST`,
+    zh ? `${n} 条历史判定在本轮复查中未再次出现，已移出活动列表。` : `${n} FINDINGS GONE ON RE-CHECK, DROPPED FROM THE LIST`,
 })
 
 /** Join the catalog with the sweep, the exposure scan and the archive. The
@@ -108,56 +118,97 @@ const joinCatalog = (
   return rows
 }
 
-export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseId }: {
+export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseId, investigationIntent, workspace = 'network' }: {
   lang: Lang
   scenario?: 'live' | 'bench'
   /** Arrived here from a live-situation row: open focused on that subject. */
   focusSubject?: string
   focusCaseId?: string
+  investigationIntent?: InvestigationIntent
+  onIntentChange?: (intent: InvestigationIntent) => void
+  workspace?: 'network' | 'response'
 }) {
   const zh = lang === 'zh'
+  const [responseView, setResponseView] = useState<'changes' | 'automatic'>('changes')
+  const [preparedChangeId, setPreparedChangeId] = useState('')
+  const { record: responseCase } = useInvestigationCase(workspace === 'response' ? focusCaseId : undefined)
+  const isIpConflict = responseCase?.service === 'duplicate_ip_static' || responseCase?.ruleId === 'l2_ownership_drift'
   const tx = T(zh)
+  const section = workspace
   const [st, setSt] = useState<St>({ s: 'load' })
   const [envData, setEnv] = useState<EnvironmentReport | null>(null)
   const [incidentData, setIncidents] = useState<IncidentSummary[]>([])
   const [openRow, setOpenRow] = useState<string | null>(null)
-  const [focusIp, setFocusIp] = useState<string | null>(focusSubject ?? null)
+  const [focusIp, setFocusIp] = useState<string | null>(focusSubject && IPV4.test(focusSubject) ? focusSubject : null)
   const [relGraph, setRelGraph] = useState<SubnetGraph | null>(null)
   const [ran, setRan] = useState<Record<string, { state: 'run' | 'done' | 'err'; text: string }>>({})
   const [probe, setProbe] = useState<{ ip: string; state: 'run' | 'done' | 'err'; data?: OwnershipProbeResult; m?: string } | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null)
+  const refreshInFlight = useRef(false)
 
   // A second jump from the live-situation list must move the focus, not be
   // swallowed by the state initialiser having already run once.
   useEffect(() => {
-    if (!focusSubject) return
-    const timer = window.setTimeout(() => setFocusIp(focusSubject), 0)
+    const timer = window.setTimeout(
+      () => setFocusIp(focusSubject && IPV4.test(focusSubject) ? focusSubject : null),
+      0,
+    )
     return () => window.clearTimeout(timer)
   }, [focusSubject])
 
   useEffect(() => {
-    let alive = true
-    fetch(`/api/rca/pentest?lang=${lang}&scenario=${scenario}`)
-      .then((r) => r.json())
-      .then((d: ScanResp) => { if (alive) setSt(d && d.ok ? { s: 'ok', d } : { s: 'err', m: 'NO DATA' }) })
-      .catch((e) => { if (alive) setSt({ s: 'err', m: e instanceof Error ? e.message : String(e) }) })
-    return () => { alive = false }
+    const target = investigationIntent === 'remediation_readback'
+      ? 'incident-response-readback'
+      : investigationIntent === 'evidence_hypotheses' ? 'incident-response-readback' : null
+    if (!target) return
+    const timer = window.setTimeout(() => {
+      document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [investigationIntent, focusCaseId])
+
+  const loadNetworkContext = useCallback(async (force: boolean) => {
+    if (refreshInFlight.current) return
+    refreshInFlight.current = true
+    setRefreshing(true)
+    try {
+      const tasks: Promise<unknown>[] = [
+        fetch(`/api/rca/pentest?lang=${lang}&scenario=${scenario}`, { headers: { Accept: 'application/json' } })
+          .then((response) => {
+            if (!response.ok) throw new Error(`gateway ${response.status}`)
+            return response.json()
+          })
+          .then((data: ScanResp) => setSt(data?.ok ? { s: 'ok', d: data } : { s: 'err', m: 'NO DATA' })),
+      ]
+      if (scenario === 'live') {
+        tasks.push(
+          fetch(`/api/rca/environment${force ? '?refresh=1' : ''}`, { headers: { Accept: 'application/json' } })
+            .then((response) => (response.ok ? response.json() : null))
+            .then((data: EnvironmentReport | null) => setEnv(data)),
+          fetch('/api/rca/incidents', { headers: { Accept: 'application/json' } })
+            .then((response) => (response.ok ? response.json() : null))
+            .then((data) => setIncidents(data?.incidents ?? [])),
+        )
+      }
+      const results = await Promise.allSettled(tasks)
+      if (results.every((result) => result.status === 'rejected')) {
+        const rejected = results[0] as PromiseRejectedResult
+        setSt({ s: 'err', m: rejected.reason instanceof Error ? rejected.reason.message : String(rejected.reason) })
+      }
+      setRefreshedAt(new Date().toISOString())
+    } finally {
+      refreshInFlight.current = false
+      setRefreshing(false)
+    }
   }, [lang, scenario])
 
-  // The environment sweep and the archived incidents describe the real network,
-  // so they are only meaningful next to the live scenario.
   useEffect(() => {
-    if (scenario !== 'live') return
-    let alive = true
-    fetch('/api/rca/environment', { headers: { Accept: 'application/json' } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: EnvironmentReport | null) => { if (alive) setEnv(d) })
-      .catch(() => { if (alive) setEnv(null) })
-    fetch('/api/rca/incidents', { headers: { Accept: 'application/json' } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (alive && d?.incidents) setIncidents(d.incidents) })
-      .catch(() => { if (alive) setIncidents([]) })
-    return () => { alive = false }
-  }, [scenario])
+    if (workspace !== 'network') return
+    void loadNetworkContext(false)
+    const timer = window.setInterval(() => void loadNetworkContext(true), 60_000)
+    return () => window.clearInterval(timer)
+  }, [loadNetworkContext, workspace])
 
   // The sweep and the archived incidents describe the real network, so they are
   // only read next to the live scenario — gated here rather than cleared in the
@@ -180,7 +231,7 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
       .then((g) => { if (alive && g?.ok) setRelGraph(g as SubnetGraph) })
       .catch(() => {})
     return () => { alive = false }
-  }, [targetCidr])
+  }, [targetCidr, refreshedAt])
 
   const rows = useMemo(() => {
     const joined = joinCatalog(env?.findings ?? [], findings, incidents)
@@ -214,6 +265,12 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
     retired: env?.totals.resolved_dropped ?? 0,
     blind: env?.totals.blind_classes ?? 0,
   }), [surface, findings, env, incidents])
+  const liveSourceLag = useMemo(() => {
+    const ages = (env?.sources ?? [])
+      .filter((source) => source.flowing && source.age_seconds != null)
+      .map((source) => Number(source.age_seconds))
+    return ages.length ? Math.max(...ages) : null
+  }, [env])
 
   const runStep = useCallback((key: string, command: string) => {
     setRan((cur) => ({ ...cur, [key]: { state: 'run', text: '' } }))
@@ -247,18 +304,22 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
   }, [])
 
   return (
-    <div className="dx">
-      <header className="dx-head">
+    <div className="dx dx-workspace">
+      <header className={`dx-head${focusCaseId ? ' is-focused' : ''}`}>
         <div className="dx-head-l">
           <div className="dx-head-code"><span>{d?.target?.cidr?.startsWith('itbench') ? tx.codeBench : docRange ? tx.codeMock : tx.codeReal}</span></div>
-          <h1 className="dx-head-title">{zh ? <>诊断<mark>处置</mark></> : <>DIAGNOSE &amp; <mark>FIX</mark></>}</h1>
-          <p className="dx-thesis">{tx.thesis}</p>
+          <h1 className="dx-head-title">
+            {workspace === 'network'
+              ? (zh ? <>网络<mark>背景</mark></> : <>NETWORK <mark>CONTEXT</mark></>)
+              : (zh ? <>配置与<mark>处置</mark></> : <>CHANGES &amp; <mark>ACTIONS</mark></>)}
+          </h1>
+          <p className="dx-thesis">{workspace === 'network' ? (zh ? '持续观测全网资产、开放端口、地址归属、网络配置与观测覆盖。页面覆盖当前网络，可独立筛选和复查。' : 'Continuously observe network assets, open ports, address ownership, configuration and sensor coverage. Browse and refresh the whole network independently.') : tx.thesis}</p>
           <div className="dx-target">
-            <b>{d?.target?.label ?? '—'}</b><span>{d?.target?.cidr ?? '—'}</span>
+            <b>{focusSubject ?? (workspace === 'network' ? d?.target?.label : (zh ? '全网配置与处置记录' : 'NETWORK-WIDE CHANGES AND ACTIONS')) ?? (zh ? '正在读取网络范围' : 'Loading network scope')}</b>{workspace === 'network' ? <span>{d?.target?.cidr ?? ''}</span> : null}
             {docRange ? <span className="dx-rfc"><span className="dx-lock" />{tx.rfc}</span> : null}
           </div>
         </div>
-        {d ? (
+        {d && !focusSubject ? (
           <div className="dx-metrics">
             <div className="dx-metric"><b>{m.assets}</b><span>{tx.assets}</span></div>
             <div className="dx-metric"><b>{m.finds}</b><span>{tx.finds}</span></div>
@@ -268,30 +329,26 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
         ) : null}
       </header>
 
-      {scenario === 'live' && focusSubject ? (
-        <section className="dx-sec dx-focused-investigation" aria-label={zh ? '当前事件调查' : 'Current incident investigation'}>
-          <div className="dx-sec-k dx-focused-investigation-head">
-            <span>{zh ? '当前事件调查' : 'CURRENT INCIDENT INVESTIGATION'}</span>
-            <code>{focusSubject}</code>
-          </div>
-          <p className="dx-focused-investigation-note">
-            {zh
-              ? '正在对告警中选定的对象执行只读调查。下方回执直接列出命中的历史记忆、调整后的探针顺序、实际执行数量和知识检索结果。'
-              : 'Read-only investigation is running for the selected alert subject. The receipt below shows recalled memory, the reordered probe plan, actual execution count, and retrieved knowledge.'}
-          </p>
-          <InvestigateChat
-            key={`${focusCaseId ?? 'adhoc'}:${focusSubject}`}
-            lang={lang}
-            subject={focusSubject}
-            caseId={focusCaseId}
-          />
-        </section>
-      ) : null}
+      {scenario === 'live' && section === 'response' ? <section id="incident-response-readback" className="dx-sec"><nav aria-label={zh ? '处置类型' : 'Action type'}><button aria-pressed={responseView === 'changes'} onClick={() => setResponseView('changes')}>{zh ? '配置变更与审批' : 'Configuration changes & approval'}</button><button aria-pressed={responseView === 'automatic'} onClick={() => setResponseView('automatic')}>{zh ? '自动恢复记录' : 'Automatic recovery history'}</button></nav>{responseView === 'changes' ? <>{isIpConflict && focusIp ? <IpConflictResolution key={focusCaseId ?? focusIp} ip={focusIp} caseId={focusCaseId} lang={lang} onPrepared={setPreparedChangeId} /> : null}<ChangeWorkbench key={focusCaseId ?? 'global'} ip={focusIp ?? ''} caseId={focusCaseId ?? ''} selectedChangeId={preparedChangeId} lang={lang} /></> : <SentinelTimeline lang={lang} focus={focusSubject ?? focusIp ?? undefined} />}</section> : null}
 
-      {st.s === 'load' ? <div className="dx-state">{tx.loading}</div>
+      {section === 'network' ? (st.s === 'load' ? <div className="dx-state">{tx.loading}</div>
         : st.s === 'err' ? <div className="dx-state">{tx.offline} · {st.m}</div>
         : (
           <>
+            <div className="dx-context-bar">
+              <div>
+                <b>{tx.networkContext}</b>
+                <span>{tx.autoRefresh}</span>
+                <span>{zh ? '报告时间' : 'REPORT'} {env?.checked_at ? env.checked_at.replace('T', ' ').replace(/\.\d+.*$/, '') : 'N/A'}</span>
+                <span className={liveSourceLag != null && liveSourceLag > 360 ? 'is-stale' : ''}>
+                  {zh ? '最旧实时源' : 'OLDEST LIVE SOURCE'} {ageText(liveSourceLag, zh)}
+                </span>
+                {refreshedAt ? <span>{zh ? '页面更新' : 'PAGE UPDATE'} {refreshedAt.replace('T', ' ').replace(/\.\d+.*$/, '')}</span> : null}
+              </div>
+              <button type="button" onClick={() => void loadNetworkContext(true)} disabled={refreshing}>
+                {refreshing ? tx.refreshing : tx.refresh}
+              </button>
+            </div>
             {env ? <ScopeStrip sources={env.sources} zh={zh} /> : null}
             {env && m.retired ? <div className="dx-retired">{tx.retiredNote(m.retired)}</div> : null}
 
@@ -383,7 +440,7 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
                         </button>
                         {open ? (
                           <div className="dx-row-b">
-                            <p className="dx-row-note"><b>{tx.rationale}</b> — {zh ? fam.rationale[0] : fam.rationale[1]}</p>
+                            <p className="dx-row-note"><b>{tx.rationale}</b>：{zh ? fam.rationale[0] : fam.rationale[1]}</p>
                             {fam.protectedNote ? (
                               <div className="dx-prot">
                                 <span className="dx-lock" />
@@ -419,7 +476,7 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
                               <div className="dx-hits">
                                 <span>{tx.archivedHits}</span>
                                 {row.archived.map((incident) => (
-                                  <em key={incident.id} className="v-archived">{incident.asset?.ip ?? '—'} · {incident.title}</em>
+                                  <em key={incident.id} className="v-archived">{incident.asset?.ip ?? 'N/A'} · {incident.title}</em>
                                 ))}
                               </div>
                             ) : null}
@@ -467,12 +524,12 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
                                     <span>{probe.data.verdict_note}</span>
                                     <div className="dx-probe-grid">
                                       {Object.entries(probe.data.service_profiles).map(([mac, ports]) => (
-                                        <div key={mac}><dt>{mac}</dt><dd>{ports.join(' · ') || '—'}</dd></div>
+                                        <div key={mac}><dt>{mac}</dt><dd>{ports.join(' · ') || 'N/A'}</dd></div>
                                       ))}
                                     </div>
                                     {Object.entries(probe.data.impact).map(([port, info]) => (
                                       <div className="dx-probe-imp" key={port}>
-                                        {info.service} ({port}) —{' '}
+                                        {info.service} ({port}) ·{' '}
                                         {zh
                                           ? `约 ${Math.round(info.unreachable_share * 100)}% 的时间不可达`
                                           : `unreachable ~${Math.round(info.unreachable_share * 100)}% of samples`}
@@ -492,27 +549,6 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
               ) : null}
             </section>
 
-            {scenario === 'live' ? (
-              <section className="dx-sec">
-                <div className="dx-sec-k">{zh ? '真实故障 · 长期风险 · 已验证网络特征' : 'INCIDENTS · LONG-RUN RISKS · VALIDATED FEATURES'}</div>
-                <OperationalMemoryPanel lang={lang} subject={focusIp ?? undefined} />
-              </section>
-            ) : null}
-
-            {scenario === 'live' ? (
-              <section className="dx-sec">
-                <div className="dx-sec-k">{tx.acted}</div>
-                <SentinelTimeline lang={lang} focus={focusIp ?? undefined} />
-              </section>
-            ) : null}
-
-            {scenario === 'live' && !focusSubject ? (
-              <section className="dx-sec">
-                <div className="dx-sec-k">{tx.chat}</div>
-                <InvestigateChat lang={lang} family={openRow ?? undefined} subject={focusIp ?? undefined} />
-              </section>
-            ) : null}
-
             {env?.coverage?.length ? (
               <section className="dx-sec">
                 <div className="dx-sec-k">{tx.cov}</div>
@@ -520,7 +556,7 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
               </section>
             ) : null}
           </>
-        )}
+        )) : null}
     </div>
   )
 }

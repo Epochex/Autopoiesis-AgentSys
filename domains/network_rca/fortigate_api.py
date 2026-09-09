@@ -5,10 +5,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import ssl
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.cookiejar import CookieJar
 from typing import Any, Protocol
@@ -25,10 +27,35 @@ from core.env import autopoiesis_env
 
 
 _PURPOSES = {
+    "identity": "设备指纹：用于选择与型号、固件版本匹配的官方运维知识",
     "interfaces": "网络拓扑：说明设备挂在哪个接口及其 VLAN 归属",
     "devices": "设备识别：把日志中的裸 IP 对应到 MAC 和主机名",
     "policies": "流量解释：用源区、目的区和动作说明 deny 的策略上下文",
     "changes": "变更账：说明谁在什么时候改了什么",
+    "operational_state": "当前运行状态：路由、VPN 与 SD-WAN 健康读数",
+}
+
+_IDENTITY_PATHS = (
+    "/api/v2/monitor/system/status",
+    "/api/v2/cmdb/system/global",
+)
+
+_OPERATIONAL_STATE_SPECS: dict[str, tuple[str, set[str], tuple[str, ...]]] = {
+    "routes": (
+        "/api/v2/monitor/router/ipv4?vdom=*",
+        {"ip_mask", "prefix", "gateway", "interface", "device"},
+        ("ip_mask", "prefix", "gateway", "interface", "device", "distance", "metric", "type", "protocol"),
+    ),
+    "vpn": (
+        "/api/v2/monitor/vpn/ipsec?vdom=*",
+        {"name", "parent", "rgwy", "tun_id", "connection_count"},
+        ("name", "parent", "status", "type", "rgwy", "tun_id", "connection_count", "creation_time", "incoming_bytes", "outgoing_bytes"),
+    ),
+    "sdwan": (
+        "/api/v2/monitor/virtual-wan/health-check?vdom=*",
+        {"name", "interface", "status", "link", "latency", "packet_loss", "packetloss"},
+        ("name", "interface", "status", "link", "latency", "jitter", "packet_loss", "packetloss", "state_changed"),
+    ),
 }
 
 
@@ -247,6 +274,31 @@ class FortiGateReadonlyAPI:
         items = [_interface_row(row) for row in rows]
         return self._available_result("interfaces", items)
 
+    def fetch_identity(self) -> dict[str, Any]:
+        """Read the managed appliance model, serial and firmware identity.
+
+        FortiOS releases expose these fields through different read endpoints
+        and envelope shapes.  The allowlisted result is intentionally small so
+        it can safely drive documentation selection without leaking unrelated
+        configuration.
+        """
+
+        payload, reason = self._read_first(_IDENTITY_PATHS)
+        if payload is None:
+            return self._missing_result("identity", "device_identity", reason)
+        item = _identity_row(payload)
+        return self._result(
+            "identity",
+            available=any(item.get(key) for key in ("model", "serial", "firmware_version")),
+            degraded=bool(item["missing_fields"]),
+            items=[item],
+            missing=(
+                []
+                if any(item.get(key) for key in ("model", "serial", "firmware_version"))
+                else [{"item": "device_identity", "reason": "FortiGate returned no identity fields"}]
+            ),
+        )
+
     def fetch_devices(self) -> dict[str, Any]:
         """合并租约和已知设备，给 syslog 中只出现 IP 的事件补上设备身份。"""
 
@@ -282,6 +334,9 @@ class FortiGateReadonlyAPI:
                     continue
                 if previous["hostname"] is None and device["hostname"] is not None:
                     previous["hostname"] = device["hostname"]
+                for field in ("vendor", "model", "device_type", "os", "os_version"):
+                    if previous.get(field) is None and device.get(field) is not None:
+                        previous[field] = device[field]
                 previous["sources"] = sorted(set(previous["sources"] + device["sources"]))
                 previous["missing_fields"] = _missing_fields(
                     previous, ("mac", "ip", "hostname")
@@ -326,10 +381,58 @@ class FortiGateReadonlyAPI:
         items = [_change_row(row) for row in rows]
         return self._available_result("changes", items)
 
+    def fetch_operational_state(self) -> dict[str, Any]:
+        """Read bounded cross-domain state used by many investigation families.
+
+        Each domain is independently optional because monitor endpoints vary by
+        FortiOS version and admin profile.  Parallel reads bound wall-clock cost
+        for token-auth clients; the cookie transport serializes them safely.
+        """
+
+        def read_domain(
+            item: tuple[str, tuple[str, set[str], tuple[str, ...]]]
+        ) -> tuple[str, dict[str, Any]]:
+            name, (path, identity_keys, fields) = item
+            payload, reason = self._read_remote(path)
+            if payload is None:
+                return name, {
+                    "available": False,
+                    "items": None,
+                    "missing": [{"item": name, "reason": reason}],
+                }
+            rows = _extract_rows(payload, identity_keys=identity_keys)
+            return name, {
+                "available": True,
+                "items": [_compact_fields(row, fields) for row in rows[:128]],
+                "truncated": max(0, len(rows) - 128),
+                "missing": [],
+            }
+
+        with ThreadPoolExecutor(
+            max_workers=len(_OPERATIONAL_STATE_SPECS),
+            thread_name_prefix="fortigate-read",
+        ) as executor:
+            domains = dict(executor.map(read_domain, _OPERATIONAL_STATE_SPECS.items()))
+        available = any(item["available"] for item in domains.values())
+        return {
+            "kind": "operational_state",
+            "purpose": _PURPOSES["operational_state"],
+            "fetched_at": self._timestamp(),
+            "available": available,
+            "degraded": not all(item["available"] for item in domains.values()),
+            "domains": domains,
+            "missing": [
+                missing
+                for item in domains.values()
+                for missing in item.get("missing", [])
+            ],
+        }
+
     def fetch_all(self) -> dict[str, Any]:
-        """分别读取四类事实，某一端点失败时保留其余成功结果。"""
+        """分别读取设备指纹和四类事实，某一端点失败时保留其余成功结果。"""
 
         results = {
+            "identity": self.fetch_identity(),
             "interfaces": self.fetch_interfaces(),
             "devices": self.fetch_devices(),
             "policies": self.fetch_policies(),
@@ -459,8 +562,65 @@ def _device_row(row: Mapping[str, Any], source: str) -> dict[str, Any]:
         "hostname": _first_text(row, "hostname", "host", "device_name", "devname", "name"),
         "sources": [source],
     }
+    optional = {
+        "vendor": _first_text(row, "hardware_vendor", "vendor", "manufacturer"),
+        "model": _first_text(row, "hardware_family", "model", "product"),
+        "device_type": _first_text(row, "hardware_type", "type", "device_type"),
+        "os": _nested_text(row.get("os")),
+        "os_version": _first_text(row, "software_version", "os_version", "version"),
+    }
+    item.update({key: value for key, value in optional.items() if value is not None})
     item["missing_fields"] = _missing_fields(item, ("mac", "ip", "hostname"))
     return item
+
+
+def _identity_row(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract one stable appliance fingerprint from nested FortiOS envelopes."""
+
+    candidates: list[Mapping[str, Any]] = [payload]
+
+    def visit(value: Any) -> None:
+        if isinstance(value, Mapping):
+            candidates.append(value)
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            for nested in value:
+                visit(nested)
+
+    visit(payload.get("results", {}))
+
+    def first(*keys: str) -> Any:
+        for candidate in candidates:
+            value = _first_value(candidate, *keys)
+            if value is not None and not isinstance(value, (Mapping, list, tuple)):
+                return value
+        return None
+
+    serial = first("serial", "serial_number", "serialno", "devid")
+    model = first("model", "platform", "model_name", "hardware_model")
+    if not model and serial:
+        match = re.match(r"^(FGT?\d+[A-Z]?)(?=[A-Z]{2}\d)", str(serial), re.I)
+        model = match.group(1).upper() if match else None
+    item = {
+        "vendor": "Fortinet",
+        "product": "FortiGate",
+        "model": model,
+        "serial": serial,
+        "firmware_version": first("version", "firmware_version", "firmware", "os_version"),
+        "firmware_build": first("build", "build_number", "buildno"),
+        "hostname": first("hostname", "host_name"),
+    }
+    item["missing_fields"] = _missing_fields(
+        item, ("model", "serial", "firmware_version", "firmware_build")
+    )
+    return item
+
+
+def _nested_text(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        return _first_text(value, "name", "value", "label")
+    return str(value) if value not in (None, "", "N/A") else None
 
 
 def _policy_row(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -487,6 +647,16 @@ def _change_row(row: Mapping[str, Any]) -> dict[str, Any]:
         item, ("version", "changed_at", "administrator", "summary")
     )
     return item
+
+
+def _compact_fields(row: Mapping[str, Any], fields: Sequence[str]) -> dict[str, Any]:
+    """Copy an allowlisted, shallow state row into the evidence packet."""
+    return {
+        field: value
+        for field in fields
+        if (value := row.get(field)) not in (None, "", "N/A", [], {})
+        and isinstance(value, (str, int, float, bool))
+    }
 
 
 def _first_value(row: Mapping[str, Any], *keys: str) -> Any:

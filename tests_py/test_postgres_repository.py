@@ -10,7 +10,6 @@ from uuid import uuid4
 import pytest
 
 from core.memory.postgres_repository import (
-    CheckpointError,
     MemoryVersionConflict,
     PostgresMemoryRepository,
     _decode_record,
@@ -56,8 +55,6 @@ def test_schema_has_state_event_checkpoint_and_integrity_constraints():
     assert "UNIQUE (memory_id, version)" in sql
     assert "BEFORE UPDATE OR DELETE OR TRUNCATE" in sql
     assert "memory_events_arrays_ck" in sql
-    assert "CREATE TABLE IF NOT EXISTS index_checkpoints" in sql
-    assert "CHECK (event_offset >= 0)" in sql
     for field in MemoryRecord.model_fields:
         assert f"'{field}'" in sql or field in {"memory_id"}
 
@@ -75,8 +72,6 @@ def test_local_argument_guards_run_before_database_access():
         repository.read_events(after_offset=-1)
     with pytest.raises(ValueError, match="limit"):
         repository.read_events(limit=0)
-    with pytest.raises(ValueError, match="index_name"):
-        repository.get_checkpoint(" ")
     with pytest.raises(ValueError, match="reason"):
         repository.quarantine("m1", " ")
     with pytest.raises(ValueError, match="duplicate"):
@@ -103,7 +98,6 @@ def test_real_postgres_commit_restart_conflict_replay_and_checkpoint():
     repository.initialize_schema()
     first_id = f"{prefix}-first"
     second_id = f"{prefix}-second"
-    checkpoint_name = f"{prefix}-hnsw"
 
     try:
         created = repository.upsert(_record(first_id), expected_version=0)
@@ -198,12 +192,6 @@ def test_real_postgres_commit_restart_conflict_replay_and_checkpoint():
         assert replayed[second_id] == restarted.get(second_id)[0]  # type: ignore[index]
 
         last_offset = relevant[-1].event_offset
-        assert restarted.advance_checkpoint(checkpoint_name, last_offset) == last_offset
-        assert restarted.get_checkpoint(checkpoint_name) == last_offset
-        with pytest.raises(CheckpointError):
-            restarted.advance_checkpoint(checkpoint_name, last_offset - 1)
-        with pytest.raises(CheckpointError):
-            restarted.advance_checkpoint(checkpoint_name, last_offset + 10_000_000)
 
         # The database itself rejects event rewriting, not just this repository API.
         with pytest.raises(psycopg.errors.RaiseException, match="append-only"):

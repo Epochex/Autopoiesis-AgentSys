@@ -4,7 +4,7 @@
 
 ## 中文
 
-面向混合设备私有网络构建持续事件调查系统。采集端把安全事件和网络事实写入 Redpanda 与 ClickHouse，检测结果聚合为可持久化案件；调查服务在同一案件内联合召回历史故障档案、资产画像、执行记忆和厂商知识，并调用主机、ClickHouse 与 FortiGate 只读工具补充现场证据。每轮检索、探针、引用、假设修正和人工处置均写回案件时间线，会话快照支持服务重启后的继续调查。
+面向混合设备私有网络构建持续事件调查系统。单机采集服务按源文件字节位置归档安全事件和网络事实，在进程内完成时间窗口检测并生成稳定告警，检测结果聚合为可持久化案件；调查服务在同一案件内联合召回历史故障档案、资产画像、执行记忆和厂商知识，并调用主机、ClickHouse 与 FortiGate 只读工具补充现场证据。每轮检索、探针、引用、假设修正和人工处置均写回案件时间线，会话快照支持服务重启后的继续调查。
 
 - 统一检索来自执行记忆、历史事件档案、风险模式、网络画像和知识文档的候选，保存来源、定位符、分数组成、匹配字段及是否进入模型上下文。
 - 将实时告警和关联建议按稳定来源标识合并为案件，避免轮询和重复投递产生重复工单，并把交互调查绑定到同一案件标识。
@@ -14,7 +14,7 @@
 
 ## English
 
-Built a persistent incident-investigation system for heterogeneous private networks. The ingestion path writes security events and network facts to Redpanda and ClickHouse, correlated detections become durable cases, and each investigation recalls operational history, indexed memory, asset context, and vendor documentation before collecting fresh read-only evidence from hosts, ClickHouse, and FortiGate. Retrieval receipts, probes, citations, hypothesis revisions, and operator dispositions remain attached to one case, while durable session snapshots allow an investigation to continue after a service restart.
+Built a persistent incident-investigation system for heterogeneous private networks. A single-host collector archives security events and network facts by durable source offset, performs event-window detection in process, and turns stable alerts into durable cases. Each investigation recalls operational history, indexed memory, asset context, and vendor documentation before collecting fresh read-only evidence from hosts, ClickHouse, and FortiGate. Retrieval receipts, probes, citations, hypothesis revisions, and operator dispositions remain attached to one case, while durable session snapshots allow an investigation to continue after a service restart.
 
 - Unified retrieval across indexed memory, incident dossiers, risk patterns, network features, and reference documents with source locators, component scores, matched fields, and context-selection receipts.
 - Merged repeated alert deliveries and later correlation suggestions into stable incident cases using source-level idempotency.

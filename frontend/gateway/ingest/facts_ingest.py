@@ -2,13 +2,12 @@
 
 Feeds the situational-awareness console's historical queries and continuous
 event path. The raw
-FortiGate logs live on R230 (`/data/fortigate-runtime/input/`): the live file
-plus ~2.5 months of rotated `.gz`. This reads them over SSH, parses each traffic
-line into a flat fact row, normalizes selected authentication and management-
-plane signals into `autopoiesis.security_events`, batch-inserts both stores into
-ClickHouse, and publishes the live event envelope to Redpanda through its HTTP
-proxy. Failed Redpanda batches remain in a bounded disk outbox and are retried
-in order; historical backfills never enter the production topic.
+FortiGate logs live under `/data/fortigate-runtime/input/`: the live file plus
+rotated `.gz` history. This reads the source by durable byte position, parses
+each traffic line into a flat fact row, normalizes authentication and
+management-plane signals into `autopoiesis.security_events`, batch-inserts both
+stores into ClickHouse, and runs alert detection in the same collector process.
+Historical backfills archive facts only and never create production alerts.
 
 Two modes:
   backfill  — replay every rotated .gz (oldest→newest) + the current file once.
@@ -23,11 +22,7 @@ Config via env (falls back to `/etc/autopoiesis.env` values):
   FACTS_LIVE_FLUSH_SECONDS                  — default 5
   FACTS_STATUS_FILE                         - default /run/autopoiesis-facts-ingest/status.json
   SECURITY_EVENTS_PROVENANCE                — real (default), replay, or drill
-  REDPANDA_PUBLISH_ENABLED                  — publish live envelopes when true
-  REDPANDA_PROXY_URL                        — HTTP proxy base URL
-  REDPANDA_TOPIC_RAW                        - default autopoiesis.events.raw.v1
-  REDPANDA_OUTBOX_DIR                       — durable retry directory
-  REDPANDA_OUTBOX_MAX_BYTES                 — default 512 MiB
+  AUTOPOIESIS_ALERT_DIRECTORY               — atomic alert files read by the gateway
 """
 from __future__ import annotations
 
@@ -44,6 +39,15 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+# systemd launches this file directly, so make the repository's domain modules
+# importable without requiring deployment-specific PYTHONPATH configuration.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from domains.network_rca.admin_auth import classify_admin_auth_event
+from domains.network_rca.event_detection import DetectionPolicy
+from frontend.gateway.ingest.standalone_alerts import AlertStoreConfig, StandaloneAlertPipeline
 
 
 def _read_env_file(path: str) -> dict[str, str]:
@@ -98,19 +102,11 @@ CHECKPOINT_FILE = Path(_env(
     "/var/lib/autopoiesis-facts-ingest/source-checkpoint.json",
 ))
 SOURCE_POLL_SECONDS = max(0.2, float(_env("FACTS_SOURCE_POLL_SECONDS", "5")))
+ALERT_WARMUP_BYTES = max(0, int(_env("AUTOPOIESIS_ALERT_WARMUP_BYTES", str(32 * 1024 * 1024))))
 
-REDPANDA_PUBLISH_ENABLED = _env("REDPANDA_PUBLISH_ENABLED", "0").strip().lower() in {
-    "1", "true", "yes", "on",
-}
-REDPANDA_PROXY_URL = _env("REDPANDA_PROXY_URL").rstrip("/")
-REDPANDA_TOPIC_RAW = _env("REDPANDA_TOPIC_RAW", "autopoiesis.events.raw.v1")
-REDPANDA_OUTBOX_DIR = Path(
-    _env("REDPANDA_OUTBOX_DIR", "/var/lib/autopoiesis-facts-ingest/outbox")
+ALERT_DIRECTORY = Path(
+    _env("AUTOPOIESIS_ALERT_DIRECTORY", "/data/autopoiesis-production/stream/alerts")
 )
-REDPANDA_OUTBOX_MAX_BYTES = int(
-    _env("REDPANDA_OUTBOX_MAX_BYTES", str(512 * 1024 * 1024))
-)
-REDPANDA_HTTP_TIMEOUT_SECONDS = float(_env("REDPANDA_HTTP_TIMEOUT_SECONDS", "15"))
 
 # FortiGate syslog is space-separated key=value; values may be "quoted".
 _KV = re.compile(r'(\w+)=(?:"([^"]*)"|(\S+))')
@@ -193,7 +189,7 @@ def parse_stream_event(line: str, source_kind: str = "real") -> dict[str, object
     The event id is stable across collector retries.  The envelope intentionally
     carries more fields than the narrow ClickHouse fact row because the correlator
     needs identity, interface, policy, byte and provenance context.  Historical
-    replay uses a separate topic and never calls this live publisher.
+    Historical replay uses an isolated evaluator and never calls this live path.
     """
     d = _kv(line)
     ts = _ts(d)
@@ -275,102 +271,6 @@ def parse_stream_event(line: str, source_kind: str = "real") -> dict[str, object
     }
 
 
-class RedpandaOutbox:
-    """Ordered at-least-once delivery for live events through Pandaproxy."""
-
-    def __init__(
-        self,
-        *,
-        enabled: bool = REDPANDA_PUBLISH_ENABLED,
-        proxy_url: str = REDPANDA_PROXY_URL,
-        topic: str = REDPANDA_TOPIC_RAW,
-        directory: Path = REDPANDA_OUTBOX_DIR,
-        max_bytes: int = REDPANDA_OUTBOX_MAX_BYTES,
-        timeout: float = REDPANDA_HTTP_TIMEOUT_SECONDS,
-    ) -> None:
-        self.enabled = enabled
-        self.proxy_url = proxy_url.rstrip("/")
-        self.topic = topic
-        self.directory = Path(directory)
-        self.max_bytes = max_bytes
-        self.timeout = timeout
-        self._sequence = 0
-        if self.enabled:
-            if not self.proxy_url:
-                raise ValueError("REDPANDA_PROXY_URL is required when publishing is enabled")
-            self.directory.mkdir(parents=True, exist_ok=True)
-
-    def pending(self) -> tuple[int, int]:
-        if not self.enabled or not self.directory.exists():
-            return 0, 0
-        paths = list(self.directory.glob("*.jsonl"))
-        return len(paths), sum(path.stat().st_size for path in paths)
-
-    def enqueue(self, events: list[dict[str, object]]) -> None:
-        if not self.enabled or not events:
-            return
-        payload = "".join(
-            json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
-            for event in events
-        ).encode("utf-8")
-        _, pending_bytes = self.pending()
-        if pending_bytes + len(payload) > self.max_bytes:
-            raise RuntimeError(
-                f"Redpanda outbox limit exceeded: {pending_bytes + len(payload)} > {self.max_bytes}"
-            )
-        self._sequence += 1
-        stem = f"{time.time_ns():020d}-{os.getpid()}-{self._sequence:08d}"
-        tmp = self.directory / f".{stem}.tmp"
-        final = self.directory / f"{stem}.jsonl"
-        with tmp.open("wb") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, final)
-
-    def drain(self) -> int:
-        if not self.enabled:
-            return 0
-        published = 0
-        for path in sorted(self.directory.glob("*.jsonl")):
-            events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-            if not events:
-                path.unlink()
-                continue
-            self._publish(events)
-            path.unlink()
-            published += len(events)
-        return published
-
-    def _publish(self, events: list[dict[str, object]]) -> None:
-        records = [
-            {"key": str(event["event_id"]), "value": event}
-            for event in events
-        ]
-        body = json.dumps({"records": records}, ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
-        request = urllib.request.Request(
-            f"{self.proxy_url}/topics/{urllib.parse.quote(self.topic, safe='')}",
-            data=body,
-            headers={
-                "Accept": "application/vnd.kafka.v2+json",
-                "Content-Type": "application/vnd.kafka.json.v2+json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            result = json.loads(response.read().decode("utf-8"))
-        offsets = result.get("offsets") if isinstance(result, dict) else None
-        # Redpanda Pandaproxy acknowledges a batch with one base offset per
-        # destination partition, not one offset per input record.
-        if not isinstance(offsets, list) or not offsets:
-            raise RuntimeError("Redpanda proxy returned an incomplete acknowledgement")
-        errors = [row for row in offsets if row.get("error_code") not in (None, 0)]
-        if errors:
-            raise RuntimeError("Redpanda proxy rejected one or more records")
-
-
 def _uint16(value: str | None) -> int:
     try:
         parsed = int(value or 0)
@@ -402,33 +302,16 @@ def parse_security_event(line: str, provenance: str = "real") -> list | None:
     action = d.get("action", "")
     status = d.get("status", "")
     reason = d.get("reason", "")
-    combined = " ".join((logdesc, message, action, status, reason)).lower()
-    event_type: str | None = None
-
-    if log_type == "event" and subtype == "system":
-        admin_context = "admin" in combined or "administrator" in combined
-        login_context = "login" in combined or action.lower() == "login"
-        lockout_context = login_context and (
-            "disabled" in combined
-            or "lockout" in combined
-            or "locked out" in combined
-            or reason.lower() == "exceed_limit"
-        )
-        account_disabled = (
-            admin_context
-            and ("account" in combined or "user" in combined)
-            and "disabled" in combined
-            and not login_context
-        )
-        login_failed = admin_context and "login" in combined and any(
-            marker in combined for marker in ("failed", "failure", "invalid")
-        )
-        if account_disabled:
-            event_type = "admin_account_disabled"
-        elif lockout_context:
-            event_type = "admin_login_lockout"
-        elif login_failed:
-            event_type = "admin_login_failed"
+    event_type = classify_admin_auth_event({
+        **d,
+        "type": log_type,
+        "subtype": subtype,
+        "logdesc": logdesc,
+        "msg": message,
+        "action": action,
+        "status": status,
+        "reason": reason,
+    })
 
     dstport = _uint16(d.get("dstport") or d.get("dst_port"))
     if log_type == "traffic" and subtype == "local" and dstport in _MANAGEMENT_PORTS:
@@ -532,9 +415,9 @@ def _ch_post(query: str, data: bytes | None = None) -> None:
 def create_facts_table() -> None:
     """Create the event-keyed fact archive used after the live cutover.
 
-    Readers continue to use ``autopoiesis.facts``.  The deployment migration
-    turns that name into a union view over the retained legacy table and this
-    event-keyed table, so historical queries keep their existing contract.
+    Readers resolve ``FACTS_CLICKHOUSE_TABLE`` through the same deployment
+    setting, so ingestion and investigation cannot silently diverge on a stale
+    legacy table name.
     """
     _ch_post(
         f"""CREATE TABLE IF NOT EXISTS {CH_DB}.{CH_TABLE} (
@@ -556,7 +439,16 @@ def create_facts_table() -> None:
             srcname String,
             sentbyte UInt64,
             rcvdbyte UInt64,
-            ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            ingested_at DateTime64(3, 'UTC') DEFAULT now64(3),
+            INDEX idx_facts_device device_key TYPE bloom_filter(0.01) GRANULARITY 4,
+            INDEX idx_facts_srcip srcip TYPE bloom_filter(0.01) GRANULARITY 4,
+            INDEX idx_facts_dstip dstip TYPE bloom_filter(0.01) GRANULARITY 4,
+            PROJECTION facts_by_src_flow_time (
+                SELECT * ORDER BY (srcip, dstip, dstport, proto, event_ts, event_id)
+            ),
+            PROJECTION facts_by_device_time (
+                SELECT * ORDER BY (device_key, event_ts, event_id)
+            )
         ) ENGINE = ReplacingMergeTree(ingested_at)
         PARTITION BY toYYYYMM(event_ts)
         ORDER BY event_id
@@ -588,11 +480,63 @@ def create_security_events_table() -> None:
             message String,
             provenance Enum8('real' = 1, 'replay' = 2, 'drill' = 3),
             raw_log String,
-            ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+            ingested_at DateTime64(3, 'UTC') DEFAULT now64(3),
+            INDEX idx_security_device device_id TYPE bloom_filter(0.01) GRANULARITY 4,
+            INDEX idx_security_srcip srcip TYPE bloom_filter(0.01) GRANULARITY 4,
+            PROJECTION security_by_device_time (
+                SELECT * ORDER BY (device_id, device_name, event_type, event_ts, event_id)
+            ),
+            PROJECTION security_by_source_time (
+                SELECT * ORDER BY (srcip, event_type, event_ts, event_id)
+            )
         ) ENGINE = ReplacingMergeTree(ingested_at)
         PARTITION BY toYYYYMM(event_ts)
         ORDER BY event_id"""
     )
+
+
+def materialize_investigation_acceleration() -> None:
+    """Backfill investigation indexes/projections for retained partitions.
+
+    This is deliberately an explicit deployment operation because materializing
+    a large retained table consumes substantial I/O.  New inserts are covered as
+    soon as the definitions exist.
+    """
+    create_facts_table()
+    create_security_events_table()
+    for table, definitions in (
+        (CH_TABLE, (
+            "INDEX IF NOT EXISTS idx_facts_device device_key TYPE bloom_filter(0.01) GRANULARITY 4",
+            "INDEX IF NOT EXISTS idx_facts_srcip srcip TYPE bloom_filter(0.01) GRANULARITY 4",
+            "INDEX IF NOT EXISTS idx_facts_dstip dstip TYPE bloom_filter(0.01) GRANULARITY 4",
+            "PROJECTION IF NOT EXISTS facts_by_src_flow_time "
+            "(SELECT * ORDER BY (srcip, dstip, dstport, proto, event_ts, event_id))",
+            "PROJECTION IF NOT EXISTS facts_by_device_time "
+            "(SELECT * ORDER BY (device_key, event_ts, event_id))",
+        )),
+        (SECURITY_TABLE, (
+            "INDEX IF NOT EXISTS idx_security_device device_id TYPE bloom_filter(0.01) GRANULARITY 4",
+            "INDEX IF NOT EXISTS idx_security_srcip srcip TYPE bloom_filter(0.01) GRANULARITY 4",
+            "PROJECTION IF NOT EXISTS security_by_device_time "
+            "(SELECT * ORDER BY (device_id, device_name, event_type, event_ts, event_id))",
+            "PROJECTION IF NOT EXISTS security_by_source_time "
+            "(SELECT * ORDER BY (srcip, event_type, event_ts, event_id))",
+        )),
+    ):
+        for definition in definitions:
+            _ch_post(f"ALTER TABLE {CH_DB}.{table} ADD {definition}")
+    for table, names in (
+        (CH_TABLE, ("idx_facts_device", "idx_facts_srcip", "idx_facts_dstip")),
+        (SECURITY_TABLE, ("idx_security_device", "idx_security_srcip")),
+    ):
+        for name in names:
+            _ch_post(f"ALTER TABLE {CH_DB}.{table} MATERIALIZE INDEX {name}")
+    for table, names in (
+        (CH_TABLE, ("facts_by_src_flow_time", "facts_by_device_time")),
+        (SECURITY_TABLE, ("security_by_device_time", "security_by_source_time")),
+    ):
+        for name in names:
+            _ch_post(f"ALTER TABLE {CH_DB}.{table} MATERIALIZE PROJECTION {name}")
 
 
 def ch_insert_security(rows: list[list]) -> None:
@@ -625,13 +569,14 @@ def _ssh_env() -> dict[str, str] | None:
     return env
 
 
-def _write_status(**updates) -> None:
+def _write_status(*, reset: bool = False, **updates) -> None:
     """Atomically update non-secret live health state; failure never stops ingest."""
     state: dict = {}
-    try:
-        state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        pass
+    if not reset:
+        try:
+            state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
     state.update(updates)
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
     tmp = STATUS_FILE.with_name(f".{STATUS_FILE.name}.{os.getpid()}.tmp")
@@ -992,65 +937,121 @@ def commit_live_batch_sinks(
     security_rows: list[list],
     stream_events: list[dict[str, object]],
     *,
-    outbox: RedpandaOutbox,
+    alert_pipeline: StandaloneAlertPipeline,
     fact_sink=None,
     security_sink=None,
-) -> tuple[int, str | None]:
-    """Commit the live path with the event stream as the first delivery target.
+) -> dict[str, int]:
+    """Archive and detect one source batch before its byte checkpoint advances.
 
-    The durable outbox is written before either remote system. When Redpanda is
-    reachable, consumers receive the batch before ClickHouse archival starts.
-    A broker outage leaves the batch queued while ClickHouse still receives the
-    facts; an archive outage propagates after the stream acknowledgement so live
-    detection can continue from the already published event. The retained R230
-    source logs remain the repair source for an archive gap.
+    ReplacingMergeTree event keys make archive retries idempotent.  The alert
+    processor rolls back its in-memory windows on sink failure, so the next read
+    from the unchanged source checkpoint reproduces the same alert decisions.
     """
     fact_sink = fact_sink or ch_insert
     security_sink = security_sink or ch_insert_security
-    outbox.enqueue(stream_events)
-    published = 0
-    publish_error = None
-    try:
-        published = outbox.drain()
-    except Exception as exc:
-        publish_error = type(exc).__name__
-        print(
-            f"[live] Redpanda publish deferred ({publish_error}); batch remains in outbox",
-            file=sys.stderr,
-            flush=True,
-        )
     if fact_rows:
         fact_sink(fact_rows)
     if security_rows:
         security_sink(security_rows)
-    return published, publish_error
+    return alert_pipeline.process_batch(stream_events)
+
+
+def _build_alert_pipeline() -> StandaloneAlertPipeline:
+    pipeline = StandaloneAlertPipeline(AlertStoreConfig(
+        clickhouse_url=CH_URL,
+        clickhouse_user=CH_USER,
+        clickhouse_password=CH_PASS,
+        clickhouse_database=CH_DB,
+        alert_directory=ALERT_DIRECTORY,
+        detection_policy=DetectionPolicy(
+            deny_window_seconds=int(_env("AUTOPOIESIS_DENY_WINDOW_SECONDS", "60")),
+            deny_threshold=int(_env("AUTOPOIESIS_DENY_THRESHOLD", "30")),
+            byte_window_seconds=int(_env("AUTOPOIESIS_BYTE_WINDOW_SECONDS", "300")),
+            byte_threshold=int(_env("AUTOPOIESIS_BYTE_THRESHOLD", "20000000")),
+            auth_window_seconds=int(_env("AUTOPOIESIS_AUTH_WINDOW_SECONDS", "60")),
+            auth_failure_threshold=int(_env("AUTOPOIESIS_AUTH_FAILURE_THRESHOLD", "12")),
+            auth_distinct_source_threshold=int(
+                _env("AUTOPOIESIS_AUTH_DISTINCT_SOURCE_THRESHOLD", "5")
+            ),
+            cooldown_seconds=int(_env("AUTOPOIESIS_ALERT_COOLDOWN_SECONDS", "60")),
+        ),
+    ))
+    pipeline.ensure_schema()
+    return pipeline
+
+
+def _warm_alert_pipeline(
+    pipeline: StandaloneAlertPipeline,
+    checkpoint: dict[str, str | int],
+) -> int:
+    """Replay source bytes before the checkpoint to preserve windows across restart."""
+    if ALERT_WARMUP_BYTES <= 0:
+        return 0
+    file_id = str(checkpoint["source_file_id"])
+    offset = int(checkpoint["source_offset_bytes"])
+    if offset <= 0:
+        return 0
+    current = _source_position()
+    if str(current["source_file_id"]) == file_id:
+        path = R230_LOG
+    else:
+        path = _find_source_file(file_id)
+        if path is None:
+            return 0
+    start = max(0, offset - ALERT_WARMUP_BYTES)
+    count = offset - start
+    command = (
+        f"tail -c +{start + 1} -- {shlex.quote(path)} | "
+        f"head -c {count}"
+    )
+    process = subprocess.Popen(
+        _ssh_cmd(command),
+        env=_ssh_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    accepted = 0
+    first = True
+    assert process.stdout is not None
+    for raw in process.stdout:
+        if first and start > 0:
+            first = False
+            continue
+        first = False
+        event = parse_stream_event(raw.decode("utf-8", errors="ignore"), "real")
+        if event is not None:
+            accepted += pipeline.warmup((event,))
+    _stdout, stderr = process.communicate()
+    if process.returncode != 0:
+        detail = stderr.decode("utf-8", errors="ignore").strip()
+        raise RecoverableSSHError(
+            f"detector warmup exited with status {process.returncode}: {detail}"
+        )
+    return accepted
 
 
 def live() -> None:
-    """Read the current log from a durable position into both production sinks."""
+    """Read the current log into archival tables and the in-process detector."""
     create_facts_table()
     create_security_events_table()
+    alert_pipeline = _build_alert_pipeline()
     provenance = _env("SECURITY_EVENTS_PROVENANCE", "real")
-    outbox = RedpandaOutbox()
     print(f"[live] polling {R230_LOG} from {CHECKPOINT_FILE}", flush=True)
     started_at = datetime.now(timezone.utc).isoformat()
     rows_since_start = 0
     security_rows_since_start = 0
-    stream_rows_since_start = 0
     reconnect_count = 0
-    queued_batches, queued_bytes = outbox.pending()
     _write_status(
+        reset=True,
         mode="live",
         source_mode="checkpoint_poll",
+        event_processing="in_process",
         pid=os.getpid(),
         started_at=started_at,
         rows_inserted_since_start=0,
         security_rows_inserted_since_start=0,
-        stream_rows_published_since_start=0,
-        stream_publish_enabled=outbox.enabled,
-        stream_topic=outbox.topic if outbox.enabled else None,
-        stream_queued_batches=queued_batches,
-        stream_queued_bytes=queued_bytes,
+        **alert_pipeline.status(),
         reconnect_count=0,
         ssh_connection="connecting",
         ssh_pid=None,
@@ -1062,35 +1063,37 @@ def live() -> None:
         security_rows: list[list],
         stream_events: list[dict[str, object]],
     ) -> None:
-        nonlocal rows_since_start, security_rows_since_start, stream_rows_since_start
-        published, publish_error = commit_live_batch_sinks(
+        nonlocal rows_since_start, security_rows_since_start
+        batch_result = commit_live_batch_sinks(
             fact_rows,
             security_rows,
             stream_events,
-            outbox=outbox,
+            alert_pipeline=alert_pipeline,
         )
         rows_since_start += len(fact_rows)
         security_rows_since_start += len(security_rows)
-        stream_rows_since_start += published
-        queued_batches, queued_bytes = outbox.pending()
         now = datetime.now(timezone.utc).isoformat()
+        status_updates = {
+            "rows_inserted_since_start": rows_since_start,
+            "last_batch_rows": len(fact_rows),
+            "security_rows_inserted_since_start": security_rows_since_start,
+            "security_last_batch_rows": len(security_rows),
+            **alert_pipeline.status(),
+            "detector_last_batch_events": batch_result["events_seen"],
+            "detector_last_batch_accepted": batch_result["events_accepted"],
+            "detector_last_batch_rejected": batch_result["events_rejected"],
+            "detector_last_batch_alerts": batch_result["alerts_persisted"],
+        }
+        if fact_rows:
+            status_updates["last_insert_at"] = now
+        if security_rows:
+            status_updates["security_last_insert_at"] = now
         _write_status(
-            rows_inserted_since_start=rows_since_start,
-            last_insert_at=now if fact_rows else None,
-            last_batch_rows=len(fact_rows),
-            security_rows_inserted_since_start=security_rows_since_start,
-            security_last_insert_at=now if security_rows else None,
-            security_last_batch_rows=len(security_rows),
-            stream_rows_published_since_start=stream_rows_since_start,
-            stream_last_publish_at=now if published else None,
-            stream_last_batch_rows=published,
-            stream_last_error_type=publish_error,
-            stream_queued_batches=queued_batches,
-            stream_queued_bytes=queued_bytes,
+            **status_updates,
         )
         print(
             f"[live] batch facts={len(fact_rows):,} security={len(security_rows):,} "
-            f"streamed={published:,} queued={queued_batches:,}",
+            f"events={batch_result['events_seen']:,} alerts={batch_result['alerts_persisted']:,}",
             flush=True,
         )
 
@@ -1116,6 +1119,10 @@ def live() -> None:
             checkpoint_initialized_at_eof=True,
             source_committed_offset_bytes=int(checkpoint["source_offset_bytes"]),
         )
+
+    warmed_events = _warm_alert_pipeline(alert_pipeline, checkpoint)
+    _write_status(detector_warmup_events=warmed_events)
+    print(f"[live] detector warmup accepted={warmed_events:,}", flush=True)
 
     def read_file_range(path: str, file_id: str, start_offset: int, label: str) -> None:
         # Re-check the inode inside the same SSH command. If rotation happens
@@ -1326,7 +1333,7 @@ def status() -> int:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "mode", nargs="?", choices=["backfill", "security-backfill", "live"]
+        "mode", nargs="?", choices=["backfill", "security-backfill", "live", "optimize"]
     )
     ap.add_argument("--status", action="store_true", help="report live ingest and ClickHouse freshness")
     args = ap.parse_args()
@@ -1340,5 +1347,7 @@ if __name__ == "__main__":
         backfill()
     elif args.mode == "security-backfill":
         security_backfill()
+    elif args.mode == "optimize":
+        materialize_investigation_acceleration()
     else:
         live()

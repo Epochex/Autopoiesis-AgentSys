@@ -248,7 +248,7 @@ class HybridKBRetriever:
                 self.doc_ids,
                 [self.documents[doc_id].text for doc_id in self.doc_ids],
                 model_name=self.model_name,
-                index_type="flat",
+                index_type="auto",
                 cache_key=cache_key,
             )
         except ModuleNotFoundError as exc:

@@ -1,0 +1,997 @@
+{
+  "business_value": {
+    "allProven": true,
+    "caseCount": 6,
+    "cohortPolicy": {
+      "acceptanceOnly": false,
+      "latestAcceptanceRunId": "20260907T104446Z-149231",
+      "productionCasesExcluded": 0,
+      "productionOnly": false,
+      "supersededAcceptanceCasesExcluded": 0
+    },
+    "rows": [
+      {
+        "caseIds": [
+          "case-85bc828c4190f63de22e",
+          "case-e605955492c905971a3b",
+          "case-ed917da91bc0d6d64ac2",
+          "case-9fe2eb7a73e5d8c712e2",
+          "case-58b2edbcfb6f37ef0bac",
+          "case-8e82edaa6241cc2fe1db"
+        ],
+        "eligibleCases": 6,
+        "key": "automatic_incident_takeover",
+        "measured": {
+          "scopedAutoStartedCases": 6
+        },
+        "passedCases": 6,
+        "requirement": "auto-started case has a managed asset, bounded scope and fault domain",
+        "status": "proven"
+      },
+      {
+        "caseIds": [
+          "case-85bc828c4190f63de22e",
+          "case-e605955492c905971a3b",
+          "case-ed917da91bc0d6d64ac2",
+          "case-9fe2eb7a73e5d8c712e2",
+          "case-58b2edbcfb6f37ef0bac",
+          "case-8e82edaa6241cc2fe1db"
+        ],
+        "eligibleCases": 6,
+        "key": "auditable_terminal_outcome",
+        "measured": {
+          "escalatedCases": 2,
+          "resolvedCases": 4,
+          "terminalOutcomeRate": 1.0
+        },
+        "passedCases": 6,
+        "requirement": "every auto-started case ends resolved or escalated with its durable decision",
+        "status": "proven"
+      },
+      {
+        "caseIds": [
+          "case-85bc828c4190f63de22e"
+        ],
+        "eligibleCases": 1,
+        "key": "open_fault_investigation",
+        "measured": {
+          "confirmedModelOriginRoots": 1
+        },
+        "passedCases": 1,
+        "requirement": "model-origin root is confirmed by frozen independent probes and becomes the decision",
+        "status": "proven"
+      },
+      {
+        "caseIds": [
+          "case-85bc828c4190f63de22e",
+          "case-e605955492c905971a3b",
+          "case-ed917da91bc0d6d64ac2",
+          "case-9fe2eb7a73e5d8c712e2",
+          "case-58b2edbcfb6f37ef0bac",
+          "case-8e82edaa6241cc2fe1db"
+        ],
+        "eligibleCases": 6,
+        "key": "grounded_decisions",
+        "measured": {
+          "groundedDecisionRate": 1.0
+        },
+        "passedCases": 6,
+        "requirement": "final evidence ids are the deterministic supports of the published root",
+        "status": "proven"
+      },
+      {
+        "caseIds": [
+          "case-ed917da91bc0d6d64ac2"
+        ],
+        "eligibleCases": 1,
+        "key": "faster_investigation",
+        "measured": {
+          "excludedFirstProbeBaselines": 2,
+          "excludedUnconfirmedBaselines": 0,
+          "sameCasePairsWithEarlierConfirmation": 1
+        },
+        "passedCases": 1,
+        "requirement": "same current root under equal candidate coverage, with fewer executed probes and lower measured wall time than the fixed-script control",
+        "status": "proven"
+      },
+      {
+        "caseIds": [
+          "case-e605955492c905971a3b",
+          "case-ed917da91bc0d6d64ac2",
+          "case-9fe2eb7a73e5d8c712e2",
+          "case-58b2edbcfb6f37ef0bac",
+          "case-8e82edaa6241cc2fe1db"
+        ],
+        "eligibleCases": 5,
+        "key": "action_and_recovery_readback",
+        "measured": {
+          "actionsWithTerminalReadback": 5
+        },
+        "passedCases": 5,
+        "requirement": "action-ready case ends resolved or escalated with original-system readback",
+        "status": "proven"
+      },
+      {
+        "caseIds": [
+          "case-ed917da91bc0d6d64ac2"
+        ],
+        "eligibleCases": 1,
+        "key": "recurrence_memory_value",
+        "measured": {
+          "excludedFirstProbeBaselines": 1,
+          "excludedUnconfirmedBaselines": 0,
+          "probeDeltas": [
+            5
+          ],
+          "recurrencesWithProvenSavings": 1
+        },
+        "passedCases": 1,
+        "requirement": "recurrence matches the first root and uses fewer probes; same-case ablation also passes",
+        "status": "proven"
+      }
+    ],
+    "sessionCount": 6
+  },
+  "case_count": 6,
+  "codex_call_count": 3,
+  "emergency_stop": {
+    "actor": "business-value-acceptance",
+    "fail_closed": false,
+    "paused": false,
+    "reason": "controlled loopback acceptance run",
+    "timestamp": "2026-09-07T10:44:46.839655Z"
+  },
+  "failed_recovery": {
+    "case_id": "case-e605955492c905971a3b",
+    "decision": {
+      "action": "restart_unit bvaccept-fail-149231.service",
+      "caseId": "case-e605955492c905971a3b",
+      "classification": "service_failed",
+      "disposition": "停止继续变更，保留现场并调查动作失败原因。",
+      "evidence": [
+        {
+          "evidenceId": "ev-005",
+          "label": "systemctl --failed --no-legend",
+          "observedAt": "2026-09-07T10:46:06.703482+00:00",
+          "source": "live_command",
+          "value": "● bvaccept-fail-149231.service loaded failed failed /data/Autopoiesis-AgentSys/frontend/.venv/bin/python /data/Autopoiesis-AgentSys/scripts/business_value_fault_target.py --mode always-fail --port 38641"
+        },
+        {
+          "evidenceId": "ev-006",
+          "label": "动作结果回读",
+          "observedAt": "2026-09-07T10:46:12.450499+00:00",
+          "source": "action_readback",
+          "value": "restart_unit bvaccept-fail-149231.service -> revert_unverified"
+        }
+      ],
+      "generatedAt": "2026-09-07T10:46:12.940567+00:00",
+      "headline": "动作未通过结果回读，案件已升级",
+      "impactedAssets": [
+        "bvaccept-fail-149231.service"
+      ],
+      "missingObservations": [],
+      "nextProbe": null,
+      "readback": {
+        "evidenceId": "ev-006",
+        "executionId": "rem-1483e9c414d8bb9ab64a1ab7",
+        "needsHuman": true,
+        "outcome": "revert_unverified"
+      },
+      "service": "",
+      "sessionId": "c2305b55fe1d",
+      "state": "escalated",
+      "summary": "restart_unit bvaccept-fail-149231.service 已执行，观察结果为 revert_unverified。"
+    },
+    "unit_state_after": "failed"
+  },
+  "open_root": {
+    "case_id": "case-85bc828c4190f63de22e",
+    "citations": [
+      "ev-009",
+      "ev-010"
+    ],
+    "codex_calls": [
+      {
+        "root_cause": "inconclusive",
+        "root_hypothesis_id": "",
+        "schema": "rca_analysis",
+        "verification_commands": [
+          "systemctl show bvaccept-schema-149231.service -p ExecStart --value",
+          "curl -s -m 5 http://127.0.0.1:41371/health"
+        ]
+      },
+      {
+        "root_cause": "bvaccept-schema-149231.service 以 `--mode schema-mismatch` 启动，导致端点返回 schema v1，而期望版本为 v2 [ev-007] [ev-008]。",
+        "root_hypothesis_id": "",
+        "schema": "rca_analysis",
+        "verification_commands": [
+          "systemctl show bvaccept-schema-149231.service -p ExecStart --value",
+          "curl -s -m 5 http://127.0.0.1:41371/health"
+        ]
+      },
+      {
+        "root_cause": "bvaccept-schema-149231.service 以 `--mode schema-mismatch` 启动，导致端点返回 schema v1，而期望版本为 v2 [ev-009][ev-010]。",
+        "root_hypothesis_id": "model:588240213140",
+        "schema": "rca_analysis",
+        "verification_commands": [
+          "systemctl show bvaccept-schema-149231.service -p ExecStart --value",
+          "curl -s -m 5 http://127.0.0.1:41371/health"
+        ]
+      }
+    ],
+    "decision": {
+      "action": "不执行自动动作",
+      "caseId": "case-85bc828c4190f63de22e",
+      "classification": "model:588240213140",
+      "disposition": "当前动作目录没有适用的安全操作，案件携带已确认根因转交责任人。",
+      "evidence": [
+        {
+          "evidenceId": "ev-009",
+          "label": "service_state 根因支持检查",
+          "observedAt": "2026-09-07T10:47:00.563067+00:00",
+          "source": "live_command",
+          "value": "contains '--mode schema-mismatch'，匹配=True；原始结果：{ path=/data/Autopoiesis-AgentSys/frontend/.venv/bin/python ; argv[]=/data/Autopoiesis-AgentSys/frontend/.venv/bin/python /data/Autopoiesis-\n… [略去 146 字符] …\n; stop_time=[n/a] ; pid=2847872 ; code=(null) ; status=0/0 }"
+        },
+        {
+          "evidenceId": "ev-010",
+          "label": "endpoint_state 根因支持检查",
+          "observedAt": "2026-09-07T10:47:00.802268+00:00",
+          "source": "live_command",
+          "value": "contains '\"schema_version\": \"v1\"'，匹配=True；原始结果：{\"expected_schema_version\": \"v2\", \"ready\": true, \"schema_version\": \"v1\"}"
+        }
+      ],
+      "generatedAt": "2026-09-07T10:47:18.057887+00:00",
+      "headline": "已确认：bvaccept-schema-149231.service 以 `--mode schema-mismatch` 启动，导致端点返回 schema v1，而期望版本为 v2。",
+      "impactedAssets": [
+        "bvaccept-schema-149231.service"
+      ],
+      "missingObservations": [],
+      "nextProbe": null,
+      "readback": null,
+      "service": "",
+      "sessionId": "a27f08ac16be",
+      "state": "escalated",
+      "summary": "当前只读观察完成候选原因排查，并确认该故障条件。"
+    },
+    "session_id": "a27f08ac16be"
+  },
+  "recurrence_memory": {
+    "first_case_id": "case-9fe2eb7a73e5d8c712e2",
+    "first_readback": {
+      "evidenceId": "ev-013",
+      "executionId": "rem-2d987ff8c3c32742dd02f2fa",
+      "needsHuman": false,
+      "outcome": "passed"
+    },
+    "pair": {
+      "acceptance": {
+        "business_value_proven": true,
+        "comparable_probe_outputs": true,
+        "compared_probe_count": 1,
+        "confirmation_step_delta": 2,
+        "elapsed_ms_delta": 719.041,
+        "failure_reason": null,
+        "faster_confirmation": true,
+        "fewer_executed_probes": true,
+        "lower_wall_time": true,
+        "memory_influenced_order": true,
+        "no_extra_unscoped_context": true,
+        "probe_count_delta": 5,
+        "same_confirmed_root": true,
+        "same_probe_coverage": true,
+        "wall_time_measurable": true
+      },
+      "case_id": "case-ed917da91bc0d6d64ac2",
+      "control": {
+        "candidate_probes": [
+          "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+          "df -h",
+          "dmesg -T --level err,crit,alert -x",
+          "free -m",
+          "ip -br link show",
+          "ip neigh show",
+          "ip neigh show managed-host-149231",
+          "ip route show",
+          "journalctl -p err -n 40 --no-pager --since -24h",
+          "ping -c 2 -W 2 managed-host-149231",
+          "ss -tulpn",
+          "systemctl --failed --no-legend"
+        ],
+        "confirmed_roots": [
+          "service_failed"
+        ],
+        "decisive_probe_output_fingerprints": {
+          "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+        },
+        "elapsed_ms": 1640.516,
+        "memory_enabled": false,
+        "memory_influenced_order": false,
+        "probe_count": 6,
+        "probe_order": [
+          "ip -br link show",
+          "ip route show",
+          "systemctl --failed --no-legend",
+          "df -h",
+          "free -m",
+          "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+        ],
+        "probe_output_fingerprints": {
+          "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+          "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+          "free -m": "64b9495bc70169f38dee12456bf3c6958d8169bbaafce5df4034187b8c5e08c8",
+          "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+          "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+          "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+        },
+        "retrieval_drop_count": 0,
+        "saved_probe_count": 6,
+        "selected_context_count": 0,
+        "session_id": "de4699907309",
+        "steps_to_first_confirmation": 3,
+        "strategy": "no_memory",
+        "unscoped_context_count": 0
+      },
+      "evaluated_at": "2026-09-07T10:45:54.668489+00:00",
+      "evaluation_id": "pair-f12884a8c2b7441b",
+      "fixed_script": {
+        "candidate_probes": [
+          "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+          "df -h",
+          "dmesg -T --level err,crit,alert -x",
+          "free -m",
+          "ip -br link show",
+          "ip neigh show",
+          "ip neigh show managed-host-149231",
+          "ip route show",
+          "journalctl -p err -n 40 --no-pager --since -24h",
+          "ping -c 2 -W 2 managed-host-149231",
+          "ss -tulpn",
+          "systemctl --failed --no-legend"
+        ],
+        "confirmed_roots": [
+          "service_failed"
+        ],
+        "decisive_probe_output_fingerprints": {
+          "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+        },
+        "elapsed_ms": 1507.03,
+        "memory_enabled": false,
+        "memory_influenced_order": false,
+        "probe_count": 6,
+        "probe_order": [
+          "ip -br link show",
+          "ip route show",
+          "systemctl --failed --no-legend",
+          "df -h",
+          "free -m",
+          "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+        ],
+        "probe_output_fingerprints": {
+          "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+          "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+          "free -m": "835eab6da47c125fc00a43f52f55ce3e8fc4918c23434b128314bbd213920bdd",
+          "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+          "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+          "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+        },
+        "retrieval_drop_count": 0,
+        "saved_probe_count": 6,
+        "selected_context_count": 0,
+        "session_id": "ab0a4b429dce",
+        "steps_to_first_confirmation": 3,
+        "strategy": "fixed_script",
+        "unscoped_context_count": 0
+      },
+      "fixed_script_comparison": {
+        "business_value_proven": true,
+        "comparable_probe_outputs": true,
+        "compared_probe_count": 1,
+        "confirmation_step_delta": 2,
+        "elapsed_ms_delta": 585.555,
+        "failure_reason": null,
+        "faster_confirmation": true,
+        "fewer_executed_probes": true,
+        "lower_wall_time": true,
+        "memory_influenced_order": true,
+        "no_extra_unscoped_context": true,
+        "probe_count_delta": 5,
+        "same_confirmed_root": true,
+        "same_probe_coverage": true,
+        "wall_time_measurable": true
+      },
+      "input_mode": "fresh_probe_pair",
+      "observation_lag_seconds": 3.316,
+      "recurrence": {
+        "confirmation_step_delta": 2,
+        "current": {
+          "candidate_probes": [
+            "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+            "df -h",
+            "dmesg -T --level err,crit,alert -x",
+            "free -m",
+            "ip -br link show",
+            "ip neigh show",
+            "ip neigh show managed-host-149231",
+            "ip route show",
+            "journalctl -p err -n 40 --no-pager --since -24h",
+            "ping -c 2 -W 2 managed-host-149231",
+            "ss -tulpn",
+            "systemctl --failed --no-legend"
+          ],
+          "confirmed_roots": [
+            "service_failed"
+          ],
+          "decisive_probe_output_fingerprints": {
+            "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+          },
+          "elapsed_ms": null,
+          "memory_enabled": true,
+          "memory_influenced_order": true,
+          "probe_count": 1,
+          "probe_order": [
+            "systemctl --failed --no-legend"
+          ],
+          "probe_output_fingerprints": {
+            "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+          },
+          "retrieval_drop_count": 0,
+          "saved_probe_count": 11,
+          "selected_context_count": 1,
+          "session_id": "ce1c92a1b8d4",
+          "steps_to_first_confirmation": 1,
+          "strategy": "full_system",
+          "unscoped_context_count": 0
+        },
+        "current_case_id": "case-ed917da91bc0d6d64ac2",
+        "earlier_confirmation_than_first_incident": true,
+        "fewer_probes_than_first_incident": true,
+        "prior": {
+          "candidate_probes": [
+            "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+            "df -h",
+            "dmesg -T --level err,crit,alert -x",
+            "free -m",
+            "ip -br link show",
+            "ip neigh show",
+            "ip neigh show managed-host-149231",
+            "ip route show",
+            "journalctl -p err -n 40 --no-pager --since -24h",
+            "ping -c 2 -W 2 managed-host-149231",
+            "ss -tulpn",
+            "systemctl --failed --no-legend"
+          ],
+          "confirmed_roots": [
+            "service_failed"
+          ],
+          "decisive_probe_output_fingerprints": {
+            "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+          },
+          "elapsed_ms": null,
+          "memory_enabled": true,
+          "memory_influenced_order": false,
+          "probe_count": 6,
+          "probe_order": [
+            "ip -br link show",
+            "ip route show",
+            "systemctl --failed --no-legend",
+            "df -h",
+            "free -m",
+            "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+          ],
+          "probe_output_fingerprints": {
+            "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+            "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+            "free -m": "b6561b032728e9a67bbfdc58a8cbce0fdf7bcda6c3fbeeef529b78f65a7f9efa",
+            "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+            "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+            "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+          },
+          "retrieval_drop_count": 0,
+          "saved_probe_count": 6,
+          "selected_context_count": 0,
+          "session_id": "32e5567afab2",
+          "steps_to_first_confirmation": 3,
+          "strategy": "full_system",
+          "unscoped_context_count": 0
+        },
+        "prior_case_id": "case-9fe2eb7a73e5d8c712e2",
+        "probe_delta": 5,
+        "same_confirmed_root": true,
+        "signature": "bab0ef75f8800aa303e7"
+      },
+      "recurrence_value_proven": true,
+      "repetitions_per_strategy": 3,
+      "stable_roots_by_strategy": {
+        "fixed_script": true,
+        "full_system": true,
+        "no_memory": true
+      },
+      "strategy_samples": {
+        "fixed_script": [
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 1585.42,
+            "memory_enabled": false,
+            "memory_influenced_order": false,
+            "probe_count": 6,
+            "probe_order": [
+              "ip -br link show",
+              "ip route show",
+              "systemctl --failed --no-legend",
+              "df -h",
+              "free -m",
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+            ],
+            "probe_output_fingerprints": {
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+              "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+              "free -m": "17efa35afb93ebd832d0d7d28deffdf6ded0a3db37b0ae99e9865f1f3842a565",
+              "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+              "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 6,
+            "selected_context_count": 0,
+            "session_id": "ef46c9732442",
+            "steps_to_first_confirmation": 3,
+            "strategy": "fixed_script",
+            "unscoped_context_count": 0
+          },
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 1507.03,
+            "memory_enabled": false,
+            "memory_influenced_order": false,
+            "probe_count": 6,
+            "probe_order": [
+              "ip -br link show",
+              "ip route show",
+              "systemctl --failed --no-legend",
+              "df -h",
+              "free -m",
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+            ],
+            "probe_output_fingerprints": {
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+              "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+              "free -m": "835eab6da47c125fc00a43f52f55ce3e8fc4918c23434b128314bbd213920bdd",
+              "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+              "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 6,
+            "selected_context_count": 0,
+            "session_id": "ab0a4b429dce",
+            "steps_to_first_confirmation": 3,
+            "strategy": "fixed_script",
+            "unscoped_context_count": 0
+          },
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 1373.926,
+            "memory_enabled": false,
+            "memory_influenced_order": false,
+            "probe_count": 6,
+            "probe_order": [
+              "ip -br link show",
+              "ip route show",
+              "systemctl --failed --no-legend",
+              "df -h",
+              "free -m",
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+            ],
+            "probe_output_fingerprints": {
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+              "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+              "free -m": "173c0576197088f619c127ff49358923d4f53126cd32be86410fba78fc3c976a",
+              "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+              "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 6,
+            "selected_context_count": 0,
+            "session_id": "758c6ae98659",
+            "steps_to_first_confirmation": 3,
+            "strategy": "fixed_script",
+            "unscoped_context_count": 0
+          }
+        ],
+        "full_system": [
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 836.854,
+            "memory_enabled": true,
+            "memory_influenced_order": true,
+            "probe_count": 1,
+            "probe_order": [
+              "systemctl --failed --no-legend"
+            ],
+            "probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 11,
+            "selected_context_count": 1,
+            "session_id": "b4d45324e28b",
+            "steps_to_first_confirmation": 1,
+            "strategy": "full_system",
+            "unscoped_context_count": 0
+          },
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 981.433,
+            "memory_enabled": true,
+            "memory_influenced_order": true,
+            "probe_count": 1,
+            "probe_order": [
+              "systemctl --failed --no-legend"
+            ],
+            "probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 11,
+            "selected_context_count": 1,
+            "session_id": "de8f6d4f0e87",
+            "steps_to_first_confirmation": 1,
+            "strategy": "full_system",
+            "unscoped_context_count": 0
+          },
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 921.475,
+            "memory_enabled": true,
+            "memory_influenced_order": true,
+            "probe_count": 1,
+            "probe_order": [
+              "systemctl --failed --no-legend"
+            ],
+            "probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 11,
+            "selected_context_count": 1,
+            "session_id": "a83066b48ed8",
+            "steps_to_first_confirmation": 1,
+            "strategy": "full_system",
+            "unscoped_context_count": 0
+          }
+        ],
+        "no_memory": [
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 1424.87,
+            "memory_enabled": false,
+            "memory_influenced_order": false,
+            "probe_count": 6,
+            "probe_order": [
+              "ip -br link show",
+              "ip route show",
+              "systemctl --failed --no-legend",
+              "df -h",
+              "free -m",
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+            ],
+            "probe_output_fingerprints": {
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+              "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+              "free -m": "64b9495bc70169f38dee12456bf3c6958d8169bbaafce5df4034187b8c5e08c8",
+              "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+              "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 6,
+            "selected_context_count": 0,
+            "session_id": "02bfbab8a4c6",
+            "steps_to_first_confirmation": 3,
+            "strategy": "no_memory",
+            "unscoped_context_count": 0
+          },
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 1905.301,
+            "memory_enabled": false,
+            "memory_influenced_order": false,
+            "probe_count": 6,
+            "probe_order": [
+              "ip -br link show",
+              "ip route show",
+              "systemctl --failed --no-legend",
+              "df -h",
+              "free -m",
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+            ],
+            "probe_output_fingerprints": {
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+              "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+              "free -m": "f074a18ee3caec25d6b28b2e97e4cc08f56bf0395f5305ef3e38c492f3d0a7ac",
+              "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+              "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 6,
+            "selected_context_count": 0,
+            "session_id": "d3a4d6895d9b",
+            "steps_to_first_confirmation": 3,
+            "strategy": "no_memory",
+            "unscoped_context_count": 0
+          },
+          {
+            "candidate_probes": [
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+              "df -h",
+              "dmesg -T --level err,crit,alert -x",
+              "free -m",
+              "ip -br link show",
+              "ip neigh show",
+              "ip neigh show managed-host-149231",
+              "ip route show",
+              "journalctl -p err -n 40 --no-pager --since -24h",
+              "ping -c 2 -W 2 managed-host-149231",
+              "ss -tulpn",
+              "systemctl --failed --no-legend"
+            ],
+            "confirmed_roots": [
+              "service_failed"
+            ],
+            "decisive_probe_output_fingerprints": {
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "elapsed_ms": 1640.516,
+            "memory_enabled": false,
+            "memory_influenced_order": false,
+            "probe_count": 6,
+            "probe_order": [
+              "ip -br link show",
+              "ip route show",
+              "systemctl --failed --no-legend",
+              "df -h",
+              "free -m",
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz"
+            ],
+            "probe_output_fingerprints": {
+              "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz": "a91cac6d7bbaa4237fb53262c2644705827cf13176e0d358ed2ad8deffae0eb2",
+              "df -h": "919c54c561a46c42e8ebdef2f0827d83900bfb99b23746305cbf9056c4de2d36",
+              "free -m": "64b9495bc70169f38dee12456bf3c6958d8169bbaafce5df4034187b8c5e08c8",
+              "ip -br link show": "5e26da32e25c42faa68867cc2f24ca79e37cd5a221b40009146de46eb30efb14",
+              "ip route show": "c041c665eec52f833c3f997734a45660285d4ee5815983654cafc450e5a52f2e",
+              "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+            },
+            "retrieval_drop_count": 0,
+            "saved_probe_count": 6,
+            "selected_context_count": 0,
+            "session_id": "de4699907309",
+            "steps_to_first_confirmation": 3,
+            "strategy": "no_memory",
+            "unscoped_context_count": 0
+          }
+        ]
+      },
+      "treatment": {
+        "candidate_probes": [
+          "curl -s -m 5 -o /dev/null -w %{http_code} http://127.0.0.1:8026/api/healthz",
+          "df -h",
+          "dmesg -T --level err,crit,alert -x",
+          "free -m",
+          "ip -br link show",
+          "ip neigh show",
+          "ip neigh show managed-host-149231",
+          "ip route show",
+          "journalctl -p err -n 40 --no-pager --since -24h",
+          "ping -c 2 -W 2 managed-host-149231",
+          "ss -tulpn",
+          "systemctl --failed --no-legend"
+        ],
+        "confirmed_roots": [
+          "service_failed"
+        ],
+        "decisive_probe_output_fingerprints": {
+          "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+        },
+        "elapsed_ms": 921.475,
+        "memory_enabled": true,
+        "memory_influenced_order": true,
+        "probe_count": 1,
+        "probe_order": [
+          "systemctl --failed --no-legend"
+        ],
+        "probe_output_fingerprints": {
+          "systemctl --failed --no-legend": "a06bb4dc7d3e271e4a5f2e9dbebc13c11b7e8b61ca9257e1fb9c3f29afc25133"
+        },
+        "retrieval_drop_count": 0,
+        "saved_probe_count": 11,
+        "selected_context_count": 1,
+        "session_id": "a83066b48ed8",
+        "steps_to_first_confirmation": 1,
+        "strategy": "full_system",
+        "unscoped_context_count": 0
+      }
+    },
+    "second_case_id": "case-ed917da91bc0d6d64ac2",
+    "second_readback": {
+      "evidenceId": "ev-008",
+      "executionId": "rem-5b6f87703676437b855f7dd3",
+      "needsHuman": false,
+      "outcome": "passed"
+    },
+    "unit_state_after": "active"
+  },
+  "run_id": "20260907T104446Z-149231",
+  "session_count": 6,
+  "successful_recovery": {
+    "first_case_id": "case-8e82edaa6241cc2fe1db",
+    "first_outcome": {
+      "evidenceId": "ev-006",
+      "executionId": "rem-69c39e4f9cbb6de38e449dbe",
+      "needsHuman": false,
+      "outcome": "passed"
+    },
+    "pair": {},
+    "second_case_id": "case-58b2edbcfb6f37ef0bac",
+    "second_outcome": {
+      "evidenceId": "ev-006",
+      "executionId": "rem-a0f9d1bcb2045ce3b27442b4",
+      "needsHuman": false,
+      "outcome": "passed"
+    },
+    "unit_state_after": "active"
+  }
+}

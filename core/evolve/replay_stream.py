@@ -1,8 +1,7 @@
 """Streaming fault-injection self-heal benchmark for the network-RCA system.
 
-This module replays representative FAULT scenarios for the six REAL R230 held-out
-cases through the isolated Redpanda topic ``autopoiesis.events.replay.v1`` and scores the
-self-heal + self-evolution loop by driving the REAL evolving stream
+This module builds representative fault scenarios for the six real held-out
+cases and scores the self-heal and self-evolution loop by driving the evolving stream
 (:func:`core.evolve.stream.run_evolving_stream`) over the same real cases.
 
 Honesty contract
@@ -17,18 +16,12 @@ Honesty contract
   production ``autopoiesis.events.raw.v1`` contract. The
   ``real_window_stats.json`` capture (top attacker/deny sources + ports), so they
   mirror the real signal without ever being replayed as current observations.
-* Replay transport uses the Autopoiesis Kafka endpoint directly. When the
-  optional client or endpoint is unavailable, it returns a structured degraded
-  result and the offline trajectory remains available.
+* Replay records remain local benchmark inputs and never enter the production
+  collector, case repository or operational memory.
 """
 from __future__ import annotations
 
 import json
-import os
-import urllib.error
-import urllib.parse
-import urllib.request
-import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Sequence
@@ -37,12 +30,6 @@ from typing import Any, Sequence
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FIXTURES = _REPO_ROOT / "domains" / "network_rca" / "fixtures" / "real"
 _MANIFEST = _FIXTURES / "manifest.json"
-
-REPLAY_TOPIC = "autopoiesis.events.replay.v1"
-
-_KAFKA_BROKERS = os.getenv("AUTOPOIESIS_KAFKA_BROKERS", "")
-_REDPANDA_PROXY_URL = os.getenv("AUTOPOIESIS_REDPANDA_PROXY_URL", "").rstrip("/")
-_REDPANDA_ADMIN_URL = os.getenv("AUTOPOIESIS_REDPANDA_ADMIN_URL", "").rstrip("/")
 
 # The production event contract (see frontend/gateway/ingest/facts_ingest.py).
 # Every replay event fills all of these, plus the honesty markers replay + case_id.
@@ -103,7 +90,6 @@ def _event(case_id: str, seq: int, **over: Any) -> dict[str, Any]:
     # Fault annotation → the REAL correlator's annotated_fault_v1 fires on ONE event
     # regardless of action type (login-failed / accept / dhcp-ack all covered), so
     # every case reaches the live pipeline instead of only the deny-flood ones.
-    # event_id (QualityGate-required) is stamped per batch in produce_replay.
     ev["fault_context"] = {"is_fault": True, "scenario": case_id, "confidence": 1.0}
     return ev
 
@@ -259,189 +245,6 @@ def _load_cases(case_ids: Sequence[str] | None = None):
         wanted = set(case_ids)
         cases = [c for c in cases if c.id in wanted]
     return cases, ground_truth
-
-
-# ── Redpanda production (best-effort; degrades gracefully) ───────────────────────
-def _kafka_types() -> tuple[Any, Any, Any]:
-    from confluent_kafka import Consumer, Producer, TopicPartition
-
-    return Consumer, Producer, TopicPartition
-
-
-def produce_replay(case_ids: Sequence[str] | None = None, topic: str = REPLAY_TOPIC) -> dict[str, Any]:
-    """Build replay events for the given (or all) real cases and produce them to `topic`.
-
-    Publishes through the Autopoiesis Kafka endpoint. Missing dependencies,
-    endpoint failures and delivery failures return a structured degraded result.
-    """
-    cases, _gt = _load_cases(case_ids)
-    events: list[dict[str, Any]] = []
-    used_cases: list[str] = []
-    for case in cases:
-        evs = case_fault_events(case)
-        events.extend(evs)
-        used_cases.append(case.id)
-
-    return produce_tagged_replay(events, used_cases, topic=topic)
-
-
-def produce_tagged_replay(
-    events: Sequence[dict[str, Any]],
-    case_ids: Sequence[str],
-    *,
-    topic: str = REPLAY_TOPIC,
-) -> dict[str, Any]:
-    """Produce already-built, honesty-tagged events through the isolated replay path.
-
-    This shared transport lets dedicated incident replays reuse the same topic and
-    graceful-degradation behavior as the benchmark replay. It rejects untagged or
-    non-simulated inputs before opening Kafka, which prevents historical fixture
-    records from being presented as current observations.
-    """
-    prepared = [dict(event) for event in events]
-    used_cases = list(case_ids)
-    for event in prepared:
-        if event.get("replay") is not True or event.get("source_kind") != "simulated":
-            return {
-                "ok": False,
-                "topic": topic,
-                "produced": 0,
-                "cases": used_cases,
-                "degraded": True,
-                "note": "replay transport accepts only replay:true simulated events",
-            }
-
-    # QualityGate drops any event without a unique non-empty event_id before the rules
-    # ever see it. Stamp a per-batch-unique id so repeat demos aren't swallowed by the
-    # correlator's dedup cache.
-    batch = uuid.uuid4().hex[:8]
-    for i, ev in enumerate(prepared):
-        ev["event_id"] = f"{ev.get('case_id', 'replay')}-{i:03d}-{batch}"
-
-    if not prepared:
-        return {
-            "ok": False, "topic": topic, "produced": 0, "cases": used_cases,
-            "degraded": True, "note": "no replay events available",
-        }
-
-    if not _REDPANDA_PROXY_URL and not _KAFKA_BROKERS:
-        return {
-            "ok": False, "topic": topic, "produced": 0, "cases": used_cases,
-            "degraded": True, "note": "no replay transport endpoint is configured",
-        }
-    try:
-        if _REDPANDA_PROXY_URL:
-            body = json.dumps({
-                "records": [
-                    {"key": event["event_id"], "value": event}
-                    for event in prepared
-                ]
-            }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            request = urllib.request.Request(
-                f"{_REDPANDA_PROXY_URL}/topics/{urllib.parse.quote(topic, safe='')}",
-                data=body,
-                method="POST",
-                headers={
-                    "Accept": "application/vnd.kafka.v2+json",
-                    "Content-Type": "application/vnd.kafka.json.v2+json",
-                },
-            )
-            with urllib.request.urlopen(request, timeout=30) as response:
-                result = json.loads(response.read().decode("utf-8"))
-            offsets = result.get("offsets") or []
-            errors = [row for row in offsets if row.get("error_code") not in (None, 0)]
-            if errors or len(offsets) != len(prepared):
-                raise RuntimeError("Redpanda HTTP proxy did not acknowledge every replay event")
-            return {
-                "ok": True, "topic": topic, "produced": len(prepared), "cases": used_cases,
-                "degraded": False,
-                "note": f"produced {len(prepared)} replay:true events for {len(used_cases)} cases to {topic}",
-            }
-
-        _Consumer, Producer, _TopicPartition = _kafka_types()
-        producer = Producer({
-            "bootstrap.servers": _KAFKA_BROKERS,
-            "enable.idempotence": True,
-            "acks": "all",
-        })
-        failures: list[str] = []
-
-        def delivered(error: Any, _message: Any) -> None:
-            if error is not None:
-                failures.append(str(error))
-
-        for event in prepared:
-            producer.produce(
-                topic,
-                key=str(event["event_id"]).encode("utf-8"),
-                value=json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-                on_delivery=delivered,
-            )
-        remaining = producer.flush(30)
-        if remaining or failures:
-            raise RuntimeError("; ".join(failures) or f"{remaining} messages unacknowledged")
-    except (ImportError, OSError, RuntimeError, ValueError, urllib.error.URLError) as exc:
-        return {
-            "ok": False, "topic": topic, "produced": 0, "cases": used_cases,
-            "degraded": True, "note": f"Replay transport unavailable: {type(exc).__name__}: {exc}",
-        }
-    return {
-        "ok": True, "topic": topic, "produced": len(prepared), "cases": used_cases,
-        "degraded": False,
-        "note": f"produced {len(prepared)} replay:true events for {len(used_cases)} cases to {topic}",
-    }
-
-
-def topic_status(topic: str = REPLAY_TOPIC) -> dict[str, Any]:
-    """Best-effort high-watermark for `topic` through the Kafka protocol.
-
-    Returns ``{"events": int|None, "degraded": bool}``; ``events`` is the summed
-    partition high-watermark, or ``None`` when the endpoint is unavailable.
-    """
-    if _REDPANDA_ADMIN_URL:
-        try:
-            request = urllib.request.Request(
-                f"{_REDPANDA_ADMIN_URL}/public_metrics",
-                headers={"Accept": "text/plain"},
-            )
-            with urllib.request.urlopen(request, timeout=15) as response:
-                metrics = response.read().decode("utf-8")
-            topic_label = f'redpanda_topic="{topic}"'
-            offsets = [
-                int(float(line.rsplit(" ", 1)[1]))
-                for line in metrics.splitlines()
-                if line.startswith("redpanda_kafka_max_offset{") and topic_label in line
-            ]
-            if not offsets:
-                raise RuntimeError("replay topic metric unavailable")
-            return {"events": sum(offsets), "degraded": False}
-        except (OSError, RuntimeError, ValueError, urllib.error.URLError):
-            return {"events": None, "degraded": True}
-
-    if not _KAFKA_BROKERS:
-        return {"events": None, "degraded": True}
-    try:
-        Consumer, _Producer, TopicPartition = _kafka_types()
-        consumer = Consumer({
-            "bootstrap.servers": _KAFKA_BROKERS,
-            "group.id": f"autopoiesis-replay-status-{uuid.uuid4().hex}",
-        })
-        try:
-            metadata = consumer.list_topics(topic=topic, timeout=10)
-            topic_metadata = metadata.topics.get(topic)
-            if topic_metadata is None or topic_metadata.error is not None:
-                raise RuntimeError("replay topic metadata unavailable")
-            total = sum(
-                consumer.get_watermark_offsets(
-                    TopicPartition(topic, partition), timeout=10, cached=False
-                )[1]
-                for partition in topic_metadata.partitions
-            )
-        finally:
-            consumer.close()
-    except (ImportError, OSError, RuntimeError):
-        return {"events": None, "degraded": True}
-    return {"events": total, "degraded": False}
 
 
 # ── the scored trajectory (REAL offline run) ────────────────────────────────────

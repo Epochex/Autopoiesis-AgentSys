@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
+import { readProductionOverviewCache, writeProductionOverviewCache } from '../production-overview-cache'
 import type {
   DataStats,
   Device,
@@ -7,14 +8,25 @@ import type {
   GraphAnalysis,
   GraphDevice,
   GraphEdge,
+  MeshNode,
   ProfilePeer,
   Subnet,
   SubnetGraph,
+  TheaterEvent,
   Topology,
 } from '../types'
 import { LiveAlerts } from './LiveAlerts'
 import { TopologyCanvas, type ProductionTopologyContext } from './TopologyCanvas'
-import type { Threat, WanThreat } from './ThreatCard'
+import { readAnalysis, type AnalysisMode } from './analysis-read'
+import { ThreatCard, type Threat, type WanThreat } from './ThreatCard'
+import type { InvestigationSourceEventInput } from './investigation-context'
+
+const Constellation3D = lazy(() => import('./Constellation3D').then((module) => ({ default: module.Constellation3D })))
+
+type ConstellationModel = {
+  links: { src: string; dst: string; relation: string; strength: number }[]
+  nodes: Record<string, { severity: string; label: string; summary: string }>
+}
 
 interface Segment {
   cidr: string
@@ -59,6 +71,10 @@ interface BoundaryRecord {
   port?: number | null
   action: string
   flows: number
+  bytes?: number
+  country?: string
+  sourceInterface?: string
+  destinationInterface?: string
   lastSeenAt: string
 }
 
@@ -72,6 +88,8 @@ interface EgressRecord {
   action: string
   flows: number
   bytes: number
+  sourceInterface?: string
+  destinationInterface?: string
   lastSeenAt?: string
 }
 
@@ -131,6 +149,8 @@ const VENDOR_MOBILE = /xiaomi|huawei|honor|oppo|vivo|oneplus|samsung|realme|meiz
 const VENDOR_WORKSTATION = /dell|lenovo|hewlett|hp inc|asus|acer|micro-star|gigabyte|intel corporate|microsoft/i
 const NAME_APPLE_PC = /macbook|imac|mac[-_ ]?mini|\bmbp\b/i
 
+// Exported for deterministic projection tests; it has no React state.
+// eslint-disable-next-line react-refresh/only-export-components
 export const classifyAsset = (asset: Asset): string => {
   if (asset.deviceClass) return asset.deviceClass
   const name = asset.name && asset.name !== asset.ip ? asset.name : ''
@@ -224,7 +244,11 @@ const forceLayout = (specs: LayoutSpec[], edges: GraphEdge[]): Map<string, { x: 
     .filter((s): s is { a: number; b: number; k: number } => s.a !== undefined && s.b !== undefined)
   const fx = new Float64Array(n)
   const fy = new Float64Array(n)
-  for (let iter = 0; iter < 160; iter += 1) {
+  // The projection runs on the browser's main thread. Large observed segments
+  // converge well before the old fixed 160 passes, while those extra passes
+  // delay first paint quadratically as the asset population grows.
+  const iterations = n > 180 ? 56 : n > 80 ? 80 : 120
+  for (let iter = 0; iter < iterations; iter += 1) {
     fx.fill(0)
     fy.fill(0)
     for (let i = 0; i < n; i += 1) {
@@ -335,15 +359,26 @@ const peerFrom = (record: BoundaryRecord, dir: 'in' | 'out'): ProfilePeer => ({
   hits: record.flows,
   accept: ['accept', 'allow', 'pass', 'close'].includes(record.action.toLowerCase()) ? record.flows : 0,
   deny: ['deny', 'blocked', 'reject'].includes(record.action.toLowerCase()) ? record.flows : 0,
-  bytes: 0,
+  bytes: record.bytes ?? 0,
   ports: record.port ? [record.port] : [],
   services: record.service ? [record.service] : [],
-  country: null,
+  country: record.country || 'Reserved',
+  segment: dir === 'out' ? record.destinationSegment : record.sourceSegment,
+  interface: dir === 'out' ? record.destinationInterface : record.sourceInterface,
+  action: record.action,
+  lastSeenAt: record.lastSeenAt ?? null,
   external: false,
   kind: 'host',
   dir,
 })
 
+const carriesUsefulTraffic = (record: Pick<BoundaryRecord, 'action' | 'bytes'>) => {
+  const denied = ['deny', 'blocked', 'reject'].includes(record.action.toLowerCase())
+  return !denied || (record.bytes ?? 0) > 0
+}
+
+// Exported for deterministic projection tests; it has no React state.
+// eslint-disable-next-line react-refresh/only-export-components
 export function projectProductionOverview(data: ProductionOverview): ProductionProjection {
   const assets = new Map(data.inventory.assets.map((asset) => [asset.ip, asset]))
   const risks = Object.fromEntries(data.riskFusion.map((risk) => [risk.asset, risk]))
@@ -395,7 +430,10 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
   const graphs: Record<string, SubnetGraph> = {}
   for (const segment of data.inventory.segments) {
     const native = data.inventory.assets.filter((asset) => asset.segment === segment.cidr)
-    const boundary = data.crossSegment.records.filter((record) => record.sourceSegment === segment.cidr || record.destinationSegment === segment.cidr)
+    const boundary = data.crossSegment.records.filter((record) =>
+      (record.sourceSegment === segment.cidr || record.destinationSegment === segment.cidr)
+      && carriesUsefulTraffic(record),
+    )
     const peerIps = [...new Set(boundary.map((record) => record.sourceSegment === segment.cidr ? record.destination : record.source))]
     const nativeIps = new Set(native.map((asset) => asset.ip))
     const peerAssets = peerIps.filter((ip) => !nativeIps.has(ip)).map((ip) => assets.get(ip) ?? ({ ip, name: ip, segment: 'cross-segment', active24h: true } as Asset))
@@ -411,7 +449,9 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
     /* Internet egress, clustered by destination: every measured private→public
      * pair from this segment rolls up into one endpoint node (country/service/
      * talker count), so N hosts sharing one destination read as one relation. */
-    const egress = (data.internetOutbound?.records ?? []).filter((record) => nativeIps.has(record.source))
+    const egress = (data.internetOutbound?.records ?? []).filter((record) =>
+      nativeIps.has(record.source) && carriesUsefulTraffic(record),
+    )
     const endpointMap = new Map<string, Endpoint>()
     for (const record of egress) {
       const endpoint = endpointMap.get(record.destination) ?? {
@@ -563,7 +603,7 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
      * measured private→public pairs with country/service, marked external so
      * the ego overlay fans them into its WAN column. */
     const egressPeers = (data.internetOutbound?.records ?? [])
-      .filter((record) => record.source === asset.ip)
+      .filter((record) => record.source === asset.ip && carriesUsefulTraffic(record))
       .map((record): ProfilePeer => ({
         ip: record.destination,
         hits: record.flows,
@@ -573,15 +613,19 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
         ports: record.port ? [record.port] : [],
         services: record.service ? [record.service] : [],
         country: record.country || null,
+        segment: null,
+        interface: record.destinationInterface ?? null,
+        action: record.action,
+        lastSeenAt: record.lastSeenAt ?? null,
         external: true,
         kind: 'host',
         dir: 'out',
       }))
     const outbound = [
-      ...data.crossSegment.records.filter((record) => record.source === asset.ip).map((record) => peerFrom(record, 'out')),
+      ...data.crossSegment.records.filter((record) => record.source === asset.ip && carriesUsefulTraffic(record)).map((record) => peerFrom(record, 'out')),
       ...egressPeers,
     ]
-    const inbound = data.crossSegment.records.filter((record) => record.destination === asset.ip).map((record) => peerFrom(record, 'in'))
+    const inbound = data.crossSegment.records.filter((record) => record.destination === asset.ip && carriesUsefulTraffic(record)).map((record) => peerFrom(record, 'in'))
     const graphDev = Object.values(graphs).flatMap((graph) => graph.devices).find((device) => device.ip === asset.ip)
     profiles[asset.ip] = {
       ok: true,
@@ -654,9 +698,70 @@ function ProductionSearch({ data, onPick, lang }: { data: ProductionOverview; on
   )
 }
 
-export function ProductionTopologyPage({ lang, onOpenCase }: { lang: Lang; onOpenCase: (subject: string, caseId?: string) => void }) {
-  const [data, setData] = useState<ProductionOverview | null>(null)
+function ProductionImpactStrip({
+  theater,
+  data,
+  lang,
+}: {
+  theater: TheaterEvent
+  data: ProductionOverview
+  lang: Lang
+}) {
+  const zh = lang === 'zh'
+  const asset = theater.anchorIp
+    ? data.inventory.assets.find((item) => item.ip === theater.anchorIp)
+    : undefined
+  const segment = asset
+    ? data.inventory.segments.find((item) => item.cidr === asset.segment)
+    : undefined
+  const scope = theater.blastScope === 'single-service'
+    ? (zh ? '单一服务' : 'SINGLE SERVICE')
+    : theater.blastScope || (zh ? '范围待核对' : 'SCOPE PENDING')
+  const boundary = theater.blastScope === 'single-service'
+    ? (zh
+        ? `边界锁定为 ${theater.device} 单一服务；承载主机和所在网段用于定位，当前链路未将其他资产列为受影响对象。`
+        : `The measured boundary is the single service ${theater.device}; the host and segment locate it, and no other asset is listed as impacted by this chain.`)
+    : theater.blastSummary || (zh ? '当前事件没有返回影响边界说明' : 'NO IMPACT BOUNDARY RECEIPT')
+  return (
+    <section className="production-impact" aria-label={zh ? '所选事件影响结论' : 'Selected event impact conclusion'}>
+      <div className="production-impact-title">
+        <span>{zh ? '所选事件影响结论' : 'SELECTED EVENT IMPACT'}</span>
+        <b>{scope}</b>
+      </div>
+      <dl>
+        <div><dt>{zh ? '故障对象' : 'FAULT OBJECT'}</dt><dd>{theater.deviceLabel || theater.device}</dd></div>
+        <div><dt>{zh ? '承载资产' : 'HOST ASSET'}</dt><dd>{asset ? `${asset.name} · ${asset.ip}` : theater.anchorIp || (zh ? '尚无资产坐标' : 'NO ASSET COORDINATE')}</dd></div>
+        <div><dt>{zh ? '所在网段' : 'SEGMENT'}</dt><dd>{segment ? `${segment.name} · ${segment.cidr}` : asset?.segment || 'N/A'}</dd></div>
+        <div className="production-impact-result"><dt>{zh ? '实测边界' : 'MEASURED BOUNDARY'}</dt><dd>{boundary}</dd></div>
+      </dl>
+    </section>
+  )
+}
+
+export function ProductionTopologyPage({
+  lang,
+  onOpenCase,
+  onTrackIncident,
+  onOpenExposure,
+  focusSubject,
+  showConstellation = false,
+  onShowConstellation,
+}: {
+  lang: Lang
+  onOpenCase: (subject: string, caseId?: string, sourceEvent?: InvestigationSourceEventInput) => void
+  onOpenExposure?: () => void
+  onTrackIncident?: (subject: string, event: TheaterEvent, caseId?: string) => void
+  focusSubject?: string
+  showConstellation?: boolean
+  onShowConstellation?: (show: boolean) => void
+}) {
+  const [data, setData] = useState<ProductionOverview | null>(
+    () => readProductionOverviewCache<ProductionOverview>(),
+  )
   const [error, setError] = useState(false)
+  const [usingCache, setUsingCache] = useState(
+    () => readProductionOverviewCache<ProductionOverview>() !== null,
+  )
   const [drillSub, setDrillSub] = useState<string | null>(null)
   const [drillDev, setDrillDev] = useState<string | null>(null)
   const [hoverDev, setHoverDev] = useState<string | null>(null)
@@ -665,23 +770,61 @@ export function ProductionTopologyPage({ lang, onOpenCase }: { lang: Lang; onOpe
   const [wan, setWan] = useState<WanThreat | null>(null)
   const [marks, setMarks] = useState<Record<string, { severity: string; verdict: string }>>({})
   const [rate, setRate] = useState<number | null>(null)
+  const [theater, setTheater] = useState<TheaterEvent | null>(null)
+  const [hover3D, setHover3D] = useState<string | null>(null)
+  const savedAnalyses = useRef(new Map<string, Threat | WanThreat | GraphAnalysis>())
+  const analysisSequence = useRef({ host: 0, wan: 0, subnet: 0 })
+  useEffect(() => {
+    const sequence = analysisSequence.current
+    return () => { sequence.host++; sequence.wan++; sequence.subnet++ }
+  }, [lang])
+  const hasData = useRef(data !== null)
+  const request = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
+    // A slow source must not allow interval ticks to stack up. In particular,
+    // every completed response used to recreate this callback (through the
+    // `data` dependency), restart the effect and immediately issue another
+    // request. That formed an unbounded request loop instead of a 10 s poll.
+    if (request.current) return
+    const controller = new AbortController()
+    request.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 12_000)
     try {
-      const response = await fetch('/api/rca/situational-overview', { headers: { Accept: 'application/json' } })
+      const response = await fetch('/api/rca/situational-overview', {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const next = await response.json() as ProductionOverview
-      setData(next)
+      const servedStale = response.headers.get('X-Autopoiesis-Cache') === 'stale'
+      if (controller.signal.aborted) return
+      hasData.current = true
+      writeProductionOverviewCache(next)
+      // Cached responses have the same observation timestamp. Preserve the
+      // object identity so the topology projection and force layout are reused.
+      setData((current) => current?.observedAt === next.observedAt ? current : next)
       setError(false)
+      setUsingCache(servedStale)
     } catch {
-      setError((current) => current || !data)
+      // Keep the last successful topology visible during transient refresh
+      // failures, but never leave a cold first load spinning indefinitely.
+      setError(!hasData.current)
+      if (hasData.current) setUsingCache(true)
+    } finally {
+      window.clearTimeout(timeout)
+      if (request.current === controller) request.current = null
     }
-  }, [data])
+  }, [])
 
   useEffect(() => {
     void load()
-    const timer = window.setInterval(() => void load(), 10_000)
-    return () => window.clearInterval(timer)
+    const timer = window.setInterval(() => void load(), 30_000)
+    return () => {
+      window.clearInterval(timer)
+      request.current?.abort()
+      request.current = null
+    }
   }, [load])
 
   useEffect(() => {
@@ -695,75 +838,160 @@ export function ProductionTopologyPage({ lang, onOpenCase }: { lang: Lang; onOpe
   }, [])
 
   const projection = useMemo(() => data ? projectProductionOverview(data) : null, [data])
+  const constellationMeshes = useMemo<Record<string, MeshNode[]>>(() => {
+    if (!projection) return {}
+    return Object.fromEntries(Object.entries(projection.graphs).map(([cidr, current]) => [
+      cidr,
+      current.devices
+        .filter((device) => device.intf === cidr)
+        .map((device) => ({
+          ip: device.ip,
+          out: device.flows,
+          deny: device.deny,
+          accept: device.accept,
+          ports: device.topPorts,
+          role: device.role,
+          threat: device.threat,
+        })),
+    ]))
+  }, [projection])
+  const constellationModel = useMemo<ConstellationModel | null>(() => {
+    if (!projection) return null
+    const visible = new Set(Object.values(constellationMeshes).flat().map((device) => device.ip))
+    const seen = new Set<string>()
+    const links: ConstellationModel['links'] = []
+    for (const current of Object.values(projection.graphs)) {
+      for (const edge of current.edges) {
+        if (!edge.observed || !visible.has(edge.src) || !visible.has(edge.dst)) continue
+        const key = [edge.src, edge.dst].sort().join('|')
+        if (seen.has(key)) continue
+        seen.add(key)
+        links.push({ src: edge.src, dst: edge.dst, relation: edge.evidence, strength: edge.weight })
+      }
+    }
+    const nodes = Object.fromEntries(Object.values(projection.graphs).flatMap((current) =>
+      current.devices.filter((device) => visible.has(device.ip)).map((device) => {
+        const risk = projection.risks[device.ip]
+        return [device.ip, {
+          severity: risk?.severity ?? device.threat,
+          label: device.name ?? device.role,
+          summary: risk?.reasons.join('；') ?? '',
+        }]
+      }),
+    ))
+    return { links, nodes }
+  }, [constellationMeshes, projection])
   const graph = drillSub && projection ? projection.graphs[drillSub] ?? null : null
   const tempo = rate == null ? 1 : Math.max(0.6, Math.min(3, rate / 12))
 
   if (!data || !projection) return <div className={`boot ${error ? 'err' : ''}`}>{error ? (lang === 'zh' ? '生产态势接口不可达' : 'PRODUCTION SITUATION UNREACHABLE') : <span className="orbit" />}</div>
 
-  const openSubnet = (subnet: Subnet | null) => {
-    setDrillSub(subnet?.cidr ?? null)
-    setDrillDev(null)
-    setThreat(null)
-    setWan(null)
-    setAnalysis(null)
+  const hostBaseline = (ip: string): Threat => {
+    const asset = data.inventory.assets.find(row => row.ip === ip)
+    const activity = asset?.activity
+    return { ip, loading: false, analysisState: 'baseline', analysisAvailable: false,
+      verdict: lang === 'zh' ? '设备生产观测' : 'Observed device activity',
+      analysis: asset ? `${asset.name} · ${asset.segment}${activity ? ` · ${activity.flows24h} ${lang === 'zh' ? '条流量记录' : 'flow records'} · ${activity.denied24h} ${lang === 'zh' ? '条拒绝记录' : 'denied records'}` : ''}` : (lang === 'zh' ? '当前资产目录未返回此设备的详细观测。' : 'The current inventory contains no detailed observations for this device.'),
+      facts: { asset: asset?.name, segment: asset?.segment, activity: activity ?? null } }
   }
-  const inspectRisk = (device: Device | null) => {
-    if (!device) { setThreat(null); return }
-    const risk = projection.risks[device.ip]
-    setThreat({
-      ip: device.ip,
-      loading: false,
-      severity: risk?.severity ?? 'low',
-      verdict: risk ? (lang === 'zh' ? '生产风险融合命中' : 'PRODUCTION RISK MATCH') : (lang === 'zh' ? '当前无风险融合命中' : 'NO CURRENT RISK MATCH'),
-      analysis: risk?.reasons.join('；') || (lang === 'zh' ? '当前生产投影中没有该资产的未关闭案件或行为偏差。' : 'No open case or behavior deviation in the current projection.'),
-      impactPeers: graph?.edges.filter((edge) => edge.src === device.ip || edge.dst === device.ip).map((edge) => ({ ip: edge.src === device.ip ? edge.dst : edge.src, relation: edge.evidence })).slice(0, 6),
-      mostLikely: risk?.reasons[0] ?? '',
-      worstCase: '',
-      recovery: { action: lang === 'zh' ? '打开关联案件核验' : 'open associated case', eta: 'operator' },
-      model: 'production evidence projection',
-    })
+  const wanBaseline = (ip: string): WanThreat => {
+    const source = data.externalSources.find(row => row.ip === ip)
+    return { ip, loading: false, analysisState: 'baseline', analysisAvailable: false, sourceMode: 'production_observed',
+      eventCount: source?.events, observedAt: source?.lastSeenAt,
+      verdict: lang === 'zh' ? '公网来源观测' : 'Observed public source',
+      campaign: source ? `${source.eventTypes.join(' · ')} · ${source.events} ${lang === 'zh' ? '条事件' : 'events'} · ${source.lastSeenAt}` : (lang === 'zh' ? '当前快照未记录此来源的事件数量。' : 'The current snapshot does not record an event count for this source.'),
+      facts: { eventTypes: source?.eventTypes ?? [], ports: source?.ports ?? [], eventCount: source?.events, observedAt: source?.lastSeenAt } }
   }
-  const inspectExternal = (ip: string) => {
-    const source = data.externalSources.find((item) => item.ip === ip)
-    if (!source) return
-    setWan({
-      ip,
-      loading: false,
-      attempts: source.events,
-      verdict: lang === 'zh' ? '生产事实流中的公网来源' : 'EXTERNAL SOURCE IN PRODUCTION FACTS',
-      severity: source.eventTypes.includes('management_exposure') ? 'critical' : source.eventTypes.includes('admin_login_failed') ? 'high' : 'medium',
-      campaign: `${source.eventTypes.join(' · ') || 'event'} · ${source.events} events · ${source.lastSeenAt}`,
-      attribution: lang === 'zh' ? '仅依据已落库事件分类' : 'landed event classification only',
-      blast: source.ports.length ? `ports ${source.ports.join(', ')}` : (lang === 'zh' ? '端口信息缺失' : 'ports unavailable'),
-      actions: [],
-      impactNodes: [],
-      model: 'production evidence projection',
-    })
-  }
-  const analyze = (cidr: string) => {
+  const subnetBaseline = (cidr: string): GraphAnalysis => {
     const current = projection.graphs[cidr]
-    const risky = current.devices.filter((device) => device.threat !== 'ok')
-    setAnalysis({
-      cidr,
-      summary: lang === 'zh'
-        ? `${current.devices.length} 个可见资产，${current.stats.observedEdges} 条实测跨区关系 + ${current.edges.length - current.stats.observedEdges} 条同目的推断，${risky.length} 个风险命中。`
-        : `${current.devices.length} visible assets, ${current.stats.observedEdges} observed boundary relations + ${current.edges.length - current.stats.observedEdges} shared-destination inferences, ${risky.length} risk matches.`,
-      communities: current.clusters.map((cluster) => ({ id: cluster.id, label: cluster.vendor, note: `${cluster.size}` })),
-      patterns: risky.map((device) => ({ title: projection.risks[device.ip]?.reasons[0] ?? 'risk match', kind: 'production-risk', members: [device.ip], why: projection.risks[device.ip]?.reasons.join('；') ?? '', severity: device.threat === 'high' ? 'high' : 'medium' })),
-      corridors: current.edges.filter((edge) => edge.observed).slice(0, 12).map((edge) => ({ src: edge.src, dst: edge.dst, why: edge.evidence })),
-      flow: 'ClickHouse facts → production topology projection',
-      blindSpot: lang === 'zh' ? '同网段横向通信需要交换机镜像、NetFlow 或端点网络探针。' : 'Same-segment movement requires switch telemetry or endpoint sensors.',
-      actions: [],
-      model: 'production evidence projection',
-    })
+    const segment = data.inventory.segments.find(row => row.cidr === cidr)
+    return { cidr, loading: false, analysisState: 'baseline', analysisAvailable: false,
+      summary: `${segment?.name ?? cidr} · ${current?.devices.length ?? segment?.assetCount ?? (lang === 'zh' ? '未知' : 'Unknown')} ${lang === 'zh' ? '台设备' : 'devices'}`,
+      facts: { assetCount: segment?.assetCount, active24h: segment?.active24h, role: segment?.role } }
+  }
+  const inspectRisk = async (device: Device | GraphDevice | null, cidr?: string, mode: AnalysisMode = 'read', force = false) => {
+    if (!device) { setThreat(null); return }
+    const ip = device.ip
+    if (cidr) setDrillSub(cidr)
+    const key = `host:${lang}:${ip}`
+    const baseline = hostBaseline(ip)
+    setThreat(current => ({ ...baseline, ...(savedAnalyses.current.get(key) as Threat | undefined), ...(current?.ip === ip ? current : {}), loading: mode === 'analyze', cacheReading: mode === 'read', error: undefined, analysisError: undefined }))
+    const sequence = ++analysisSequence.current.host
+    try {
+      const result = await readAnalysis('host', ip, lang, mode, force)
+      const next = { ...baseline, ...result, ip, loading: false, cacheReading: false }
+      savedAnalyses.current.set(key, next)
+      if (sequence === analysisSequence.current.host) setThreat(current => current?.ip === ip ? next : current)
+    } catch (error) {
+      if (sequence === analysisSequence.current.host) setThreat(current => current?.ip === ip ? { ...current, loading: false, cacheReading: false, error: error instanceof Error ? error.message : String(error) } : current)
+    }
+  }
+  const inspectExternal = async (ip: string, mode: AnalysisMode = 'read', force = false) => {
+    const key = `wan:${lang}:${ip}`
+    const baseline = wanBaseline(ip)
+    setWan(current => ({ ...baseline, ...(savedAnalyses.current.get(key) as WanThreat | undefined), ...(current?.ip === ip ? current : {}), loading: mode === 'analyze', cacheReading: mode === 'read', error: undefined, analysisError: undefined }))
+    const sequence = ++analysisSequence.current.wan
+    try {
+      const result = await readAnalysis('wan', ip, lang, mode, force)
+      const next = { ...baseline, ...result, ip, loading: false, cacheReading: false }
+      savedAnalyses.current.set(key, next)
+      if (sequence === analysisSequence.current.wan) setWan(current => current?.ip === ip ? next : current)
+    } catch (error) {
+      if (sequence === analysisSequence.current.wan) setWan(current => current?.ip === ip ? { ...current, loading: false, cacheReading: false, error: error instanceof Error ? error.message : String(error) } : current)
+    }
+  }
+  const inspectSubnet = async (cidr: string, mode: AnalysisMode = 'read', force = false) => {
+    const key = `subnet:${lang}:${cidr}`
+    const baseline = subnetBaseline(cidr)
+    setAnalysis(current => ({ ...baseline, ...(savedAnalyses.current.get(key) as GraphAnalysis | undefined), ...(current?.cidr === cidr ? current : {}), loading: mode === 'analyze', cacheReading: mode === 'read', error: undefined, analysisError: undefined }))
+    const sequence = ++analysisSequence.current.subnet
+    try {
+      const result = await readAnalysis('subnet', cidr, lang, mode, force)
+      const next = { ...baseline, ...result, cidr, loading: false, cacheReading: false }
+      savedAnalyses.current.set(key, next)
+      if (sequence === analysisSequence.current.subnet) setAnalysis(current => current?.cidr === cidr ? next : current)
+    } catch (error) {
+      if (sequence === analysisSequence.current.subnet) setAnalysis(current => current?.cidr === cidr ? { ...current, loading: false, cacheReading: false, error: error instanceof Error ? error.message : String(error) } : current)
+    }
+  }
+  const openSubnet = (subnet: Subnet | null) => {
+    setDrillSub(subnet?.cidr ?? null); setDrillDev(null); setThreat(null); setWan(null); setAnalysis(null)
+    if (subnet) void inspectSubnet(subnet.cidr)
+  }
+  const analyzeHost = (ip: string, force = false) => {
+    const device = Object.values(projection.graphs).flatMap(current => current.devices).find(row => row.ip === ip)
+    if (device) void inspectRisk(device, undefined, 'analyze', force)
   }
 
   return (
     <>
-      <LiveAlerts lang={lang} theaterActive={false} onOpen={(subject) => onOpenCase(subject)} />
-      <section className={`canvas-wrap ${threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>
-        <ProductionSearch data={data} lang={lang} onPick={(ip, cidr) => { setDrillSub(cidr); setDrillDev(ip) }} />
-        <TopologyCanvas
+      <LiveAlerts
+        lang={lang}
+        theaterActive={Boolean(theater)}
+        activeSubject={theater?.device}
+        autoOpenSubject={focusSubject}
+        onArchived={subject => { if (theater?.device === subject) setTheater(null) }}
+        onOpen={(subject, event, caseId, origin) => {
+          setTheater({ ...event, caseId: caseId ?? event.caseId })
+          if (origin !== 'focus') onTrackIncident?.(subject, event, caseId)
+          setDrillSub(null)
+          setDrillDev(null)
+          setThreat(null)
+          setWan(null)
+          setAnalysis(null)
+        }}
+      />
+      {usingCache ? (
+        <div className="production-source-state" role="status">
+          <strong>{lang === 'zh' ? '数据源状态' : 'SOURCE STATUS'}</strong>
+          <span>{lang === 'zh' ? '缓存快照' : 'CACHED SNAPSHOT'}</span>
+          <small>{lang === 'zh' ? '后台重连中，页面保留最近一次成功观测' : 'reconnecting; the latest successful observation remains visible'}</small>
+        </div>
+      ) : null}
+      {theater && theater.kind !== 'browse' ? <ProductionImpactStrip theater={theater} data={data} lang={lang} /> : null}
+      <section className={`canvas-wrap ${theater ? 'theater-mode ' : ''}${showConstellation ? 'full3d' : threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>
+        {!showConstellation ? <ProductionSearch data={data} lang={lang} onPick={(ip, cidr) => { setDrillSub(cidr); setDrillDev(ip); const device = projection.graphs[cidr]?.devices.find(row => row.ip === ip); if (device) void inspectRisk(device, cidr) }} /> : null}
+        {!showConstellation ? <TopologyCanvas
           topo={projection.topology}
           stats={projection.stats}
           activeKey="production_observed"
@@ -783,11 +1011,13 @@ export function ProductionTopologyPage({ lang, onOpenCase }: { lang: Lang; onOpe
           graphAnalysis={analysis}
           hoverDev={hoverDev}
           onHoverDev={setHoverDev}
-          onGraphAnalyze={analyze}
+          onGraphAnalyze={(cidr, force) => void inspectSubnet(cidr, 'analyze', force)}
+          onAnalyzeWan={(ip, force) => void inspectExternal(ip, 'analyze', force)}
+          onAnalyzeHost={analyzeHost}
           onCloseGraphAnalysis={() => setAnalysis(null)}
           onWan={inspectExternal}
           onCloseWan={() => setWan(null)}
-          onOpen3D={() => {}}
+          onOpen3D={() => onShowConstellation?.(true)}
           onCloseThreat={() => setThreat(null)}
           onSub={openSubnet}
           onDev={(device) => inspectRisk(device)}
@@ -799,10 +1029,68 @@ export function ProductionTopologyPage({ lang, onOpenCase }: { lang: Lang; onOpe
             }
             setMarks(next)
           }}
-          onDiagnose={() => threat && onOpenCase(threat.ip, projection.risks[threat.ip]?.caseIds[0])}
+          onDiagnose={() => {
+            if (wan) { onOpenExposure?.(); return }
+            if (theater) onOpenCase(theater.device, theater.caseId, {
+              id: theater.id,
+              kind: theater.kind,
+              observedAt: theater.ts,
+              summary: theater.summary,
+              severity: theater.severity,
+              scope: theater.scope,
+            })
+            else if (threat) {
+              const risk = projection.risks[threat.ip]
+              const caseId = risk?.caseIds[0]
+              onOpenCase(threat.ip, caseId, {
+                id: caseId,
+                kind: 'topology_risk',
+                summary: risk?.reasons[0] ?? threat.verdict,
+                severity: risk?.severity,
+                scope: risk?.segment,
+              })
+            }
+          }}
+          theater={theater}
+          allGraphs={projection.graphs}
+          onCloseTheater={() => setTheater(null)}
           production={projection.context}
-        />
+        /> : (
+          <>
+            <Suspense fallback={<div className="c3d-inline c3d-booting">3D…</div>}>
+              <Constellation3D
+                topo={projection.topology}
+                stats={projection.stats}
+                meshes={constellationMeshes}
+                model={constellationModel?.links.length ? constellationModel : null}
+                lang={lang}
+                onClose={() => {
+                  setHover3D(null)
+                  setThreat(null)
+                  onShowConstellation?.(false)
+                }}
+                onHoverIp={setHover3D}
+                onClickIp={(ip, cidr) => {
+                  setDrillSub(cidr)
+                  setDrillDev(ip)
+                  const device = projection.graphs[cidr]?.devices.find((item) => item.ip === ip)
+                  if (device) inspectRisk({
+                    ip: device.ip,
+                    flows: device.flows,
+                    deny: device.deny,
+                    accept: device.accept,
+                    threat: device.threat,
+                    top_ports: device.topPorts,
+                  }, cidr)
+                }}
+                focusCidr={null}
+              />
+            </Suspense>
+            {threat ? <div className="c3d-threat"><ThreatCard th={threat} lang={lang} onAnalyze={force => analyzeHost(threat.ip, force)} onClose={() => setThreat(null)} /></div> : null}
+          </>
+        )}
         {rate !== null ? <div className="live-rate"><span className="rate-dot" />{rate}/s · {lang === 'zh' ? '生产事实流' : 'PRODUCTION FACTS'}</div> : null}
+        {showConstellation && hover3D ? <div className="production-cache-state">{lang === 'zh' ? `当前资产 · ${hover3D}` : `ASSET · ${hover3D}`}</div> : null}
       </section>
     </>
   )

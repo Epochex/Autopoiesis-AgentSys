@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Literal, Mapping
@@ -22,6 +23,7 @@ from core.memory.postgres_scope import enter_schema, validate_schema_name
 OperationalKind = Literal["incident_dossier", "risk_pattern", "network_feature"]
 _KINDS = frozenset({"incident_dossier", "risk_pattern", "network_feature"})
 _WRITER_LOCK = 746_617_310_630_458_477
+_DEFAULT_MAX_AGGREGATE_PAYLOAD_BYTES = 8 * 1024 * 1024
 
 
 class OperationalVersionConflict(RuntimeError):
@@ -170,13 +172,21 @@ class InMemoryOperationalRepository:
             ).encode("utf-8")
         )
 
-    def load(self, kind: OperationalKind) -> list[OperationalSnapshot]:
+    def load(
+        self, kind: OperationalKind, *, limit: int | None = None,
+    ) -> list[OperationalSnapshot]:
         kind, _ = _validate_identity(kind, "load")
         with self._lock:
-            return sorted(
+            rows = sorted(
                 (row for (row_kind, _), row in self._records.items() if row_kind == kind),
                 key=lambda row: row.record_id,
             )
+        if limit is not None:
+            if limit <= 0:
+                raise ValueError("limit must be positive")
+            rows.sort(key=lambda row: (-row.updated_at.timestamp(), row.record_id))
+            rows = rows[:limit]
+        return rows
 
     def read_events(self, *, after_offset: int = 0, limit: int = 1000) -> list[OperationalEvent]:
         if after_offset < 0 or limit <= 0:
@@ -218,7 +228,15 @@ class PostgresOperationalRepository:
             raise RuntimeError(
                 "PostgreSQL persistence requires psycopg 3; install psycopg[binary]"
             ) from exc
-        connection = psycopg.connect(self._dsn)
+        connection = psycopg.connect(
+            self._dsn,
+            connect_timeout=5,
+            options=(
+                "-c statement_timeout=30000 "
+                "-c lock_timeout=5000 "
+                "-c idle_in_transaction_session_timeout=30000"
+            ),
+        )
         enter_schema(connection, self._schema)
         return connection
 
@@ -238,14 +256,28 @@ class PostgresOperationalRepository:
         kind, record_id = _validate_identity(kind, record_id)
         document = _payload(payload)
         encoded = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        encoded_bytes = encoded.encode("utf-8")
+        digest = hashlib.sha256(encoded_bytes).hexdigest()
+        if kind != "incident_dossier":
+            maximum = max(
+                1,
+                int(os.getenv(
+                    "AUTOPOIESIS_OPERATIONAL_MAX_SNAPSHOT_BYTES",
+                    str(_DEFAULT_MAX_AGGREGATE_PAYLOAD_BYTES),
+                )),
+            )
+            if len(encoded_bytes) > maximum:
+                raise ValueError(
+                    f"{kind} snapshot is {len(encoded_bytes)} bytes; limit is {maximum}"
+                )
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_xact_lock(%s)", (_WRITER_LOCK,))
                 cursor.execute(
-                    "SELECT version, updated_at, payload = %s::jsonb AS unchanged "
+                    "SELECT version, updated_at, payload_sha256 "
                     "FROM operational_memory_records "
                     "WHERE kind=%s AND record_id=%s FOR UPDATE",
-                    (encoded, kind, record_id),
+                    (kind, record_id),
                 )
                 row = cursor.fetchone()
                 current_version = int(row[0]) if row is not None else 0
@@ -254,25 +286,28 @@ class PostgresOperationalRepository:
                         f"{kind}:{record_id} expected version {expected_version}, "
                         f"current version is {current_version}"
                     )
-                # Compare inside PostgreSQL.  The aggregate risk and feature
-                # records can be tens of megabytes; selecting the old JSONB
-                # value made psycopg decode the whole document under the GIL
-                # before every refresh and starved unrelated HTTP requests.
-                if row is not None and bool(row[2]):
+                # A fixed-size digest makes unchanged writes constant-size. The
+                # previous JSONB equality query sent the entire snapshot before
+                # PostgreSQL could answer and could hold the writer transaction
+                # open indefinitely when the process was under memory pressure.
+                if row is not None and row[2] == digest:
                     return OperationalSnapshot(
                         kind, record_id, current_version, document, row[1]
                     )
                 version = current_version + 1
                 cursor.execute(
                     """
-                    INSERT INTO operational_memory_records(kind, record_id, version, payload)
-                    VALUES (%s, %s, %s, %s::jsonb)
+                    INSERT INTO operational_memory_records(
+                      kind, record_id, version, payload, payload_sha256
+                    )
+                    VALUES (%s, %s, %s, %s::jsonb, %s)
                     ON CONFLICT(kind, record_id) DO UPDATE SET
                       version=EXCLUDED.version, payload=EXCLUDED.payload,
+                      payload_sha256=EXCLUDED.payload_sha256,
                       updated_at=clock_timestamp()
                     RETURNING updated_at
                     """,
-                    (kind, record_id, version, encoded),
+                    (kind, record_id, version, encoded, digest),
                 )
                 updated_at = cursor.fetchone()[0]
                 event_encoded = json.dumps(
@@ -308,22 +343,38 @@ class PostgresOperationalRepository:
         with self._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT pg_column_size(payload) FROM operational_memory_records "
+                    # Bound the decoded document, not PostgreSQL's compressed
+                    # on-disk representation. A 33 MB JSON document can fit in
+                    # an 8 MB TOAST value and still expand several times again
+                    # as Python objects.
+                    "SELECT octet_length(payload::text) FROM operational_memory_records "
                     "WHERE kind=%s AND record_id=%s",
                     (kind, record_id),
                 )
                 row = cursor.fetchone()
         return int(row[0]) if row is not None else None
 
-    def load(self, kind: OperationalKind) -> list[OperationalSnapshot]:
+    def load(
+        self, kind: OperationalKind, *, limit: int | None = None,
+    ) -> list[OperationalSnapshot]:
         kind, _ = _validate_identity(kind, "load")
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be positive")
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT record_id, version, payload, updated_at "
-                    "FROM operational_memory_records WHERE kind=%s ORDER BY record_id",
-                    (kind,),
-                )
+                if limit is None:
+                    cursor.execute(
+                        "SELECT record_id, version, payload, updated_at "
+                        "FROM operational_memory_records WHERE kind=%s ORDER BY record_id",
+                        (kind,),
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT record_id, version, payload, updated_at "
+                        "FROM operational_memory_records WHERE kind=%s "
+                        "ORDER BY updated_at DESC, record_id LIMIT %s",
+                        (kind, limit),
+                    )
                 rows = cursor.fetchall()
         return [
             OperationalSnapshot(

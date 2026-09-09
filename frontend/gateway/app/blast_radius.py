@@ -92,8 +92,8 @@ def _unit_radius(target: str) -> dict[str, Any]:
     return {
         "scope": "single-service",
         "summary": (
-            f"只影响 {target} 这一个服务，它现在是 {active}——已经不在提供服务了。"
-            + (f" 它监听的端口：{', '.join(ports)}。" if ports else "")
+            f"影响范围：{target} 单一服务进程；当前状态：{active}。"
+            + (f" 关联监听端口：{', '.join(ports)}。" if ports else "")
         ),
         "measured": {"state": active, "ports": ports},
     }

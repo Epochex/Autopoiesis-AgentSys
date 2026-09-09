@@ -63,7 +63,13 @@
 .th-stage.is-completed .th-stage-l, .th-stage.is-completed .th-stage-n { fill: var(--ink); }
 .th-stage.is-current .th-stage-box { stroke: var(--sc, var(--ink)); stroke-width: 3; }
 .th-stage.is-current .th-stage-l, .th-stage.is-current .th-stage-n { fill: var(--sc, var(--ink)); font-weight: 700; }
+.th-stage { cursor: pointer; }
+.th-stage:focus-visible { outline: none; }
+.th-stage.is-selected .th-stage-box { stroke: var(--ink); stroke-width: 3.2; }
+.th-stage.is-selected .th-stage-l { fill: var(--ink); font-weight: 700; }
 .th-stage-done { font: 700 10px 'IBM Plex Mono', monospace; fill: var(--sc, var(--ink)); }
+.th-stage-proof { font: 600 8.5px 'IBM Plex Mono', monospace; fill: var(--ink); letter-spacing: .025em;
+  paint-order: stroke; stroke: var(--paper); stroke-width: 3px; }
 .th-rail-arm { stroke: var(--rule); stroke-width: 1.2; }
 .th-rail-arm.is-pending { opacity: .28; }
 .th-rail-arm.is-completed { stroke: var(--sc, var(--ink)); stroke-width: 1.8; }
@@ -139,6 +145,34 @@
 .th-focus-ring { fill: none; stroke: var(--acid); stroke-width: 2.4; }
 .th-dev.focus .th-dot { fill: var(--acid); stroke: var(--ink); }
 
+/* Event focus mode keeps the complete production graph available as context,
+   while giving visual weight only to the selected incident path. */
+.theater.is-incident:not(.has-origin) .th-wan { opacity: .1; }
+.theater.is-incident .th-core,
+.theater.is-incident .th-if,
+.theater.is-incident .th-stub { opacity: .32; }
+.theater.is-incident .th-cluster .th-hull-path { opacity: .12; animation: none; }
+.theater.is-incident .th-cluster .th-hull-lab { display: none; }
+.theater.is-incident .th-cluster .th-edge { opacity: .05; }
+.theater.is-incident .th-cluster .th-region { opacity: .22; }
+.theater.is-incident .th-cluster .th-region-lab { opacity: .46; }
+.theater.is-incident .th-cluster .th-dev { opacity: .14; }
+.theater.is-incident .th-cluster.is-context .th-region,
+.theater.is-incident .th-cluster.is-context .th-region-lab,
+.theater.is-incident .th-cluster.is-context .th-hulls,
+.theater.is-incident .th-cluster.is-context .th-mesh,
+.theater.is-incident .th-cluster.is-context .th-dev { display: none; }
+.theater.is-incident .th-cluster.is-related .th-region { opacity: .62; stroke-width: 1.5; }
+.theater.is-incident .th-cluster.is-related .th-region-lab { opacity: 1; font-weight: 700; }
+.theater.is-incident .th-cluster.is-related .th-dev { opacity: .18; }
+.theater.is-incident .th-cluster .th-dev.focus,
+.theater.is-incident .th-cluster .th-dev.rel,
+.theater.is-incident .th-cluster .th-dev.impact,
+.theater.is-incident .th-cluster .th-dev.busy { opacity: 1; }
+.theater.is-incident .th-cluster.is-context .th-dev { pointer-events: none; }
+.theater.is-incident .th-chain-line { stroke-width: 3; opacity: 1; }
+.theater.is-incident .th-chain-lab { font-size: 11.5px; font-weight: 700; }
+
 /* reinforced relations of the focus node — alive, not static */
 .th-edge-hot { stroke: var(--ink); stroke-width: 1.6; opacity: 0.5; stroke-dasharray: 2 4; animation: th-march 1s linear infinite; }
 .th-edge-hot.obs { opacity: 0.85; stroke-width: 2.2; stroke-dasharray: 7 4; animation: th-march 0.8s linear infinite; }
@@ -189,61 +223,61 @@
 .th-banner-meta { font-size: 9.5px; color: var(--ink); }
 .th-banner-note { font-size: 8.5px; color: var(--gray); letter-spacing: 0.05em; border-top: 1px solid var(--rule); padding-top: 5px; }
 
-/* ── 处置进度（叠在剧场里）───────────────────────────────────────────────
-   The watch window looks like a hang unless something visibly ticks, so the
-   sample count and the current phase are the two things that must move. */
-.th-rp-fo { overflow:visible; }
-.rp { max-width:100%;
-  border:1.5px solid var(--ink); background:var(--paper); padding:11px 14px 12px; }
-.rp.is-running { border-left:4px solid var(--acid); }
-.rp-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:9px; }
-.rp-k { font-family:var(--font-mono); font-size:8.5px; letter-spacing:.14em; text-transform:uppercase;
-  color:var(--gray); }
-.rp-subject { font-family:var(--font-display); font-size:15px; font-weight:700; color:var(--ink); }
-.rp-terminal { margin-left:auto; font-family:var(--font-mono); font-size:9px; font-weight:600;
-  letter-spacing:.1em; text-transform:uppercase; padding:2px 8px; border:1px solid currentColor; }
-.rp-terminal.t-resolved,.rp-terminal.t-passed { color:#12615c; }
-.rp-terminal.t-needs_human,.rp-terminal.t-revert_unverified { color:#9e2937; }
-/* Filled, not outlined: the only terminal where the system stopped on purpose
-   and nothing further will happen without a person. */
-.rp-terminal.t-escalated { color:var(--paper); background:#7a1526; border-color:#7a1526; }
-.rp-terminal.t-no_safe_action,.rp-terminal.t-declined,.rp-terminal.t-cooldown { color:#80500e; }
-.rp-terminal.t-running { color:var(--ink); background:var(--acid); border-color:var(--ink); }
-
-.rp-rail { list-style:none; display:flex; margin:0 0 9px; padding:0; gap:0; }
-.rp-phase { flex:1; display:flex; flex-direction:column; gap:3px; position:relative; padding-top:9px; }
-.rp-phase::before { content:''; position:absolute; top:3px; left:0; right:0; height:1px; background:var(--rule); }
-.rp-phase.is-done::before { background:var(--ink); }
-.rp-dot { position:absolute; top:0; left:0; width:7px; height:7px; border:1px solid var(--rule);
-  background:var(--paper); }
-.rp-phase.is-done .rp-dot { background:var(--ink); border-color:var(--ink); }
-.rp-phase.is-now .rp-dot { background:var(--acid); border-color:var(--ink); }
-.rp-phase.is-now .rp-lab { color:var(--ink); font-weight:600; }
-.rp-lab { font-family:var(--font-mono); font-size:8.5px; letter-spacing:.06em; text-transform:uppercase;
-  color:var(--gray); }
-.rp-count { font-family:var(--font-mono); font-size:9px; color:var(--ink); font-variant-numeric:tabular-nums; }
-
-.rp-line { margin:0 0 4px; font-size:11.5px; line-height:1.5; color:var(--ink-soft); }
-.rp-line span { display:inline-block; min-width:60px; font-family:var(--font-mono); font-size:8.5px;
-  letter-spacing:.1em; text-transform:uppercase; color:var(--gray); }
-.rp-hint { margin:6px 0 0; padding-top:6px; border-top:1px solid var(--rule);
-  font-size:11px; line-height:1.5; color:var(--ink-soft); }
-.rp-decision { margin-top:8px; padding:7px 9px; border-left:3px solid #80500e; background:rgba(128,80,14,.06); }
-.rp-decision strong,.rp-decision span { display:block; font-family:var(--font-mono); font-size:8.5px;
-  line-height:1.45; letter-spacing:.04em; color:#80500e; }
-.rp-decision p { margin:4px 0; font-size:10.5px; line-height:1.45; color:var(--ink); }
-.rp-recurrence { margin-top:8px; padding:8px 10px; border-left:3px solid #7a1526;
-  background:rgba(122,21,38,.055); display:grid; gap:4px; }
-.rp-recurrence strong { font-family:var(--font-mono); font-size:9px; letter-spacing:.08em;
-  color:#7a1526; text-transform:uppercase; }
-.rp-recurrence span { font-size:10.5px; line-height:1.45; color:var(--ink-soft); }
-.rp-recurrence .rp-next { margin-top:2px; padding-top:5px; border-top:1px solid rgba(122,21,38,.22);
-  color:var(--ink); }
-
-@media (prefers-reduced-motion:no-preference) {
-  .rp.is-running .rp-phase.is-now .rp-dot { animation:rp-pulse 1.4s ease-in-out infinite; }
-}
-@keyframes rp-pulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }
+/* Four-level case drilldown: stage -> record -> field -> raw value. */
+.th-drill-fo { overflow: visible; pointer-events: auto; }
+.th-drill { height: 100%; box-sizing: border-box; display: flex; flex-direction: column;
+  border: 1.5px solid var(--ink); background: var(--paper); color: var(--ink);
+  box-shadow: 5px 5px 0 rgba(13,13,13,.14); font-family: var(--font-mono); }
+.th-drill button { font: inherit; }
+.th-drill-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px 10px; border-bottom: 1px solid var(--ink); }
+.th-drill-head > div { display: grid; gap: 3px; min-width: 0; }
+.th-drill-head small { color: var(--gray); font-size: 8.5px; letter-spacing: .14em; }
+.th-drill-head b { overflow: hidden; text-overflow: ellipsis; font-family: var(--font-display);
+  font-size: 17px; white-space: nowrap; }
+.th-drill-head button { flex: none; border: 1px solid var(--ink); background: var(--acid); color: var(--ink);
+  padding: 6px 9px; cursor: pointer; font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+.th-drill-meta { display: grid; gap: 3px; padding: 8px 14px; border-bottom: 1px solid var(--rule);
+  color: var(--gray); font-size: 8.5px; }
+.th-drill-meta code { color: var(--ink); }
+.th-drill-crumb { display: flex; align-items: center; gap: 6px; padding: 7px 14px;
+  border-bottom: 1px solid var(--rule); font-size: 8px; letter-spacing: .08em; }
+.th-drill-crumb span, .th-drill-crumb .is-muted { color: var(--gray); opacity: .55; }
+.th-drill-stages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--ink); }
+.th-drill-stages button { min-width: 0; display: flex; align-items: center; justify-content: space-between;
+  gap: 4px; padding: 7px 8px; border: 0; border-right: 1px solid var(--rule); background: transparent;
+  color: var(--gray); cursor: pointer; font-size: 8px; }
+.th-drill-stages button:nth-child(4n) { border-right: 0; }
+.th-drill-stages button.is-completed { color: var(--ink); }
+.th-drill-stages button.is-current { box-shadow: inset 0 -2px var(--acid); color: var(--ink); }
+.th-drill-stages button.is-selected { background: var(--ink); color: var(--paper); }
+.th-drill-stages button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th-drill-stages button small { opacity: .7; }
+.th-drill-body { display: grid; grid-template-columns: 1.08fr .92fr; min-height: 0; flex: 1 1 auto; }
+.th-drill-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--rule); }
+.th-drill-col:last-child { border-right: 0; }
+.th-drill-col h3, .th-drill-raw h3 { flex: none; margin: 0; padding: 7px 9px;
+  border-bottom: 1px solid var(--rule); font-size: 8px; letter-spacing: .1em; }
+.th-drill-col h3 small { float: right; color: var(--gray); }
+.th-drill-list, .th-drill-fields { min-height: 0; overflow: auto; }
+.th-drill-list > button, .th-drill-fields > button { display: block; width: 100%; box-sizing: border-box;
+  padding: 7px 9px; border: 0; border-bottom: 1px solid var(--rule); background: transparent;
+  color: var(--ink); cursor: pointer; text-align: left; }
+.th-drill-list > button:hover, .th-drill-fields > button:hover { background: rgba(13,13,13,.04); }
+.th-drill-list > button.is-selected, .th-drill-fields > button.is-selected { box-shadow: inset 3px 0 var(--acid); background: rgba(194,255,0,.09); }
+.th-drill-list button > span { display: flex; justify-content: space-between; gap: 7px; }
+.th-drill-list b { font-size: 8px; letter-spacing: .05em; }
+.th-drill-list time { flex: none; color: var(--gray); font-size: 7.5px; }
+.th-drill-list p { margin: 4px 0 0; font-family: var(--font-body); font-size: 10px; line-height: 1.35;
+  display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.th-drill-list button > small { display: block; margin-top: 4px; color: var(--gray); font-size: 7.5px; }
+.th-drill-fields code { display: block; overflow-wrap: anywhere; font-size: 8px; font-weight: 700; }
+.th-drill-fields span { display: block; overflow: hidden; margin-top: 3px; color: var(--gray); font-size: 8.5px;
+  text-overflow: ellipsis; white-space: nowrap; }
+.th-drill-empty { margin: 0; padding: 12px 9px; color: var(--gray); font-size: 8.5px; }
+.th-drill-raw { flex: 0 0 150px; min-height: 0; border-top: 1px solid var(--ink); }
+.th-drill-raw pre, .th-drill-raw p { box-sizing: border-box; max-height: 118px; margin: 0; padding: 8px 10px;
+  overflow: auto; color: var(--ink); font: 8.5px/1.45 var(--font-mono); white-space: pre-wrap; word-break: break-word; }
 
 /* ── incident marker: the fault, drawn on the map rather than beside it ───── */
 .th-inc-halo { fill: none; stroke: #b3243c; stroke-width: 1.2; opacity: .35; }

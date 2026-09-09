@@ -10,12 +10,10 @@ User=root
 WorkingDirectory=/data/Autopoiesis-AgentSys
 EnvironmentFile=/etc/autopoiesis.env
 Environment=PYTHONUNBUFFERED=1
+Environment=FACTS_SOURCE_POLL_SECONDS=1
 Environment=AUTOPOIESIS_CLICKHOUSE_DB=autopoiesis
 Environment=FACTS_STATUS_FILE=/run/autopoiesis-facts-ingest/status.json
-Environment=REDPANDA_PUBLISH_ENABLED=1
-Environment=REDPANDA_PROXY_URL=http://10.43.234.236:8082
-Environment=REDPANDA_TOPIC_RAW=autopoiesis.events.raw.v1
-Environment=REDPANDA_OUTBOX_DIR=/var/lib/autopoiesis-facts-ingest/outbox
+Environment=AUTOPOIESIS_ALERT_DIRECTORY=/data/autopoiesis-production/stream/alerts
 RuntimeDirectory=autopoiesis-facts-ingest
 RuntimeDirectoryMode=0750
 StateDirectory=autopoiesis-facts-ingest

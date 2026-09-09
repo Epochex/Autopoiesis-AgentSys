@@ -11,24 +11,32 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import platform
+import socket
 import statistics
 import threading
 import time
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from domains.network_rca.fortigate_api import FortiGateReadonlyAPI
 
-from .history import _CH_DB, _q
+from .history import _CH_DB, _CH_TABLE, _q
 from .investigation_cases import is_observed_case
 from .live_identity import identity_map as _live_identity_map, role_for_type
 
 
-_CACHE_TTL_SECONDS = 20.0
-_cache_lock = threading.Lock()
+SITUATIONAL_CACHE_TTL_SECONDS = 20.0
+_cache_build_lock = threading.Lock()
+_cache_state_lock = threading.Lock()
 _cache: tuple[float, dict[str, Any]] | None = None
+_CACHE_PATH = Path(os.getenv(
+    "AUTOPOIESIS_SITUATIONAL_CACHE_PATH",
+    "/data/autopoiesis-production/cache/situational-overview.json",
+))
 _DEFAULT_ROUTER_FACTORY = FortiGateReadonlyAPI.from_env
 
 _FAULT_TITLES = {
@@ -151,6 +159,28 @@ def _safe_query(query: Callable[[str], list[dict[str, Any]]], sql: str) -> list[
         return []
 
 
+def _local_host_identity() -> dict[str, str]:
+    """Identity measured on the gateway host itself.
+
+    Router fingerprints are useful for remote assets, but a migrated or cloned
+    MAC can retain another machine's hostname and OS.  For this one host we have
+    stronger evidence: its own hostname and active LAN address.
+    """
+    from .sentinel_projection import host_address
+
+    address = host_address()
+    hostname = socket.gethostname().strip()
+    return {
+        key: value
+        for key, value in {
+            "ip": address,
+            "hostname": hostname,
+            "os": platform.system() or None,
+        }.items()
+        if value
+    }
+
+
 def _router_snapshot(
     factory: Callable[..., FortiGateReadonlyAPI],
 ) -> dict[str, Any]:
@@ -172,7 +202,7 @@ def _latest_facts(query: Callable[[str], list[dict[str, Any]]]) -> dict[str, Any
     rows = _safe_query(
         query,
         f"SELECT toString(max(event_ts)) AS latest, count() AS retained "
-        f"FROM {_CH_DB}.facts",
+        f"FROM {_CH_DB}.{_CH_TABLE}",
     )
     row = rows[0] if rows else {}
     return {"latest": row.get("latest"), "retained": _number(row.get("retained"))}
@@ -181,20 +211,21 @@ def _latest_facts(query: Callable[[str], list[dict[str, Any]]]) -> dict[str, Any
 def _asset_activity(query: Callable[[str], list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return _safe_query(
         query,
-        "WITH (SELECT max(event_ts) FROM {db}.facts) AS anchor "
+        "WITH (SELECT max(event_ts) FROM {db}.{table}) AS anchor "
         "SELECT srcip, anyLast(srcname) AS srcname, anyLast(srcintf) AS srcintf, "
         "count() AS flows, sum(sentbyte + rcvdbyte) AS bytes, "
         "countIf(action='deny') AS denied, uniqExact(dstip) AS peers, "
         "groupUniqArray(8)(service) AS services, toString(max(event_ts)) AS last_seen "
-        "FROM {db}.facts WHERE event_ts >= anchor - INTERVAL 24 HOUR AND srcip != '' "
-        "GROUP BY srcip ORDER BY last_seen DESC LIMIT 2000".format(db=_CH_DB),
+        "FROM {db}.{table} WHERE event_ts >= anchor - INTERVAL 24 HOUR AND srcip != '' "
+        "AND ((sentbyte + rcvdbyte) > 0 OR action != 'deny') "
+        "GROUP BY srcip ORDER BY last_seen DESC LIMIT 2000".format(db=_CH_DB, table=_CH_TABLE),
     )
 
 
 def _behavior_rows(query: Callable[[str], list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return _safe_query(
         query,
-        "WITH (SELECT max(event_ts) FROM {db}.facts) AS anchor "
+        "WITH (SELECT max(event_ts) FROM {db}.{table}) AS anchor "
         "SELECT srcip, "
         "countIf(event_ts >= anchor - INTERVAL 24 HOUR) AS current_flows, "
         "countIf(event_ts >= anchor - INTERVAL 24 HOUR AND action='deny') AS current_denied, "
@@ -204,9 +235,10 @@ def _behavior_rows(query: Callable[[str], list[dict[str, Any]]]) -> list[dict[st
         "countIf(event_ts < anchor - INTERVAL 24 HOUR AND action='deny') / 7.0 AS baseline_denied, "
         "uniqExactIf(dstip, event_ts < anchor - INTERVAL 24 HOUR AND dstip!='') / 7.0 AS baseline_peers, "
         "toString(min(event_ts)) AS first_seen "
-        "FROM {db}.facts WHERE event_ts >= anchor - INTERVAL 8 DAY AND srcip != '' "
+        "FROM {db}.{table} WHERE event_ts >= anchor - INTERVAL 8 DAY AND srcip != '' "
+        "AND ((sentbyte + rcvdbyte) > 0 OR action != 'deny') "
         "GROUP BY srcip HAVING current_flows > 0 ORDER BY current_flows DESC LIMIT 2000".format(
-            db=_CH_DB
+            db=_CH_DB, table=_CH_TABLE
         ),
     )
 
@@ -214,15 +246,46 @@ def _behavior_rows(query: Callable[[str], list[dict[str, Any]]]) -> list[dict[st
 def _cross_segment_rows(query: Callable[[str], list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return _safe_query(
         query,
-        "WITH (SELECT max(event_ts) FROM {db}.facts) AS anchor "
+        "WITH (SELECT max(event_ts) FROM {db}.{table}) AS anchor "
         "SELECT srcip, dstip, action, srcintf, dstintf, service, dstport, "
         "anyLast(dstcountry) AS country, "
         "count() AS flows, sum(sentbyte + rcvdbyte) AS bytes, "
         "toString(min(event_ts)) AS first_seen, toString(max(event_ts)) AS last_seen "
-        "FROM {db}.facts WHERE event_ts >= anchor - INTERVAL 24 HOUR "
+        "FROM {db}.{table} WHERE event_ts >= anchor - INTERVAL 24 HOUR "
         "AND srcip != '' AND dstip != '' "
         "GROUP BY srcip,dstip,action,srcintf,dstintf,service,dstport "
-        "ORDER BY flows DESC LIMIT 2000".format(db=_CH_DB),
+        "ORDER BY flows DESC LIMIT 2000".format(db=_CH_DB, table=_CH_TABLE),
+    )
+
+
+def _internet_outbound_rows(query: Callable[[str], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Internet egress ranked separately from high-cardinality LAN denies."""
+    return _safe_query(
+        query,
+        "WITH (SELECT max(event_ts) FROM {db}.{table}) AS anchor "
+        "SELECT srcip, dstip, argMax(action, event_ts) AS action, "
+        "argMax(srcintf, event_ts) AS srcintf, argMax(dstintf, event_ts) AS dstintf, "
+        "argMax(service, event_ts) AS service, argMax(dstport, event_ts) AS dstport, "
+        "argMax(dstcountry, event_ts) AS country, "
+        "count() AS flows, sum(sentbyte + rcvdbyte) AS bytes, "
+        "toString(min(event_ts)) AS first_seen, toString(max(event_ts)) AS last_seen "
+        "FROM {db}.{table} WHERE event_ts >= anchor - INTERVAL 24 HOUR "
+        "AND srcip != '' AND dstip != '' "
+        "AND (isIPAddressInRange(srcip, '10.0.0.0/8') "
+        "OR isIPAddressInRange(srcip, '172.16.0.0/12') "
+        "OR isIPAddressInRange(srcip, '192.168.0.0/16')) "
+        "AND NOT isIPAddressInRange(dstip, '10.0.0.0/8') "
+        "AND NOT isIPAddressInRange(dstip, '172.16.0.0/12') "
+        "AND NOT isIPAddressInRange(dstip, '192.168.0.0/16') "
+        "AND NOT isIPAddressInRange(dstip, '100.64.0.0/10') "
+        "AND NOT isIPAddressInRange(dstip, '127.0.0.0/8') "
+        "AND NOT isIPAddressInRange(dstip, '169.254.0.0/16') "
+        "AND NOT isIPAddressInRange(dstip, '224.0.0.0/4') "
+        "AND ((sentbyte + rcvdbyte) > 0 OR lower(action) NOT IN ('deny', 'blocked', 'reject')) "
+        "GROUP BY srcip,dstip "
+        "ORDER BY max(event_ts) DESC /* internet_outbound */".format(
+            db=_CH_DB, table=_CH_TABLE,
+        ),
     )
 
 
@@ -243,11 +306,11 @@ def _funnel(query: Callable[[str], list[dict[str, Any]]]) -> dict[str, int]:
     rows = _safe_query(
         query,
         "SELECT "
-        "(SELECT count() FROM {db}.facts WHERE event_ts >= now() - INTERVAL 24 HOUR) AS facts, "
+        "(SELECT count() FROM {db}.{table} WHERE event_ts >= now() - INTERVAL 24 HOUR) AS facts, "
         "(SELECT uniqExact(event_id) FROM {db}.security_events WHERE provenance='real' "
         " AND event_ts >= now() - INTERVAL 24 HOUR) AS security_events, "
         "(SELECT uniqExact(alert_id) FROM {db}.alerts WHERE alert_ts >= now() - INTERVAL 24 HOUR) AS alerts".format(
-            db=_CH_DB
+            db=_CH_DB, table=_CH_TABLE
         ),
     )
     row = rows[0] if rows else {}
@@ -277,6 +340,48 @@ def _load_intel() -> tuple[dict[str, dict[str, Any]], str | None]:
                 "updatedAt": item.get("updated_at") or item.get("updatedAt"),
             }
     return indicators, str(path)
+
+
+def cached_situational_overview() -> tuple[dict[str, Any] | None, float | None]:
+    """Return the latest good projection without waiting for a source refresh."""
+    global _cache
+    with _cache_state_lock:
+        current = _cache
+    if current is not None:
+        return current[1], max(0.0, time.monotonic() - current[0])
+
+    try:
+        payload = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
+        modified_at = _CACHE_PATH.stat().st_mtime
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None, None
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        return None, None
+    age = max(0.0, time.time() - modified_at)
+    with _cache_state_lock:
+        if _cache is None:
+            _cache = (time.monotonic() - age, payload)
+        current = _cache
+    return current[1], max(0.0, time.monotonic() - current[0])
+
+
+def _persist_situational_overview(payload: dict[str, Any]) -> None:
+    """Atomically preserve one last-known-good response across deployments."""
+    temporary = _CACHE_PATH.with_name(
+        f".{_CACHE_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    try:
+        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(temporary, _CACHE_PATH)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _case_projection(repository: Any, now: datetime) -> tuple[list[Any], list[dict[str, Any]]]:
@@ -364,18 +469,42 @@ def _build(
     identity_provider: Callable[[], dict[str, Any]],
     now: datetime,
 ) -> dict[str, Any]:
-    router = _router_snapshot(router_factory)
+    # These sources are independent network/storage reads. Running them in
+    # series made one cold page wait for the sum of every source latency and
+    # multiplied the effect of a degraded source. Keep the pool local and
+    # bounded; _safe_query already degrades individual query failures to an
+    # empty result with explicit coverage/freshness fields in the response.
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix="situation-source") as executor:
+        source_futures = {
+            "router": executor.submit(_router_snapshot, router_factory),
+            "latest": executor.submit(_latest_facts, query),
+            "activity": executor.submit(_asset_activity, query),
+            "behavior": executor.submit(_behavior_rows, query),
+            "cross": executor.submit(_cross_segment_rows, query),
+            "internet": executor.submit(_internet_outbound_rows, query),
+            "external": executor.submit(_external_sources, query),
+            "funnel": executor.submit(_funnel, query),
+            "cases": executor.submit(_case_projection, repository, now),
+            "identities": executor.submit(identity_provider),
+        }
+        router = source_futures["router"].result()
+        latest = source_futures["latest"].result()
+        activity_rows = source_futures["activity"].result()
+        behavior_rows = source_futures["behavior"].result()
+        cross_rows = source_futures["cross"].result()
+        internet_rows = source_futures["internet"].result()
+        external_rows = source_futures["external"].result()
+        funnel = source_futures["funnel"].result()
+        cases, case_rows = source_futures["cases"].result()
+        try:
+            live_ids = source_futures["identities"].result() or {}
+        except Exception:
+            live_ids = {}
+
     interfaces = list(router.get("interfaces", {}).get("items") or ())
     devices = list(router.get("devices", {}).get("items") or ())
     policies = list(router.get("policies", {}).get("items") or ())
     catalog = _segment_catalog(interfaces)
-    latest = _latest_facts(query)
-    activity_rows = _asset_activity(query)
-    behavior_rows = _behavior_rows(query)
-    cross_rows = _cross_segment_rows(query)
-    external_rows = _external_sources(query)
-    funnel = _funnel(query)
-    cases, case_rows = _case_projection(repository, now)
 
     device_by_ip: dict[str, dict[str, Any]] = {}
     for item in devices:
@@ -461,7 +590,7 @@ def _build(
             "baselineDaily": {"flows": round(baseline, 1), "denied": round(base_denied, 1),
                               "peers": round(base_peers, 1)},
             "evidence": {
-                "source": f"{_CH_DB}.facts", "window": "latest 24h vs previous 7d",
+                "source": f"{_CH_DB}.{_CH_TABLE}", "window": "latest 24h vs previous 7d",
                 "firstSeenAt": row.get("first_seen"),
             },
         }
@@ -493,15 +622,17 @@ def _build(
     cross_segment.sort(key=lambda item: item["flows"], reverse=True)
     cross_segment = cross_segment[:30]
 
-    # Internet egress pairs live in the same measured rows: private source,
-    # public destination. Multicast/broadcast never qualifies (_public_ip).
+    # Internet egress has its own query budget, so LAN discovery bursts cannot
+    # crowd public destinations out of a host's traffic portrait.
     internet_outbound: list[dict[str, Any]] = []
-    for row in cross_rows:
+    for row in internet_rows:
         source = str(row.get("srcip") or "")
         destination = str(row.get("dstip") or "")
         if _private_ip(source) is None or not _public_ip(destination):
             continue
         action = str(row.get("action") or "unknown").casefold()
+        if action in {"deny", "blocked", "reject"} and _number(row.get("bytes")) <= 0:
+            continue
         internet_outbound.append({
             "id": f"egress:{source}:{destination}:{row.get('dstport')}:{action}",
             "source": source, "sourceSegment": _segment_for(source, catalog),
@@ -509,9 +640,10 @@ def _build(
             "service": str(row.get("service") or ""), "port": _number(row.get("dstport")) or None,
             "action": action, "flows": _number(row.get("flows")), "bytes": _number(row.get("bytes")),
             "lastSeenAt": row.get("last_seen"),
+            "sourceInterface": str(row.get("srcintf") or ""),
+            "destinationInterface": str(row.get("dstintf") or ""),
         })
-    internet_outbound.sort(key=lambda item: item["flows"], reverse=True)
-    internet_outbound = internet_outbound[:200]
+    internet_outbound.sort(key=lambda item: str(item.get("lastSeenAt") or ""), reverse=True)
 
     environment_findings = [
         dict(item) for item in (environment_report or {}).get("findings") or ()
@@ -585,7 +717,7 @@ def _build(
                 ), "segment": record["destinationSegment"]},
             ],
             "flows": record["flows"], "lastSeenAt": record["lastSeenAt"],
-            "evidence": {"source": f"{_CH_DB}.facts", "action": record["action"]},
+            "evidence": {"source": f"{_CH_DB}.{_CH_TABLE}", "action": record["action"]},
         })
 
     intel, intel_path = _load_intel()
@@ -653,13 +785,13 @@ def _build(
     for item in external_sources:
         event_types = set(item["eventTypes"])
         if "management_exposure" in event_types:
-            severity = "critical"
+            severity = "medium"
             title = f"公网来源 {item['ip']} 与管理端口形成成功会话记录"
         elif "admin_login_failed" in event_types:
-            severity = "high"
+            severity = "low"
             title = f"公网来源 {item['ip']} 持续尝试管理登录"
         else:
-            severity = "medium"
+            severity = "low"
             title = f"公网来源 {item['ip']} 探测管理端口"
         changes.append({
             "id": f"external:{item['ip']}", "at": item["lastSeenAt"],
@@ -675,12 +807,9 @@ def _build(
     # Live device fingerprints (hostname / vendor / OS / hardware type) from the
     # router's own inventory. MAC first — DHCP reassigns IPs — then IP. Empty maps
     # when the router is unreachable, so absence never becomes a claim.
-    try:
-        live_ids = identity_provider() or {}
-    except Exception:
-        live_ids = {}
     ids_by_mac = live_ids.get("byMac") or {}
     ids_by_ip = live_ids.get("byIp") or {}
+    local_identity = _local_host_identity()
 
     asset_rows = []
     for ip in set(device_by_ip) | set(active_by_ip):
@@ -711,6 +840,30 @@ def _build(
             device_class = role_for_type(fingerprint.get("type"))
             if device_class:
                 row["deviceClass"] = device_class
+        if ip == local_identity.get("ip"):
+            # The local readback has higher authority than a router fingerprint.
+            # This matters during host migration, where a cloned MAC can make the
+            # router attach the retired node's hostname and OS to this address.
+            conflicts = {
+                "hostname": fingerprint.get("hostname"),
+                "os": fingerprint.get("os"),
+            } if fingerprint else {}
+            conflicts = {
+                key: value for key, value in conflicts.items()
+                if value and value != local_identity.get(key)
+            }
+            if conflicts:
+                row["identityConflict"] = {
+                    "source": "fortigate-live",
+                    "reported": conflicts,
+                    "resolvedBy": "local_host_readback",
+                }
+            row["name"] = local_identity.get("hostname") or row["name"]
+            row["identity"] = {
+                "os": local_identity["os"],
+            } if local_identity.get("os") else {}
+            row["deviceClass"] = "server"
+            row["sources"] = sorted(set(row["sources"] + ["local_host_readback"]))
         asset_rows.append(row)
     asset_rows.sort(key=lambda item: (
         item["risk"] is not None, item["active24h"], str(dict(item.get("activity") or {}).get("lastSeenAt") or "")
@@ -769,22 +922,40 @@ def build_situational_overview(
     """Build and short-cache the production page contract."""
     global _cache
     use_cache = query is _q and router_factory is _DEFAULT_ROUTER_FACTORY and now is None
-    if use_cache and not refresh:
-        with _cache_lock:
-            if _cache and time.monotonic() - _cache[0] < _CACHE_TTL_SECONDS:
-                return _cache[1]
-    result = _build(
-        repository,
-        environment_report,
-        query=query,
-        router_factory=router_factory,
-        identity_provider=identity_provider,
-        now=now or datetime.now(timezone.utc),
-    )
-    if use_cache:
-        with _cache_lock:
+    if not use_cache:
+        return _build(
+            repository,
+            environment_report,
+            query=query,
+            router_factory=router_factory,
+            identity_provider=identity_provider,
+            now=now or datetime.now(timezone.utc),
+        )
+
+    # Serialize production cache fills. Previously simultaneous browser polls
+    # all missed the cache together, repeated every upstream read and retained
+    # a large response graph per worker. Waiting callers now reuse the one fill.
+    with _cache_build_lock:
+        with _cache_state_lock:
+            current = _cache
+        if not refresh and current and time.monotonic() - current[0] < SITUATIONAL_CACHE_TTL_SECONDS:
+            return current[1]
+        result = _build(
+            repository,
+            environment_report,
+            query=query,
+            router_factory=router_factory,
+            identity_provider=identity_provider,
+            now=now or datetime.now(timezone.utc),
+        )
+        with _cache_state_lock:
             _cache = (time.monotonic(), result)
-    return result
+        _persist_situational_overview(result)
+        return result
 
 
-__all__ = ["build_situational_overview"]
+__all__ = [
+    "SITUATIONAL_CACHE_TTL_SECONDS",
+    "build_situational_overview",
+    "cached_situational_overview",
+]

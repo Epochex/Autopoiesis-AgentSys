@@ -30,6 +30,7 @@ import hashlib
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -60,7 +61,7 @@ from core.investigate.network_hypotheses import (
 )
 from core.investigate.safe_exec import is_safe, run
 from core.memory.bm25 import tokenize
-from core.memory.ops_knowledge import retrieve_ops_knowledge
+from core.memory.ops_knowledge import knowledge_backend_status, retrieve_ops_knowledge
 from core.memory.store import MemoryRecord, TieredMemoryStore
 from core.trace.events import TraceEvent
 
@@ -167,7 +168,7 @@ def _device_profile_anomaly_types(subject: str | None) -> list[str]:
     try:
         from domains.network_rca.device_profile import ProfileStore
         from domains.network_rca.fortigate_stream import FortiEvent
-        from .history import _CH_DB, _q
+        from .history import _CH_DB, _CH_TABLE, _q
 
         safe_subject = ".".join(str(int(part)) for part in subject.split("."))
         if any(not 0 <= int(part) <= 255 for part in safe_subject.split(".")):
@@ -175,9 +176,9 @@ def _device_profile_anomaly_types(subject: str | None) -> list[str]:
         rows = _q(
             "SELECT event_ts, srcip, dstip, dstport, proto, action, type, subtype, "
             "srcintf, dstintf, sentbyte, rcvdbyte "
-            f"FROM {_CH_DB}.facts WHERE srcip='{safe_subject}' "
+            f"FROM {_CH_DB}.{_CH_TABLE} WHERE srcip='{safe_subject}' "
             "AND event_ts >= (SELECT max(event_ts) - INTERVAL 7 DAY "
-            f"FROM {_CH_DB}.facts WHERE srcip='{safe_subject}') "
+            f"FROM {_CH_DB}.{_CH_TABLE} WHERE srcip='{safe_subject}') "
             "ORDER BY event_ts DESC LIMIT 5001"
         )
         if not rows:
@@ -228,7 +229,7 @@ def _device_profile_anomaly_types(subject: str | None) -> list[str]:
             group_rows = _q(
                 "SELECT srcip, count() AS sessions, uniqExactIf(dstip, dstip!='') AS peers, "
                 "countIf(action='accept') AS accepted, countIf(action='deny') AS denied "
-                f"FROM {_CH_DB}.facts WHERE startsWith(srcip,'{prefix}') "
+                f"FROM {_CH_DB}.{_CH_TABLE} WHERE startsWith(srcip,'{prefix}') "
                 f"AND event_ts < toDateTime64('{cutoff}',3) "
                 f"AND event_ts >= toDateTime64('{cutoff}',3) - INTERVAL 7 DAY "
                 "GROUP BY srcip ORDER BY srcip LIMIT 256"
@@ -325,7 +326,10 @@ MAX_TURNS = 40
 # Generating a runbook over a full evidence block takes longer than a chat
 # reply. Too short a timeout does not save money — the tokens are billed
 # whether or not we wait for the answer.
-LLM_TIMEOUT_SEC = 180
+LLM_TIMEOUT_SEC = max(
+    15,
+    int(os.getenv("AUTOPOIESIS_INVESTIGATION_MODEL_TIMEOUT_SECONDS", "60")),
+)
 
 # Context budget. These exist because the naive version — send every reading in
 # full on every turn — makes a ten-turn session cost quadratically more than a
@@ -352,8 +356,23 @@ _READONLY_ADAPTER_PROBES = frozenset({
 })
 
 
+def _canonical_probe_command(command: str) -> str:
+    """Bind a model adapter request to the session-owned typed probe.
+
+    Adapter arguments and explanatory parentheticals cannot alter scope. The
+    case already owns the subject, incident window and source identifiers.
+    Shell commands keep their exact text and still pass through the allowlist.
+    """
+    requested = command.strip()
+    match = re.match(r"^(adapter:[a-z_]+)(?=$|[\s(（])", requested)
+    if match and match.group(1) in _READONLY_ADAPTER_PROBES:
+        return match.group(1)
+    return requested
+
+
 def _is_safe_probe(command: str) -> bool:
-    return command.strip() in _READONLY_ADAPTER_PROBES or is_safe(command)
+    canonical = _canonical_probe_command(command)
+    return canonical in _READONLY_ADAPTER_PROBES or is_safe(canonical)
 
 
 def _diagnostic_signal_family(command: str) -> str | None:
@@ -363,7 +382,7 @@ def _diagnostic_signal_family(command: str) -> str | None:
     but they cannot confirm an arbitrary root cause. Open-root confirmation is
     limited to tools whose output has a direct operational meaning here.
     """
-    command = command.strip()
+    command = _canonical_probe_command(command)
     if command == "adapter:case_flow_window":
         return "flow_window"
     if command == "adapter:fortigate_context":
@@ -396,7 +415,7 @@ def _diagnostic_signal_family(command: str) -> str | None:
 
 def _execute_readonly_probe(session: "Session", command: str) -> dict[str, Any]:
     """Execute one closed adapter name or delegate to the shell allowlist."""
-    command = command.strip()
+    command = _canonical_probe_command(command)
     if command not in _READONLY_ADAPTER_PROBES:
         return run(command).as_evidence(session.next_evidence_id())
     try:
@@ -420,9 +439,24 @@ def _execute_readonly_probe(session: "Session", command: str) -> dict[str, Any]:
                 session.incident_start,
                 session.incident_end,
                 managed_device=str(session.incident_facts.get("managedDevice") or ""),
-                failure_threshold=int(session.incident_facts.get("threshold") or 12),
+                failure_threshold=int(
+                    session.incident_facts.get("failureThreshold")
+                    or session.incident_facts.get("threshold")
+                    or 12
+                ),
                 distinct_source_threshold=int(
                     session.incident_facts.get("distinctSourceThreshold") or 5
+                ),
+                expected_failure_count=(
+                    int(session.incident_facts["failedLogins"])
+                    if session.incident_facts.get("failedLogins") is not None else None
+                ),
+                expected_distinct_sources=(
+                    int(session.incident_facts["distinctSources"])
+                    if session.incident_facts.get("distinctSources") is not None else None
+                ),
+                source_event_ids=tuple(
+                    session.incident_facts.get("sourceEventIds") or ()
                 ),
             )
             ok = bool(payload.get("available"))
@@ -438,7 +472,7 @@ def _execute_readonly_probe(session: "Session", command: str) -> dict[str, Any]:
         elif command == "adapter:device_history":
             from .history import device_history
 
-            payload = device_history(session.subject or "", 7, False) or {}
+            payload = device_history(session.subject or "", 7, False, fresh=True) or {}
             ok = bool(payload.get("ok", True))
         else:
             from .live_identity import live_flows
@@ -452,6 +486,14 @@ def _execute_readonly_probe(session: "Session", command: str) -> dict[str, Any]:
             "ok": ok,
             "exit_code": 0 if ok else 1,
             "source": "live_tool",
+            "source_role": str(
+                payload.get("sourceRole") or payload.get("source_role")
+                or "current_state_readback"
+            ),
+            "observed_at": str(
+                payload.get("observedAt") or payload.get("observed_at")
+                or payload.get("queriedAt") or datetime.now(timezone.utc).isoformat()
+            ),
         }
     except Exception as error:  # adapter failures stay visible as failed observations
         return {
@@ -465,11 +507,81 @@ def _execute_readonly_probe(session: "Session", command: str) -> dict[str, Any]:
 
 
 @dataclass
+class WorkingSetCheckpoint:
+    """Compact, durable state needed to continue one investigation."""
+
+    goal: str = ""
+    subgoal: str = ""
+    confirmed_hypotheses: list[dict[str, Any]] = field(default_factory=list)
+    open_hypotheses: list[dict[str, Any]] = field(default_factory=list)
+    rejected_hypotheses: list[dict[str, Any]] = field(default_factory=list)
+    decisive_evidence_ids: list[str] = field(default_factory=list)
+    tool_receipts: list[dict[str, Any]] = field(default_factory=list)
+    pending_actions: list[dict[str, Any]] = field(default_factory=list)
+    next_candidates: list[dict[str, Any]] = field(default_factory=list)
+    constraints: dict[str, Any] = field(default_factory=dict)
+    state_version: int = 0
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    transition: str = "session_opened"
+    delta: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "goal": self.goal,
+            "subgoal": self.subgoal,
+            "confirmed_hypotheses": self.confirmed_hypotheses,
+            "open_hypotheses": self.open_hypotheses,
+            "rejected_hypotheses": self.rejected_hypotheses,
+            "decisive_evidence_ids": self.decisive_evidence_ids,
+            "tool_receipts": self.tool_receipts,
+            "pending_actions": self.pending_actions,
+            "next_candidates": self.next_candidates,
+            "constraints": self.constraints,
+            "state_version": self.state_version,
+            "updated_at": self.updated_at,
+            "transition": self.transition,
+            "delta": self.delta,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any] | None,
+        *,
+        goal: str = "",
+    ) -> "WorkingSetCheckpoint":
+        raw = dict(value or {})
+        return cls(
+            goal=str(raw.get("goal") or goal),
+            subgoal=str(raw.get("subgoal") or raw.get("goal") or goal),
+            confirmed_hypotheses=list(raw.get("confirmed_hypotheses") or ()),
+            open_hypotheses=list(raw.get("open_hypotheses") or ()),
+            rejected_hypotheses=list(raw.get("rejected_hypotheses") or ()),
+            decisive_evidence_ids=list(raw.get("decisive_evidence_ids") or ()),
+            tool_receipts=list(raw.get("tool_receipts") or ()),
+            pending_actions=list(raw.get("pending_actions") or ()),
+            next_candidates=list(raw.get("next_candidates") or ()),
+            constraints=dict(raw.get("constraints") or {}),
+            state_version=max(0, int(raw.get("state_version") or 0)),
+            updated_at=str(
+                raw.get("updated_at") or datetime.now(timezone.utc).isoformat()
+            ),
+            transition=str(raw.get("transition") or "legacy_session_restored"),
+            delta=dict(raw.get("delta") or {}),
+        )
+
+
+@dataclass
 class Session:
     session_id: str
     question: str
     family: str | None
     subject: str | None
+    query_intent: str = "triage"
+    source_plan: list[str] = field(default_factory=lambda: [
+        "direct_state", "event_window", "operational_memory", "official_knowledge",
+    ])
+    query_bindings: dict[str, str] = field(default_factory=dict)
     case_id: str | None = None
     asset_ids: list[str] = field(default_factory=list)
     external_actors: list[str] = field(default_factory=list)
@@ -511,6 +623,8 @@ class Session:
     root_cause: str = ""
     analysis_citations: list[str] = field(default_factory=list)
     decision: dict[str, Any] = field(default_factory=dict)
+    working_set: WorkingSetCheckpoint | None = None
+    memory_intervention: dict[str, Any] = field(default_factory=dict)
     opened_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def next_evidence_id(self) -> str:
@@ -524,9 +638,16 @@ class Session:
         if len(self.evidence) >= MAX_EVIDENCE:
             return {"evidence_id": "", "command": command, "output": "",
                     "ok": False, "refused": "session evidence limit reached"}
+        requested_command = command.strip()
+        command = _canonical_probe_command(requested_command)
         _prepare_probe_for_command(self, command)
         item = _execute_readonly_probe(self, command)
+        if requested_command != command:
+            item["requested_command"] = requested_command
         item["at"] = datetime.now(timezone.utc).isoformat()
+        item.setdefault("source", "live_command")
+        item.setdefault("source_role", "current_state_readback")
+        item.setdefault("observed_at", item["at"])
         self.evidence.append(item)
         _record_probe_observation(self, item)
         _after_evidence(self, item)
@@ -552,7 +673,14 @@ class Session:
             "ok": bool(ok),
             "at": observed_at or datetime.now(timezone.utc).isoformat(),
             "source": source,
+            "source_role": str(
+                payload.get("sourceRole") or payload.get("source_role")
+                or "current_state_readback"
+            ),
         }
+        item["observed_at"] = str(
+            payload.get("observedAt") or payload.get("observed_at") or item["at"]
+        )
         self.evidence.append(item)
         _after_evidence(self, item)
         return item
@@ -563,6 +691,9 @@ class Session:
             "question": self.question,
             "family": self.family,
             "subject": self.subject,
+            "query_intent": self.query_intent,
+            "source_plan": self.source_plan,
+            "query_bindings": self.query_bindings,
             "case_id": self.case_id,
             "asset_ids": self.asset_ids,
             "external_actors": self.external_actors,
@@ -596,6 +727,8 @@ class Session:
             "root_cause": self.root_cause,
             "analysis_citations": self.analysis_citations,
             "decision": self.decision,
+            "working_set": self.working_set.as_dict() if self.working_set else {},
+            "memory_intervention": self.memory_intervention,
             "opened_at": self.opened_at,
         }
 
@@ -606,6 +739,11 @@ class Session:
             question=str(value.get("question") or ""),
             family=value.get("family"),
             subject=value.get("subject"),
+            query_intent=str(value.get("query_intent") or "triage"),
+            source_plan=list(value.get("source_plan") or (
+                "direct_state", "event_window", "operational_memory", "official_knowledge",
+            )),
+            query_bindings=dict(value.get("query_bindings") or {}),
             case_id=value.get("case_id"),
             asset_ids=list(value.get("asset_ids") or ()),
             external_actors=list(value.get("external_actors") or ()),
@@ -639,6 +777,11 @@ class Session:
             root_cause=str(value.get("root_cause") or ""),
             analysis_citations=list(value.get("analysis_citations") or ()),
             decision=dict(value.get("decision") or {}),
+            working_set=WorkingSetCheckpoint.from_dict(
+                value.get("working_set") if isinstance(value.get("working_set"), Mapping) else None,
+                goal=str(value.get("question") or ""),
+            ),
+            memory_intervention=dict(value.get("memory_intervention") or {}),
             opened_at=str(value.get("opened_at") or datetime.now(timezone.utc).isoformat()),
         )
 
@@ -700,6 +843,11 @@ def _after_evidence(session: Session, item: dict[str, Any]) -> None:
             event_id=f"{session.session_id}:evidence:{evidence_id}",
             status="investigating",
         )
+    _update_working_set(
+        session,
+        "evidence_collected",
+        extra_delta={"evidence_id": evidence_id, "command": item.get("command")},
+    )
     _persist_session(session)
 
 
@@ -1088,6 +1236,7 @@ def _loop_for(session: Session) -> HypothesisLoop | None:
 
 def _store_loop(session: Session, loop: HypothesisLoop) -> None:
     session.hypothesis_state = loop.state.model_dump(mode="json")
+    _update_working_set(session, "hypothesis_state_updated")
 
 
 def _initialise_hypothesis_loop(
@@ -1271,6 +1420,16 @@ def _run_next_discriminating_probe(session: Session) -> dict[str, Any] | None:
         "ok": bool(item.get("ok")),
         "at": item.get("at"),
     })
+    _update_working_set(
+        session,
+        "probe_round_completed",
+        extra_delta={
+            "probe_id": selected.probe_id,
+            "command": selected.description,
+            "evidence_id": item.get("evidence_id"),
+        },
+    )
+    _persist_session(session)
     return item
 
 
@@ -1290,6 +1449,262 @@ def _hypothesis_view(session: Session) -> dict[str, Any]:
             item.hypothesis_id for item in state.hypotheses if item.status in {"proposed", "testing"}
         ],
     }
+
+
+def _checkpoint_hypothesis(item: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "hypothesis_id": str(item.get("hypothesis_id") or ""),
+        "statement": str(item.get("statement") or ""),
+        "status": str(item.get("status") or "proposed"),
+        "supporting_evidence_ids": list(item.get("supporting_evidence_ids") or ()),
+        "opposing_evidence_ids": list(item.get("opposing_evidence_ids") or ()),
+    }
+
+
+def _checkpoint_ids(items: list[dict[str, Any]]) -> list[str]:
+    return [str(item.get("hypothesis_id") or "") for item in items]
+
+
+def _update_working_set(
+    session: Session,
+    transition: str,
+    *,
+    extra_delta: Mapping[str, Any] | None = None,
+    subgoal: str | None = None,
+) -> WorkingSetCheckpoint:
+    """Materialize the bounded continuation state after a meaningful transition."""
+    previous = session.working_set
+    view = _hypothesis_view(session)
+    hypotheses = [
+        _checkpoint_hypothesis(item)
+        for item in view.get("hypotheses") or ()
+        if isinstance(item, Mapping)
+    ]
+    confirmed = [item for item in hypotheses if item["status"] == "confirmed"]
+    rejected = [item for item in hypotheses if item["status"] == "rejected"]
+    open_items = [
+        item for item in hypotheses if item["status"] in {"proposed", "testing"}
+    ]
+    decisive_ids = list(dict.fromkeys(
+        str(evidence_id)
+        for item in [*confirmed, *rejected]
+        for key in ("supporting_evidence_ids", "opposing_evidence_ids")
+        for evidence_id in item.get(key) or ()
+        if evidence_id
+    ))
+    receipts = [
+        {
+            "evidence_id": str(item.get("evidence_id") or ""),
+            "command": str(item.get("command") or ""),
+            "ok": bool(item.get("ok")),
+            "source": str(item.get("source") or "unknown"),
+            "observed_at": str(item.get("observed_at") or item.get("at") or ""),
+            "output_fingerprint": hashlib.sha256(
+                str(item.get("output") or "").encode("utf-8")
+            ).hexdigest(),
+        }
+        for item in session.evidence[-32:]
+        if item.get("evidence_id")
+    ]
+    pending_actions = [
+        {
+            "kind": "runbook_step",
+            "step": item.get("n"),
+            "command": item.get("command"),
+            "risk": item.get("risk"),
+        }
+        for item in session.runbook
+        if not item.get("runnable")
+    ]
+    if session.decision.get("state") == "action_ready" and session.decision.get("action"):
+        pending_actions.append({
+            "kind": "business_action",
+            "action": session.decision.get("action"),
+            "classification": session.decision.get("classification"),
+        })
+    next_candidates = [
+        {
+            "probe_id": str(item.get("probe_id") or ""),
+            "command": str(item.get("description") or ""),
+            "distinguishes": list(item.get("distinguishes_hypothesis_ids") or ()),
+        }
+        for item in view.get("probes") or ()
+        if isinstance(item, Mapping) and item.get("status") == "available"
+    ]
+    next_probe = str(session.decision.get("nextProbe") or "")
+    if next_probe and next_probe not in {item["command"] for item in next_candidates}:
+        next_candidates.insert(0, {
+            "probe_id": "business-decision-next-probe",
+            "command": next_probe,
+            "distinguishes": [],
+        })
+
+    previous_confirmed = _checkpoint_ids(previous.confirmed_hypotheses) if previous else []
+    previous_open = _checkpoint_ids(previous.open_hypotheses) if previous else []
+    previous_rejected = _checkpoint_ids(previous.rejected_hypotheses) if previous else []
+    previous_decisive = set(previous.decisive_evidence_ids) if previous else set()
+    previous_receipts = {
+        str(item.get("evidence_id") or "") for item in previous.tool_receipts
+    } if previous else set()
+    delta: dict[str, Any] = {
+        "transition": transition,
+        "previous_state_version": previous.state_version if previous else 0,
+        "confirmed_added": [item for item in _checkpoint_ids(confirmed) if item not in previous_confirmed],
+        "confirmed_removed": [item for item in previous_confirmed if item not in _checkpoint_ids(confirmed)],
+        "open_added": [item for item in _checkpoint_ids(open_items) if item not in previous_open],
+        "open_removed": [item for item in previous_open if item not in _checkpoint_ids(open_items)],
+        "rejected_added": [item for item in _checkpoint_ids(rejected) if item not in previous_rejected],
+        "decisive_evidence_added": [item for item in decisive_ids if item not in previous_decisive],
+        "tool_receipts_added": [
+            item["evidence_id"] for item in receipts
+            if item["evidence_id"] not in previous_receipts
+        ],
+    }
+    if extra_delta:
+        delta.update(dict(extra_delta))
+    checkpoint = WorkingSetCheckpoint(
+        goal=session.question,
+        subgoal=(
+            subgoal
+            or (str(session.decision.get("headline") or "") if session.decision else "")
+            or (previous.subgoal if previous else "")
+            or session.question
+        ),
+        confirmed_hypotheses=confirmed,
+        open_hypotheses=open_items,
+        rejected_hypotheses=rejected,
+        decisive_evidence_ids=decisive_ids,
+        tool_receipts=receipts,
+        pending_actions=pending_actions,
+        next_candidates=next_candidates,
+        constraints={
+            "allowed_sources": list(session.allowed_sources),
+            "source_plan": list(session.source_plan),
+            "scope_quality": session.scope_quality,
+            "scope_missing": list(session.scope_missing),
+            "query_intent": session.query_intent,
+            "memory_enabled": session.memory_enabled,
+            "safe_readonly_probe_only": True,
+            "max_evidence": MAX_EVIDENCE,
+            "max_turns": MAX_TURNS,
+        },
+        state_version=max(
+            int(view.get("state_version") or 0),
+            (previous.state_version + 1) if previous else 1,
+        ),
+        updated_at=datetime.now(timezone.utc).isoformat(),
+        transition=transition,
+        delta=delta,
+    )
+    session.working_set = checkpoint
+    _persist_session_trace(session, "working_set_updated", {
+        "session_id": session.session_id,
+        "working_set": checkpoint.as_dict(),
+    })
+    return checkpoint
+
+
+def _working_set_prompt(session: Session) -> str:
+    checkpoint = session.working_set or _update_working_set(
+        session, "working_set_rebuilt"
+    )
+    return json.dumps(
+        {"active": checkpoint.as_dict(), "delta": checkpoint.delta},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _evaluate_memory_intervention(
+    session: Session,
+    *,
+    phase: str,
+) -> dict[str, Any]:
+    """Compare the chosen probe path with an order computed without memory."""
+    shadow_order = [
+        str(item) for item in session.probe_prior.get("no_memory_shadow_order") or ()
+    ]
+    selected_order = [
+        str(item) for item in session.probe_prior.get("selected_order") or ()
+    ]
+    candidate_set = set([*shadow_order, *selected_order])
+    executed_order = list(dict.fromkeys(
+        str(item.get("command") or "")
+        for item in session.evidence
+        if str(item.get("command") or "") in candidate_set
+    ))
+    root_key = str(session.probe_prior.get("root_key") or "")
+    root_status = next(
+        (
+            str(item.get("status") or "")
+            for item in _hypothesis_view(session).get("hypotheses") or ()
+            if str(item.get("hypothesis_id") or "") == root_key
+        ),
+        "",
+    )
+    memory_applied = bool(
+        session.memory_enabled
+        and session.probe_prior.get("strictly_narrowed")
+        and root_key
+    )
+    eligible_saved = [
+        str(item)
+        for item in session.probe_prior.get("early_stop_candidates") or ()
+    ]
+    changed = bool(
+        memory_applied
+        and (selected_order != shadow_order or eligible_saved)
+    )
+    if not memory_applied:
+        validation = "not_applicable"
+    elif root_status == "confirmed":
+        validation = "confirmed"
+    elif root_status == "rejected":
+        validation = "invalidated"
+    else:
+        validation = "unresolved"
+    saved_probes = eligible_saved if validation == "confirmed" else []
+    decisive_ids = list(dict.fromkeys(
+        str(evidence_id)
+        for item in _hypothesis_view(session).get("hypotheses") or ()
+        if str(item.get("hypothesis_id") or "") == root_key
+        for key in ("supporting_evidence_ids", "opposing_evidence_ids")
+        for evidence_id in item.get(key) or ()
+    ))
+    result = {
+        "phase": phase,
+        "memory_applied": memory_applied,
+        "ordering_effect": "changed" if changed else "not_changed",
+        "memory_hypothesis_result": validation,
+        "confirmed": validation == "confirmed",
+        "invalidated": validation == "invalidated",
+        "root_key": root_key or None,
+        "memory_ids": list(session.probe_prior.get("memory_ids") or ()),
+        "no_memory_shadow_order": shadow_order,
+        "selected_order": selected_order,
+        "executed_order": executed_order,
+        "saved_probes": saved_probes,
+        "saved_probe_count": len(saved_probes),
+        "decisive_evidence_ids": decisive_ids,
+    }
+    previous_comparable = {
+        key: value for key, value in session.memory_intervention.items()
+        if key != "phase"
+    }
+    current_comparable = {key: value for key, value in result.items() if key != "phase"}
+    session.memory_intervention = result
+    if current_comparable != previous_comparable:
+        _persist_session_trace(session, "memory_intervention_evaluated", result)
+    _update_working_set(
+        session,
+        "memory_intervention_evaluated",
+        extra_delta={
+            "memory_ordering_effect": result["ordering_effect"],
+            "memory_hypothesis_result": validation,
+            "saved_probe_count": len(saved_probes),
+        },
+    )
+    return result
 
 
 def _register_model_hypothesis(
@@ -1337,7 +1752,7 @@ def _register_model_hypothesis(
             for raw in raw_checks[:3] if isinstance(raw_checks, list) else ():
                 if not isinstance(raw, Mapping):
                     continue
-                command = str(raw.get("command") or "").strip()
+                command = _canonical_probe_command(str(raw.get("command") or ""))
                 if (
                     not command
                     or command in existing_commands
@@ -1392,7 +1807,7 @@ def _register_model_hypothesis(
     for raw in raw_checks[:3] if isinstance(raw_checks, list) else ():
         if not isinstance(raw, Mapping):
             continue
-        command = str(raw.get("command") or "").strip()
+        command = _canonical_probe_command(str(raw.get("command") or ""))
         if (
             not command
             or command in seen_commands
@@ -1636,6 +2051,12 @@ def _knowledge_retrieval_results(
             "source_rank": source_rank,
             "matched_on": ["query_terms"] if matched_terms else [],
             "matched_terms": matched_terms,
+            "applicable_versions": list(item.get("applicable_versions") or ()),
+            "asset_ids": list(item.get("asset_ids") or ()),
+            "entity_ids": list(item.get("entity_ids") or ()),
+            "product": item.get("product"),
+            "document_type": item.get("document_type"),
+            "degraded_reason": item.get("degraded_reason"),
             "reference_only": True,
             "selected_for_context": True,
             "relation_to_current": _retrieval_relation(
@@ -1725,7 +2146,9 @@ def _constrain_retrieval_results(session: Session) -> None:
         asset_ids = item_assets or (
             (session.subject,) if scoped_to_subject and session.subject else ()
         )
-        entity_ids = asset_ids
+        entity_ids = tuple(
+            str(value) for value in item.get("entity_ids") or () if value
+        ) or asset_ids
         candidates.append(EvidenceCandidate(
             evidence_id=evidence_id,
             text=str(item.get("summary") or item.get("title") or ""),
@@ -1824,12 +2247,32 @@ def _retrieval_context(session: Session) -> list[dict[str, Any]]:
     ]
 
 
+def _record_model_context(session: Session, messages: list[dict[str, Any]], purpose: str) -> None:
+    """Persist the exact submitted input, not a reconstruction from later memory."""
+    _persist_session_trace(session, "context_compiled", {
+        "purpose": purpose,
+        "messages": messages,
+        "retrieval_results": _retrieval_context(session),
+        "working_set": session.working_set.as_dict() if session.working_set else {},
+        "session_id": session.session_id,
+    })
+    _persist_session(session)
+
+
 def _session_open_response(session: Session) -> dict[str, Any]:
+    checkpoint = session.working_set or _update_working_set(
+        session, "working_set_rebuilt"
+    )
     return {
         "session_id": session.session_id,
         "question": session.question,
         "family": session.family,
         "subject": session.subject,
+        "query_contract": {
+            "intent": session.query_intent,
+            "sources": list(session.source_plan),
+            "bindings": dict(session.query_bindings),
+        },
         "case_id": session.case_id,
         "auto_started": session.auto_started,
         "incident_scope": {
@@ -1854,6 +2297,9 @@ def _session_open_response(session: Session) -> dict[str, Any]:
         "probe_rounds": session.probe_rounds,
         "trace_events": session.trace_events,
         "decision": session.decision or None,
+        "working_set": checkpoint.as_dict(),
+        "working_set_delta": dict(checkpoint.delta),
+        "memory_value": dict(session.memory_intervention),
         "summary": _summarise(session),
     }
 
@@ -1889,6 +2335,15 @@ def start(
         if existing_id and not evaluation_only and not restart_existing:
             try:
                 existing = get(existing_id)
+                latest_decision_event = case.latest_event("business_decision_recorded") or {}
+                durable_decision = dict(latest_decision_event.get("decision") or {})
+                decision_rehydrated = False
+                if durable_decision and not existing.decision:
+                    # Older session snapshots predate durable decision storage.
+                    # Rehydrate the checkpoint so a resumed goal advances from
+                    # its case state instead of repeating the same wait result.
+                    existing.decision = durable_decision
+                    decision_rehydrated = True
                 refreshed_facts = dict(case_scope.get("incident_facts") or {})
                 refreshed_assets = list(case_scope.get("asset_ids") or ())
                 became_actionable = bool(
@@ -1915,21 +2370,65 @@ def start(
                     existing.scope_basis = list(case_scope.get("scope_basis") or ())
                     existing.scope_missing = list(case_scope.get("scope_missing") or ())
                     existing.source_refs = list(case_scope.get("source_refs") or existing.source_refs)
+                if scope_changed or decision_rehydrated:
+                    _update_working_set(
+                        existing,
+                        "incident_scope_refreshed",
+                        extra_delta={
+                            "scope_changed": scope_changed,
+                            "decision_rehydrated": decision_rehydrated,
+                        },
+                    )
                     _persist_session(existing)
                 if not became_actionable:
                     return _session_open_response(existing)
             except KeyError:
                 pass
+    from domains.network_rca.query_contract import parse_investigation_query
+
+    query_contract = parse_investigation_query(question, subject=subject)
+    query_bindings = dict(query_contract.bindings)
+    if case is None:
+        subject = query_contract.subject
+    source_plan = list(query_contract.sources)
+    device_api_configured = bool(
+        (os.environ.get("AUTOPOIESIS_FGT_USER") or os.environ.get("FGT_USER"))
+        and (os.environ.get("AUTOPOIESIS_FGT_PASS") or os.environ.get("FGT_PASS"))
+    )
+    if (
+        case is None
+        and subject is None
+        and "direct_state" in source_plan
+        and device_api_configured
+    ):
+        try:
+            from .investigation_tools import resolve_device_subject
+
+            resolution = resolve_device_subject(question)
+        except Exception:
+            resolution = None
+        if resolution is not None:
+            subject = str(resolution["subject"])
+            query_contract = parse_investigation_query(question, subject=subject)
+            source_plan = list(query_contract.sources)
+            query_bindings["subject"] = str(resolution["source"])
+    if case is not None:
+        source_plan = [
+            "direct_state", "event_window", "operational_memory", "official_knowledge",
+        ]
     session = Session(
         session_id=uuid.uuid4().hex[:12],
         question=question.strip(),
         family=family,
         subject=subject,
+        query_intent="root_cause" if case is not None else query_contract.intent,
+        source_plan=source_plan,
+        query_bindings=query_bindings,
         case_id=None if evaluation_only else case_id,
         asset_ids=list(case_scope.get("asset_ids") or ([subject] if subject else [])),
         external_actors=list(case_scope.get("external_actors") or ()),
-        incident_start=case_scope.get("incident_start"),
-        incident_end=case_scope.get("incident_end"),
+        incident_start=case_scope.get("incident_start") or query_contract.window_start,
+        incident_end=case_scope.get("incident_end") or query_contract.window_end,
         fault_domain=case_scope.get("fault_domain"),
         scope_quality=str(
             case_scope.get("scope_quality") or ("exact" if subject else "unresolved")
@@ -1943,7 +2442,18 @@ def start(
         evaluation_source_case_id=case_id if evaluation_only else None,
         evaluation_strategy=evaluation_strategy if evaluation_only else None,
     )
+    try:
+        from core.memory.knowledge_sync import knowledge_sync_status
+
+        sync_fingerprint = dict(knowledge_sync_status().get("fingerprint") or {})
+    except Exception:
+        sync_fingerprint = {}
+    installed_version = str(sync_fingerprint.get("version") or "").strip()
+    if installed_version:
+        session.device_versions.append(installed_version)
+        session.asset_versions["fortigate"] = installed_version
     _SESSIONS[session.session_id] = session
+    _update_working_set(session, "session_opened")
     _append_case_event(
         session,
         "investigation_session_started",
@@ -1952,6 +2462,9 @@ def start(
             "question": session.question,
             "subject": session.subject,
             "family": session.family,
+            "queryIntent": session.query_intent,
+            "sourcePlan": list(session.source_plan),
+            "queryBindings": dict(session.query_bindings),
             "autoStarted": session.auto_started,
             "scopeQuality": session.scope_quality,
             "faultDomain": session.fault_domain,
@@ -1999,7 +2512,7 @@ def start(
         return _session_open_response(session)
     session.historical_context = (
         _operational_context(subject, family)
-        if memory_enabled and not terminal_case and not case_driven_policy
+        if memory_enabled and not terminal_case and "operational_memory" in session.source_plan
         else {}
     )
     if any(session.historical_context.get(key) for key in ("dossiers", "risks", "features")):
@@ -2017,15 +2530,24 @@ def start(
     query_terms = _query_terms(question, family, subject)
     session.knowledge_context = (
         retrieve_ops_knowledge(question, query_terms=query_terms, limit=4)
-        if memory_enabled and not terminal_case and not case_driven_policy
+        if memory_enabled and not terminal_case and "official_knowledge" in session.source_plan
         else []
     )
+    if memory_enabled and not terminal_case and "official_knowledge" in session.source_plan:
+        session.trace_events.append({
+            "kind": "knowledge_retrieval_attempted",
+            "at": datetime.now(timezone.utc).isoformat(),
+            "payload": knowledge_backend_status(),
+        })
     if session.knowledge_context:
         session.trace_events.append({
             "kind": "knowledge_retrieved",
             "at": datetime.now(timezone.utc).isoformat(),
             "payload": {
-                "route": "bm25",
+                "route": sorted({
+                    str(item.get("route") or "unknown")
+                    for item in session.knowledge_context
+                }),
                 "document_ids": [
                     item["document_id"] for item in session.knowledge_context
                 ],
@@ -2038,19 +2560,26 @@ def start(
     # triage sweep, because "what is wrong here" has no smaller honest answer.
     extra = (
         []
-        if terminal_case
+        if terminal_case or session.query_intent in {
+            "current_status", "event_history", "procedure_lookup",
+        }
         else FAMILY_PROBES.get(family or "") or TRIAGE_PROBES
     )
     uses_triage = extra is TRIAGE_PROBES
-    # Policy cases establish the exact flow window and current device state first.
-    # Other investigations may use verified history to reorder their fixed probes.
+    # Every non-terminal case may use verified history to rank its fixed probes.
+    # Policy cases still establish the exact flow window and current device state
+    # before any recalled precedent can influence a conclusion.
     memory_prior = _probe_prior(
         question,
         family,
         subject,
         (
             _live_memory_store()
-            if memory_enabled and not terminal_case and not case_driven_policy
+            if (
+                memory_enabled
+                and not terminal_case
+                and "operational_memory" in session.source_plan
+            )
             else None
         ),
         as_of=(
@@ -2087,6 +2616,11 @@ def start(
         if uses_triage and session.evaluation_strategy != "fixed_script"
         else []
     )
+    original_probe_order = list(TRIAGE_PROBES if uses_triage else extra)
+    no_memory_shadow_order = (
+        order_triage_by_profile(list(original_probe_order), profile_anomalies)
+        if uses_triage else list(original_probe_order)
+    )
     # Preserve a procedural memory's earned prefix so its existing evidence-only
     # early-stop contract remains intact.  The portrait sorts the untouched tail;
     # with no procedural prefix it sorts the whole original triage sweep.
@@ -2115,6 +2649,8 @@ def start(
         for key, value in prior.items()
         if key not in {"ordered", "retrieval_results"}
     }
+    session.probe_prior["no_memory_shadow_order"] = no_memory_shadow_order
+    session.probe_prior["selected_order"] = list(ordered_extra)
     session.retrieval_results = _build_retrieval_results(
         session,
         list(memory_prior.get("retrieval_results") or ()),
@@ -2129,6 +2665,8 @@ def start(
         not case_driven_policy
         and family != "fam-address-ownership"
         and subject
+        and "direct_state" in session.source_plan
+        and session.query_intent != "current_status"
         and not unit_subject
         and re.fullmatch(r"[\w.:-]{1,64}", subject)
     ):
@@ -2139,50 +2677,101 @@ def start(
     if (
         not case_driven_policy
         and subject
-        and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", subject)
+        and re.fullmatch(r"[\w.:-]{1,64}", subject)
     ):
-        try:
-            from .history import device_history
+        subject_is_ip = re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", subject) is not None
+        configured = device_api_configured
+        jobs: dict[str, Any] = {}
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="investigation-source") as executor:
+            if subject_is_ip and "event_window" in session.source_plan:
+                from .history import device_history
 
-            history = device_history(subject, 7, False)
-            if history is not None:
-                session.collect_observation(
-                    label=f"clickhouse:device_history {subject} 7d",
-                    payload=history,
-                    ok=bool(history.get("ok", True)),
+                jobs["history"] = executor.submit(
+                    device_history,
+                    subject,
+                    7,
+                    False,
+                    fresh=True,
+                    window_start=session.incident_start,
+                    window_end=session.incident_end,
                 )
-        except Exception as error:  # source failure is visible but does not stop host probes
-            session.collect_observation(
-                label=f"clickhouse:device_history {subject} 7d",
-                payload={"error": f"{type(error).__name__}: {error}"[:240]},
-                ok=False,
-            )
+            if configured and "direct_state" in session.source_plan:
+                from .investigation_tools import (
+                    collect_fortigate_context,
+                    collect_fortigate_current_status,
+                )
 
-        # Production receives the router credentials through the service
-        # environment. Unit tests and developer shells without them do not make
-        # a surprise network call or add synthetic evidence.
-        configured = bool(
-            (os.environ.get("AUTOPOIESIS_FGT_USER") or os.environ.get("FGT_USER"))
-            and (os.environ.get("AUTOPOIESIS_FGT_PASS") or os.environ.get("FGT_PASS"))
+                reader = (
+                    collect_fortigate_current_status
+                    if session.query_intent == "current_status"
+                    else collect_fortigate_context
+                )
+                jobs["direct"] = executor.submit(reader, subject)
+
+            if "history" in jobs:
+                try:
+                    history = jobs["history"].result()
+                    if history is not None:
+                        history_window = (
+                            f"{session.incident_start}..{session.incident_end}"
+                            if session.incident_start and session.incident_end
+                            else "7d"
+                        )
+                        session.collect_observation(
+                            label=f"clickhouse:device_history {subject} {history_window}",
+                            payload=history,
+                            ok=bool(history.get("ok", True)),
+                        )
+                except Exception as error:
+                    history_window = (
+                        f"{session.incident_start}..{session.incident_end}"
+                        if session.incident_start and session.incident_end
+                        else "7d"
+                    )
+                    session.collect_observation(
+                        label=f"clickhouse:device_history {subject} {history_window}",
+                        payload={"error": f"{type(error).__name__}: {error}"[:240]},
+                        ok=False,
+                    )
+            if "direct" in jobs:
+                try:
+                    router_context = jobs["direct"].result()
+                    identity = router_context.get("managedDeviceIdentity") or {}
+                    version = str(identity.get("firmware_version") or "").strip()
+                    if version:
+                        session.device_versions = list(dict.fromkeys([
+                            *session.device_versions, version,
+                        ]))
+                        session.asset_versions.setdefault("fortigate", version)
+                        _constrain_retrieval_results(session)
+                    session.collect_observation(
+                        label=(
+                            f"fortigate:current_status {subject}"
+                            if session.query_intent == "current_status"
+                            else f"fortigate:network_context {subject}"
+                        ),
+                        payload=router_context,
+                        ok=(
+                            bool(router_context.get("available", True))
+                            and not bool(router_context.get("degraded"))
+                        ),
+                    )
+                except Exception as error:
+                    session.collect_observation(
+                        label=f"fortigate:network_context {subject}",
+                        payload={"error": f"{type(error).__name__}: {error}"[:240]},
+                        ok=False,
+                    )
+
+    baseline_probes = (
+        []
+        if (
+            case_driven_policy
+            or "direct_state" not in session.source_plan
+            or session.query_intent in {"current_status", "procedure_lookup", "event_history"}
         )
-        if configured:
-            try:
-                from .investigation_tools import collect_fortigate_context
-
-                router_context = collect_fortigate_context(subject)
-                session.collect_observation(
-                    label=f"fortigate:network_context {subject}",
-                    payload=router_context,
-                    ok=not bool(router_context.get("degraded")),
-                )
-            except Exception as error:
-                session.collect_observation(
-                    label=f"fortigate:network_context {subject}",
-                    payload={"error": f"{type(error).__name__}: {error}"[:240]},
-                    ok=False,
-                )
-
-    baseline_probes = [] if case_driven_policy else list(BASELINE_PROBES)
+        else list(BASELINE_PROBES)
+    )
     planned = list(baseline_probes)
     for command in [*ordered_extra, *subject_probes]:
         if command not in planned:
@@ -2239,7 +2828,6 @@ def start(
         if command not in BASELINE_PROBES and command not in ordered_extra:
             session.collect(command)
 
-    original_probe_order = list(TRIAGE_PROBES if uses_triage else extra)
     reordered = ordered_extra != original_probe_order
     if prior["strictly_narrowed"] and (reordered or early_stopped):
         payload = {
@@ -2262,6 +2850,9 @@ def start(
         }
         _persist_shortcut_trace(session, payload)
 
+    session.probe_prior["early_stop_candidates"] = list(skipped) if early_stopped else []
+    _evaluate_memory_intervention(session, phase="opening_probes")
+
     if not terminal_case and not case_driven_policy:
         kinds: dict[str, int] = {}
         for item in session.retrieval_results:
@@ -2273,7 +2864,6 @@ def start(
             {
                 key: value
                 for key, value in item.items()
-                if key not in {"summary", "source_trace_ids"}
             }
             for item in session.retrieval_results
         ]
@@ -2287,6 +2877,14 @@ def start(
             "returned_count": len(session.retrieval_results),
             "counts_by_kind": kinds,
             "results": trace_results,
+            "investigation_context": {
+                "question": session.question,
+                "subject": session.subject,
+                "family": session.family,
+                "retrieval_results": trace_results,
+                "working_set": session.working_set.as_dict() if session.working_set else {},
+                "evidence": list(session.evidence),
+            },
         })
         _append_case_event(
             session,
@@ -2548,14 +3146,18 @@ def get(session_id: str) -> Session:
         snapshot = _session_store().load(session_id)
         if snapshot is None:
             raise KeyError(f"unknown session {session_id!r}")
+        had_checkpoint = bool(snapshot.get("working_set"))
         session = Session.from_dict(snapshot)
         _SESSIONS[session_id] = session
+        if not had_checkpoint:
+            _update_working_set(session, "legacy_session_restored")
+            _persist_session(session)
     return session
 
 
-def live_retrieval_trace(query: str | None = None, limit: int = 12) -> dict[str, Any]:
+def live_retrieval_trace(query: str | None = None, limit: int = 12, case_id: str | None = None, subject: str | None = None, lang: str = "zh") -> dict[str, Any]:
     """Project actual investigation retrieval receipts into the retrieval-page contract."""
-    snapshots = _session_store().recent(limit=max(limit * 2, 20))
+    snapshots = _session_store().recent(limit=5_000 if case_id or subject else max(limit * 2, 20))
     seen = {str(item.get("session_id")) for item in snapshots}
     snapshots = [
         *[session.as_dict() for session in reversed(list(_SESSIONS.values())) if session.session_id not in seen],
@@ -2564,6 +3166,10 @@ def live_retrieval_trace(query: str | None = None, limit: int = 12) -> dict[str,
     needle = (query or "").strip().lower()
     cases: list[dict[str, Any]] = []
     for snapshot in snapshots:
+        if case_id and str(snapshot.get("case_id") or "") != case_id:
+            continue
+        if not case_id and subject and str(snapshot.get("subject") or "") != subject:
+            continue
         results = list(snapshot.get("retrieval_results") or ())
         if not results:
             continue
@@ -2628,6 +3234,9 @@ def live_retrieval_trace(query: str | None = None, limit: int = 12) -> dict[str,
         question_text = str(snapshot.get("question") or "")
         cases.append({
             "id": f"investigate:{session_id}",
+            "case_id": snapshot.get("case_id"),
+            "subject": snapshot.get("subject"),
+            "raw": {"query": question_text, "retrieval_results": results},
             "flow": "memory_recall",
             "label": {"zh": question_text[:80], "en": question_text[:80]},
             "query": question_text,
@@ -2668,7 +3277,11 @@ def live_retrieval_trace(query: str | None = None, limit: int = 12) -> dict[str,
         })
         if len(cases) >= limit:
             break
-    return {"ok": True, "dataMode": "live_investigation_receipts", "cases": cases}
+    payload = {"ok": True, "dataMode": "live_investigation_receipts", "cases": cases}
+    if lang == "en":
+        from .display_translation import translate_display_payload
+        return translate_display_payload(payload)
+    return payload
 
 
 def _excerpt(text: str, head: int, tail: int) -> str:
@@ -2681,9 +3294,51 @@ def _excerpt(text: str, head: int, tail: int) -> str:
 
 
 def _render(item: dict[str, Any], head: int, tail: int) -> str:
-    header = f"[{item['evidence_id']}] $ {item['command']}"
+    header = (
+        f"[{item['evidence_id']}] source_role={item.get('source_role') or 'unknown'} "
+        f"observed_at={item.get('observed_at') or item.get('at') or 'unknown'} "
+        f"read={item['command']}"
+    )
     body = item.get("output") or f"(no output; {item.get('refused') or 'empty'})"
+    if isinstance(body, str) and body.startswith(("{", "[")):
+        try:
+            body = json.dumps(
+                _compact_evidence_value(json.loads(body)),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        except json.JSONDecodeError:
+            pass
     return f"{header}\n{_excerpt(body, head, tail)}"
+
+
+def _compact_evidence_value(value: Any, *, depth: int = 0) -> Any:
+    """Bound structured evidence without asking a model to interpret raw rows."""
+    if depth >= 4:
+        if isinstance(value, (Mapping, list, tuple)):
+            return {"shape": type(value).__name__, "items": len(value)}
+        return value
+    if isinstance(value, Mapping):
+        omitted_fields = {
+            "raw_log", "raw", "configuration", "config", "password", "secret", "token",
+        }
+        return {
+            str(key): _compact_evidence_value(item, depth=depth + 1)
+            for key, item in value.items()
+            if str(key).casefold() not in omitted_fields
+        }
+    if isinstance(value, (list, tuple)):
+        limit = 8 if depth < 2 else 4
+        rows = [
+            _compact_evidence_value(item, depth=depth + 1)
+            for item in value[:limit]
+        ]
+        if len(value) > limit:
+            rows.append({"omittedItems": len(value) - limit})
+        return rows
+    if isinstance(value, str) and len(value) > 1200:
+        return _excerpt(value, 800, 200)
+    return value
 
 
 def _evidence_block(session: Session, *, full_ids: set[str] | None = None) -> str:
@@ -2840,6 +3495,9 @@ def _remember_confirmed_procedure(
             event_type=f"procedure:{root_key}",
         ))
     elif session.session_id not in existing.source_trace_ids:
+        # Capacity retirement is reversible after a new machine-confirmed
+        # occurrence. Contradiction/redaction quarantine remains review-bound.
+        memory.restore(memory_id, "evicted")
         existing.confidence = min(3.0, float(existing.confidence) + 0.2)
         existing.strength = 1.0
         existing.last_observed_at = observed_at
@@ -2851,6 +3509,9 @@ def _remember_confirmed_procedure(
                 existing.asset_ids.append(value)
         existing.source_trace_ids.append(session.session_id)
         memory.reindex(memory_id)
+    # A confirmed procedure must survive a gateway restart before it can help
+    # the next incident. The repository is optional in unit tests.
+    memory.flush()
     _persist_session_trace(session, "verified_procedure_indexed", {
         "session_id": session.session_id,
         "memory_id": memory_id,
@@ -3115,8 +3776,27 @@ def _record_business_decision(session: Session, decision: Any) -> dict[str, Any]
         "next_probe": payload.get("nextProbe"),
         "case_status": case_status,
     })
+    if session.probe_prior:
+        _evaluate_memory_intervention(session, phase="business_decision")
+    _update_working_set(
+        session,
+        "business_decision_recorded",
+        extra_delta={
+            "decision_state": state,
+            "decision_classification": payload.get("classification"),
+        },
+    )
     _persist_session(session)
-    return {"decision": payload, "case_status": case_status}
+    checkpoint = session.working_set or _update_working_set(
+        session, "business_decision_recorded"
+    )
+    return {
+        "decision": payload,
+        "case_status": case_status,
+        "working_set": checkpoint.as_dict(),
+        "working_set_delta": dict(checkpoint.delta),
+        "memory_value": dict(session.memory_intervention),
+    }
 
 
 def _evidence_for_root(
@@ -3225,6 +3905,113 @@ def _confirmed_root_business_text(
     return headline, summary, disposition
 
 
+def _admin_auth_evidence_conflict(
+    session: Session,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Return the archived auth reading when it cannot reproduce its trigger."""
+    if session.family != "fam-management-auth":
+        return None
+    evidence = next(
+        (
+            item for item in reversed(session.evidence)
+            if item.get("ok") and item.get("command") == "adapter:admin_auth_window"
+        ),
+        None,
+    )
+    if evidence is None:
+        return None
+    try:
+        payload = dict(json.loads(str(evidence.get("output") or "{}")))
+    except (TypeError, ValueError):
+        return None
+    consistency = dict(payload.get("evidence_consistency") or {})
+    if consistency.get("state") == "conflict":
+        return evidence, payload
+    facts = dict(session.incident_facts or {})
+    expected_failures = int(facts.get("failedLogins") or 0)
+    expected_sources = int(facts.get("distinctSources") or 0)
+    failure_threshold = int(
+        facts.get("failureThreshold") or facts.get("threshold") or 12
+    )
+    distinct_threshold = int(facts.get("distinctSourceThreshold") or 5)
+    observed_failures = int(payload.get("failed_logins") or 0)
+    observed_lockouts = int(payload.get("lockouts") or 0)
+    observed_sources = int(payload.get("distinct_sources") or 0)
+    trigger_crossed = bool(
+        expected_failures >= failure_threshold
+        and expected_sources >= distinct_threshold
+    )
+    archive_crossed = bool(
+        (
+            observed_failures + observed_lockouts >= failure_threshold
+            and observed_sources >= distinct_threshold
+        )
+        or observed_lockouts > 0
+    )
+    return (evidence, payload) if trigger_crossed and not archive_crossed else None
+
+
+def _escalate_bounded_investigation(
+    session: Session,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    """End an unattended goal with evidence, ownership and an exact gap."""
+    from domains.network_rca.business_decision import (
+        BusinessDecision,
+        DecisionEvidence,
+        MissingObservation,
+    )
+
+    successful = [item for item in session.evidence if item.get("ok")][-6:]
+    view = _hypothesis_view(session)
+    active = list(view.get("active_root_keys") or ())
+    available = next(
+        (
+            str(item.get("description") or "")
+            for item in view.get("probes") or ()
+            if item.get("status") == "available"
+        ),
+        "",
+    )
+    decision = BusinessDecision(
+        case_id=session.case_id or f"adhoc:{session.session_id}",
+        session_id=session.session_id,
+        state="escalated",
+        classification="bounded_investigation_exhausted",
+        headline="自动调查预算已用完，案件携带现场证据升级",
+        summary=(
+            f"已完成 {len(session.evidence)} 项观察，仍有 {len(active)} 个候选条件"
+            f"缺少决定性结果。结束原因：{reason[:180]}"
+        ),
+        disposition=(
+            "转交网络责任人核对缺失观察；补充结果写回原案件后可从当前检查点继续。"
+        ),
+        action="保留现场，不执行自动变更。",
+        impacted_assets=tuple(session.asset_ids),
+        evidence=tuple(
+            DecisionEvidence(
+                evidence_id=str(item.get("evidence_id") or ""),
+                label=str(item.get("command") or "现场观察"),
+                value=_excerpt(str(item.get("output") or ""), 180, 80),
+                source=str(item.get("source") or "live_tool"),
+                observed_at=str(item.get("observed_at") or item.get("at") or "") or None,
+            )
+            for item in successful
+            if item.get("evidence_id")
+        ),
+        missing_observations=tuple(
+            MissingObservation(
+                code=f"bounded:{root_id}",
+                question=f"候选条件 {root_id} 缺少哪项决定性现场结果？",
+                probe=available or None,
+            )
+            for root_id in (active[:4] or ["open_root"])
+        ),
+    )
+    return _record_business_decision(session, decision)
+
+
 def complete(session_id: str) -> dict[str, Any]:
     """Advance a session until it has a business decision or an exact next probe."""
     from domains.network_rca.business_decision import (
@@ -3246,16 +4033,42 @@ def complete(session_id: str) -> dict[str, Any]:
     )
     case_evidence_id = str((case_evidence or {}).get("evidence_id") or "")
     if session.case_id and session.scope_quality == "unresolved":
+        prior_scope_wait = bool(
+            session.auto_started
+            and str(session.decision.get("classification") or "")
+            == "incident_scope_unresolved"
+        )
         decision = BusinessDecision(
             case_id=session.case_id,
             session_id=session.session_id,
-            state="investigating",
-            classification="incident_scope_unresolved",
-            headline="事件已接管，当前记录无法圈定可调查的受管对象",
+            state="escalated" if prior_scope_wait else "investigating",
+            classification=(
+                "incident_scope_data_gap" if prior_scope_wait
+                else "incident_scope_unresolved"
+            ),
+            headline=(
+                "事件缺少受管对象，案件已携带源记录升级"
+                if prior_scope_wait else
+                "事件已接管，当前记录无法圈定可调查的受管对象"
+            ),
             summary="源记录缺少能够把告警绑定到受管资产和故障域的结构化字段。",
-            disposition="保持案件调查中，从源告警补齐资产身份后再启动探针。",
+            disposition=(
+                "转交数据采集责任人补齐资产身份映射；补充结果写回原案件后重新启动探针。"
+                if prior_scope_wait else
+                "保持案件调查中，从源告警补齐资产身份后再启动探针。"
+            ),
             action="当前不执行探针或变更。",
             impacted_assets=tuple(session.asset_ids),
+            evidence=tuple(
+                [DecisionEvidence(
+                    evidence_id=case_evidence_id,
+                    label="触发源记录",
+                    value=_excerpt(str((case_evidence or {}).get("output") or ""), 180, 80),
+                    source=str((case_evidence or {}).get("source") or "landed alert"),
+                    observed_at=str((case_evidence or {}).get("observed_at") or "") or None,
+                )]
+                if case_evidence_id else []
+            ),
             missing_observations=tuple(
                 MissingObservation(
                     code=f"scope:{name}",
@@ -3269,7 +4082,13 @@ def complete(session_id: str) -> dict[str, Any]:
             "evidence_total": len(session.evidence),
             "hypothesis_state": _hypothesis_view(session),
             "probe_rounds": session.probe_rounds,
-            "action_candidate": {"eligible": False, "reason": "incident_scope_unresolved"},
+            "action_candidate": {
+                "eligible": False,
+                "reason": (
+                    "incident_scope_data_gap" if prior_scope_wait
+                    else "incident_scope_unresolved"
+                ),
+            },
         }
     if session.case_id and session.family == "fam-policy-reachability":
         if is_terminal_local_in_deny(session.incident_facts):
@@ -3314,6 +4133,69 @@ def complete(session_id: str) -> dict[str, Any]:
             "hypothesis_state": _hypothesis_view(session),
             "probe_rounds": session.probe_rounds,
             "action_candidate": action_candidate(session.session_id),
+        }
+
+    auth_conflict = _admin_auth_evidence_conflict(session)
+    if session.case_id and auth_conflict is not None:
+        auth_evidence, archived = auth_conflict
+        facts = dict(session.incident_facts or {})
+        trigger_failures = int(facts.get("failedLogins") or 0)
+        trigger_sources = int(facts.get("distinctSources") or 0)
+        archived_failures = int(archived.get("failed_logins") or 0)
+        archived_lockouts = int(archived.get("lockouts") or 0)
+        archived_sources = int(archived.get("distinct_sources") or 0)
+        decision = BusinessDecision(
+            case_id=session.case_id,
+            session_id=session.session_id,
+            state="escalated",
+            classification="authentication_evidence_conflict",
+            headline="认证攻击触发计数无法由归档事件窗口复现",
+            summary=(
+                f"实时检测记录 {trigger_failures} 次认证失败、{trigger_sources} 个来源；"
+                f"同一设备和时间窗口归档到 {archived_failures} 次失败、"
+                f"{archived_lockouts} 次锁定、{archived_sources} 个来源。"
+            ),
+            disposition=(
+                "案件已携带触发记录和归档回查升级给数据采集责任人；"
+                "修复分类或落库缺口后使用同一事件标识重放并重新判定。"
+            ),
+            action="冻结自动封禁和账户变更，优先修复证据链。",
+            service="fortigate-admin",
+            impacted_assets=tuple(session.asset_ids),
+            evidence=tuple(item for item in (
+                DecisionEvidence(
+                    evidence_id=case_evidence_id,
+                    label="实时检测聚合",
+                    value=(
+                        f"{trigger_failures} 次失败登录，{trigger_sources} 个来源，"
+                        f"事件标识 {len(facts.get('sourceEventIds') or ())} 个"
+                    ),
+                    source="landed alert",
+                    observed_at=str(facts.get("observedAt") or "") or None,
+                ) if case_evidence_id else None,
+                DecisionEvidence(
+                    evidence_id=str(auth_evidence.get("evidence_id") or ""),
+                    label="同窗归档回查",
+                    value=(
+                        f"{archived_failures} 次失败登录，{archived_lockouts} 次锁定，"
+                        f"{archived_sources} 个来源"
+                    ),
+                    source=str(auth_evidence.get("source") or "ClickHouse security_events"),
+                    observed_at=str(auth_evidence.get("observed_at") or "") or None,
+                ),
+            ) if item is not None),
+            missing_observations=(MissingObservation(
+                code="authentication_event_archive_reconciliation",
+                question="哪些触发事件未按同一分类规则和事件标识进入归档？",
+                probe="replay:sourceEventIds->security_events",
+            ),),
+        )
+        return {
+            **_record_business_decision(session, decision),
+            "evidence_total": len(session.evidence),
+            "hypothesis_state": _hypothesis_view(session),
+            "probe_rounds": session.probe_rounds,
+            "action_candidate": {"eligible": False, "reason": "evidence_conflict"},
         }
 
     loop = _loop_for(session)
@@ -3398,12 +4280,12 @@ def complete(session_id: str) -> dict[str, Any]:
         decision = BusinessDecision(
             case_id=case_key,
             session_id=session.session_id,
-            state="investigating",
+            state="escalated",
             classification="multiple_confirmed_conditions",
             headline="多个故障条件同时成立",
             summary="当前观察确认了多个独立故障条件，需要按影响面分别处置。",
-            disposition="拆分动作并逐项回读，任何一项失败都保留原案件。",
-            action="等待按故障条件生成独立动作",
+            disposition="转交网络责任人拆分动作并逐项回读，任一失败结果写回原案件。",
+            action="冻结组合自动动作，等待逐项处置",
             impacted_assets=tuple(session.asset_ids),
             evidence=_evidence_for_root(session, supporting_ids),
         )
@@ -3470,6 +4352,13 @@ def remediate(
         "target": target,
         "fault_domain": session.fault_domain,
     })
+    _update_working_set(
+        session,
+        "remediation_started",
+        extra_delta={"action": action, "target": target},
+        subgoal=f"执行并回读 {action} {target}",
+    )
+    _persist_session(session)
     try:
         result = executor(
             action,
@@ -3525,6 +4414,16 @@ def remediate(
         "evidence_id": receipt.get("evidence_id"),
         "case_status": case_status,
     })
+    _update_working_set(
+        session,
+        "action_readback_recorded",
+        extra_delta={
+            "action": action,
+            "target": target,
+            "outcome": result.get("outcome"),
+            "evidence_id": receipt.get("evidence_id"),
+        },
+    )
     from domains.network_rca.business_decision import BusinessDecision, DecisionEvidence
 
     previous = dict(session.decision or {})
@@ -3594,7 +4493,19 @@ def analyze(
     if session.case_id:
         completed = complete(session_id)
         decision = dict(completed.get("decision") or {})
-        if decision.get("classification") != "open_root_required":
+        if (
+            session.auto_started
+            and decision.get("classification") == "root_cause_unresolved"
+            and not decision.get("nextProbe")
+        ):
+            completed = _escalate_bounded_investigation(
+                session,
+                reason="active_hypothesis_has_no_remaining_probe",
+            )
+            decision = dict(completed.get("decision") or {})
+        if decision.get("classification") not in {
+            "open_root_required", "root_cause_unresolved",
+        }:
             return {
                 **completed,
                 "diagnosis": str(decision.get("summary") or ""),
@@ -3618,6 +4529,9 @@ def analyze(
             {"committed": False, "reason": "case_decision_owns_disposition"}
             if session.case_id else _archive_confirmed_if_complete(session)
         )
+        if session.probe_prior:
+            _evaluate_memory_intervention(session, phase="analysis_degraded")
+        checkpoint = _update_working_set(session, "analysis_degraded")
         _persist_session(session)
         result = {
             "diagnosis": "未配置推理模型，只给出已采集的证据。设置 AUTOPOIESIS_LLM_BASE_URL / "
@@ -3629,11 +4543,25 @@ def analyze(
             "probe_rounds": session.probe_rounds,
             "memory_commit": memory_commit,
             "action_candidate": action_candidate(session.session_id),
+            "working_set": checkpoint.as_dict(),
+            "working_set_delta": dict(checkpoint.delta),
+            "memory_value": dict(session.memory_intervention),
             "degraded": True,
         }
         if session.case_id:
-            result["decision"] = dict(session.decision)
-            result["case_status"] = "investigating"
+            completed = complete(session.session_id)
+            decision = dict(completed.get("decision") or {})
+            if session.auto_started and decision.get("state") == "investigating":
+                completed = _escalate_bounded_investigation(
+                    session,
+                    reason="reasoning_provider_unavailable",
+                )
+                decision = dict(completed.get("decision") or {})
+            result.update(completed)
+            result["diagnosis"] = str(decision.get("summary") or result["diagnosis"])
+            result["root_cause"] = str(
+                decision.get("classification") or "reasoning_provider_unavailable"
+            )
         return result
 
     payload: dict[str, Any] = {}
@@ -3659,6 +4587,8 @@ def analyze(
                     "以下候选根因状态由当前会话的探针结果维护。confirmed 和 rejected "
                     "可作为当前事实，proposed 和 testing 仍是待验证候选。\n"
                     f"候选状态：{json.dumps(_hypothesis_view(session), ensure_ascii=False)}\n\n"
+                    "以下工作集是当前可恢复检查点，delta 是最近一次状态转移。\n"
+                    f"工作集：{_working_set_prompt(session)}\n\n"
                     f"已采集的真实命令输出：\n{_evidence_block(session)}\n\n"
                     + ("这是最后一轮，必须基于现有证据给出结论；need_commands 请留空。\n\n"
                        if round_index == MAX_ANALYZE_ROUNDS - 1 else "")
@@ -3667,17 +4597,25 @@ def analyze(
             },
         ]
         try:
+            _record_model_context(session, messages, "rca_analysis")
             payload = client.complete_json(messages, schema_name="rca_analysis")
         except Exception as error:  # noqa: BLE001 - surfaced, not hidden
-            return {
+            degraded = {
                 "diagnosis": f"推理调用没有完成（{type(error).__name__}）。已采集的证据仍然有效，可以直接看上面的命令输出，或重试。",
                 "citations": [], "runbook": [], "degraded": True,
                 "error": f"{type(error).__name__}: {error}"[:300],
             }
+            if session.case_id and session.auto_started:
+                terminal = _escalate_bounded_investigation(
+                    session,
+                    reason=f"model_call:{type(error).__name__}",
+                )
+                degraded.update(terminal)
+            return degraded
 
         registered_id = _register_model_hypothesis(session, payload) or registered_id
         raw_verification_commands = [
-            str(item.get("command") or "").strip()
+            _canonical_probe_command(str(item.get("command") or ""))
             for item in (payload.get("verification") or ())
             if isinstance(item, Mapping) and str(item.get("command") or "").strip()
         ]
@@ -3702,7 +4640,7 @@ def analyze(
         wanted = list(dict.fromkeys([
             *verification_commands,
             *[
-                str(command).strip()
+                _canonical_probe_command(str(command))
                 for command in (payload.get("need_commands") or ())
                 if str(command).strip()
             ],
@@ -3748,6 +4686,14 @@ def analyze(
         {"committed": False, "reason": "case_decision_owns_disposition"}
         if session.case_id else _archive_confirmed_if_complete(session)
     )
+    if session.probe_prior:
+        _evaluate_memory_intervention(session, phase="analysis_completed")
+    checkpoint = _update_working_set(
+        session,
+        "analysis_completed",
+        extra_delta={"root_cause": root_cause, "citations": list(citations)},
+        subgoal=session.diagnosis,
+    )
     _append_case_event(
         session,
         "hypothesis_updated",
@@ -3775,9 +4721,27 @@ def analyze(
         "probe_rounds": session.probe_rounds,
         "memory_commit": memory_commit,
         "action_candidate": action_candidate(session.session_id),
+        "working_set": checkpoint.as_dict(),
+        "working_set_delta": dict(checkpoint.delta),
+        "memory_value": dict(session.memory_intervention),
         "degraded": False,
     }
     if session.case_id:
+        if published is None and session.auto_started:
+            terminal = _escalate_bounded_investigation(
+                session,
+                reason="no_decisive_root_after_bounded_rounds",
+            )
+            decision = dict(terminal.get("decision") or {})
+            result.update(terminal)
+            result["diagnosis"] = str(decision.get("summary") or session.diagnosis)
+            result["root_cause"] = str(decision.get("classification") or root_cause)
+            result["citations"] = [
+                str(item.get("evidenceId") or "")
+                for item in decision.get("evidence") or ()
+                if item.get("evidenceId")
+            ]
+            return result
         completed = complete(session.session_id)
         decision = dict(completed.get("decision") or {})
         result.update(completed)
@@ -3955,11 +4919,26 @@ def close(
         event_id=f"{session.session_id}:disposition",
         status=final_status,
     )
+    if session.probe_prior:
+        _evaluate_memory_intervention(session, phase="disposition_recorded")
+    checkpoint = _update_working_set(
+        session,
+        "disposition_recorded",
+        extra_delta={
+            "resolution": resolution,
+            "root_cause": root_cause,
+            "citations": selected,
+        },
+        subgoal=f"调查结论：{resolution}",
+    )
     _persist_session(session)
     return {
         "dossier": payload,
         "resolution": resolution,
         "procedure_memory_id": procedure_memory_id,
+        "working_set": checkpoint.as_dict(),
+        "working_set_delta": dict(checkpoint.delta),
+        "memory_value": dict(session.memory_intervention),
     }
 
 
@@ -3974,7 +4953,7 @@ def _sanitise_runbook(raw: list[Any]) -> list[dict[str, Any]]:
     for index, item in enumerate(raw, start=1):
         if not isinstance(item, dict):
             continue
-        command = str(item.get("command") or "").strip()
+        command = _canonical_probe_command(str(item.get("command") or ""))
         claimed = str(item.get("risk") or "gated").lower()
         if claimed not in {"readonly", "auto", "gated"}:
             claimed = "gated"
@@ -3999,25 +4978,33 @@ def _verified_citations(session: Session, claimed: list[Any]) -> list[str]:
 
 
 def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
-    """One follow-up turn. Prior evidence and prior turns stay in view."""
+    """One follow-up turn grounded in the durable active working set."""
     session = get(session_id)
     if len(session.turns) >= MAX_TURNS:
         return {"answer": "本次会话轮数已达上限，请开新会话。", "citations": [], "evidence": []}
 
     client = _client()
     if client is None:
+        checkpoint = session.working_set or _update_working_set(
+            session, "follow_up_degraded"
+        )
         return {"answer": "未配置推理模型，无法回答追问。已采集的证据仍可查看。",
                 "citations": [], "evidence": [],
                 "hypothesis_state": _hypothesis_view(session),
-                "probe_rounds": session.probe_rounds, "degraded": True}
+                "probe_rounds": session.probe_rounds,
+                "working_set": checkpoint.as_dict(),
+                "working_set_delta": dict(checkpoint.delta),
+                "memory_value": dict(session.memory_intervention),
+                "degraded": True}
 
-    history = "\n".join(
-        f"问：{turn['question']}\n答：{turn['answer'][:600]}" for turn in session.turns[-4:]
+    checkpoint = session.working_set or _update_working_set(
+        session, "working_set_rebuilt"
     )
     recent_ids = {item["evidence_id"] for item in session.evidence[-FOLLOW_UP_FULL:]}
-    # Anything an earlier answer cited stays in full: it is load-bearing.
-    for turn in session.turns[-4:]:
-        recent_ids.update(turn.get("citations") or [])
+    recent_ids.update(checkpoint.decisive_evidence_ids)
+    last_turn = checkpoint.delta.get("last_turn")
+    if isinstance(last_turn, Mapping):
+        recent_ids.update(str(item) for item in last_turn.get("citations") or ())
     messages = [
         {"role": "system", "content": _system_prompt(language)},
         {
@@ -4026,7 +5013,8 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
                 f"原始问题：{session.question}\n"
                 + "\n本次调查检索结果（历史线索与参考知识）：\n"
                 + f"{json.dumps(_retrieval_context(session), ensure_ascii=False)}\n"
-                + (f"\n此前对话：\n{history}\n" if history else "")
+                + "\n当前工作集与最近状态增量：\n"
+                + f"{_working_set_prompt(session)}\n"
                 + f"\n已采集证据（最近 {FOLLOW_UP_FULL} 条为全文，更早的为摘要）：\n"
                 + f"{_evidence_block(session, full_ids=recent_ids)}\n\n"
                 f"追问：{question}\n\n"
@@ -4037,6 +5025,7 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
         },
     ]
     try:
+        _record_model_context(session, messages, "rca_followup")
         payload = client.complete_json(messages, schema_name="rca_followup")
     except Exception as error:  # noqa: BLE001 - surfaced to the caller, not hidden
         return {
@@ -4058,6 +5047,23 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
     citations = _verified_citations(session, payload.get("citations") or [])
     session.turns.append({"question": question, "answer": answer, "citations": citations,
                           "at": datetime.now(timezone.utc).isoformat()})
+    if session.probe_prior:
+        _evaluate_memory_intervention(session, phase="follow_up")
+    checkpoint = _update_working_set(
+        session,
+        "follow_up_answered",
+        extra_delta={
+            "last_turn": {
+                "question": question,
+                "answer": answer[:600],
+                "citations": list(citations),
+                "fresh_evidence_ids": [
+                    item.get("evidence_id") for item in fresh if item.get("evidence_id")
+                ],
+            }
+        },
+        subgoal=question,
+    )
     turn_number = len(session.turns)
     _append_case_event(
         session,
@@ -4079,6 +5085,9 @@ def ask(session_id: str, question: str, language: str = "zh") -> dict[str, Any]:
         "hypothesis_state": _hypothesis_view(session),
         "probe_rounds": session.probe_rounds,
         "memory_commit": _archive_confirmed_if_complete(session),
+        "working_set": checkpoint.as_dict(),
+        "working_set_delta": dict(checkpoint.delta),
+        "memory_value": dict(session.memory_intervention),
         "degraded": False,
     }
 

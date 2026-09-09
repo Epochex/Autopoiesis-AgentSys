@@ -267,7 +267,8 @@ def test_durable_emergency_stop_blocks_before_any_host_command():
         control.resume("operator-test", "test cleanup")
     assert result["ran"] is False
     assert result["refused"] is True
-    assert "global remediation pause" in result["reason"]
+    assert result["reason_code"] == "new_actions_paused"
+    assert "management plane maintenance" in result["reason"]
     assert ran == []
 
 
@@ -321,3 +322,36 @@ def test_startup_reconciles_an_interrupted_budget_reservation(tmp_path, monkeypa
     )
     assert row["success"] is False
     assert json.loads(path.read_text(encoding="utf-8"))["records"][0]["completed_at"] is not None
+
+
+def test_command_observer_emits_start_before_return_and_keeps_separate_streams():
+    from domains.network_rca.remediation import CommandLog
+    seen = []
+    log = CommandLog(on_entry=seen.append)
+    def run(argv):
+        assert seen[-1]['phase'] == 'started'
+        assert seen[-1]['rc'] is None
+        return subprocess.CompletedProcess(argv, 7, 'partial output', 'permission denied')
+    command = Command(run=run).with_log(log)
+    result = command.run(['systemctl', 'restart', 'test.service'])
+    assert result.returncode == 7
+    assert [e['phase'] for e in seen] == ['started', 'completed']
+    assert seen[0]['command_id'] == seen[1]['command_id']
+    assert seen[1]['stdout'] == 'partial output'
+    assert seen[1]['stderr'] == 'permission denied'
+    assert seen[1]['duration_ms'] >= 0
+    assert len(log.entries) == 1
+
+
+@pytest.mark.parametrize('error', [FileNotFoundError('missing binary'), subprocess.TimeoutExpired(['systemctl'], 30, output=b'partial')])
+def test_command_failures_finish_the_started_receipt(error):
+    from domains.network_rca.remediation import CommandLog
+    seen = []
+    def fail(_):
+        raise error
+    with pytest.raises(type(error)):
+        Command(run=fail).with_log(CommandLog(on_entry=seen.append)).run(['systemctl', 'is-active', 'test.service'])
+    assert [e['phase'] for e in seen] == ['started', 'error']
+    assert seen[0]['command_id'] == seen[1]['command_id']
+    assert seen[1]['rc'] is None
+    assert type(error).__name__ in seen[1]['error']

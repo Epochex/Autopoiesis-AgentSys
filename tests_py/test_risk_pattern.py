@@ -349,6 +349,39 @@ def test_dimension_and_dedupe_state_have_hard_bounds():
     assert pattern.dedupe_truncated is True
 
 
+def test_snapshot_restore_can_tighten_previous_capacity_limits():
+    original = RiskPatternStore(
+        max_patterns=8,
+        max_dimension_values=8,
+        max_evidence_refs=8,
+        max_event_ids_per_pattern=8,
+    )
+    for index in range(6):
+        original.ingest(
+            _event(
+                f"restore-{index}",
+                1,
+                source_ip=f"45.74.{index}.1",
+                account=f"user-{index}",
+                asset=f"192.168.1.{index + 1}",
+            )
+        )
+
+    restored = RiskPatternStore.from_snapshot(
+        original.snapshot(),
+        max_dimension_values=2,
+        max_evidence_refs=2,
+        max_event_ids_per_pattern=2,
+    )
+    state = restored.snapshot()["patterns"][0]
+
+    assert len(state["source_ips"]) == 2
+    assert len(state["target_accounts"]) == 2
+    assert len(state["target_assets"]) == 2
+    assert len(state["evidence_refs"]) == 2
+    assert len(state["event_ids"]) == 2
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

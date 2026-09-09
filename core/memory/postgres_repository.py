@@ -1,7 +1,7 @@
 """PostgreSQL persistence for memory state and replayable index changes.
 
 ``memory_records`` is the current snapshot used at process startup, while
-``memory_events`` is an append-only stream consumed by incremental indexes.
+``memory_events`` is the append-only audit and replay log exposed by the event API.
 Quarantine keeps content but excludes it from retrieval. Redaction removes the
 content from the snapshot and every historical event while retaining a
 tombstone. Purge is a separately enabled administrative action that removes the
@@ -32,10 +32,6 @@ _EVENT_WRITER_LOCK = 746_617_310_630_458_476
 
 class MemoryVersionConflict(RuntimeError):
     """The caller tried to replace a memory version that is no longer current."""
-
-
-class CheckpointError(ValueError):
-    """An index checkpoint moved backwards or beyond the event high-water mark."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -510,54 +506,3 @@ class PostgresMemoryRepository:
                     )
                     for row in cursor.fetchall()
                 ]
-
-    def get_checkpoint(self, index_name: str) -> int:
-        if not index_name.strip():
-            raise ValueError("index_name must not be empty")
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT event_offset FROM index_checkpoints WHERE index_name = %s",
-                    (index_name,),
-                )
-                row = cursor.fetchone()
-                return int(row[0]) if row is not None else 0
-
-    def advance_checkpoint(self, index_name: str, event_offset: int) -> int:
-        """Move an index checkpoint monotonically within the committed event log."""
-        if not index_name.strip():
-            raise ValueError("index_name must not be empty")
-        if event_offset < 0:
-            raise ValueError("event_offset must be non-negative")
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
-                self._lock_event_writer(cursor)
-                cursor.execute("SELECT COALESCE(MAX(event_offset), 0) FROM memory_events")
-                high_water = int(cursor.fetchone()[0])
-                if event_offset > high_water:
-                    raise CheckpointError(
-                        f"checkpoint {event_offset} is beyond event high-water mark {high_water}"
-                    )
-                cursor.execute(
-                    """
-                    INSERT INTO index_checkpoints (index_name, event_offset)
-                    VALUES (%s, %s)
-                    ON CONFLICT (index_name) DO UPDATE
-                    SET event_offset = EXCLUDED.event_offset,
-                        updated_at = clock_timestamp()
-                    WHERE index_checkpoints.event_offset <= EXCLUDED.event_offset
-                    RETURNING event_offset
-                    """,
-                    (index_name, event_offset),
-                )
-                row = cursor.fetchone()
-                if row is None:
-                    cursor.execute(
-                        "SELECT event_offset FROM index_checkpoints WHERE index_name = %s",
-                        (index_name,),
-                    )
-                    current = int(cursor.fetchone()[0])
-                    raise CheckpointError(
-                        f"checkpoint for {index_name!r} cannot move from {current} to {event_offset}"
-                    )
-                return int(row[0])

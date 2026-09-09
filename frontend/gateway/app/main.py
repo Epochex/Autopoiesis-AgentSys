@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Mapping
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -58,7 +59,34 @@ _case_sync_health: dict[str, Any] = {
     "lastSyncAt": None,
     "lastError": None,
     "caseCount": 0,
+    "autoInvestigation": {},
 }
+_overview_client_lock = threading.Lock()
+_overview_client_requests: dict[str, list[float]] = {}
+_overview_refresh_task: asyncio.Task[dict[str, Any]] | None = None
+
+
+def _admit_overview_request(client: str, now: float | None = None) -> bool:
+    """Allow normal polling while cutting off a tight client request loop."""
+    current = time.monotonic() if now is None else now
+    with _overview_client_lock:
+        recent = [
+            timestamp
+            for timestamp in _overview_client_requests.get(client, ())
+            if current - timestamp < 5.0
+        ]
+        if len(recent) >= 3:
+            _overview_client_requests[client] = recent
+            return False
+        recent.append(current)
+        _overview_client_requests[client] = recent
+        # Keep the tiny protection map bounded even behind rotating proxies.
+        if len(_overview_client_requests) > 1_000:
+            cutoff = current - 5.0
+            for key in list(_overview_client_requests):
+                if not any(value >= cutoff for value in _overview_client_requests[key]):
+                    _overview_client_requests.pop(key, None)
+        return True
 
 
 def _case_repository():
@@ -193,9 +221,6 @@ class IncidentDispositionAPIResponse(BaseModel):
 class IncidentReplayResponse(BaseModel):
     ok: Literal[True]
     live: Literal[False]
-    topic: str
-    streamed: dict[str, Any] | None
-    topicStatus: dict[str, Any] | None
     incident_id: str
     replay: Literal[True]
     source_kind: Literal["simulated"]
@@ -274,9 +299,25 @@ async def _lifespan(app: FastAPI):
     global _diagnosis_cases, _evolving_service, _runtime_error, _operational_memory, _operational_stop
     _start_prewarm()
     _configure_production_memory_budget()
-    from .operational_memory import build_operational_memory_service
+    from .operational_memory import OperationalMemoryService, build_operational_memory_service
 
-    _operational_memory = await asyncio.to_thread(build_operational_memory_service)
+    # Restoring thousands of historical dossiers and their derived feature
+    # graph is CPU-heavy. It does not gate the live topology endpoint, so expose
+    # a valid process-local service immediately and swap in the durable store
+    # when restoration completes. Previously uvicorn did not bind its socket for
+    # minutes while this work ran inside the lifespan startup barrier.
+    _operational_memory = OperationalMemoryService(durable=False)
+
+    def restore_operational_memory() -> None:
+        global _operational_memory
+        restored = build_operational_memory_service()
+        _operational_memory = restored
+
+    threading.Thread(
+        target=restore_operational_memory,
+        name="operational-memory-restore",
+        daemon=True,
+    ).start()
     try:
         from domains.network_rca.factory import build_network_rca_service
         from domains.network_rca.real_dataset import (
@@ -296,6 +337,13 @@ async def _lifespan(app: FastAPI):
                 data_source="real",
                 real_stats_path=resolve_stats_path(_MANIFEST),
                 reasoner_mode="rule",
+                context_strategy="adaptive",
+                # Quarantined records remain durable in PostgreSQL for audit,
+                # but are excluded from serving and need not occupy the
+                # gateway's bounded in-process retrieval index.
+                # Keep retired versions for safe updates; active() excludes
+                # quarantined records from retrieval independently.
+                load_quarantined_memory=True,
                 knowledge_corpus_path=settings.knowledge_corpus_path,
                 adaptive_multiagent_enabled=True,
                 adaptive_options={
@@ -319,7 +367,6 @@ async def _lifespan(app: FastAPI):
     # Start source refresh and the autonomous detector loop after both memory
     # services exist, so their first completed event can be persisted instead
     # of racing gateway construction.
-    import threading
     from .sentinel_wiring import start_background
 
     stop_event = threading.Event()
@@ -327,6 +374,11 @@ async def _lifespan(app: FastAPI):
 
     def refresh_operational_memory() -> None:
         interval = max(30.0, float(os.getenv("AUTOPOIESIS_OPERATIONAL_REFRESH_INTERVAL", "300")))
+        # The restore worker already supplies the initial generation. Delay the
+        # broad source refresh so it cannot duplicate that CPU and memory work
+        # while the gateway is becoming ready.
+        if stop_event.wait(interval):
+            return
         while not stop_event.is_set():
             _operational_memory.refresh()
             stop_event.wait(interval)
@@ -337,7 +389,8 @@ async def _lifespan(app: FastAPI):
 
         from domains.network_rca.environment import build_environment_report
         from .investigation_cases import (
-            auto_start_pending_cases,
+            AutoInvestigationDispatcher,
+            prepare_case_repository,
             resolve_routine_observations,
             sync_environment_cases,
             sync_snapshot_cases,
@@ -346,53 +399,73 @@ async def _lifespan(app: FastAPI):
         from .sentinel_projection import merge_into_snapshot
 
         interval = max(2.0, float(os.getenv("AUTOPOIESIS_CASE_SYNC_INTERVAL", "5")))
+        repository = _case_repository()
+        startup_migration = prepare_case_repository(repository)
+        _case_sync_health["startupMigration"] = startup_migration
+        dispatcher = AutoInvestigationDispatcher(
+            repository,
+            workers=int(os.getenv("AUTOPOIESIS_AUTO_INVESTIGATION_WORKERS", "2")),
+            retry_interval_seconds=float(os.getenv(
+                "AUTOPOIESIS_AUTO_INVESTIGATION_RETRY_SECONDS", "30",
+            )),
+        )
         environment_interval = max(30.0, float(os.getenv(
             "AUTOPOIESIS_ENVIRONMENT_CASE_SYNC_INTERVAL", "60",
         )))
         environment_due_at = 0.0
-        while not stop_event.is_set():
-            try:
-                snapshot = load_runtime_snapshot(settings, "zh")
-                snapshot = merge_into_snapshot(snapshot, "zh")
-                sync_snapshot_cases(snapshot, _case_repository())
-                routine_resolved = resolve_routine_observations(_case_repository())
-                environment_case_ids: set[str] = set()
-                if time.monotonic() >= environment_due_at:
-                    report = build_environment_report()
-                    environment_case_ids.update(
-                        sync_environment_cases(report, _case_repository())
-                    )
-                    global _environment_report, _environment_loaded_at
-                    _environment_report = report
-                    _environment_loaded_at = time.monotonic()
-                    environment_due_at = time.monotonic() + environment_interval
-                auto_started = []
-                if os.getenv("AUTOPOIESIS_AUTO_INVESTIGATE", "1") != "0":
-                    auto_started = auto_start_pending_cases(
-                        _case_repository(),
-                        limit=4,
-                        case_ids=environment_case_ids or None,
-                    )
-                _case_sync_health.update({
-                    "lastSyncAt": datetime.now(timezone.utc).isoformat(),
-                    "lastError": None,
-                    "caseCount": len(_case_repository().list(limit=500)),
-                    "autoStarted": len(auto_started),
-                    "routineObservationsResolved": routine_resolved,
-                })
-            except Exception as error:
-                _case_sync_health.update({
-                    "lastSyncAt": datetime.now(timezone.utc).isoformat(),
-                    "lastError": f"{type(error).__name__}: {error}"[:300],
-                })
-            stop_event.wait(interval)
+        try:
+            while not stop_event.is_set():
+                try:
+                    snapshot = load_runtime_snapshot(settings, "zh")
+                    snapshot = merge_into_snapshot(snapshot, "zh")
+                    sync_snapshot_cases(snapshot, repository)
+                    routine_resolved = resolve_routine_observations(repository)
+                    if time.monotonic() >= environment_due_at:
+                        report = build_environment_report()
+                        sync_environment_cases(report, repository)
+                        global _environment_report, _environment_loaded_at
+                        _environment_report = report
+                        _environment_loaded_at = time.monotonic()
+                        environment_due_at = time.monotonic() + environment_interval
+                    submitted = 0
+                    if os.getenv("AUTOPOIESIS_AUTO_INVESTIGATE", "1") != "0":
+                        submitted = dispatcher.dispatch(limit=4)
+                    _case_sync_health.update({
+                        "lastSyncAt": datetime.now(timezone.utc).isoformat(),
+                        "lastError": None,
+                        "caseCount": repository.count(),
+                        "autoStarted": submitted,
+                        "autoInvestigation": dispatcher.snapshot(),
+                        "routineObservationsResolved": routine_resolved,
+                    })
+                except Exception as error:
+                    _case_sync_health.update({
+                        "lastSyncAt": datetime.now(timezone.utc).isoformat(),
+                        "lastError": f"{type(error).__name__}: {error}"[:300],
+                        "autoInvestigation": dispatcher.snapshot(),
+                    })
+                stop_event.wait(interval)
+        finally:
+            dispatcher.close()
 
     threading.Thread(target=refresh_operational_memory, daemon=True).start()
     threading.Thread(target=sync_live_investigation_cases, daemon=True).start()
+    if os.getenv("AUTOPOIESIS_KNOWLEDGE_AUTO_SYNC", "0") == "1":
+        from core.memory.knowledge_sync import run_knowledge_sync_loop
+
+        threading.Thread(
+            target=run_knowledge_sync_loop,
+            args=(stop_event,),
+            name="official-knowledge-sync",
+            daemon=True,
+        ).start()
     start_background()
+    from .change_routes import start_worker as start_change_worker
+    change_worker_stop = start_change_worker()
     try:
         yield
     finally:
+        change_worker_stop.set()
         if _operational_stop is not None:
             _operational_stop.set()
         if _evolving_service is not None:
@@ -409,6 +482,13 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=_lifespan,
 )
+
+from .change_routes import router as change_router
+app.include_router(change_router)
+from .display_translation import router as display_translation_router
+app.include_router(display_translation_router)
+from .completed_events import create_router as completed_events_router
+app.include_router(completed_events_router(_case_repository, lambda: _evolving_service))
 
 # The evolution observatory ships every memory record + lifecycle event (~290 KB of
 # highly repetitive JSON); it gzips to ~11 KB.
@@ -519,8 +599,27 @@ async def rca_threat(ip: str, cidr: str = "", lang: str = "zh") -> dict[str, Any
 
 
 @app.get("/api/rca/wan_threat")
-async def rca_wan_threat(ip: str, lang: str = "zh") -> dict[str, Any]:
+async def rca_wan_threat(ip: str, lang: str = "zh", source: str = "historical", mode: Literal["read", "analyze"] = "read", force: bool = False) -> dict[str, Any]:
+    if source == "production":
+        from .production_threat import assess_production_source
+        from .situational_awareness import build_situational_overview
+
+        overview = await asyncio.to_thread(build_situational_overview, _case_repository(), _environment_report)
+        return await asyncio.to_thread(assess_production_source, ip, overview, lang, mode=mode, force=force)
+    if source != "historical":
+        raise HTTPException(status_code=400, detail="unknown evidence source")
     return await asyncio.to_thread(assess_wan, ip, lang)
+
+
+@app.get("/api/rca/production_analysis")
+async def rca_production_analysis(subject: str, scope: str = "host", lang: str = "zh", mode: Literal["read", "analyze"] = "read", force: bool = False) -> dict[str, Any]:
+    if scope not in ("host", "subnet"):
+        raise HTTPException(status_code=400, detail="unknown analysis scope")
+    from .production_threat import assess_production_scope
+    from .situational_awareness import build_situational_overview
+
+    overview = await asyncio.to_thread(build_situational_overview, _case_repository(), _environment_report)
+    return await asyncio.to_thread(assess_production_scope, subject, scope, overview, lang, mode=mode, force=force)
 
 
 @app.get("/api/rca/device_profile")
@@ -532,7 +631,7 @@ async def rca_device_profile(ip: str, lang: str = "zh") -> dict[str, Any]:
 
 @app.get("/api/rca/device_history")
 async def rca_device_history(ip: str, days: int = 7, full: int = 0) -> dict[str, Any]:
-    """Historical portrait for one host over the last N days, from ClickHouse autopoiesis.facts."""
+    """Historical portrait for one host over the last N days from the configured fact table."""
     from .history import device_history
     out = await asyncio.to_thread(device_history, ip, days, bool(full))
     return out if out is not None else {"ok": False, "text": "history store unavailable"}
@@ -1130,6 +1229,8 @@ async def rca_memory(
     tier: Literal["episodic", "semantic", "procedural", "asset_profile"] | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
     include_quarantined: bool = False,
+    details: bool = False,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, Any]:
     """Current online memory, separate from the deterministic benchmark replay."""
     from core.evolve.observatory import CAPABILITIES
@@ -1163,7 +1264,10 @@ async def rca_memory(
                 "evaluatedAt": "module_import",
             },
         },
-        "records": [_memory_list_record(record) for record in selected[:limit]],
+        "records": [(_memory_detail_record if details else _memory_list_record)(record) for record in selected[offset:offset + limit]],
+        "total": len(selected),
+        "offset": offset,
+        "next_offset": offset + limit if offset + limit < len(selected) else None,
     }
 
 
@@ -1312,6 +1416,75 @@ async def rca_event_memory_receipt(
             "features": [],
         }
     )
+    # Investigation sessions are persisted independently from sentinel chains.
+    # Join the latest exact-subject session here so the UI can prove whether the
+    # selected event actually recalled memory and changed the probe path.  An
+    # absent row is meaningful: the event completed through the sentinel action
+    # chain without opening the investigation service.
+    from .investigate import _session_store
+
+    snapshots = await asyncio.to_thread(_session_store().recent, 1_000)
+    snapshots = [snapshot for snapshot in snapshots if not snapshot.get("evaluation_source_case_id") and not snapshot.get("evaluation_only")]
+    subject_sessions = [
+        snapshot for snapshot in snapshots
+        if str(snapshot.get("subject") or "") == subject
+    ]
+    if incident_ref:
+        exact_sessions = [
+            snapshot for snapshot in snapshots
+            if str(snapshot.get("case_id") or "") == incident_ref
+            or any(
+                incident_ref == str(source.get("source_id") or "")
+                for source in snapshot.get("source_refs") or ()
+                if isinstance(source, Mapping)
+            )
+        ]
+        investigation_snapshot = exact_sessions[0] if exact_sessions else None
+    else:
+        investigation_snapshot = subject_sessions[0] if subject_sessions else None
+
+    investigation: dict[str, Any] | None = None
+    if investigation_snapshot is not None:
+        # Investigation writes carry their exact persisted session ID as provenance.
+        # A matching subject or a retrieval hit alone does not establish a write.
+        session_source = str(investigation_snapshot.get("session_id") or "")
+        existing_ids = {record.memory_id for record in current_records}
+        current_records.extend(record for record in records
+            if session_source and session_source in record.source_trace_ids
+            and record.memory_id not in existing_ids)
+        intervention = dict(investigation_snapshot.get("memory_intervention") or {})
+        probe_prior = dict(investigation_snapshot.get("probe_prior") or {})
+        shadow_order = list(intervention.get("no_memory_shadow_order") or ())
+        if not shadow_order:
+            shadow_order = list(probe_prior.get("no_memory_shadow_order") or ())
+        selected_order = list(intervention.get("selected_order") or ())
+        if not selected_order:
+            selected_order = list(probe_prior.get("selected_order") or ())
+        executed_order = list(intervention.get("executed_order") or ())
+        saved_probes = list(intervention.get("saved_probes") or ())
+        memory_ids = list(intervention.get("memory_ids") or ())
+        if not memory_ids:
+            memory_ids = list(probe_prior.get("memory_ids") or ())
+        investigation = {
+            "session_id": investigation_snapshot.get("session_id"),
+            "case_id": investigation_snapshot.get("case_id"),
+            "subject": investigation_snapshot.get("subject"),
+            "opened_at": investigation_snapshot.get("opened_at"),
+            "memory_enabled": bool(investigation_snapshot.get("memory_enabled")),
+            "memory_applied": bool(intervention.get("memory_applied")),
+            "ordering_effect": intervention.get("ordering_effect"),
+            "confirmed": bool(intervention.get("confirmed")),
+            "memory_ids": memory_ids,
+            "candidate_probe_count": len(shadow_order),
+            "executed_probe_count": len(executed_order),
+            "saved_probe_count": len(saved_probes),
+            "selected_order": selected_order,
+            "executed_order": executed_order,
+            "saved_probes": saved_probes,
+            "trajectory_activity_count": len(
+                investigation_snapshot.get("trace_events") or ()
+            ),
+        }
     exact_dossiers = list(operational.get("dossiers", []))
     current = [memory_row(record) for record in current_records]
     related = [memory_row(record) for record in related_records]
@@ -1345,6 +1518,7 @@ async def rca_event_memory_receipt(
             "dossier_id": dossier_id,
             "source_trace_id": source_trace_id,
         },
+        "investigation": investigation,
         "dossiers": exact_dossiers,
         "risks": list(operational.get("risks", [])),
         "features": list(operational.get("features", [])),
@@ -1451,29 +1625,16 @@ async def rca_bench_snapshot(passes: int = Query(default=4, ge=1, le=64)) -> dic
 async def rca_replay(
     lang: str = "zh",
     passes: int = Query(default=4, ge=1, le=64),
-    inject: int = Query(default=0, ge=0, le=1),
 ) -> dict[str, Any]:
-    # Offline fault-injection self-heal benchmark over six held-out cases. inject=1
-    # additionally attempts to publish representative replay:true bursts to the
-    # isolated topic; `streamed` reports that attempt separately from the replay.
-    from core.evolve.replay_stream import (
-        REPLAY_TOPIC,
-        produce_replay,
-        replay_trajectory,
-        topic_status,
-    )
+    """Run the isolated held-out benchmark entirely in the local process."""
+    from core.evolve.replay_stream import replay_trajectory
 
-    streamed = await asyncio.to_thread(produce_replay) if inject == 1 else None
-    status = await asyncio.to_thread(topic_status, REPLAY_TOPIC)
     trajectory = await asyncio.to_thread(replay_trajectory, passes, lang)
     return {
         "ok": True,
         "live": False,
         "dataMode": "offline_benchmark_replay",
         "onlineMemory": False,
-        "topic": REPLAY_TOPIC,
-        "topic_events": status.get("events"),
-        "streamed": streamed,
         **trajectory,
     }
 
@@ -1631,14 +1792,8 @@ async def rca_incident_disposition(
 @app.post("/api/rca/incidents/{incident_id}/replay", response_model=IncidentReplayResponse)
 async def rca_incident_replay(
     incident_id: str,
-    inject: int = Query(default=0, ge=0, le=1),
 ) -> dict[str, Any]:
-    """Replay one incident locally or through the existing isolated replay topic."""
-    from core.evolve.replay_stream import (
-        REPLAY_TOPIC,
-        produce_tagged_replay,
-        topic_status,
-    )
+    """Build an isolated local replay for one archived incident."""
 
     try:
         replay = await asyncio.to_thread(
@@ -1647,22 +1802,9 @@ async def rca_incident_replay(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="unknown incident_id") from exc
 
-    streamed = None
-    status = None
-    if inject == 1:
-        streamed = await asyncio.to_thread(
-            produce_tagged_replay,
-            replay["events"],
-            [incident_id],
-            topic=REPLAY_TOPIC,
-        )
-        status = await asyncio.to_thread(topic_status, REPLAY_TOPIC)
     return {
         "ok": True,
         "live": False,
-        "topic": REPLAY_TOPIC,
-        "streamed": streamed,
-        "topicStatus": status,
         **replay,
     }
 
@@ -1684,6 +1826,46 @@ async def rca_environment(refresh: int = Query(default=0, ge=0, le=1)) -> dict[s
             _environment_report = await asyncio.to_thread(build_environment_report)
             _environment_loaded_at = time.monotonic()
         return _environment_report
+
+
+class OwnershipDecisionRequest(BaseModel):
+    ip: IPvAnyAddress
+    mac: str = Field(pattern=r'^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
+    action: str = Field(pattern=r'^(set_owner|retire_record|clear_owner|label_device)$')
+    device_name: str = Field(default='', max_length=120)
+    revision: int = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=1000)
+    operator: str = Field(min_length=1, max_length=100)
+
+
+@app.get('/api/rca/environment/ownership')
+async def rca_ownership(ip: IPvAnyAddress, refresh: bool = False) -> dict[str, Any]:
+    from .ownership import ownership_view
+    from .live_identity import identity_map
+    report = await rca_environment(refresh=int(refresh))
+    identities = await asyncio.to_thread(identity_map)
+    try:
+        return await asyncio.to_thread(ownership_view, str(ip), report, identities)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post('/api/rca/environment/ownership/decision')
+async def rca_ownership_decision(payload: OwnershipDecisionRequest, request: Request) -> dict[str, Any]:
+    from urllib.parse import urlsplit
+    from domains.network_rca.ownership_decisions import save_decision
+    origin = request.headers.get('origin')
+    if origin and urlsplit(origin).netloc != request.headers.get('host'):
+        raise HTTPException(status_code=403, detail='cross_origin_write_rejected')
+    view = await rca_ownership(payload.ip)
+    if payload.mac.lower() not in {row['mac'] for row in view['claimants']}:
+        raise HTTPException(status_code=400, detail='MAC is not an observed candidate')
+    try:
+        receipt = await asyncio.to_thread(save_decision, str(payload.ip), payload.mac, payload.action,
+                                          payload.revision, payload.reason, payload.operator, payload.device_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {'ok': True, 'receipt': receipt, 'ownership': await rca_ownership(payload.ip)}
 
 
 class OwnershipProbeRequest(BaseModel):
@@ -1868,6 +2050,7 @@ async def rca_pentest(lang: str = "zh", scenario: str = "live") -> dict[str, Any
 @app.get("/api/rca/retrieval")
 async def rca_retrieval(
     lang: str = "zh", q: str | None = None, scenario: str = "live",
+    case_id: str | None = None, subject: str | None = None,
 ) -> dict[str, Any]:
     # Scenario-aware trace of REAL retrieval flows. scenario="live" (default) shows
     # ONLY the internal-network memory-recall cases (real TieredMemoryStore recall);
@@ -1877,9 +2060,17 @@ async def rca_retrieval(
     if scenario == "live":
         from .investigate import live_retrieval_trace
 
-        return await asyncio.to_thread(live_retrieval_trace, q)
+        return await asyncio.to_thread(live_retrieval_trace, q, 12, case_id, subject, lang)
     from core.memory.retrieval_trace import build_retrieval_trace
     return await asyncio.to_thread(build_retrieval_trace, lang, q, scenario)
+
+
+@app.get("/api/rca/knowledge-status")
+async def rca_knowledge_status() -> dict[str, Any]:
+    """Exact corpus, synchronization and retrieval backend currently serving."""
+    from core.memory.ops_knowledge import knowledge_backend_status
+
+    return await asyncio.to_thread(knowledge_backend_status)
 
 
 @app.get("/api/rca/benchmark")
@@ -1896,20 +2087,26 @@ async def rca_live_situation(lang: str = "zh") -> dict[str, Any]:
     # Read-only snapshot of the Autopoiesis event pipeline's landed alert feed.
     from .runtime_reader import load_runtime_snapshot
     from .sentinel_projection import merge_into_snapshot
-    from .investigation_cases import sync_snapshot_cases
+    from .investigation_cases import annotate_snapshot_cases
 
     snapshot = await asyncio.to_thread(load_runtime_snapshot, settings, lang)
     # The sentinel is a separate subsystem writing a separate file. Folding its
     # chains in here is what makes a fault it just found show up on the page the
     # operator is actually looking at, instead of only in the audit trail.
     snapshot = await asyncio.to_thread(merge_into_snapshot, snapshot, lang)
-    # Every landed alert/suggestion becomes a durable case before it is returned.
-    # Source ids provide stable deduplication across the page's repeated polls.
-    return await asyncio.to_thread(sync_snapshot_cases, snapshot, _case_repository())
+    # Persistence is owned by the five-second background synchronizer. The HTTP
+    # path stays read-only so live UI polling never waits behind SQLite commits.
+    snapshot = await asyncio.to_thread(annotate_snapshot_cases, snapshot, _case_repository())
+    from .completed_events import archived_record_ids
+    from .completed_event_view import without_archived
+    archived = await asyncio.to_thread(archived_record_ids, _case_repository())
+    return without_archived(snapshot, archived)
 
 
 @app.get("/api/rca/situational-overview")
 async def rca_situational_overview(
+    request: Request,
+    response: Response,
     refresh: bool = Query(default=False),
 ) -> dict[str, Any]:
     """Current assets, changes, boundary traffic, risk and case outcomes.
@@ -1918,19 +2115,84 @@ async def rca_situational_overview(
     inputs are the FortiGate read-only API, ClickHouse production tables, the
     latest environment sweep and the durable production case repository.
     """
-    from .situational_awareness import build_situational_overview
-
-    report = _environment_report
-    if report is None:
-        from domains.network_rca.environment import build_environment_report
-
-        report = await asyncio.to_thread(build_environment_report)
-    return await asyncio.to_thread(
+    client = request.client.host if request.client is not None else "unknown"
+    if not _admit_overview_request(client):
+        raise HTTPException(
+            status_code=429,
+            detail="situational overview polling is limited to 3 requests per 5 seconds",
+            headers={"Retry-After": "5"},
+        )
+    global _overview_refresh_task
+    from .situational_awareness import (
+        SITUATIONAL_CACHE_TTL_SECONDS,
         build_situational_overview,
-        _case_repository(),
-        report,
-        refresh=refresh,
+        cached_situational_overview,
     )
+
+    cached, cache_age = cached_situational_overview()
+
+    def rebuild() -> dict[str, Any]:
+        report = _environment_report
+        if report is None:
+            from domains.network_rca.environment import build_environment_report
+
+            report = build_environment_report()
+        return build_situational_overview(
+            _case_repository(), report, refresh=True,
+        )
+
+    needs_refresh = (
+        refresh
+        or cached is None
+        or cache_age is None
+        or cache_age >= SITUATIONAL_CACHE_TTL_SECONDS
+    )
+    if needs_refresh and (
+        _overview_refresh_task is None or _overview_refresh_task.done()
+    ):
+        # Keep exactly one refresh in flight. Callers with a prior snapshot get
+        # that snapshot immediately; a cold caller waits at most ten seconds
+        # while the shared task continues safely after a client disconnect.
+        _overview_refresh_task = asyncio.create_task(asyncio.to_thread(rebuild))
+        _overview_refresh_task.add_done_callback(
+            lambda completed: (
+                completed.exception() if not completed.cancelled() else None
+            )
+        )
+
+    if cached is not None and not refresh:
+        response.headers["X-Autopoiesis-Cache"] = (
+            "stale"
+            if cache_age is not None and cache_age >= SITUATIONAL_CACHE_TTL_SECONDS
+            else "hit"
+        )
+        return cached
+    if _overview_refresh_task is None:
+        raise HTTPException(status_code=503, detail="situational overview unavailable")
+    try:
+        result = await asyncio.wait_for(
+            asyncio.shield(_overview_refresh_task), timeout=10.0,
+        )
+        response.headers["X-Autopoiesis-Cache"] = "refresh"
+        return result
+    except asyncio.TimeoutError as error:
+        if cached is not None:
+            response.headers["X-Autopoiesis-Cache"] = "stale"
+            return cached
+        raise HTTPException(
+            status_code=503,
+            detail="situational overview is warming; retry shortly",
+            headers={"Retry-After": "2"},
+        ) from error
+    except Exception as error:
+        if cached is not None:
+            response.headers["X-Autopoiesis-Cache"] = "stale"
+            return cached
+        raise HTTPException(
+            status_code=503,
+            detail=f"situational overview refresh failed: {type(error).__name__}",
+            headers={"Retry-After": "2"},
+        ) from error
 
 
 @app.get("/api/rca/investigation-cases")
@@ -2161,6 +2423,7 @@ class InvestigateStart(BaseModel):
     subject: str | None = Field(default=None, max_length=64)
     case_id: str | None = Field(default=None, min_length=1, max_length=64)
     new_session: bool = False
+    memory_enabled: bool = True
     lang: Literal["zh", "en"] = "zh"
 
 
@@ -2209,11 +2472,22 @@ async def investigate_start(request: InvestigateStart) -> dict[str, Any]:
             request.family,
             request.subject,
             request.case_id,
+            memory_enabled=request.memory_enabled,
             restart_existing=request.new_session,
         )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from None
     return {"ok": True, **result}
+
+
+@app.get("/api/rca/demo/runs")
+async def demo_scenario_runs(
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """Completed controlled demonstrations, linked to their real evidence."""
+    from .demo_scenarios import scenario_snapshot
+
+    return await asyncio.to_thread(scenario_snapshot, limit)
 
 
 @app.post("/api/rca/investigate/analyze")
@@ -2274,8 +2548,8 @@ async def investigate_business_value(
     from core.eval.business_value_acceptance import evaluate_business_value
     from .investigate import _session_store
 
-    cases = [case.as_dict() for case in _case_repository().list(limit=500)]
-    sessions = await asyncio.to_thread(_session_store().recent, 500)
+    cases = [case.as_dict() for case in _case_repository().list(limit=5_000)]
+    sessions = await asyncio.to_thread(_session_store().recent, 5_000)
     return {
         "ok": True,
         **evaluate_business_value(
@@ -2285,6 +2559,108 @@ async def investigate_business_value(
             production_only=cohort == "production",
         ),
     }
+
+
+_trajectory_fsm_cache_lock = threading.Lock()
+_trajectory_fsm_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
+
+
+def _cached_trajectory_fsm_report(
+    *,
+    session_id: str | None,
+    case_id: str | None,
+    context_window: int,
+    top_k: int,
+    limit: int,
+    max_events_per_session: int,
+) -> dict[str, Any]:
+    from .investigation_session_store import InvestigationSessionStore
+    from .trajectory_fsm import trajectory_fsm_report
+
+    root = settings.investigation_session_store_dir
+    try:
+        directory_generation = root.stat().st_mtime_ns
+    except OSError:
+        directory_generation = 0
+    cache_key = (
+        str(root),
+        directory_generation,
+        session_id,
+        case_id,
+        context_window,
+        top_k,
+        limit,
+        max_events_per_session,
+    )
+    with _trajectory_fsm_cache_lock:
+        cached = _trajectory_fsm_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    store = InvestigationSessionStore(root)
+    target = None
+    if session_id:
+        try:
+            target = store.load(session_id)
+        except (ValueError, OSError):
+            raise KeyError("unknown session") from None
+        if target is None:
+            raise KeyError("unknown session")
+    snapshots = store.recent(limit)
+    report = trajectory_fsm_report(
+        snapshots,
+        session_id=session_id,
+        case_id=case_id,
+        target_snapshot=target,
+        context_window=context_window,
+        top_k=top_k,
+        max_events_per_session=max_events_per_session,
+    )
+    samples = report["model"]["samples"]
+    payload = {
+        **report,
+        "ok": True,
+        "trainedAt": datetime.now(timezone.utc).isoformat(),
+        "sessionCount": samples["sessions"],
+        "eventCount": samples["activities"],
+        "limits": {
+            "maxSessions": limit,
+            "maxEventsPerSession": max_events_per_session,
+            "truncatedSessions": report["limits"]["truncated_sessions"],
+        },
+    }
+    with _trajectory_fsm_cache_lock:
+        if len(_trajectory_fsm_cache) >= 64:
+            _trajectory_fsm_cache.clear()
+        _trajectory_fsm_cache[cache_key] = payload
+    return payload
+
+
+@app.get("/api/rca/investigate/trajectory-fsm")
+async def investigate_trajectory_fsm(
+    session_id: str | None = Query(default=None, min_length=1, max_length=64),
+    case_id: str | None = Query(default=None, min_length=1, max_length=128),
+    context_window: int = Query(default=2, ge=1, le=4),
+    top_k: int = Query(default=3, ge=1, le=10),
+    limit: int = Query(default=1_000, ge=1, le=1_000),
+    max_events_per_session: int = Query(default=500, ge=1, le=500),
+) -> dict[str, Any]:
+    """Read-only shadow FSM learned from durable investigation traces."""
+    try:
+        report = await asyncio.to_thread(
+            _cached_trajectory_fsm_report,
+            session_id=session_id,
+            case_id=case_id,
+            context_window=context_window,
+            top_k=top_k,
+            limit=limit,
+            max_events_per_session=max_events_per_session,
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=404, detail="unknown investigation session or case"
+        ) from None
+    return report
 
 
 @app.post("/api/rca/investigate/ask")
@@ -2383,6 +2759,14 @@ async def sentinel_timeline(limit: int = Query(default=200, ge=1, le=2000)) -> d
     from core.remediate.sentinel import timeline
 
     rows = await asyncio.to_thread(timeline, limit)
+    from .demo_execution_trace import demo_execution_events
+    supplemental = await asyncio.to_thread(demo_execution_events, existing_events=rows)
+    seen = {(row.get("change_id"), row.get("source_event_seq"), row.get("kind"))
+            for row in rows if row.get("change_id") and row.get("source_event_seq") is not None}
+    rows.extend(row for row in supplemental
+                if (row.get("change_id"), row.get("source_event_seq"), row.get("kind")) not in seen)
+    rows.sort(key=lambda row: str(row.get("at") or ""))
+    rows = rows[-limit:]
     if any(row.get("kind") == "escalated" for row in rows):
         _durable, records, _budget, _last_decay_at = await asyncio.to_thread(
             _memory_records

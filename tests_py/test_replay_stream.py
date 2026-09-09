@@ -1,9 +1,8 @@
-"""Falsifiable tests for the streaming fault-injection self-heal benchmark.
+"""Falsifiable tests for the local fault-scenario benchmark.
 
 These verify that (1) the scored trajectory is the REAL offline evolving run — its
 warm accuracy equals the authoritative /api/rca/evolution delta; (2) each case's
-replay burst is real-schema-shaped and clearly tagged; and (3) Redpanda production
-    degrades gracefully when the Kafka endpoint is absent, as in CI/sandbox.
+replay burst is real-schema-shaped and clearly tagged.
 """
 from __future__ import annotations
 
@@ -11,9 +10,7 @@ from core.evolve.replay_stream import (
     _SCHEMA_FIELDS,
     _load_cases,
     case_fault_events,
-    produce_replay,
     replay_trajectory,
-    topic_status,
 )
 from frontend.gateway.app.rca_reader import load_evolution
 
@@ -82,20 +79,3 @@ def test_admin_bruteforce_events_carry_login_failed_signal():
     events = case_fault_events(admin)
     assert any(ev["action"] == "login-failed" and ev["subtype"] == "admin" for ev in events)
     assert any(ev["action"] == "login-disabled" for ev in events)  # the lockout tail
-
-
-def test_produce_replay_degrades_gracefully_without_kafka_endpoint(monkeypatch):
-    monkeypatch.setattr("core.evolve.replay_stream._KAFKA_BROKERS", "")
-    result = produce_replay()  # must NOT raise
-    assert result["ok"] is False
-    assert result["degraded"] is True
-    assert result["produced"] == 0
-    assert result["topic"] == "autopoiesis.events.replay.v1"
-    assert "no replay transport endpoint" in result["note"]
-
-
-def test_topic_status_degrades_gracefully_without_kafka_endpoint(monkeypatch):
-    monkeypatch.setattr("core.evolve.replay_stream._KAFKA_BROKERS", "")
-    status = topic_status()  # must NOT raise
-    assert status["degraded"] is True
-    assert status["events"] is None

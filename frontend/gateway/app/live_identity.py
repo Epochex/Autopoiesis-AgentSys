@@ -343,21 +343,34 @@ def live_flows(ip: str) -> dict[str, Any] | None:
     try:
         if sess.login(user, pw):
             q = urllib.parse.quote(json.dumps({"source": ip}))
-            data = sess.monitor_get(
-                f"/api/v2/monitor/fortiview/statistics?realtime=true&report_by=destination&count=12&filter={q}"
-            )
-            res = data.get("results") or {}
-            for r in res.get("details", []) or []:
-                if not isinstance(r, dict):
-                    continue
-                dests.append({
-                    "ip": r.get("dstaddr"),
-                    "resolved": r.get("resolved"),
-                    "port": r.get("dst_port"),
-                    "sessions": r.get("sessions"),
-                    "country": r.get("country"),
-                    "bytes": (r.get("sentbyte") or 0) + (r.get("rcvdbyte") or 0),
-                })
+            page_size = 200
+            start = 0
+            seen: set[tuple[Any, Any]] = set()
+            while True:
+                data = sess.monitor_get(
+                    f"/api/v2/monitor/fortiview/statistics?realtime=true&report_by=destination"
+                    f"&count={page_size}&start={start}&filter={q}"
+                )
+                res = data.get("results") or {}
+                rows = [row for row in (res.get("details", []) or []) if isinstance(row, dict)]
+                added = 0
+                for r in rows:
+                    key = (r.get("dstaddr"), r.get("dst_port"))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    added += 1
+                    dests.append({
+                        "ip": r.get("dstaddr"),
+                        "resolved": r.get("resolved"),
+                        "port": r.get("dst_port"),
+                        "sessions": r.get("sessions"),
+                        "country": r.get("country"),
+                        "bytes": (r.get("sentbyte") or 0) + (r.get("rcvdbyte") or 0),
+                    })
+                if len(rows) < page_size or added == 0:
+                    break
+                start += len(rows)
     except Exception:
         pass
     finally:
@@ -454,4 +467,3 @@ def device_status(ip: str, lang: str = "zh") -> dict[str, Any] | None:
         "lastSeenText": _ago_text(last, lang) if isinstance(last, int) else None,
         "hasLiveSession": has_session,
     }
-

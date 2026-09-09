@@ -34,6 +34,10 @@ os.environ["AUTOPOIESIS_REMEDIATION_BUDGET"] = str(RUN_ROOT / "remediation-budge
 os.environ["AUTOPOIESIS_REMEDIATION_LOG"] = str(RUN_ROOT / "remediation-runs.jsonl")
 os.environ["AUTOPOIESIS_REMEDIATION_STOP"] = str(RUN_ROOT / "remediation-stop.json")
 os.environ["AUTOPOIESIS_INVESTIGATION_PAIR_LOG"] = str(RUN_ROOT / "investigation-pairs.jsonl")
+os.environ["AUTOPOIESIS_INVESTIGATION_CASE_STORE_PATH"] = str(RUN_ROOT / "cases.sqlite3")
+os.environ["AUTOPOIESIS_INVESTIGATION_SESSION_STORE_DIR"] = str(RUN_ROOT / "sessions")
+os.environ["AUTOPOIESIS_TRACE_LEDGER_PATH"] = str(RUN_ROOT / "network-rca-trace.jsonl")
+os.environ["AUTOPOIESIS_INCIDENT_DISPOSITION_LEDGER_PATH"] = str(RUN_ROOT / "disposition.jsonl")
 # The acceptance run creates two separate, observed incidents on the same
 # loopback target within minutes.  Production keeps a long recurrence cooldown;
 # this isolated ledger removes only that waiting period while preserving the

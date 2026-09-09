@@ -29,6 +29,13 @@
   min-height: 0;
   min-width: 0;
 }
+.mo-current { display: flex; justify-content: space-between; gap: 24px; padding: 24px 0; border-bottom: 1px solid var(--rule); }
+.mo-current small { color: var(--ink-soft); font-size: 12px; }
+.mo-current h3 { font-size: 24px; margin: 10px 0; }
+.mo-current span { font-size: 12px; overflow-wrap: anywhere; }
+.mo-graph-details > summary, .mo-route > summary { cursor: pointer; font-size: 14px; padding: 18px 0; }
+.mo-graph-details > p { font-size: 13px; line-height: 1.6; }
+.mo-current + .mt { margin-bottom: 16px; }
 
 /* ── framing line ───────────────────────────────────────────────────────────
    Answers "what am I looking at, and what is about to happen" before the replay

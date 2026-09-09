@@ -89,6 +89,71 @@ def _merge_timeline(existing: Any, incoming: Iterable[dict[str, Any]]) -> list[d
     return out
 
 
+def _business_decision_signature(event: dict[str, Any]) -> str:
+    """Identity of an operator-visible decision, excluding delivery metadata."""
+    decision = dict(event.get("decision") or {})
+    evidence = [
+        {
+            "label": item.get("label"),
+            "value": item.get("value"),
+            "source": item.get("source"),
+        }
+        for item in decision.get("evidence") or ()
+        if isinstance(item, dict)
+    ]
+    stable = {
+        "state": decision.get("state"),
+        "classification": decision.get("classification"),
+        "headline": decision.get("headline"),
+        "summary": decision.get("summary"),
+        "disposition": decision.get("disposition"),
+        "action": decision.get("action"),
+        "service": decision.get("service"),
+        "impactedAssets": decision.get("impactedAssets") or [],
+        "missingObservations": decision.get("missingObservations") or [],
+        "nextProbe": decision.get("nextProbe"),
+        "readback": decision.get("readback"),
+        "evidence": evidence,
+    }
+    return _json(stable)
+
+
+def _compact_repeated_decisions(
+    timeline: Iterable[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Keep the newest row for each equal decision and record its delivery span."""
+    source = [dict(item) for item in timeline if isinstance(item, dict)]
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in source:
+        if item.get("kind") != "business_decision_recorded":
+            continue
+        groups.setdefault(_business_decision_signature(item), []).append(item)
+    if not any(len(items) > 1 for items in groups.values()):
+        return source, 0
+    kept: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    removed = 0
+    for item in reversed(source):
+        if item.get("kind") != "business_decision_recorded":
+            kept.append(item)
+            continue
+        marker = _business_decision_signature(item)
+        if marker in seen:
+            removed += 1
+            continue
+        seen.add(marker)
+        group = groups[marker]
+        newest = dict(item)
+        if len(group) > 1:
+            times = sorted(str(row.get("ts") or "") for row in group)
+            newest["equivalentRecordCount"] = len(group)
+            newest["firstRecordedAt"] = times[0]
+            newest["lastRecordedAt"] = times[-1]
+        kept.append(newest)
+    kept.reverse()
+    return kept, removed
+
+
 @dataclass(frozen=True)
 class SourceReference:
     kind: str
@@ -173,6 +238,18 @@ class InvestigationCase:
         decision_event = self.latest_event("business_decision_recorded")
         decision = dict(decision_event.get("decision") or {}) if decision_event else None
         session_event = self.latest_event("investigation_session_started")
+        source_rows = [
+            {"kind": ref.kind, "sourceId": ref.source_id}
+            for ref in self.sources
+        ]
+        source_counts: dict[str, int] = {}
+        for ref in self.sources:
+            source_counts[ref.kind] = source_counts.get(ref.kind, 0) + 1
+        sources_truncated = len(source_rows) > 40
+        visible_sources = (
+            [*source_rows[:20], *source_rows[-20:]]
+            if sources_truncated else source_rows
+        )
         return {
             "caseId": self.case_id,
             "status": self.status,
@@ -196,10 +273,9 @@ class InvestigationCase:
                 session_event.get("sessionId") if session_event is not None else None
             ),
             "sourcePayload": self.source_payload,
-            "sources": [
-                {"kind": ref.kind, "sourceId": ref.source_id}
-                for ref in self.sources
-            ],
+            "sources": visible_sources,
+            "sourceCounts": source_counts,
+            "sourcesTruncated": sources_truncated,
             "version": self.version,
         }
 
@@ -268,6 +344,7 @@ class InvestigationCaseRepository:
         projection keeps exact incident facts and completed business events.
         """
         removed = 0
+        changed = False
         legacy_kinds = {"inference", "suggestion", "critique", "runbook"}
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -291,6 +368,7 @@ class InvestigationCaseRepository:
                         and item.get("kind") == "retrieval_completed"
                     )
                 ]
+                cleaned, _ = _compact_repeated_decisions(cleaned)
                 hypotheses = dict(_loads(row["hypotheses_json"], {}))
                 payload = dict(_loads(row["source_payload_json"], {}))
                 deleted_fields = [
@@ -339,6 +417,7 @@ class InvestigationCaseRepository:
                     + (1 if hypotheses else 0)
                     + len(deleted_fields)
                 )
+                changed = True
                 conn.execute(
                     "UPDATE investigation_cases SET summary=?, hypotheses_json='{}', "
                     "timeline_json=?, source_payload_json=?, updated_at=?, "
@@ -351,7 +430,10 @@ class InvestigationCaseRepository:
                         row["case_id"],
                     ),
                 )
-            conn.commit()
+            if changed:
+                conn.commit()
+            else:
+                conn.rollback()
         return removed
 
     @staticmethod
@@ -366,11 +448,48 @@ class InvestigationCaseRepository:
         topic = observation.rule_id or observation.service or observation.scope or "live-event"
         return f"{topic} · {observation.subject}" if observation.subject else topic
 
+    def _unchanged_case_id(self, observation: CaseObservation) -> str | None:
+        """Return the existing case for an identical source delivery.
+
+        Polling surfaces repeatedly deliver the same landed alerts. Acquiring a
+        write lock and committing each unchanged source made a read request pay
+        one durable filesystem sync per row. The source index and stored payload
+        are sufficient to prove an exact replay before entering the write path.
+        Observations carrying case-local timeline or hypothesis updates retain
+        the full transactional path below.
+        """
+        if observation.hypotheses or observation.timeline:
+            return None
+        refs = observation.all_sources
+        payload = _json(observation.payload)
+        with self._connect() as conn:
+            indexed: list[str] = []
+            for ref in refs:
+                row = conn.execute(
+                    "SELECT case_id, occurred_at, payload_json "
+                    "FROM investigation_case_sources WHERE source_kind=? AND source_id=?",
+                    (ref.kind, ref.source_id),
+                ).fetchone()
+                if row is None:
+                    return None
+                indexed.append(str(row["case_id"]))
+                if ref == observation.source and (
+                    str(row["occurred_at"]) != observation.occurred_at
+                    or str(row["payload_json"]) != payload
+                ):
+                    return None
+        return indexed[0] if indexed and len(set(indexed)) == 1 else None
+
     def ingest(self, observation: CaseObservation) -> InvestigationCase:
         """Create, update, or merge the case named by this observation's sources."""
         refs = observation.all_sources
         if not refs:
             raise ValueError("an observation requires at least one source")
+        unchanged_case_id = self._unchanged_case_id(observation)
+        if unchanged_case_id:
+            unchanged = self.get(unchanged_case_id)
+            if unchanged is not None:
+                return unchanged
         now = _utc_now()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -588,7 +707,7 @@ class InvestigationCaseRepository:
         return self._from_row(row, sources)
 
     def list(self, *, status: str | None = None, limit: int = 100) -> list[InvestigationCase]:
-        limit = max(1, min(int(limit), 500))
+        limit = max(1, min(int(limit), 5_000))
         with self._connect() as conn:
             if status:
                 rows = conn.execute(
@@ -608,6 +727,20 @@ class InvestigationCaseRepository:
                 ).fetchall()
                 cases.append(self._from_row(row, sources))
         return cases
+
+    def count(self, *, status: str | None = None) -> int:
+        """Count durable cases without hydrating timelines and source rows."""
+        with self._connect() as conn:
+            if status:
+                row = conn.execute(
+                    "SELECT count(*) AS total FROM investigation_cases WHERE status=?",
+                    (status,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT count(*) AS total FROM investigation_cases"
+                ).fetchone()
+        return int(row["total"] if row is not None else 0)
 
     def open(self, case_id: str, *, actor: str = "operator") -> InvestigationCase | None:
         """Persist an idempotent transition from queued to active investigation."""
@@ -663,8 +796,34 @@ class InvestigationCaseRepository:
                         "version=version+1 WHERE case_id=?",
                         (status, now, case_id),
                     )
-                conn.commit()
+                    conn.commit()
+                else:
+                    conn.rollback()
                 return self.get(case_id)
+            if kind == "business_decision_recorded":
+                candidate = {"kind": kind, **dict(payload or {})}
+                latest = next(
+                    (
+                        item for item in reversed(timeline)
+                        if item.get("kind") == "business_decision_recorded"
+                    ),
+                    None,
+                )
+                if (
+                    latest is not None
+                    and _business_decision_signature(latest)
+                    == _business_decision_signature(candidate)
+                ):
+                    if status is not None and status != row["status"]:
+                        conn.execute(
+                            "UPDATE investigation_cases SET status=?, updated_at=?, "
+                            "version=version+1 WHERE case_id=?",
+                            (status, now, case_id),
+                        )
+                        conn.commit()
+                    else:
+                        conn.rollback()
+                    return self.get(case_id)
             event = {"kind": kind, "ts": now, **dict(payload or {})}
             if event_id:
                 event["eventId"] = event_id

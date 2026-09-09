@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { PriorCycle } from '../types'
-import { latestIncidentCycle } from './sentinel-cycle'
+import { subjectIncidentCycle } from './sentinel-cycle'
 
 /* ── one live read of a sentinel chain, shared by everything that draws it ────
  *
@@ -13,6 +13,9 @@ import { latestIncidentCycle } from './sentinel-cycle'
  * on the topology and the progress rail advance together. */
 
 export interface ChainStep {
+  reading?: Record<string, unknown>
+  healthy?: boolean
+  available?: boolean
   at: string
   kind: string
   subject?: string
@@ -21,8 +24,12 @@ export interface ChainStep {
   reason?: string
   outcome?: string
   samples?: number
+  target_recovered?: boolean | null
+  phase?: string
   streak?: number
   need?: number
+  error?: string
+  stage?: string
   note?: string
   summary?: string
   evidence?: Record<string, unknown>
@@ -40,7 +47,7 @@ export interface ChainStep {
 export const SUBJECT_KINDS = new Set([
   'detected', 'awaiting_confirmation', 'no_safe_action', 'cooldown',
   'preflight', 'declined', 'remediated', 'resolved', 'escalated',
-  'escalation_cleared',
+  'escalation_cleared', 'condition_cleared', 'remediation_started', 'execution_error',
   // Follow-up is emitted while execute() is still blocking inside the watch
   // window. Keeping these existing ledger rows in `steps` lets the theater
   // advance ACT → WATCH → VERIFY on each poll instead of jumping from
@@ -55,7 +62,21 @@ export const SUBJECT_KINDS = new Set([
 export interface CommandLine {
   at: string
   argv: string[]
-  rc: number
+  rc: number | null
+  command_id?: string
+  receipt?: Record<string, unknown>
+  source?: string
+  change_id?: string
+  phase?: 'started' | 'completed' | 'error' | 'receipt'
+  stdout?: string | null
+  stderr?: string | null
+  error?: string
+  started_at?: string
+  finished_at?: string
+  duration_ms?: number
+  purpose?: string
+  verification?: boolean
+  stage?: string
   out: string
   truncated?: boolean
 }
@@ -65,71 +86,47 @@ export interface Chain {
   steps: ChainStep[]
   /** The transcript, in order — every command, streamed as it ran. */
   commands: CommandLine[]
+  lastReadAt?: string
+  readError?: string
 }
 
-const TERMINAL_KINDS = new Set([
-  'resolved', 'remediated', 'no_safe_action', 'declined', 'cooldown', 'escalated',
-])
-/** Keep reading briefly past the first terminal step — see the note on the hook. */
-const GRACE_POLLS = 3
-
-/**
- * Poll one subject's chain.
- *
- * `intervalMs` is 3s by default: the watch window is ninety seconds of nothing
- * visibly happening, which is exactly when a slow poll reads as a hang.
- *
- * Polling winds down once the chain closes — a closed incident does not change
- * again — but not on the first sighting of a terminal step. `remediated` and
- * `resolved` are two separate appends, so a read landing between them would
- * otherwise freeze the stage at five of six steps forever. A couple of grace
- * polls costs nothing and removes that race.
- */
+/** Keep polling the selected subject while this view is mounted. A refusal or
+ * remediation receipt can be followed by a later verification or new cycle. */
 export function useSentinelChain(subject: string | null | undefined, intervalMs = 3000): Chain | null {
   const [chain, setChain] = useState<Chain | null>(null)
-  const inFlight = useRef(false)
 
   useEffect(() => {
     if (!subject) { setChain(null); return }
     let alive = true
-    let timer: number | undefined
-    let settled = 0
+    let inFlight = false
+    const abort = new AbortController()
 
     const load = async () => {
-      if (inFlight.current) return
-      inFlight.current = true
+      if (inFlight) return
+      inFlight = true
       try {
-        // 800: the transcript is one line per command, and a watch window alone
-        // adds two dozen. A short tail would drop the start of the chain.
-        const response = await fetch('/api/rca/sentinel/timeline?limit=800')
+        // Read the full retained tail, including command start and return rows.
+        const response = await fetch('/api/rca/sentinel/timeline?limit=2000', { signal: abort.signal })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
         const body = (await response.json()) as { events?: (ChainStep & CommandLine)[] }
         if (!alive) return
-        const ours = (body.events ?? []).filter((e) => (e.subject ?? '').includes(subject))
-        const mine = latestIncidentCycle(ours.filter((e) => SUBJECT_KINDS.has(e.kind)))
-        const openedAt = mine[0]?.at ?? ''
+        const ours = subjectIncidentCycle(body.events ?? [], subject)
+        const mine = ours.filter((e) => SUBJECT_KINDS.has(e.kind))
         setChain({
           steps: mine,
-          commands: ours.filter((e) => e.kind === 'command' && (!openedAt || e.at >= openedAt)) as unknown as CommandLine[],
+          lastReadAt: new Date().toISOString(),
+          commands: ours.filter((e) => e.kind === 'command') as unknown as CommandLine[],
         })
-        if (mine.some((e) => TERMINAL_KINDS.has(e.kind))) {
-          settled += 1
-          if (settled >= GRACE_POLLS && timer) {
-            window.clearInterval(timer)
-            timer = undefined
-          }
-        } else {
-          settled = 0
-        }
-      } catch {
-        // A blip must not blank a stage the operator is reading; keep the last view.
+      } catch (error) {
+        if (alive) setChain(previous => previous ? {...previous, readError: error instanceof Error ? error.message : String(error)} : {steps: [], commands: [], readError: String(error)})
       } finally {
-        inFlight.current = false
+        inFlight = false
       }
     }
 
     void load()
-    timer = window.setInterval(() => void load(), intervalMs)
-    return () => { alive = false; if (timer) window.clearInterval(timer) }
+    const timer = window.setInterval(() => void load(), intervalMs)
+    return () => { alive = false; abort.abort(); if (timer) window.clearInterval(timer) }
   }, [subject, intervalMs])
 
   return chain

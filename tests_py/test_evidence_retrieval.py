@@ -108,6 +108,23 @@ def test_metadata_prefilter_runs_before_bm25_and_dense_ranking():
     assert "outside_incident_window" in dropped["fact-outside-window"]
 
 
+def test_major_minor_document_applies_to_installed_patch_release():
+    candidate = EvidenceCandidate(
+        "doc-release-family",
+        "FortiOS route troubleshooting",
+        "document",
+        "fortios-docs",
+        asset_ids=("camera-01",),
+        applicable_versions=("6.2",),
+    )
+
+    result = EvidenceRetriever([candidate]).retrieve(
+        _scope(device_versions=("v6.2.7",), asset_versions={"camera-01": "v6.2.7"})
+    )
+
+    assert [item.candidate.evidence_id for item in result.kept] == ["doc-release-family"]
+
+
 def test_ip_reassignment_cannot_override_asset_identity():
     shared_ip = "ip:192.168.1.20"
     candidates = [

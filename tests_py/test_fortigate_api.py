@@ -256,6 +256,58 @@ def test_config_revisions_form_a_change_ledger():
     ]
 
 
+def test_appliance_identity_drives_versioned_knowledge_selection():
+    fake = FakeHttpClient({
+        "/api/v2/monitor/system/status": {
+            "status": "success",
+            "serial": "FG100ETK20014183",
+            "version": "v6.2.7",
+            "build": 1190,
+        }
+    })
+
+    result = _api(fake).fetch_identity()
+
+    assert result["available"] is True
+    assert result["degraded"] is False
+    assert result["items"] == [{
+        "vendor": "Fortinet",
+        "product": "FortiGate",
+        "model": "FG100E",
+        "serial": "FG100ETK20014183",
+        "firmware_version": "v6.2.7",
+        "firmware_build": 1190,
+        "hostname": None,
+        "missing_fields": [],
+    }]
+
+
+def test_operational_state_collects_independent_bounded_domains():
+    fake = FakeHttpClient({
+        "/api/v2/monitor/router/ipv4": {
+            "status": "success",
+            "results": [{"ip_mask": "0.0.0.0/0", "gateway": "192.0.2.1", "interface": "wan1"}],
+        },
+        "/api/v2/monitor/vpn/ipsec": {
+            "status": "success",
+            "results": [{"name": "branch-a", "status": "up", "connection_count": 1, "username": "omitted"}],
+        },
+        "/api/v2/monitor/virtual-wan/health-check": {
+            "status": "success",
+            "results": [{"name": "internet", "interface": "wan1", "status": "up", "latency": 3.2}],
+        },
+    })
+
+    result = _api(fake).fetch_operational_state()
+
+    assert result["available"] is True
+    assert result["degraded"] is False
+    assert result["domains"]["routes"]["items"][0]["gateway"] == "192.0.2.1"
+    assert result["domains"]["vpn"]["items"][0]["name"] == "branch-a"
+    assert "username" not in result["domains"]["vpn"]["items"][0]
+    assert result["domains"]["sdwan"]["items"][0]["latency"] == 3.2
+
+
 def test_unreachable_fortigate_retries_then_returns_explicit_missing_data():
     fake = FakeHttpClient(
         {

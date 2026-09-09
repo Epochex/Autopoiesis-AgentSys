@@ -23,6 +23,8 @@ import ipaddress
 import re
 import shutil
 import subprocess
+import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -59,24 +61,54 @@ class CommandLog:
     max_output: int = 400
     limit: int = 200
 
-    def add(self, argv: list[str], done: subprocess.CompletedProcess) -> None:
-        raw = ((done.stdout or "") + (done.stderr or "")).strip()
-        entry = {
-            "at": datetime.now(timezone.utc).isoformat(),
-            "argv": list(argv),
-            "rc": done.returncode,
-            "out": raw[: self.max_output],
-            "truncated": len(raw) > self.max_output,
-        }
-        if len(self.entries) < self.limit:
-            self.entries.append(entry)
+    stage: str = "preflight"
+
+    def emit(self, entry: dict[str, Any]) -> None:
         if self.on_entry is not None:
-            # Streamed as it happens: a log that only lands when the phase ends
-            # is not a log the operator can read along with.
             try:
                 self.on_entry(entry)
-            except Exception:  # noqa: BLE001 - logging must never break the action
+            except Exception:
                 pass
+
+    def begin(self, argv: list[str]) -> dict[str, Any]:
+        verb = tuple(argv[:2])
+        purpose = {
+            ('systemctl', 'restart'): 'Restart the verified failed service',
+            ('systemctl', 'is-active'): 'Read the service active state',
+            ('systemctl', 'show'): 'Read the service restart counter',
+            ('journalctl', '-u'): 'Inspect recent service failures and dependency evidence',
+            ('ip', '-br'): 'Read the interface carrier and administrative state',
+            ('ip', 'link'): 'Apply the reviewed interface administrative state',
+            ('curl', '-s'): 'Verify management gateway HTTP reachability',
+        }.get(verb, 'Execute the recorded command for this action')
+        at = datetime.now(timezone.utc).isoformat()
+        entry = {'at': at, 'started_at': at, 'command_id': uuid.uuid4().hex,
+                 'argv': list(argv), 'phase': 'started', 'stage': self.stage,
+                 'purpose': purpose, 'verification': self.stage == 'verification',
+                 'rc': None, 'out': '', 'stdout': '', 'stderr': '', 'truncated': False}
+        self.emit(entry)
+        return entry
+
+    def add(self, argv: list[str], done: subprocess.CompletedProcess,
+            *, started: dict[str, Any] | None = None, duration_ms: float | None = None,
+            error: str | None = None) -> None:
+        stdout = done.stdout or ''
+        stderr = done.stderr or ''
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode('utf-8', errors='replace')
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode('utf-8', errors='replace')
+        raw = (stdout + stderr).strip()
+        at = datetime.now(timezone.utc).isoformat()
+        entry = {**(started or {}), 'at': at, 'finished_at': at,
+                 'argv': list(argv), 'phase': 'error' if error else 'completed',
+                 'rc': done.returncode, 'out': raw[:self.max_output],
+                 'stdout': stdout[:self.max_output], 'stderr': stderr[:self.max_output],
+                 'truncated': len(raw) > self.max_output, 'error': error,
+                 'duration_ms': duration_ms}
+        if len(self.entries) < self.limit:
+            self.entries.append(entry)
+        self.emit(entry)
 
 
 @dataclass
@@ -88,16 +120,32 @@ class Command:
     """
 
     run: Callable[[list[str]], subprocess.CompletedProcess]
+    observed: bool = False
+
+    def with_log(self, log: CommandLog) -> "Command":
+        if self.observed:
+            return self
+        def run(argv: list[str]) -> subprocess.CompletedProcess:
+            started = log.begin(argv)
+            before = time.monotonic()
+            try:
+                done = self.run(argv)
+            except Exception as error:
+                done = subprocess.CompletedProcess(argv, None, getattr(error, 'stdout', '') or '', getattr(error, 'stderr', '') or '')
+                log.add(argv, done, started=started, duration_ms=round((time.monotonic() - before) * 1000, 2), error=f'{type(error).__name__}: {error}')
+                raise
+            log.add(argv, done, started=started, duration_ms=round((time.monotonic() - before) * 1000, 2))
+            return done
+        return Command(run=run, observed=True)
 
     @staticmethod
     def local(log: CommandLog | None = None) -> "Command":
         def run(argv: list[str]) -> subprocess.CompletedProcess:
             done = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
-            if log is not None:
-                log.add(argv, done)
             return done
 
-        return Command(run=run)
+        command = Command(run=run)
+        return command.with_log(log) if log is not None else command
 
 
 def assert_not_tailscale(target: str) -> None:

@@ -24,7 +24,7 @@
           "required": true,
           "min_length": 1,
           "max_length": 128,
-          "example": "autopoiesis-event-pipeline",
+          "example": "autopoiesis-facts-ingest",
           "description": "动作作用的唯一目标"
         }
       ],
@@ -71,7 +71,7 @@
           "required": true,
           "min_length": 1,
           "max_length": 128,
-          "example": "autopoiesis-event-pipeline",
+          "example": "autopoiesis-facts-ingest",
           "description": "动作作用的唯一目标"
         }
       ],

@@ -10,7 +10,7 @@ from core.memory.evolution import evolution_context_line, reconstruct_evolution
 from core.memory.store import MemoryRecord
 
 
-ContextStrategy = Literal["structured", "flat"]
+ContextStrategy = Literal["structured", "adaptive", "flat"]
 
 SECTION_NAMES: tuple[str, ...] = (
     "Current State",
@@ -119,7 +119,7 @@ class ContextCompiler:
             raise ValueError(f"token_budget must be >= 1, got {token_budget}")
         if max_memory_lines < 1 or max_evidence_lines < 1:
             raise ValueError("max_memory_lines and max_evidence_lines must be >= 1")
-        if strategy not in ("structured", "flat"):
+        if strategy not in ("structured", "adaptive", "flat"):
             raise ValueError(f"unknown context strategy: {strategy}")
         self.token_budget = token_budget
         self.enabled = enabled
@@ -177,6 +177,7 @@ class ContextCompiler:
             evidence_items,
             required_evidence,
             before,
+            active_only=self.strategy == "adaptive",
         )
 
     def _compile_structured(
@@ -187,6 +188,8 @@ class ContextCompiler:
         evidence_items: list[_ContextItem],
         required_evidence: list[str],
         before: int,
+        *,
+        active_only: bool = False,
     ) -> ContextPacket:
         by_tier = {
             tier: [item for item in memory_items if item.kind == tier]
@@ -202,6 +205,10 @@ class ContextCompiler:
             "Learnings": by_tier["semantic"],
             "Key Results": by_tier["episodic"],
         }
+        section_names = tuple(
+            name for name in SECTION_NAMES
+            if not active_only or section_inputs[name]
+        )
 
         # Section weights are initial reservations, not hard walls.  A first
         # pass identifies unused reservations (for example, empty Current State
@@ -209,11 +216,33 @@ class ContextCompiler:
         # to sections that still have content.  Required task/evidence items may
         # still overflow the global budget rather than being silently dropped.
         fitted: dict[str, tuple[list[_ContextItem], list[_ContextItem]]] = {}
-        effective_budgets = dict(self.section_budgets)
-        for name in SECTION_NAMES:
+        if active_only:
+            heading_tokens = sum(
+                self._estimate_tokens(f"## {name}") for name in section_names
+            )
+            available_content = max(0, self.token_budget - heading_tokens)
+            weight_total = sum(_SECTION_WEIGHTS[name] for name in section_names)
+            raw = {
+                name: available_content * _SECTION_WEIGHTS[name] / weight_total
+                for name in section_names
+            }
+            effective_budgets = {name: int(raw[name]) for name in section_names}
+            remainder = available_content - sum(effective_budgets.values())
+            order = sorted(
+                section_names,
+                key=lambda name: (
+                    -(raw[name] - effective_budgets[name]),
+                    SECTION_NAMES.index(name),
+                ),
+            )
+            for name in order[:remainder]:
+                effective_budgets[name] += 1
+        else:
+            effective_budgets = dict(self.section_budgets)
+        for name in section_names:
             fitted[name] = self._fit_section(section_inputs[name], effective_budgets[name])
 
-        heading_tokens = sum(self._estimate_tokens(f"## {name}") for name in SECTION_NAMES)
+        heading_tokens = sum(self._estimate_tokens(f"## {name}") for name in section_names)
         available_content = max(0, self.token_budget - heading_tokens)
         initially_used = sum(
             sum(self._item_tokens(item) for item in kept)
@@ -231,6 +260,8 @@ class ContextCompiler:
             "Task Spec",
         )
         for name in reclaim_order:
+            if name not in fitted:
+                continue
             if reclaimable <= 0:
                 break
             kept, dropped = fitted[name]
@@ -251,7 +282,7 @@ class ContextCompiler:
         sections: list[ContextSection] = []
         kept_items: list[_ContextItem] = []
         summary_parts: list[str] = []
-        for name in SECTION_NAMES:
+        for name in section_names:
             items = section_inputs[name]
             budget = effective_budgets[name]
             kept, dropped = fitted[name]
@@ -278,7 +309,7 @@ class ContextCompiler:
             kept_items=kept_items,
             required_evidence=required_evidence,
             before=before,
-            mode="structured",
+            mode="adaptive" if active_only else "structured",
             sections=sections,
         )
 
@@ -401,13 +432,26 @@ class ContextCompiler:
                     )
                 if memory.source_trace_ids:
                     timeline.append("traces=" + ",".join(memory.source_trace_ids[-3:]))
+                if memory.claims:
+                    timeline.append(f"quality={memory.quality_score:.2f}")
                 prefix = f" [{' '.join(timeline)}]" if timeline else ""
+                if memory.claims:
+                    content = " | ".join(
+                        f"{claim.kind}={claim.statement}"
+                        + (
+                            f" [evidence={','.join(claim.evidence_ids[:4])}]"
+                            if claim.evidence_ids else ""
+                        )
+                        for claim in memory.claims[:8]
+                    )
+                else:
+                    content = memory.text
                 memory_items.append(
                     _ContextItem(
                         sequence,
                         tier,
                         memory.memory_id,
-                        f"{tier}{prefix}: {memory.text}",
+                        f"{tier}{prefix}: {content}",
                     )
                 )
                 sequence += 1

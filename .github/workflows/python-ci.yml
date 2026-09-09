@@ -53,7 +53,7 @@ jobs:
         env:
           # Unskips the two integration tests that actually speak SQL.
           AUTOPOIESIS_TEST_POSTGRES_DSN: postgresql://postgres:ci@127.0.0.1:5432/autopoiesis_test
-        run: python -m pytest -p no:cacheprovider -q tests_py
+        run: python scripts/test_backend.py release -q
 
       - name: Run mock-labeled Phase 1.5 report
         run: python -m domains.network_rca.phase15

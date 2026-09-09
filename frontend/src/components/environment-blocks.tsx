@@ -1,12 +1,7 @@
-/* Environment-sweep blocks rendered inside the self-pentest page.
- *
- * These used to be a separate page. They are here because they answer the same
- * question the pentest record answers -- what is actually wrong on this network
- * right now, and how do I verify and fix it -- and two pages asking one question
- * meant two findings lists, two provenance headers and two verdict vocabularies
- * for the reader to reconcile. One page, one ledger, one palette.
- */
+/* Shared continuous network observation and investigation evidence blocks. */
 import { useMemo, useState } from 'react'
+import { useDisplayTranslation } from './useDisplayTranslation'
+import { OwnershipReview, type Claimant } from './OwnershipReview'
 import type {
   EnvCell,
   EnvCellState,
@@ -24,9 +19,11 @@ import { CELL_LABEL, COVERAGE_LABEL, FAULT_LABEL, ageText, clock, num, pick } fr
  * connected, and calling that live turns an unmonitored network into a
  * monitored-looking one. */
 export function ScopeStrip({ sources, zh }: { sources: EnvSource[]; zh: boolean }) {
+  const display = useDisplayTranslation(sources.flatMap(source => [source.label, source.note ?? '', source.unit]), zh ? 'zh' : 'en')
   const live = sources.filter((source) => source.flowing)
   return (
     <div className="dx-scope">
+      {display.error && <p role="alert">{display.error} <button onClick={display.retry}>Retry translation</button></p>}
       <div className="dx-scope-k">
         {zh ? '口径' : 'SCOPE'}
         <b>
@@ -39,16 +36,16 @@ export function ScopeStrip({ sources, zh }: { sources: EnvSource[]; zh: boolean 
         {sources.map((source) => (
           <div className={`dx-src ${source.flowing ? 'is-live' : 'is-stalled'}`} key={source.id}>
             <span className="dx-src-dot" aria-hidden="true" />
-            <span className="dx-src-name">{source.label}</span>
+            <span className="dx-src-name">{display.translate(source.label)}</span>
             <span className="dx-src-kind">{source.flowing ? (zh ? '在写' : 'FLOWING') : (zh ? '不在写' : 'NOT FLOWING')}</span>
             <span className="dx-src-window">
               {clock(source.window_start)} → {clock(source.window_end)}
             </span>
             <span className="dx-src-age">{ageText(source.age_seconds, zh)}</span>
             <span className="dx-src-vol">
-              {num(source.volume)} {source.unit}
+              {num(source.volume)} {display.translate(source.unit)}
             </span>
-            <span className="dx-src-note">{source.note}</span>
+            <span className="dx-src-note">{display.translate(source.note)}</span>
           </div>
         ))}
       </div>
@@ -171,15 +168,15 @@ export function AddressSpace({
 /* ── ownership timeline ──────────────────────────────────────────────────
  * A contested address is not a state, it is an oscillation, so the readable
  * form is two lanes and a step line: which machine held the address, when it
- * changed hands, and how often. Every handover is one interval during which
- * connections to that address reached the wrong machine.
+ * changed hands, and how often. ARP changes alone do not establish connection
+ * delivery or simultaneous address use by multiple devices.
  *
  * Driven by the live capture ledger. The earlier version plotted the archived
  * incident fixture, which never retained MAC values or switch times, so it
  * rendered a full-width empty chart with an explanation of its own emptiness. */
 type Transition = { captured_at: string; mac: string }
 
-export function OwnershipTimeline({ finding, zh }: { finding: EnvFinding; zh: boolean }) {
+export function OwnershipTimeline({ finding, zh, profiles = [] }: { finding: EnvFinding; zh: boolean; profiles?: Claimant[] }) {
   const measured = finding.measured as {
     transitions?: Transition[]
     macs?: string[]
@@ -188,33 +185,38 @@ export function OwnershipTimeline({ finding, zh }: { finding: EnvFinding; zh: bo
     captures?: number
     first_capture?: string
     last_capture?: string
+    transitions_truncated?: number
+    transitions_window_start?: string
   }
+  const display = useDisplayTranslation(profiles.flatMap(profile => [profile.name ?? '', profile.vendor ?? '', profile.device_type ?? '', profile.os ?? '']), zh ? 'zh' : 'en')
   const transitions = useMemo(() => measured.transitions ?? [], [measured.transitions])
   const macs = measured.macs ?? []
   const leased = new Set(measured.dhcp_leased_macs ?? [])
 
   const geom = useMemo(() => {
     const stamps = transitions.map((t) => new Date(t.captured_at).getTime()).filter(Number.isFinite)
-    const first = new Date(measured.first_capture ?? transitions[0]?.captured_at ?? 0).getTime()
+    const first = new Date(measured.transitions_window_start ?? measured.first_capture ?? transitions[0]?.captured_at ?? 0).getTime()
     const last = new Date(measured.last_capture ?? transitions[transitions.length - 1]?.captured_at ?? 0).getTime()
     const min = Number.isFinite(first) ? Math.min(first, ...stamps) : Math.min(...stamps)
     const max = Number.isFinite(last) ? Math.max(last, ...stamps) : Math.max(...stamps)
     const span = Math.max(1, max - min)
-    return { min, max, span, x: (ms: number) => 168 + ((ms - min) / span) * 1010 }
-  }, [transitions, measured.first_capture, measured.last_capture])
+    return { min, max, span, x: (ms: number) => 330 + ((ms - min) / span) * 848 }
+  }, [transitions, measured.first_capture, measured.last_capture, measured.transitions_window_start])
 
   if (transitions.length < 2 || macs.length < 2) return null
 
-  const laneY = (mac: string) => (macs.indexOf(mac) === 0 ? 74 : 150)
+  const laneY = (mac: string) => 95 + macs.indexOf(mac) * 120
+  const axisY = 95 + macs.length * 120
   const hhmm = (ms: number) => {
     const d = new Date(ms)
-    return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+    return `${d.toISOString().slice(5, 10)} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
   }
   const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10)
   const ticks = Array.from({ length: 7 }, (_, i) => geom.min + (geom.span * i) / 6)
 
   return (
     <div className="dx-own">
+      {display.error && <p role="alert">{display.error} <button onClick={display.retry}>Retry translation</button></p>}
       <div className="dx-own-h">
         <b>{zh ? '地址归属时间线' : 'ADDRESS OWNERSHIP TIMELINE'}</b>
         <span>{finding.subject}</span>
@@ -224,25 +226,33 @@ export function OwnershipTimeline({ finding, zh }: { finding: EnvFinding; zh: bo
             : `${measured.handovers ?? transitions.length - 1} HANDOVERS · ${measured.captures ?? 0} CAPTURES · ${dayOf(geom.min)} → ${dayOf(geom.max)}`}
         </em>
       </div>
-      <svg viewBox="0 0 1200 230" className="dx-own-svg" role="img"
+      <svg viewBox={`0 0 1200 ${axisY + 44}`} className="dx-own-svg" role="img"
         aria-label={zh ? '地址归属阶梯图' : 'Address ownership step chart'}>
-        {macs.slice(0, 2).map((mac) => (
+        {macs.map((mac) => {
+          const profile = profiles.find(p => p.mac === mac)
+          return (
           <g key={mac}>
-            <line x1="168" y1={laneY(mac)} x2="1178" y2={laneY(mac)} className="dx-own-lane" />
-            <text x="158" y={laneY(mac) - 10} textAnchor="end" className="dx-own-mac">{mac}</text>
-            <text x="158" y={laneY(mac) + 8} textAnchor="end" className="dx-own-role">
+            <title>{[display.translate(profile?.name ?? ''), mac, display.translate(profile?.vendor ?? ''), display.translate(profile?.os ?? ''), profile?.first_seen, profile?.last_seen].filter(Boolean).join(' · ')}</title>
+            <line x1="330" y1={laneY(mac)} x2="1178" y2={laneY(mac)} className="dx-own-lane" />
+            <text x="12" y={laneY(mac) - 35} className="dx-own-mac" fontWeight="700">{(display.translate(profile?.name ?? '') || (zh ? '设备名称未识别' : 'Device name unavailable')).slice(0, 30)}{profile?.name_source === 'operator' ? (zh ? ' · 人工标注' : ' · Operator label') : profile?.name && !profile.identity_fresh ? (zh ? ' · 缓存识别' : ' · Cached identity') : ''}</text>
+            <text x="12" y={laneY(mac) - 18} className="dx-own-mac">{mac}</text>
+            <text x="12" y={laneY(mac)} className="dx-own-role">{[display.translate(profile?.vendor ?? ''), display.translate(profile?.device_type ?? ''), profile?.interface ? `${zh ? '采集接口' : 'Capture interface'} ${profile.interface}` : null].filter(Boolean).join(' · ').slice(0, 48) || (zh ? '设备属性待识别' : 'Profile unavailable')}</text>
+            <text x="12" y={laneY(mac) + 18} className="dx-own-role">
               {leased.has(mac)
-                ? (zh ? '持有 DHCP 租约' : 'HOLDS THE DHCP LEASE')
-                : (zh ? '无租约记录' : 'NO LEASE ON RECORD')}
+                ? (zh ? '有历史 DHCP 记录' : 'HISTORICAL DHCP RECORD')
+                : (zh ? '无 DHCP 记录' : 'NO DHCP RECORD')}
+              {profile?.in_arp_snapshot ? (zh ? ' · ARP 快照可见' : ' · Visible in ARP snapshot') : ''}{profile?.retired ? (zh ? ' · 已标记旧记录' : ' · Retired record') : ''}
             </text>
+            <text x="12" y={laneY(mac) + 36} className="dx-own-role">{profile?.last_seen ? `${zh ? '最近观测' : 'Last seen'} ${profile.last_seen.slice(5, 16).replace('T', ' ')} · ${profile.samples ?? 0} ${zh ? '次采集' : 'samples'}` : (zh ? '观测时间待读取' : 'Observation time pending')}</text>
+            <text x="12" y={laneY(mac) + 52} className="dx-own-role">{profile?.first_seen ? `${zh ? '首次观测' : 'First seen'} ${profile.first_seen.slice(5, 16).replace('T', ' ')}` : ''}</text>
           </g>
-        ))}
+        )})}
         {transitions.map((transition, index) => {
           const ms = new Date(transition.captured_at).getTime()
           const next = transitions[index + 1]
           const x = geom.x(ms)
           const y = laneY(transition.mac)
-          const nx = next ? geom.x(new Date(next.captured_at).getTime()) : 1178
+          const nx = next ? geom.x(new Date(next.captured_at).getTime()) : measured.transitions_truncated && !measured.transitions_window_start ? x : 1178
           const ny = next ? laneY(next.mac) : y
           return (
             <g key={`${transition.captured_at}-${index}`} className={leased.has(transition.mac) ? 'is-leased' : 'is-unleased'}>
@@ -251,17 +261,17 @@ export function OwnershipTimeline({ finding, zh }: { finding: EnvFinding; zh: bo
             </g>
           )
         })}
-        <line x1="168" y1="196" x2="1178" y2="196" className="dx-own-axis" />
-        {ticks.map((ms) => (
+        <line x1="330" y1={axisY} x2="1178" y2={axisY} className="dx-own-axis" />
+        {ticks.map((ms, index) => (
           <g key={ms}>
-            <line x1={geom.x(ms)} y1="192" x2={geom.x(ms)} y2="200" className="dx-own-axis" />
-            <text x={geom.x(ms)} y="214" textAnchor="middle" className="dx-own-tick">{hhmm(ms)}</text>
+            <line x1={geom.x(ms)} y1={axisY - 4} x2={geom.x(ms)} y2={axisY + 4} className="dx-own-axis" />
+            <text x={geom.x(ms)} y={axisY + 20} textAnchor={index === ticks.length - 1 ? 'end' : 'middle'} className="dx-own-tick">{hhmm(ms)}</text>
           </g>
         ))}
-        <text x="168" y="34" className="dx-own-cap">
+        <text x="330" y="34" className="dx-own-cap">
           {zh
-            ? '每一次换手都是一段连接落到另一台机器的时间窗'
-            : 'EVERY HANDOVER IS AN INTERVAL IN WHICH CONNECTIONS REACHED THE OTHER MACHINE'}
+            ? `ARP 观测归属变化 · UTC${measured.transitions_truncated ? ` · 展示${measured.transitions_window_start ? '最近' : '前'} ${transitions.length} 条，另有 ${measured.transitions_truncated} 条未绘制` : ''}`
+            : `OBSERVED ARP OWNERSHIP · UTC${measured.transitions_truncated ? ' · TRANSITION SERIES TRUNCATED' : ''}`}
         </text>
       </svg>
     </div>
@@ -380,7 +390,7 @@ export function OwnershipContention({ finding, zh }: { finding: EnvFinding; zh: 
     measured.transitions.length >= 2 &&
     Array.isArray(measured.macs) &&
     measured.macs.length >= 2
-  return hasSeries ? <OwnershipTimeline finding={finding} zh={zh} /> : <OwnershipSnapshot finding={finding} zh={zh} />
+  return <OwnershipReview finding={finding} zh={zh}>{profiles => hasSeries ? <OwnershipTimeline finding={finding} zh={zh} profiles={profiles} /> : <OwnershipSnapshot finding={finding} zh={zh} />}</OwnershipReview>
 }
 
 /* ── stable / unbound readout ────────────────────────────────────────────
@@ -420,8 +430,10 @@ export function OwnershipStable({ ip, cell, zh }: { ip: string; cell: EnvCell | 
  * the difference: fault classes with no source present are stated as blind,
  * with the sensor that would close each one. */
 export function CoverageRail({ rows, zh }: { rows: EnvCoverageRow[]; zh: boolean }) {
+  const display = useDisplayTranslation(rows.flatMap(row => [row.closes_with ?? '', ...row.missing, ...row.present]), zh ? 'zh' : 'en')
   return (
     <div className="dx-cov">
+      {display.error && <p role="alert">{display.error} <button onClick={display.retry}>Retry translation</button></p>}
       {rows.map((row) => (
         <div className={`dx-cov-r is-${row.coverage}`} key={row.fault_class}>
           <span className="dx-cov-s">{pick(COVERAGE_LABEL[row.coverage], zh, row.coverage)}</span>
@@ -434,10 +446,10 @@ export function CoverageRail({ rows, zh }: { rows: EnvCoverageRow[]; zh: boolean
           <span className="dx-cov-n">
             {row.missing.length ? (
               <>
-                {zh ? '需要' : 'NEEDS'} <b>{row.missing.join(' + ')}</b> — {(zh ? row.closes_with_zh : row.closes_with) ?? row.closes_with}
+                {zh ? '需要' : 'NEEDS'} <b>{row.missing.map(display.translate).join(' + ')}</b> — {display.translate((zh ? row.closes_with_zh : row.closes_with) ?? row.closes_with ?? '')}
               </>
             ) : (
-              <em>{row.present.join(' + ')}</em>
+              <em>{row.present.map(display.translate).join(' + ')}</em>
             )}
           </span>
         </div>

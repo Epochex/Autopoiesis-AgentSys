@@ -9,6 +9,8 @@
 import { useEffect, useMemo } from 'react'
 import type { MemRecall, MemRecord, MemTier } from '../types'
 import './context-full.css'
+import { OnlineContextFull } from './OnlineContext'
+import type { OnlineContextData } from './OnlineContext'
 
 const TIER: Record<MemTier, [string, string]> = {
   episodic: ['遇到过的事', 'SEEN BEFORE'], semantic: ['归纳的规律', 'PATTERN'],
@@ -31,7 +33,10 @@ const T = (zh: boolean) => ({
   note: zh ? '记录、排序和得分都来自这次真实回放；变化量按接口返回的 final_score 计算。' : 'Records, ranking, and scores come from this replay; changes are calculated from the returned final_score.',
 })
 
-export function ContextFull({ recall, prevRecall, records, caseRoot, zh, onClose }: {
+export function ContextFull(props: Parameters<typeof BenchmarkContextFull>[0] | { online: OnlineContextData; onClose: () => void }) {
+  return 'online' in props ? <OnlineContextFull data={props.online} onClose={props.onClose}/> : <BenchmarkContextFull {...props}/>
+}
+function BenchmarkContextFull({ recall, prevRecall, records, caseRoot, zh, onClose }: {
   recall: MemRecall
   prevRecall: MemRecall | null
   records: MemRecord[]

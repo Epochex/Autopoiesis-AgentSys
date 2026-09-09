@@ -30,6 +30,8 @@ interface CostCall {
   total_tokens: number
   cost_cny: number
   usage_reported: boolean
+  prompt_cache_hit_tokens?: number | null
+  prompt_cache_miss_tokens?: number | null
 }
 
 interface LargestCall {
@@ -55,6 +57,14 @@ interface CostResp {
   largest_call: LargestCall | null
   recent: CostCall[]
   rates_note: string
+  provider_cache?: {
+    hit_tokens: number | null
+    miss_tokens: number | null
+    hit_reported_calls: number
+    miss_reported_calls: number
+    reported_calls: number
+    total_calls: number
+  }
 }
 
 interface CacheNamespace {
@@ -168,6 +178,14 @@ const T = (zh: boolean) => ({
   off: zh ? '关着' : 'OFF',
   cached: zh ? '缓存条数' : 'CACHED ENTRIES',
   cacheDir: zh ? '存在哪' : 'DIRECTORY',
+  providerCache: zh ? '供应商输入缓存' : 'PROVIDER INPUT CACHE',
+  cacheHit: zh ? '命中输入 token' : 'CACHED INPUT TOKENS',
+  cacheMiss: zh ? '未命中输入 token' : 'UNCACHED INPUT TOKENS',
+  cacheUnknown: zh ? '未报告' : 'NOT REPORTED',
+  cacheCoverage: zh ? '报告缓存用量的调用' : 'CALLS REPORTING CACHE USAGE',
+  providerCacheNote: zh
+    ? '供应商输入缓存复用请求中的输入 token，调用仍会生成回答。应用结果缓存直接复用已有分析，可免去一次模型调用。以下统计只汇总接口实际报告的值；未报告的字段显示为未报告。费用继续按本地费率估算。'
+    : 'Provider input caching reuses input tokens during a model call. Application result caching reuses a completed analysis and avoids a model call. Counters below include only values reported by the API; absent fields remain unreported. Cost continues to use the local rate estimate.',
   cacheWhy: zh
     ? '缓存里存着的这些回答,重新部署以后可以直接拿来用,这部分就不用再花钱问模型第二遍。'
     : 'Answers already in the cache are reused after a redeploy, so that much never has to be paid for a second time.',
@@ -435,6 +453,26 @@ export function CostPage({ lang }: { lang: Lang }) {
               <div className="cx-fig"><b>{num(d.average_tokens_per_call)}</b><span>{tx.avg}</span></div>
             </section>
 
+            <section className="cx-sec" aria-label={tx.providerCache}>
+              <div className="cx-sec-k">{tx.providerCache}</div>
+              <div className="cx-cache-r">
+                <span className="cx-sw">
+                  <em>{tx.cacheHit}</em>
+                  <b>{d.provider_cache?.hit_tokens == null ? tx.cacheUnknown : num(d.provider_cache.hit_tokens)}</b>
+                  <small>{num(d.provider_cache?.hit_reported_calls ?? 0)} / {num(d.calls)} {tx.callsUnit}</small>
+                </span>
+                <span className="cx-sw">
+                  <em>{tx.cacheMiss}</em>
+                  <b>{d.provider_cache?.miss_tokens == null ? tx.cacheUnknown : num(d.provider_cache.miss_tokens)}</b>
+                  <small>{num(d.provider_cache?.miss_reported_calls ?? 0)} / {num(d.calls)} {tx.callsUnit}</small>
+                </span>
+                <span className="cx-sw">
+                  <em>{tx.cacheCoverage}</em><b>{num(d.provider_cache?.reported_calls ?? 0)} / {num(d.calls)}</b>
+                </span>
+              </div>
+              <p className="cx-cache-p">{tx.providerCacheNote}</p>
+            </section>
+
             <section className="cx-sec">
               <div className="cx-sec-k">{tx.spent} <em>{tx.spentK}</em></div>
               <div className="cx-scroll">
@@ -579,6 +617,8 @@ export function CostPage({ lang }: { lang: Lang }) {
                       <th scope="col">{tx.model}</th>
                       <th scope="col" className="n">{tx.inTok}</th>
                       <th scope="col" className="n">{tx.outTok}</th>
+                      <th scope="col" className="n">{tx.cacheHit}</th>
+                      <th scope="col" className="n">{tx.cacheMiss}</th>
                       <th scope="col" className="n">{tx.cost}</th>
                     </tr>
                   </thead>
@@ -590,6 +630,8 @@ export function CostPage({ lang }: { lang: Lang }) {
                         <td>{r.model}</td>
                         <td className="n">{num(r.prompt_tokens)}</td>
                         <td className="n">{num(r.completion_tokens)}</td>
+                        <td className="n">{r.prompt_cache_hit_tokens == null ? tx.cacheUnknown : num(r.prompt_cache_hit_tokens)}</td>
+                        <td className="n">{r.prompt_cache_miss_tokens == null ? tx.cacheUnknown : num(r.prompt_cache_miss_tokens)}</td>
                         <td className="n strong">
                           {money(r.cost_cny, 4)}
                           {r.usage_reported ? null : <em className="cx-flag">{tx.noUsage}</em>}

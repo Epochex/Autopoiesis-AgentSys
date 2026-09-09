@@ -32,7 +32,7 @@ Optional R230 readonly ingestor service:
 ```bash
 python3 -m pip install -e '.[ingestor]'
 R230_FORTIGATE_LOG_PATHS=/data/fortigate-runtime/input/fortigate.log \
-  uvicorn domains.network_rca.ingestor_app:app --host 0.0.0.0 --port 8000
+  python3 frontend/gateway/ingest/facts_ingest.py live
 ```
 
 The ingestor exposes only `GET /healthz` and `GET /logs`; it does not mutate FortiGate, R230, or local log files.

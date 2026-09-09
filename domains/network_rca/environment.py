@@ -327,6 +327,7 @@ _CH_URL = os.getenv("CLICKHOUSE_URL", "")
 _CH_USER = os.getenv("CLICKHOUSE_USER", "default")
 _CH_PASS = os.getenv("CLICKHOUSE_PASSWORD", "")
 _CH_DB = os.getenv("CLICKHOUSE_DB", "autopoiesis")
+_CH_TABLE = os.getenv("FACTS_CLICKHOUSE_TABLE", "facts_v2")
 
 # Beyond this, a "live" pipeline is not live; findings that depend on it can no
 # longer be re-verified and must say so instead of being silently trusted.
@@ -376,7 +377,7 @@ def load_flow_store(*, now: datetime | None = None, recent_days: int = 7) -> dic
     """
     span = _clickhouse(
         f"SELECT min(event_ts) AS first, max(event_ts) AS last, count() AS rows "
-        f"FROM {_CH_DB}.facts"
+        f"FROM {_CH_DB}.{_CH_TABLE}"
     )
     if not span or not span[0].get("last"):
         return {"available": False}
@@ -391,8 +392,8 @@ def load_flow_store(*, now: datetime | None = None, recent_days: int = 7) -> dic
     # at all, and every address would look retired.
     recent = _clickhouse(
         f"SELECT srcip AS ip, count() AS flows, max(event_ts) AS last_seen "
-        f"FROM {_CH_DB}.facts "
-        f"WHERE event_ts > subtractDays((SELECT max(event_ts) FROM {_CH_DB}.facts), {int(recent_days)}) "
+        f"FROM {_CH_DB}.{_CH_TABLE} "
+        f"WHERE event_ts > subtractDays((SELECT max(event_ts) FROM {_CH_DB}.{_CH_TABLE}), {int(recent_days)}) "
         f"AND (startsWith(srcip, '192.168.') OR startsWith(srcip, '10.') OR startsWith(srcip, '172.')) "
         f"GROUP BY srcip"
     )
@@ -469,8 +470,14 @@ def detect_l2_ownership_drift(
         return []
 
     owners: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    claimant_stats: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     for capture in history:
         for record in capture["records"]:
+            stats = claimant_stats[record['ip']].setdefault(record['mac'], {
+                'mac': record['mac'], 'first_seen': capture['captured_at'], 'samples': 0,
+            })
+            stats.update(last_seen=capture['captured_at'], interface=record.get('interface', ''))
+            stats['samples'] += 1
             series = owners[record["ip"]]
             if not series or series[-1][1] != record["mac"]:
                 series.append((capture["captured_at"], record["mac"]))
@@ -501,17 +508,17 @@ def detect_l2_ownership_drift(
                 ),
                 measured={
                     "macs": macs,
+                    "claimants": list(claimant_stats[ip].values()),
                     "handovers": len(transitions) - 1,
                     "captures": len(history),
                     "dhcp_leased_macs": leased,
                     "not_leased_by_this_server": unaccounted,
-                    # The full handover series, not a sample: it is the only
-                    # readable picture of the fault, and a truncated one would
-                    # understate how often the address changes hands.
+                    # Keep the recent continuous window and expose omitted history.
                     "transitions": [
                         {"captured_at": stamp, "mac": mac} for stamp, mac in transitions
-                    ][:200],
+                    ][-200:],
                     "transitions_truncated": max(0, len(transitions) - 200),
+                    "transitions_window_start": transitions[max(0, len(transitions) - 200)][0],
                     "first_capture": history[0]["captured_at"],
                     "last_capture": history[-1]["captured_at"],
                 },
@@ -1587,7 +1594,7 @@ def source_registry(
         rows.append(
             {
                 "id": "flow_store",
-                "label": "ClickHouse autopoiesis.facts",
+                "label": f"ClickHouse {_CH_DB}.{_CH_TABLE}",
                 "kind": "live",
                 "window_start": flow_store.get("window_start"),
                 "window_end": flow_store.get("window_end"),
@@ -1606,7 +1613,7 @@ def source_registry(
         rows.append(
             {
                 "id": "flow_store",
-                "label": "ClickHouse autopoiesis.facts",
+                "label": f"ClickHouse {_CH_DB}.{_CH_TABLE}",
                 "kind": "live",
                 "window_start": None,
                 "window_end": None,
@@ -1853,6 +1860,32 @@ def build_environment_report(
     findings, resolved = verify_findings(
         findings, l2_history=history, flow_store=flows, now=checked_at
     )
+    from .ownership_decisions import read_decisions, current_state, assess_assignment
+    decisions_by_ip: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for decision in read_decisions():
+        decisions_by_ip[decision['ip']].append(decision)
+    for ip, decisions in decisions_by_ip.items():
+        assignment = current_state(decisions)
+        observed = sorted({r['mac'] for r in arp_records if r['ip'] == ip})
+        assessment = assess_assignment(assignment, observed, arp_provenance.get('captured_at'), arp_provenance.get('stale', True))
+        existing = next((f for f in findings if f['subject'] == ip and f['fault_class'] == 'duplicate_ip_static'), None)
+        if existing:
+            existing['measured']['operator_assignment'] = {**assignment, 'assessment': assessment}
+        elif assessment == 'conflict_observed':
+            resolved = [f for f in resolved if not (f['subject'] == ip and f['fault_class'] == 'duplicate_ip_static')]
+            finding = _finding(
+                detector='operator_assignment_mismatch', fault_class='duplicate_ip_static',
+                subject=ip, subject_kind='address', severity='high', confidence=0.97,
+                headline=f"{ip} observed MAC differs from the operator-assigned device",
+                measured={'macs': sorted(set(observed) | {assignment['expected_mac']}),
+                          'arp_macs': observed, 'operator_assignment': {**assignment, 'assessment': assessment}},
+                evidence={'source': 'l2_identity_snapshot', 'captured_at': arp_provenance.get('captured_at')},
+                explains=['address_assignment_mismatch'], cannot_prove=[], next_probe=f'ip neigh show {ip}',
+            )
+            finding['verification'] = _verdict('confirmed', 'l2_identity_snapshot',
+                'Fresh observation after the decision differs from the registered MAC.',
+                '登记后的新 ARP 观测与指定设备不一致，需要重新确认归属。', checked_at=checked_at)
+            findings.append(finding)
     for finding in findings:
         finding["playbook"] = build_playbook(finding)
         finding["cannot_prove_zh"] = [

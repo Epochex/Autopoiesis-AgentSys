@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh Autopoiesis official device knowledge daily
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=24h
+Persistent=true
+RandomizedDelaySec=10min
+Unit=autopoiesis-knowledge-sync.service
+
+[Install]
+WantedBy=timers.target

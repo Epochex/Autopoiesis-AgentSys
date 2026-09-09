@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +74,7 @@ def build_network_rca_orchestrator(
     # must pass False: repository construction runs initialize_schema(), and an
     # empty active set also triggers fixture seeding plus flush().
     use_env_memory_dsn: bool = True,
+    load_quarantined_memory: bool = True,
     vector_memory_enabled: bool | None = None,
     memory_embedder: Any | None = None,
     vector_options: dict[str, Any] | None = None,
@@ -122,7 +122,11 @@ def build_network_rca_orchestrator(
             schema=resolved_memory_schema,
         )
         repository.initialize_schema()
-        memory = TieredMemoryStore.from_repository(repository, enabled=memory_enabled)
+        memory = TieredMemoryStore.from_repository(
+            repository,
+            enabled=memory_enabled,
+            include_quarantined=load_quarantined_memory,
+        )
         # active(), not records(): the latter counts quarantined rows, and a
         # store whose only content is one retired record is still an empty store
         # as far as seeding goes. Getting this wrong is silent and permanent —
@@ -221,13 +225,9 @@ def build_network_rca_orchestrator(
 def build_network_rca_service(
     ledger_path: str | Path,
     *,
-    maintenance_interval_seconds: float = 60.0,
+    maintenance_interval_seconds: float | None = None,
     start_maintenance: bool = True,
     raise_on_evolution_error: bool = False,
-    projection_max_batches: int = 10,
-    project_memory_events: bool | None = None,
-    projection_index_name: str | None = None,
-    projection_batch_size: int = 1_000,
     consolidation_options: dict[str, Any] | None = None,
     **orchestrator_options: Any,
 ):
@@ -238,40 +238,13 @@ def build_network_rca_service(
     from verifier-approved runs and compact its sparse/vector indexes off the
     request thread.
     """
-    from core.memory.index_projector import MemoryIndexProjector
     from core.orchestrator.evolving_service import EvolvingRCAService
 
     orchestrator = build_network_rca_orchestrator(ledger_path, **orchestrator_options)
-    projector = None
-    repository = orchestrator.memory.repository
-    projection_enabled = (
-        repository is not None
-        if project_memory_events is None
-        else project_memory_events
-    )
-    if projection_enabled:
-        if repository is None:
-            raise ValueError("memory event projection requires PostgreSQL persistence")
-        if projection_index_name is None:
-            replica_key = hashlib.sha256(
-                str(Path(ledger_path).resolve()).encode("utf-8")
-            ).hexdigest()[:16]
-            projection_index_name = f"network-rca-online-{replica_key}"
-        elif not projection_index_name.strip():
-            raise ValueError("projection_index_name must not be empty")
-        projector = MemoryIndexProjector(
-            repository,
-            orchestrator.memory,
-            index_name=projection_index_name,
-            batch_size=projection_batch_size,
-        )
-
     return EvolvingRCAService(
         orchestrator,
-        projector=projector,
         maintenance_interval_seconds=maintenance_interval_seconds,
         start_maintenance=start_maintenance,
         raise_on_evolution_error=raise_on_evolution_error,
-        projection_max_batches=projection_max_batches,
         consolidation_options=consolidation_options,
     )

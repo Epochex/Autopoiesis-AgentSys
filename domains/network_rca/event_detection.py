@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from domains.network_rca.admin_auth import classify_admin_auth_event
+
 
 @dataclass(frozen=True)
 class DetectionPolicy:
@@ -54,6 +56,11 @@ class EventQualityGate:
             self._seen.discard(self._order.popleft())
         return True, "accepted"
 
+    def forget(self, event_ids: list[str]) -> None:
+        """Allow a source batch with an uncommitted checkpoint to be retried."""
+        for event_id in event_ids:
+            self._seen.discard(event_id)
+
 
 class EventDetector:
     """Maintain bounded event-time windows and emit stable alert envelopes."""
@@ -63,7 +70,9 @@ class EventDetector:
         self._deny: dict[tuple[str, ...], deque[datetime]] = defaultdict(deque)
         self._deny_alerted: set[tuple[str, ...]] = set()
         self._byte: dict[str, deque[tuple[datetime, int]]] = defaultdict(deque)
-        self._auth: dict[str, deque[tuple[datetime, str, str, str]]] = defaultdict(deque)
+        self._auth: dict[
+            str, deque[tuple[datetime, str, str, str, str, str]]
+        ] = defaultdict(deque)
         self._auth_alerted: set[str] = set()
         self._last_alert: dict[str, datetime] = {}
 
@@ -86,17 +95,8 @@ class EventDetector:
     def _admin_auth_attack(
         self, event: dict[str, Any], now: datetime,
     ) -> dict[str, Any] | None:
-        if str(event.get("type") or "").casefold() != "event":
-            return None
-        combined = " ".join(str(event.get(field) or "") for field in (
-            "logdesc", "msg", "action", "event_status", "reason",
-        )).casefold()
-        login = "login" in combined or str(event.get("action") or "").casefold() == "login"
-        failed = login and any(
-            marker in combined
-            for marker in ("failed", "failure", "invalid", "exceed_limit", "lockout", "disabled")
-        )
-        if not failed:
+        auth_event_type = classify_admin_auth_event(event)
+        if auth_event_type not in {"admin_login_failed", "admin_login_lockout"}:
             return None
         device = str(event.get("device_key") or event.get("devname") or "fortigate")
         source = str(event.get("srcip") or "unknown")
@@ -108,11 +108,18 @@ class EventDetector:
             bucket.popleft()
         if not bucket:
             self._auth_alerted.discard(device)
-        bucket.append((now, source, user, reason))
+        bucket.append((
+            now,
+            source,
+            user,
+            reason,
+            str(event.get("event_id") or ""),
+            auth_event_type,
+        ))
         sources = {row[1] for row in bucket if row[1] not in {"", "unknown"}}
         lockouts = sum(
             1 for row in bucket
-            if any(marker in row[3].casefold() for marker in ("exceed_limit", "lockout"))
+            if row[5] == "admin_login_lockout"
         )
         threshold_met = bool(
             len(bucket) >= self.policy.auth_failure_threshold
@@ -126,7 +133,7 @@ class EventDetector:
             return None
         self._auth_alerted.add(device)
         source_counts: dict[str, int] = {}
-        for _at, address, _user, _reason in bucket:
+        for _at, address, _user, _reason, _event_id, _event_type in bucket:
             source_counts[address] = source_counts.get(address, 0) + 1
         top_sources = sorted(source_counts.items(), key=lambda item: (-item[1], item[0]))[:8]
         result = _alert(
@@ -143,6 +150,8 @@ class EventDetector:
                 "window_sec": self.policy.auth_window_seconds,
                 "failure_threshold": self.policy.auth_failure_threshold,
                 "distinct_source_threshold": self.policy.auth_distinct_source_threshold,
+                "source_event_ids": [row[4] for row in bucket if row[4]][-64:],
+                "source_event_id_count": sum(1 for row in bucket if row[4]),
             },
         )
         result["src_device_key"] = device

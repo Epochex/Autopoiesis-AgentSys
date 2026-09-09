@@ -227,6 +227,9 @@ def probe_observation(
             payload = json.loads(output)
         except (TypeError, ValueError):
             return "neutral", False, "observed"
+        consistency = dict(payload.get("evidence_consistency") or {})
+        if consistency.get("state") == "conflict":
+            return "neutral", False, "observed"
         failures = int(payload.get("failed_logins") or 0)
         distinct = int(payload.get("distinct_sources") or 0)
         lockouts = int(payload.get("lockouts") or 0)

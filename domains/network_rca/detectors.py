@@ -46,21 +46,6 @@ def failed_units(command: Command | None = None) -> list[Detection]:
         if is_tailscale_target(unit):
             continue
         if not unit.startswith(WATCHED_UNIT_PREFIXES):
-            # Seen but not ours to touch: still reported, with no action.
-            found.append(Detection(
-                detector="failed_units", family="fam-perception-selfheal",
-                subject=unit, severity="high",
-                summary=(
-                    f"{unit} 处于 failed 状态，且不在受控单元白名单内。"
-                    "自动重启动作未授权，事件进入人工处置队列。"
-                ),
-                evidence={"line": line.strip()},
-                candidate_action="restart_unit",
-                safety_reason=(
-                    f"保留未执行单元重启：{unit} 不在受控单元白名单内；"
-                    "系统保留证据并转人工。"
-                ),
-            ))
             continue
         found.append(Detection(
             detector="failed_units", family="fam-perception-selfheal",

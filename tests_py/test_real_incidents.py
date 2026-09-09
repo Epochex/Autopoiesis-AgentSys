@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 
-from core.evolve.replay_stream import _SCHEMA_FIELDS, produce_tagged_replay
+from core.evolve.replay_stream import _SCHEMA_FIELDS
 from domains.network_rca.incidents import (
     IncidentDispositionUpdate,
     IncidentRepository,
@@ -239,20 +239,6 @@ def test_incident_replay_reuses_fact_schema_and_never_claims_live_observation():
             assert event["incident_id"] == incident_id
 
 
-def test_shared_replay_transport_rejects_observed_event_before_kafka(monkeypatch):
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("Kafka must not open for non-simulated input")
-
-    monkeypatch.setattr("core.evolve.replay_stream._kafka_types", forbidden)
-    result = produce_tagged_replay(
-        [{"replay": True, "source_kind": "observed", "case_id": "case"}],
-        ["case"],
-    )
-    assert result["ok"] is False
-    assert result["produced"] == 0
-    assert "simulated" in result["note"]
-
-
 def test_gateway_incident_list_detail_and_local_replay(monkeypatch):
     pytest.importorskip("fastapi", reason="gateway extra is not installed")
     from frontend.gateway.app import main as gateway
@@ -262,14 +248,12 @@ def test_gateway_incident_list_detail_and_local_replay(monkeypatch):
 
     listing = asyncio.run(gateway.rca_incidents(asset_ip="192.168.1.23"))
     detail = asyncio.run(gateway.rca_incident_detail(INCIDENT_23))
-    replay = asyncio.run(gateway.rca_incident_replay(INCIDENT_27, inject=0))
+    replay = asyncio.run(gateway.rca_incident_replay(INCIDENT_27))
 
     assert listing["live"] is False
     assert listing["currentOnlineObservation"] is False
     assert [item["id"] for item in listing["incidents"]] == [INCIDENT_23]
     assert detail["incident"]["detection"]["detected"] is True
-    assert replay["streamed"] is None
-    assert replay["topicStatus"] is None
     assert replay["source_kind"] == "simulated"
 
     observed_detection = asyncio.run(

@@ -29,7 +29,8 @@ from uuid import uuid4
 
 from core.evolve.observatory import emit as _emit
 from core.evolve.observatory import snapshot as _snap
-from core.memory.store import MemoryRecord, MemoryRelation, TieredMemoryStore
+from core.memory.quality import apply_memory_quality
+from core.memory.store import MemoryClaim, MemoryRecord, MemoryRelation, TieredMemoryStore
 
 _SKIP_PREFIX = ("skill:", "quarantine:", "root:")
 
@@ -396,6 +397,26 @@ def apply_route(memory: TieredMemoryStore, candidate: MemoryRecord, decision: Ro
     target.source_trace_ids.extend(
         trace_id for trace_id in candidate.source_trace_ids if trace_id not in target.source_trace_ids
     )
+    claims_changed = False
+    existing_claims = {(claim.kind, claim.statement): claim for claim in target.claims}
+    for incoming in candidate.claims:
+        key = (incoming.kind, incoming.statement)
+        current = existing_claims.get(key)
+        if current is None:
+            copied = incoming.model_copy(deep=True)
+            target.claims.append(copied)
+            existing_claims[key] = copied
+            claims_changed = True
+            continue
+        for evidence_id in incoming.evidence_ids:
+            if evidence_id not in current.evidence_ids:
+                current.evidence_ids.append(evidence_id)
+                claims_changed = True
+    if claims_changed:
+        # Keep the most recent bounded claim set.  Evidence snapshots remain the
+        # durable source when an older observation is trimmed from retrieval text.
+        target.claims = target.claims[-32:]
+        apply_memory_quality(target)
     if decision.op == "UPDATE":
         retrieval_changed = False
         for t in candidate.tags:
@@ -413,8 +434,10 @@ def apply_route(memory: TieredMemoryStore, candidate: MemoryRecord, decision: Ro
                 target.relations.append(relation)
         if candidate.evidence_snapshot and not target.evidence_snapshot:
             target.evidence_snapshot = candidate.evidence_snapshot
-        if retrieval_changed:
+        if retrieval_changed or claims_changed:
             memory.reindex(target.memory_id)
+    elif claims_changed:
+        memory.reindex(target.memory_id)
     return target.memory_id
 
 

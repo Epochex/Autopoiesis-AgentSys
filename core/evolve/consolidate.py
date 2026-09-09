@@ -22,7 +22,8 @@ from uuid import uuid4
 from core.evolve.memory_ops import apply_route, link_related, reflect, route
 from core.evolve.observatory import emit as _emit
 from core.evolve.observatory import snapshot as _snap
-from core.memory.store import MemoryRecord, TieredMemoryStore
+from core.memory.quality import apply_memory_quality
+from core.memory.store import MemoryClaim, MemoryRecord, TieredMemoryStore
 from core.skills.registry import SkillRegistry
 from core.trace.events import TraceEvent
 
@@ -70,6 +71,32 @@ _CREDIT_TRACE_PREFIX = "credit:"
 
 def _unique_strings(values) -> list[str]:
     return list(dict.fromkeys(str(value) for value in values if value))
+
+
+def _evidence_claims(snapshot: list[dict]) -> list[MemoryClaim]:
+    """Keep bounded atomic observations, each linked to its source evidence."""
+    claims: list[MemoryClaim] = []
+    for item in snapshot[:8]:
+        evidence_id = str(item.get("evidence_id") or "").strip()
+        statement = str(
+            item.get("summary")
+            or item.get("output")
+            or item.get("source")
+            or ""
+        ).strip()
+        if not evidence_id or not statement:
+            continue
+        claims.append(MemoryClaim(
+            kind="observation",
+            statement=statement[:500],
+            evidence_ids=[evidence_id],
+        ))
+    return claims
+
+
+def _apply_quality(record: MemoryRecord) -> MemoryRecord:
+    apply_memory_quality(record)
+    return record
 
 
 def _context_memory_ids(events: list[TraceEvent]) -> list[str]:
@@ -231,10 +258,13 @@ def consolidate_run(
     # distinct root causes regardless of later tag merges.
     tags_base = [*terms, root_key, f"root:{root_key}"]
     snapshot = [dict(e) for e in (evidence or []) if e.get("evidence_id") in cited]
+    cited_ids = sorted(str(value) for value in cited if value)
+    observed_claims = _evidence_claims(snapshot)
 
     # which exposed skills actually produced the evidence the verdict cited?
     winning: list[str] = []
     produced: dict[str, int] = {}
+    winning_evidence: dict[str, list[str]] = {}
     for event in events:
         if event.kind == "tool_called" and not event.payload.get("blocked"):
             name = event.payload.get("skill")
@@ -244,22 +274,42 @@ def consolidate_run(
             produced[name] = produced.get(name, 0) + len(evids)
             if (evids & cited) and name not in winning:
                 winning.append(name)
+            if evids & cited:
+                winning_evidence[name] = sorted(str(value) for value in evids & cited)
 
     if passed and root_key:
         # Episodic: the concrete incident with its historical evidence provenance.
         # A future recurrence may use it as a hypothesis, but must confirm it with
         # fresh probes. Skip a freshly-confirmed recurrence to avoid a duplicate.
         if not resolved_from_memory:
-            epi = MemoryRecord(
+            epi = _apply_quality(MemoryRecord(
                 memory_id=f"epi-{case.id}-{uuid4().hex[:6]}", tier="episodic",
-                text=f"{case.id}: {case.query[:80]} -> {root_key}",
+                text=(
+                    f"Incident {case.id}: {case.query[:240]}. "
+                    f"Verified root cause: {root_key}. "
+                    f"Outcome: verification passed with {len(cited_ids)} cited observations."
+                ),
                 tags=tags_base, asset_ids=list(case.assets), evidence_ids=sorted(x for x in cited if x),
                 confidence=max(0.8, confidence), source_trace_ids=[run_id],
                 evidence_snapshot=snapshot,
+                claims=[
+                    MemoryClaim(kind="symptom", statement=f"Observed incident: {case.query[:500]}"),
+                    *observed_claims,
+                    MemoryClaim(
+                        kind="root_cause",
+                        statement=f"Verified root cause: {root_key}",
+                        evidence_ids=cited_ids,
+                    ),
+                    MemoryClaim(
+                        kind="outcome",
+                        statement="The run verifier accepted the diagnosis against current evidence.",
+                        evidence_ids=cited_ids,
+                    ),
+                ],
                 first_observed_at=observed_at,
                 last_observed_at=observed_at,
                 event_type=f"diagnosis:{root_key}",
-            )
+            ))
             # Mem0 write router: a genuinely new incident is ADDed (and linked into its
             # family, A-MEM); a re-observed variant UPDATEs the prior instead of duplicating.
             decision = route(memory, epi, resolve_conflicts=resolve_conflicts)
@@ -312,16 +362,55 @@ def consolidate_run(
             added_assets = [asset for asset in case.assets if asset not in sem.asset_ids]
             if added_assets:
                 sem.asset_ids.extend(added_assets)
-                memory.reindex(sem.memory_id)
+            for claim in [
+                *observed_claims,
+                MemoryClaim(
+                    kind="root_cause",
+                    statement=f"Verified recurring root cause: {root_key}",
+                    evidence_ids=cited_ids,
+                ),
+                MemoryClaim(
+                    kind="applicability",
+                    statement=(
+                        "Applicable to assets: " + ", ".join(case.assets)
+                        if case.assets else f"Applicable to incidents matching {case.query[:240]}"
+                    ),
+                ),
+            ]:
+                if claim not in sem.claims:
+                    sem.claims.append(claim)
+            apply_memory_quality(sem)
+            memory.reindex(sem.memory_id)
             report.reinforced.append(sem_id)
             _emit(recorder, "REINFORCE", sem_id, sem.tier, before=before, after=_snap(sem))
         else:
-            sem_rec = MemoryRecord(
-                memory_id=sem_id, tier="semantic", text=f"pattern: {root_key}",
+            sem_rec = _apply_quality(MemoryRecord(
+                memory_id=sem_id, tier="semantic",
+                text=(
+                    f"Verified operational pattern {root_key}; "
+                    f"observed for {', '.join(case.assets) if case.assets else case.query[:240]}."
+                ),
                 tags=tags_base, asset_ids=list(case.assets), confidence=1.2, source_trace_ids=[run_id],
+                evidence_ids=cited_ids,
+                evidence_snapshot=snapshot,
+                claims=[
+                    *observed_claims,
+                    MemoryClaim(
+                        kind="root_cause",
+                        statement=f"Verified recurring root cause: {root_key}",
+                        evidence_ids=cited_ids,
+                    ),
+                    MemoryClaim(
+                        kind="applicability",
+                        statement=(
+                            "Applicable to assets: " + ", ".join(case.assets)
+                            if case.assets else f"Applicable to incidents matching {case.query[:240]}"
+                        ),
+                    ),
+                ],
                 first_observed_at=observed_at, last_observed_at=observed_at,
                 event_type=f"pattern:{root_key}",
-            )
+            ))
             memory.add(sem_rec)
             report.added.append(sem_id)
             # no route() runs on this dedupe-by-id path, so there is no similarity to report.
@@ -349,19 +438,63 @@ def consolidate_run(
                 if st not in proc.tags:
                     proc.tags.append(st)
                     retrieval_changed = True
-            if retrieval_changed:
-                memory.reindex(proc.memory_id)
+            for skill in winning:
+                claim = MemoryClaim(
+                    kind="probe",
+                    statement=f"Run read-only probe: {skill}",
+                    evidence_ids=winning_evidence.get(skill, []),
+                )
+                if claim not in proc.claims:
+                    proc.claims.append(claim)
+            expected = MemoryClaim(
+                kind="expected_signal",
+                statement=f"Accept {root_key} only when fresh probe evidence supports it.",
+                evidence_ids=cited_ids,
+            )
+            if expected not in proc.claims:
+                proc.claims.append(expected)
+            if not any(claim.kind == "trigger" for claim in proc.claims):
+                proc.claims.append(MemoryClaim(
+                    kind="trigger",
+                    statement=f"Trigger on incidents matching {case.query[:240]}",
+                ))
+            apply_memory_quality(proc)
+            memory.reindex(proc.memory_id)
             report.reinforced.append(proc_id)
             _emit(recorder, "REINFORCE", proc_id, proc.tier, before=before, after=_snap(proc))
         elif winning:
-            proc_rec = MemoryRecord(
+            proc_rec = _apply_quality(MemoryRecord(
                 memory_id=proc_id, tier="procedural",
-                text=f"for {root_key}, probe {', '.join(winning)}",
+                text=(
+                    f"For candidate root {root_key}, run {', '.join(winning)} and "
+                    "accept it only when fresh cited evidence matches the expected signal."
+                ),
                 tags=[*tags_base, *skill_tags], asset_ids=list(case.assets),
                 confidence=1.5, source_trace_ids=[run_id],
+                evidence_ids=cited_ids,
+                evidence_snapshot=snapshot,
+                claims=[
+                    MemoryClaim(
+                        kind="trigger",
+                        statement=f"Trigger on incidents matching {case.query[:240]}",
+                    ),
+                    *[
+                        MemoryClaim(
+                            kind="probe",
+                            statement=f"Run read-only probe: {skill}",
+                            evidence_ids=winning_evidence.get(skill, []),
+                        )
+                        for skill in winning
+                    ],
+                    MemoryClaim(
+                        kind="expected_signal",
+                        statement=f"Accept {root_key} only when fresh probe evidence supports it.",
+                        evidence_ids=cited_ids,
+                    ),
+                ],
                 first_observed_at=observed_at, last_observed_at=observed_at,
                 event_type=f"procedure:{root_key}",
-            )
+            ))
             memory.add(proc_rec)
             report.added.append(proc_id)
             _emit(recorder, "ADD", proc_id, "procedural", after=_snap(proc_rec))

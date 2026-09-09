@@ -31,9 +31,8 @@ describe('production topology projection', () => {
     const projection = projectProductionOverview(overview)
 
     expect(projection.topology.subnets.map((item) => item.cidr)).toEqual(['192.168.1.0/24', '192.168.16.0/20'])
-    expect(projection.graphs['192.168.16.0/20'].edges).toHaveLength(1)
-    expect(projection.graphs['192.168.16.0/20'].edges[0].observed).toBe(true)
-    expect(projection.context.profiles['192.168.16.56'].outbound[0].ip).toBe('192.168.1.20')
+    expect(projection.graphs['192.168.16.0/20'].edges).toHaveLength(0)
+    expect(projection.context.profiles['192.168.16.56'].outbound).toEqual([])
     expect(projection.context.activeCases).toBe(1)
     expect(JSON.stringify(projection)).not.toMatch(/R230|192\.168\.1\.23|2026-06-1[67]/)
   })
@@ -68,12 +67,13 @@ describe('production topology projection', () => {
       },
       changes: [],
       crossSegment: { records: [
-        { source: '192.168.16.10', destination: '192.168.2.1', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.2.0/24', service: 'DNS', port: 53, action: 'deny', flows: 20, lastSeenAt: 't' },
-        { source: '192.168.16.11', destination: '192.168.2.1', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.2.0/24', service: 'DNS', port: 53, action: 'deny', flows: 5, lastSeenAt: 't' },
+        { source: '192.168.16.10', destination: '192.168.2.1', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.2.0/24', service: 'DNS', port: 53, action: 'accept', flows: 20, bytes: 1200, lastSeenAt: 't' },
+        { source: '192.168.16.11', destination: '192.168.2.1', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.2.0/24', service: 'DNS', port: 53, action: 'accept', flows: 5, bytes: 300, lastSeenAt: 't' },
       ] },
       internetOutbound: { records: [
         { source: '192.168.16.10', sourceSegment: '192.168.16.0/20', destination: '77.236.99.122', country: 'France', service: 'udp/41641', port: 41641, action: 'accept', flows: 900, bytes: 5000, lastSeenAt: 't' },
         { source: '192.168.16.12', sourceSegment: '192.168.16.0/20', destination: '77.236.99.122', country: 'France', service: 'udp/41641', port: 41641, action: 'accept', flows: 100, bytes: 800, lastSeenAt: 't' },
+        { source: '192.168.16.13', sourceSegment: '192.168.16.0/20', destination: '198.18.0.1', country: 'France', service: 'udp/52656', port: 52656, action: 'deny', flows: 30, bytes: 0, lastSeenAt: 't' },
       ] },
       riskFusion: [],
       externalSources: [],
@@ -112,5 +112,7 @@ describe('production topology projection', () => {
     expect(external[0].ip).toBe('77.236.99.122')
     expect(external[0].country).toBe('France')
     expect(profile.totals.extPeers).toBe(1)
+    expect(graph.devices.some((device) => device.ip === '198.18.0.1')).toBe(false)
+    expect(graph.edges.some((edge) => edge.dst === '198.18.0.1')).toBe(false)
   })
 })

@@ -31,13 +31,15 @@ _FIELD = re.compile(
     r'(?:.*?proto=(?P<proto>\d+))?'
     r'(?:.*?action="(?P<action>[a-z]+)")?'
     r'(?:.*?service="(?P<service>[^"]+)")?'
-    r'(?:.*?dstcountry="(?P<country>[^"]+)")?'
+    r'(?:.*?dstcountry="(?P<dst_country>[^"]+)")?'
+    r'(?:.*?srccountry="(?P<src_country>[^"]+)")?'
     r'(?:.*?sentbyte=(?P<sent>\d+))?'
     r'(?:.*?rcvdbyte=(?P<rcvd>\d+))?'
 )
 _VOIP = re.compile(r'srcip=(?P<src>[0-9.]+) src_port=\d+ dstip=(?P<dst>[0-9.]+) dst_port=(?P<port>\d+)')
 _TIME = re.compile(r' time=(?P<h>\d{2}):\d{2}:\d{2}')
 _DATE = re.compile(r'date=(?P<d>\d{4}-\d{2}-\d{2})')
+_STAMP = re.compile(r'date=(?P<date>\d{4}-\d{2}-\d{2}) time=(?P<time>\d{2}:\d{2}:\d{2})')
 
 # IP protocol numbers as syslog reports them (proto=6 etc.)
 _PROTO = {1: "ICMP", 2: "IGMP", 6: "TCP", 17: "UDP", 47: "GRE", 50: "ESP", 58: "ICMPv6"}
@@ -91,7 +93,9 @@ def _mine() -> dict[str, Any]:
             src, dst = g["src"], g["dst"]
             p = pairs.setdefault((src, dst), {
                 "hits": 0, "accept": 0, "deny": 0, "sent": 0, "rcvd": 0,
-                "ports": Counter(), "services": Counter(), "country": None,
+                "ports": Counter(), "services": Counter(),
+                "src_country": None, "dst_country": None,
+                "last_seen": None,
             })
             p["hits"] += 1
             action = g.get("action") or ("accept" if is_voip else None)
@@ -105,8 +109,13 @@ def _mine() -> dict[str, Any]:
                 p["services"][g["service"]] += 1
             if is_voip:
                 p["services"]["SIP"] += 1
-            if g.get("country") and g["country"] not in ("Reserved",):
-                p["country"] = g["country"]
+            for key in ("src_country", "dst_country"):
+                if g.get(key) and g[key] not in ("Reserved",):
+                    p[key] = g[key]
+            stamp = _STAMP.search(line)
+            if stamp:
+                observed = f"{stamp.group('date')}T{stamp.group('time')}"
+                p["last_seen"] = max(str(p.get("last_seen") or ""), observed)
             p["sent"] += int(g.get("sent") or 0)
             p["rcvd"] += int(g.get("rcvd") or 0)
             if g.get("port"):
@@ -170,7 +179,8 @@ def _peer_row(peer: str, agg: dict[str, Any], *, inbound: bool) -> dict[str, Any
         "bytes": agg["sent"] + agg["rcvd"],
         "ports": [p for p, _ in agg["ports"].most_common(4)],
         "services": [s for s, _ in agg["services"].most_common(3)],
-        "country": agg["country"],
+        "country": agg["src_country" if inbound else "dst_country"],
+        "lastSeenAt": agg.get("last_seen"),
         "external": not _is_private(peer) and not _is_bcast(peer),
         "kind": "bcast" if _is_bcast(peer) else "host",
         "dir": "in" if inbound else "out",
@@ -230,15 +240,20 @@ def device_profile(ip: str, lang: str = "zh") -> dict[str, Any]:
 
     out_rows = sorted(
         (_peer_row(dst, agg, inbound=False) for (src, dst), agg in data["pairs"].items() if src == ip),
-        key=lambda r: -r["hits"],
+        key=lambda r: (str(r.get("lastSeenAt") or ""), r["hits"]), reverse=True,
     )
     in_rows = sorted(
         (_peer_row(src, agg, inbound=True) for (src, dst), agg in data["pairs"].items() if dst == ip),
-        key=lambda r: -r["hits"],
+        key=lambda r: (str(r.get("lastSeenAt") or ""), r["hits"]), reverse=True,
     )
     names = _rdns([r["ip"] for r in (out_rows + in_rows) if r["external"]][:12])
     for r in out_rows + in_rows:
         r["rdns"] = names.get(r["ip"])
+
+    # A fully denied, zero-byte attempt is retained in the evidence store and in
+    # aggregate risk signals. It is not an access destination for this portrait.
+    visible_out_rows = [r for r in out_rows if r["bytes"] > 0 or r["accept"] > 0]
+    visible_in_rows = [r for r in in_rows if r["bytes"] > 0 or r["accept"] > 0]
 
     sp = data["span"].get(ip)
     try:
@@ -268,6 +283,8 @@ def device_profile(ip: str, lang: str = "zh") -> dict[str, Any]:
         for (s, port, proto), u in (data["port_use"].get(ip) or {}).items():
             if s != side:
                 continue
+            if u["hits"] and u["deny"] >= u["hits"]:
+                continue
             # drop service labels that just restate port/proto ("udp/48689")
             svc = next((name for name, _ in u["services"].most_common(2)
                         if name.lower() != f"{proto.lower()}/{port}"), None)
@@ -283,16 +300,16 @@ def device_profile(ip: str, lang: str = "zh") -> dict[str, Any]:
         "status": status,
         "live": live,
         "ports": {"local": _port_rows("local"), "remote": _port_rows("remote")},
-        "outbound": out_rows[:10],
-        "inbound": in_rows[:8],
+        "outbound": visible_out_rows,
+        "inbound": visible_in_rows,
         "hours": data["hours"].get(ip, [0] * 24),
         "tags": tags,
         "totals": {
-            "outHits": sum(r["hits"] for r in out_rows),
-            "inHits": sum(r["hits"] for r in in_rows),
-            "bytes": sum(r["bytes"] for r in out_rows + in_rows),
-            "extPeers": sum(1 for r in out_rows + in_rows if r["external"]),
-            "intPeers": sum(1 for r in out_rows + in_rows if not r["external"] and r["kind"] == "host"),
+            "outHits": sum(r["hits"] for r in visible_out_rows),
+            "inHits": sum(r["hits"] for r in visible_in_rows),
+            "bytes": sum(r["bytes"] for r in visible_out_rows + visible_in_rows),
+            "extPeers": sum(1 for r in visible_out_rows + visible_in_rows if r["external"]),
+            "intPeers": sum(1 for r in visible_out_rows + visible_in_rows if not r["external"] and r["kind"] == "host"),
         },
         "window": {"from": sp[0], "to": sp[1]} if sp else None,
         "sampled": True,

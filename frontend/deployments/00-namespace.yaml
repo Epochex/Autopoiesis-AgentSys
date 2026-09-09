@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: autopoiesis
-  labels:
-    app.kubernetes.io/name: autopoiesis
-    app.kubernetes.io/part-of: autopoiesis

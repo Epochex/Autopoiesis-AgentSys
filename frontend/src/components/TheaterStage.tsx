@@ -23,9 +23,10 @@ import type { Lang } from '../i18n'
 import { useReducedMotion } from '../reduced-motion'
 import { currentRound, railFor, sentinelStageIds } from './autopoiesis-pipeline'
 import { type ChainStep, useSentinelChain } from './use-sentinel-chain'
+import { executionProgress } from './execution-progress'
+import { CaseTrajectoryDrilldown } from './CaseTrajectoryDrilldown'
+import { useInvestigationCase } from './investigation-case'
 import './theater.css'
-import { ExecutionLog } from './ExecutionLog'
-import { RemediationProgress } from './RemediationProgress'
 
 type Pt = { x: number; y: number }
 type CitationCycle = {
@@ -46,7 +47,7 @@ const INCIDENT_W = 330
 /* WAN tally block (1 mark = 1 real distinct source, a reading order not a map) */
 const TALLY = { x: 58, y: 330, cols: 18, cell: 6.4 }
 
-export type TheaterRailStatus = 'completed' | 'current' | 'pending'
+export type TheaterRailStatus = 'completed' | 'current' | 'pending' | 'failed' | 'paused'
 export interface TheaterRailPresentation {
   stages: { id: string; status: TheaterRailStatus; terminal: boolean }[]
   terminalKind: string | null
@@ -54,7 +55,7 @@ export interface TheaterRailPresentation {
 
 const CLOSED_SENTINEL_KINDS = new Set([
   'resolved', 'no_safe_action', 'declined', 'cooldown', 'escalated',
-  'remediation_reverted', 'revert_unverified',
+  'remediation_reverted', 'revert_unverified', 'bakein_regressed', 'condition_cleared', 'execution_error',
 ])
 
 /**
@@ -80,7 +81,10 @@ export function theaterRailPresentation({
   if (!railIds.length) return { stages: [], terminalKind: null }
 
   const round = currentRound(timeline)
-  const latestClosed = [...round].reverse().find((step) => {
+  const verifiedRecovery = executionProgress({steps:round,commands:[]}).verified
+  const latestProgressIndex = round.findLastIndex(step => ['preflight', 'remediation_started', 'remediation_committed', 'bakein_opened', 'bakein_sampled', 'bakein_passed'].includes(step.kind))
+  const latestClosed = [...round].map((step,index)=>({...step,index})).reverse().find((step) => {
+    if (step.index < latestProgressIndex || step.kind === 'resolved' && !verifiedRecovery) return false
     if (CLOSED_SENTINEL_KINDS.has(step.kind)) return true
     return step.kind === 'remediated' && (step.outcome !== 'passed' || step.needs_human === true)
   })
@@ -90,7 +94,7 @@ export function theaterRailPresentation({
 
   // The four-step safety-refusal branch is a completed decision path. Showing
   // its last box as merely "current" implies the system may still write.
-  if (reportClosed || round.some((step) => step.kind === 'no_safe_action')) {
+  if (reportClosed || round.findLastIndex(step => step.kind === 'no_safe_action') > latestProgressIndex) {
     return {
       stages: railIds.map((id, index) => ({
         id,
@@ -141,15 +145,19 @@ export function theaterRailPresentation({
     currentId = ''
     terminalId = 'confirm'
   } else if (terminalKind) {
-    completedThrough = railIds.length - 1
+    terminalId = terminalKind === 'condition_cleared' ? 'detector' : terminalKind === 'execution_error' && latestClosed?.stage === 'preflight' ? 'preflight' : kinds.has('remediation_committed') ? 'watch' : 'act'
+    completedThrough = railIds.indexOf(terminalId) - 1
     currentId = ''
-    terminalId = railIds[railIds.length - 1]
   }
 
   return {
     stages: railIds.map((id, index) => ({
       id,
-      status: index <= completedThrough
+      status: id === terminalId && ['remediated','bakein_regressed','remediation_reverted','revert_unverified','execution_error'].includes(terminalKind ?? '')
+        ? 'failed'
+        : id === terminalId && ['declined','condition_cleared'].includes(terminalKind ?? '')
+          ? 'paused'
+          : index <= completedThrough
         ? 'completed'
         : id === currentId
           ? 'current'
@@ -280,13 +288,14 @@ function cidrHolds(cidr: string, ip: string): boolean {
 
 const REGIONS: { c: Pt; rx: number; ry: number }[] = [
   { c: { x: 1300, y: 650 }, rx: 420, ry: 245 },
-  { c: { x: 1030, y: 250 }, rx: 300, ry: 162 },
+  { c: { x: 1030, y: 330 }, rx: 300, ry: 142 },
   { c: { x: 1720, y: 220 }, rx: 150, ry: 110 },
   { c: { x: 620, y: 860 }, rx: 130, ry: 70 },
+  { c: { x: 900, y: 860 }, rx: 130, ry: 70 },
 ]
 
 export function TheaterStage({
-  topo, stats, graphs, theater, lang, onClose, onNode, busyIp, impactNodes, analysisIp,
+  topo, stats, graphs, theater, lang, onClose, onNode, onOpenCase, busyIp, impactNodes, analysisIp,
 }: {
   topo: Topology
   stats: DataStats
@@ -296,6 +305,7 @@ export function TheaterStage({
   onClose: () => void
   /** stage-3 hook: bidirectional node analysis (internal device / WAN attacker) */
   onNode?: (ip: string, side: 'internal' | 'wan') => void
+  onOpenCase?: () => void
   busyIp?: string | null
   /** nodes on an open analysis' attack path — highlighted red-dashed */
   impactNodes?: string[]
@@ -306,6 +316,8 @@ export function TheaterStage({
   const [hover, setHover] = useState<{ ip: string; p: Pt; role: string; vendor: string; threat: string; deny: number } | null>(null)
   const [sel, setSel] = useState<string | null>(null)
   const [openCitation, setOpenCitation] = useState<string | null>(null)
+  const [stageChoice, setStageChoice] = useState<{ eventId: string; stageId: string } | null>(null)
+  const { record: caseRecord, error: caseError } = useInvestigationCase(theater.caseId)
 
   /* map the event onto a real topology anchor — or admit it.
    *
@@ -326,9 +338,9 @@ export function TheaterStage({
   /* ── full expansion: every subnet gets a region, every mined device a node ── */
   const scene = useMemo(() => {
     const withGraph = topo.subnets
-      .filter((s) => graphs[s.cidr])
+      .filter((s) => (graphs[s.cidr]?.devices.length ?? 0) > 0)
       .sort((a, b) => (graphs[b.cidr]?.devices.length ?? 0) - (graphs[a.cidr]?.devices.length ?? 0))
-    const stubs = topo.subnets.filter((s) => !graphs[s.cidr])
+    const stubs = topo.subnets.filter((s) => (graphs[s.cidr]?.devices.length ?? 0) === 0)
 
     const regions = withGraph.map((s, i) => {
       const r = REGIONS[i] ?? REGIONS[REGIONS.length - 1]
@@ -430,7 +442,9 @@ export function TheaterStage({
   // The selected card already carries the closed report branch. Use it during
   // the first timeline fetch so the stage never flashes the six-step write
   // path for an incident whose safety gate has already closed.
-  const reportClosed = terminal?.kind === 'no_safe_action' || theater.stageIds.includes('handoff')
+  const reportClosed = chain?.steps.length
+    ? terminal?.kind === 'no_safe_action' && executionProgress(chain).paused
+    : theater.stageIds.includes('handoff')
   const railTimeline = chain?.steps.length
     ? chain.steps
     : reportClosed ? [{ kind: 'no_safe_action', at: theater.ts || '' }] : []
@@ -444,9 +458,54 @@ export function TheaterStage({
     reportClosed,
     sentinel: isSentinel,
   })
+  const roundSteps = useMemo(() => currentRound(chain?.steps ?? []), [chain])
+  const stageProofs = useMemo(() => {
+    const proof = new Map<string, string>()
+    if (!isSentinel || !roundSteps.length) return proof
+
+    if (roundSteps.some((step) => step.kind === 'detected')) {
+      proof.set('detector', zh ? '故障事实已记录' : 'fault recorded')
+    }
+    const confirmationTarget = Math.max(0, ...roundSteps.map((step) => Number(step.need ?? 0)))
+    const confirmationHits = Math.max(0, ...roundSteps.map((step) => Number(step.streak ?? 0)))
+    if (confirmationHits) {
+      proof.set('confirm', confirmationTarget
+        ? (zh ? `${confirmationHits}/${confirmationTarget} 次连续命中` : `${confirmationHits}/${confirmationTarget} consecutive hits`)
+        : (zh ? `${confirmationHits} 次连续命中` : `${confirmationHits} consecutive hits`))
+    }
+    const preflight = [...roundSteps].reverse().find((step) => step.kind === 'preflight' || step.kind === 'declined')
+    if (preflight) proof.set('preflight', preflight.eligible === false
+      ? (zh ? '安全门未放行' : 'safety gate held')
+      : preflight.eligible === true ? (zh ? '安全门通过' : 'safety gate passed') : (zh ? '前置检查已记录' : 'preflight recorded'))
+
+    const committed = [...roundSteps].reverse().find((step) => step.kind === 'remediation_committed' || step.kind === 'remediated' && step.outcome === 'passed')
+    if (committed) {
+      const action = String(committed.action ?? '').split(':')[0]
+      proof.set('act', action ? `${action} ${zh ? '已提交' : 'committed'}` : (zh ? '动作已提交' : 'action committed'))
+    }
+
+    const samples = roundSteps.filter((step) => step.kind === 'bakein_sampled')
+    const passed = [...roundSteps].reverse().find((step) => step.kind === 'bakein_passed' || step.kind === 'remediated' && step.outcome === 'passed')
+    const readbacks = Number(passed?.samples ?? samples.filter((step) => step.phase !== 'baseline').length)
+    const fast = samples.filter((step) => step.phase === 'fast').length
+    const stable = samples.filter((step) => step.phase === 'stability').length
+    if (readbacks || samples.length) {
+      proof.set('watch', zh
+        ? `${readbacks || samples.length} 次回读${fast || stable ? ` · 快${fast}/稳${stable}` : ''}`
+        : `${readbacks || samples.length} readbacks${fast || stable ? ` · fast ${fast}/stable ${stable}` : ''}`)
+    }
+    if (executionProgress({steps:roundSteps,commands:[]}).verified) {
+      proof.set('verify', zh ? '恢复已验证' : 'recovery verified')
+    }
+    return proof
+  }, [isSentinel, roundSteps, zh])
   const stageView = new Map(railView.stages.map((stage) => [stage.id, stage]))
   const nowStage = railStages.find((stage) => stageView.get(stage.id)?.status === 'current') ?? null
   const firstReached = railStages.find((stage) => stageView.get(stage.id)?.status !== 'pending') ?? railStages[0]
+  const selectedStage = stageChoice?.eventId === theater.id
+    && railStages.some((stage) => stage.id === stageChoice.stageId)
+    ? stageChoice.stageId
+    : nowStage?.id ?? firstReached?.id ?? railStages[0]?.id ?? null
   const terminalLabel = railView.terminalKind === 'no_safe_action'
     ? (zh ? '决策已交接' : 'DECISION HANDED OFF')
     : railView.terminalKind === 'resolved'
@@ -456,10 +515,19 @@ export function TheaterStage({
         : null
   const atk = stats.topAttackerSrc.slice(0, 3)
 
-  const kindLab = theater.kind === 'alert' ? (zh ? '实时告警' : 'LIVE ALERT') : theater.kind === 'suggestion' ? (zh ? '处置建议' : 'SUGGESTION') : (zh ? '自由浏览' : 'BROWSE')
+  const controlled = theater.dataClassification === 'controlled_test' || theater.device.startsWith('autopoiesis-acceptance-')
+  const kindLab = controlled
+    ? theater.device.includes('memory')
+      ? (zh ? '受控记忆演示' : 'CONTROLLED MEMORY DEMO')
+      : (zh ? '受控自愈演示' : 'CONTROLLED RECOVERY DEMO')
+    : theater.kind === 'alert'
+      ? (zh ? '实时告警' : 'LIVE ALERT')
+      : theater.kind === 'suggestion'
+        ? (zh ? '处置建议' : 'SUGGESTION')
+        : (zh ? '自由浏览' : 'BROWSE')
 
   return (
-    <g className="theater">
+    <g className={`theater${theater.kind !== 'browse' ? ' is-incident' : ''}${theater.originIp ? ' has-origin' : ''}${controlled ? ' is-controlled' : ''}`}>
       {/* Autopoiesis incident rail: the chain the landed event actually lit */}
       <g className="th-rail">
         <text x={RAIL_X0 - 12} y={RAIL_Y - 26} className="th-rail-kick" textAnchor="start">
@@ -483,10 +551,19 @@ export function TheaterStage({
           return (
             <g
               key={s.id}
-              className={`th-stage st-${s.id} is-${view.status}${view.terminal ? ' is-terminal' : ''}`}
+              className={`th-stage st-${s.id} is-${view.status}${view.terminal ? ' is-terminal' : ''}${selectedStage === s.id ? ' is-selected' : ''}`}
               data-stage-id={s.id}
               data-stage-status={view.status}
               aria-label={`${zh ? s.zh : s.en} · ${view.status}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setStageChoice({ eventId: theater.id, stageId: s.id })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  setStageChoice({ eventId: theater.id, stageId: s.id })
+                }
+              }}
             >
               {i < railStages.length - 1 ? (
                 <line x1={s.p.x + 74} y1={s.p.y} x2={railStages[i + 1].p.x - 74} y2={railStages[i + 1].p.y}
@@ -499,6 +576,7 @@ export function TheaterStage({
               {view.status === 'completed' ? (
                 <text x={s.p.x + 59} y={s.p.y + 4} className="th-stage-done" textAnchor="middle">✓</text>
               ) : null}
+              {view.status === 'failed' || view.status === 'paused' ? <text x={s.p.x + 59} y={s.p.y + 4} className="th-stage-failure" textAnchor="middle">!</text> : null}
               {view.status === 'current' ? (
                 <>
                   <rect x={s.p.x - 70} y={s.p.y - 15} width={140} height={30} className="th-stage-fill" />
@@ -514,6 +592,11 @@ export function TheaterStage({
                     ■ {terminalLabel}
                   </text>
                 </>
+              ) : null}
+              {stageProofs.get(s.id) ? (
+                <text x={s.p.x} y={s.p.y + 31} className="th-stage-proof" textAnchor="middle">
+                  {stageProofs.get(s.id)}
+                </text>
               ) : null}
             </g>
           )
@@ -544,14 +627,19 @@ export function TheaterStage({
         // card hangs straight below it. A mined dot sits inside a cluster, so
         // there the card goes to whichever side has room.
         const onHostBox = scene.selfNode?.ip === anchor?.ip
+        const fitsBeforeDrilldown = anchorP.x + 26 + INCIDENT_W <= 1320
         const tx = onHostBox
           ? anchorP.x - INCIDENT_W / 2
-          : anchorP.x < 1200 ? anchorP.x + 26 : anchorP.x - 26 - INCIDENT_W
+          : fitsBeforeDrilldown ? anchorP.x + 26 : anchorP.x - 26 - INCIDENT_W
         const phase = nowStage
         // The card's own fallback carries the same stale radius, so a refused
         // round falls through to no extent line at all rather than to a figure
         // measured for the repair it was denied.
-        const extent = liveRadius?.summary ?? (escalated ? null : theater.blastSummary)
+        const recordedExtent = liveRadius?.summary ?? (escalated ? null : theater.blastSummary)
+        const extentScope = liveRadius?.scope ?? theater.blastScope
+        const extent = controlled && extentScope === 'single-service'
+          ? (zh ? `单一服务进程 · ${theater.device}` : `single service process · ${theater.device}`)
+          : recordedExtent
         const cycles = (escalated?.prior_cycles ?? []) as CitationCycle[]
         const windowHours = escalated?.window_hours
         const times = escalated?.recurrences ?? cycles.length
@@ -602,7 +690,7 @@ export function TheaterStage({
                 {onHostBox ? (
                   <div className="th-inc-note">
                     {zh ? '本机 · 不在 FortiGate 日志语料内'
-                        : 'this host — absent from the syslog corpus'}
+                        : 'this host, absent from the syslog corpus'}
                   </div>
                 ) : null}
                 {/* 复发次数, then the rounds it counted. Without the rounds the
@@ -682,12 +770,9 @@ export function TheaterStage({
                     <span>{zh ? '影响面' : 'EXTENT'}</span>{extent}
                   </div>
                 ) : null}
-                {/* the question the red dots provoke, answered on the canvas */}
                 <div className="th-inc-row">
-                  <span>{zh ? '涉及设备' : 'DEVICES'}</span>
-                  {zh
-                    ? '仅这一台。图上其余红点是语料里的高威胁设备，与本次无关。'
-                    : 'just this one. The other red dots are corpus high-threat devices, unrelated.'}
+                  <span>{zh ? '焦点资产' : 'FOCUS'}</span>
+                  {anchor ? `${anchor.name} · ${anchor.ip}` : (theater.deviceLabel || theater.device)}
                 </div>
                 {theater.originIp ? (
                   <div className="th-inc-row">
@@ -782,8 +867,9 @@ export function TheaterStage({
       {/* ── every subnet, every node ── */}
       {scene.regions.map((r) => {
         const st = r.g.stats
+        const relatedRegion = Boolean(anchor?.ip && cidrHolds(r.sub.cidr, anchor.ip)) || impact.has(r.sub.cidr)
         return (
-          <g key={r.sub.cidr} className="th-cluster">
+          <g key={r.sub.cidr} className={`th-cluster ${relatedRegion ? 'is-related' : 'is-context'}`}>
             <ellipse cx={r.c.x} cy={r.c.y} rx={r.rx} ry={r.ry} className={`th-region ${impact.has(r.sub.cidr) ? 'impact' : ''}`} pointerEvents="none" />
             <text x={r.c.x - r.rx + 14} y={r.c.y - r.ry + 4} className="th-region-lab">
               {r.sub.cidr} · {r.g.devices.length} {zh ? '台设备' : 'devices'} · {st.edges} {zh ? '条关联' : 'relations'}
@@ -821,7 +907,9 @@ export function TheaterStage({
               const isFocus = focusIp === d.ip
               const isRel = relIps.has(d.ip)
               const anchorMeta = topo.anchors.find((a) => a.ip === d.ip)
-              const labeled = isAnchor || isFocus || !!anchorMeta || d.threat === 'high'
+              const labeled = theater.kind === 'browse'
+                ? isAnchor || isFocus || !!anchorMeta || d.threat === 'high'
+                : isAnchor || isFocus || isRel || impact.has(d.ip)
               return (
                 <g key={d.ip}
                   className={`th-dev role-${d.role} t-${d.threat} ${isFocus ? 'focus' : ''} ${isRel ? 'rel' : ''} ${impact.has(d.ip) ? 'impact' : ''} ${busyIp === d.ip ? 'busy' : ''}`}
@@ -938,36 +1026,46 @@ export function TheaterStage({
           </div>
           {theater.kind !== 'browse' ? (
             <>
-              <div className="th-banner-dev">{theater.deviceLabel || theater.device || '—'}</div>
+              <div className="th-banner-dev">{theater.deviceLabel || theater.device || 'N/A'}</div>
               <div className="th-banner-sum">{theater.summary || theater.scenario || ''}</div>
               <div className="th-banner-meta">
                 {theater.ts.replace('T', ' ').replace(/\+.*$/, '')} ·{' '}
                 {anchor
                   ? (zh ? `已映射 → ${anchor.name} ${anchor.ip}` : `mapped → ${anchor.name} ${anchor.ip}`)
-                  : (zh ? '实验流标识 · 不在实网拓扑,不作杜撰映射' : 'lab-stream key · not on the real network')}
+                  : (zh ? '原始事件标识 · 尚无资产坐标' : 'source event identity · asset coordinate unavailable')}
               </div>
             </>
           ) : (
             <div className="th-banner-sum">{zh ? '全拓扑展开 · 点击任意节点看其真实关联' : 'Full topology · click any node for its mined relations'}</div>
           )}
           <div className="th-banner-note">
-            {zh ? `实网设备图 ${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} 节点 · Autopoiesis 实时事件` : `${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} mined nodes · Autopoiesis live events`}
+            {controlled
+              ? (zh ? `受控演示账本 · 生产观测图 ${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} 节点` : `controlled demo ledger · ${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} production-observed nodes`)
+              : (zh ? `生产观测图 ${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} 节点 · 实时事件` : `${scene.regions.reduce((a, r) => a + r.g.devices.length, 0)} production-observed nodes · live event`)}
           </div>
         </div>
       </foreignObject>
 
-      {/* Live response for the device on stage. Anchored bottom-left so it sits
-          clear of the banner, and only drawn once the sentinel has something to
-          say about this subject. */}
-      <foreignObject x={20} y={556} width={620} height={escalated ? 260 : reportClosed ? 210 : 126} className="th-rp-fo">
-        <RemediationProgress subject={theater.device} lang={lang} />
-      </foreignObject>
-
-      {/* the transcript, under the progress rail: what it did, not just how far
-          along it is. Open by default — see ExecutionLog. */}
-      {isSentinel && chain?.commands.length ? (
-        <foreignObject x={20} y={escalated ? 824 : 690} width={620} height={210} className="th-xl-fo">
-          <ExecutionLog steps={chain.steps} commands={chain.commands} lang={lang} />
+      {theater.kind !== 'browse' ? (
+        <foreignObject x={1340} y={112} width={560} height={810} className="th-drill-fo">
+          <CaseTrajectoryDrilldown
+            lang={lang}
+            caseId={theater.caseId}
+            record={caseRecord}
+            chain={chain}
+            stages={railStages.map((stage) => ({
+              id: stage.id,
+              zh: stage.zh,
+              en: stage.en,
+              status: stageView.get(stage.id)?.status ?? 'pending',
+            }))}
+            selectedStage={selectedStage}
+            onSelectStage={(stageId) => setStageChoice({ eventId: theater.id, stageId })}
+            onOpenCase={onOpenCase}
+            error={caseError}
+            subject={theater.deviceLabel || theater.device}
+            controlled={controlled}
+          />
         </foreignObject>
       ) : null}
     </g>

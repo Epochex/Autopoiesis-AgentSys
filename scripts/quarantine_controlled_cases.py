@@ -17,7 +17,7 @@ from pathlib import Path
 
 PREFIXES = (
     "autopoiesis-acceptance-", "bvaccept-", "controlled-", "managed-host-",
-    "redpanda-e2e-", "replay-", "synthetic-",
+    "replay-", "synthetic-",
 )
 
 

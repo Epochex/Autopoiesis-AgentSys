@@ -292,6 +292,10 @@ class Sentinel:
     clock: Callable[[], float] = time.monotonic
 
     _streak: dict[str, int] = field(default_factory=dict)
+    # Stable anchor for a condition that remains active across bounded timeline
+    # reads. Without it, the oldest detection eventually falls out of the tail
+    # and every later poll appears to start a new incident.
+    _opened_at: dict[str, str] = field(default_factory=dict)
     # Keys already announced as escalated, so a fault that stays broken does not
     # re-announce every fifteen seconds. Cleared when the condition clears, and
     # deliberately not persisted: a fresh process should say it again once.
@@ -368,6 +372,7 @@ class Sentinel:
     ) -> dict[str, Any]:
         """Advance state while ``_poll_lock`` is held."""
         seen: list[Detection] = []
+        state_changed = False
         for detector in detectors:
             try:
                 seen.extend(detector())
@@ -379,26 +384,40 @@ class Sentinel:
         # has to re-confirm rather than accumulating across hours.
         for key in list(self._streak):
             if key not in active:
+                detector, _, subject = key.partition(":")
+                record("condition_cleared", {
+                    "subject": subject,
+                    "detector": detector,
+                    "action": None,
+                    "note": "当前巡检已不再发现该条件，持续事件结束",
+                })
+                state_changed = True
                 del self._streak[key]
+                self._opened_at.pop(key, None)
         # An escalation ends when the condition does. Recording that is not
         # bookkeeping: the in-process latch is invisible to anything reading the
         # log, so without this line a card stays "needs a person" forever after
         # the person fixed it — the system would be unable to notice it had been
         # helped.
         for key in sorted(self._escalated - active):
-            detector, _, rest = key.partition(":")
-            subject, _, action = rest.rpartition(":")
+            detector, _, subject = key.partition(":")
             record("escalation_cleared", {
-                "subject": subject, "detector": detector, "action": action or None,
+                "subject": subject, "detector": detector, "action": None,
                 "note": "该目标已不再报错，升级状态解除；复发计数仍在窗口内保留",
             })
+            state_changed = True
         self._escalated &= active
 
         acted: list[dict[str, Any]] = []
         for detection in seen:
             self._streak[detection.key] = self._streak.get(detection.key, 0) + 1
             streak = self._streak[detection.key]
-            entry = record("detected", {**detection.as_dict(), "streak": streak})
+            cycle_opened_at = self._opened_at.setdefault(detection.key, _now())
+            entry = record("detected", {
+                **detection.as_dict(),
+                "streak": streak,
+                "cycle_opened_at": cycle_opened_at,
+            })
 
             if streak < self.confirm_polls:
                 record("awaiting_confirmation", {
@@ -451,8 +470,14 @@ class Sentinel:
 
             acted.append(self._act(detection))
 
-        record("cycle", {"detections": len(seen), "acted": len(acted)})
-        return {"detections": [d.as_dict() for d in seen], "acted": acted, "busy": False}
+        if seen or acted or state_changed:
+            record("cycle", {"detections": len(seen), "acted": len(acted)})
+        return {
+            "detections": [d.as_dict() for d in seen],
+            "acted": acted,
+            "busy": False,
+            "memory_sync_due": bool(acted or state_changed),
+        }
 
     def _history(self, detection: Detection) -> recurrence.History:
         """How often this exact repair has already worked and not held.
@@ -477,11 +502,19 @@ class Sentinel:
             window is ninety seconds long, and a transcript that only appears
             once the window closes cannot be read while it is happening.
             """
-            record("command", {"subject": target, "action": action,
-                               "argv": entry["argv"], "rc": entry["rc"],
-                               "out": entry["out"], "truncated": entry["truncated"]})
+            record("command", {**entry, "subject": target, "action": action})
 
-        check = self.preflight(action, target, on_command=log_command)
+        def failed(stage: str, error: Exception) -> dict[str, Any]:
+            payload = {"subject": target, "action": action, "stage": stage,
+                       "error": f"{type(error).__name__}: {error}", "needs_human": True,
+                       "outcome": "execution_error"}
+            record("execution_error", payload)
+            return payload
+
+        try:
+            check = self.preflight(action, target, on_command=log_command)
+        except Exception as error:
+            return failed('preflight', error)
         record("preflight", {"subject": target, "action": action,
                              "eligible": check.get("eligible"),
                              "reason": check.get("reason"),
@@ -498,7 +531,10 @@ class Sentinel:
         self._cooldown_until[detection.key] = self.clock() + recurrence.cooldown_for(
             history.recurrences, self.cooldown_sec
         )
-        result = self.execute(action, target, on_command=log_command)
+        try:
+            result = self.execute(action, target, on_command=log_command) or {}
+        except Exception as error:
+            return failed('execution', error)
         verdict = (result or {}).get("verdict") or {}
         record("remediated", {
             "subject": target, "action": action, "detector": detection.detector,
@@ -522,8 +558,11 @@ class Sentinel:
         # has already failed to hold. Clearing it on success was what made
         # recurrence invisible; the fix would work, the fault would come back
         # twenty minutes later, and nothing remembered.
-        if verdict.get("outcome") == "passed":
+        if (verdict.get("outcome") == "passed" and verdict.get("samples")
+                and verdict.get("target_recovered") is not False
+                and not result.get("needs_human")):
             self._streak.pop(detection.key, None)
+            self._opened_at.pop(detection.key, None)
             # detector + action are what the recurrence projection keys on; a
             # resolution that does not say what it resolved cannot be counted.
             record("resolved", {"subject": target, "action": action,

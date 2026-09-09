@@ -235,8 +235,14 @@ export function MemoryGraph(props: {
   pinnedId: string | null
   onSelect: (id: string | null) => void
   zh: boolean
+  online?: {
+    versions: Record<string, string>
+    entries: { id: string; label: string; memoryId?: string; write?: boolean; dropped?: boolean; changed?: boolean }[]
+    phase: string
+  }
 }): JSX.Element {
-  const { records, events, touchedIds, recall, selectedId, pinnedId, onSelect, zh } = props
+  const { records, events, touchedIds, recall, selectedId, pinnedId, onSelect, zh, online } = props
+  const onlineMode = Boolean(online)
 
   /* ── 1 · geometry. Depends on `records` only, so scrubbing the cursor never
    *      moves a single box. Same input ⇒ same positions, always. ─────────── */
@@ -247,8 +253,9 @@ export function MemoryGraph(props: {
       if (k && !cols.includes(k)) cols.push(k)
     }
     if (!cols.length) cols.push('__other')
+    if (onlineMode) cols.splice(0, cols.length, ...Array.from({ length: Math.min(4, Math.max(1, ...TIER_ORDER.map(t => records.filter(r => r.tier === t).length))) }, (_, i) => String(i + 1)))
     const colW = PLOT_W / cols.length
-    const boxW = Math.max(60, Math.min(144, colW - 20))
+    const boxW = Math.max(60, Math.min(onlineMode ? 300 : 144, colW - 20))
     const boxDx = (colW - boxW) / 2
     const colX = (i: number) => PLOT_X + i * colW
     const colCx = (i: number) => colX(i) + colW / 2
@@ -265,13 +272,13 @@ export function MemoryGraph(props: {
     let spineY = 0
     for (const tier of tiers) {
       const inTier = records.filter((r) => r.tier === tier)
-      const kinds: ('family' | 'pattern')[] = inTier.some(isFamily)
+      const kinds: ('family' | 'pattern')[] = !onlineMode && inTier.some(isFamily)
         ? ['family', 'pattern']
         : ['pattern']
       const band: BandGeom = { tier, top: y, bottom: y, rows: [] }
       let first = true
       for (const kind of kinds) {
-        const rs = inTier.filter((r) => (kind === 'family' ? isFamily(r) : !isFamily(r)))
+        const rs = inTier.filter((r) => onlineMode || (kind === 'family' ? isFamily(r) : !isFamily(r)))
         const nodesTop = first ? band.top + BAND_HEAD : y + ROW_HEAD
         const maxH = rs.length ? Math.max(...rs.map((r) => hOf(r.importance))) : H_MIN
         const row: RowGeom = {
@@ -284,11 +291,14 @@ export function MemoryGraph(props: {
         }
         band.rows.push(row)
 
-        for (const rec of rs) {
-          const h = hOf(rec.importance)
+        for (const [recordIndex, rec] of rs.entries()) {
+          const h = onlineMode ? 106 : hOf(rec.importance)
           let x: number
           let col: number
-          if (kind === 'family') {
+          if (onlineMode) {
+            col = recordIndex % cols.length
+            x = tier === 'semantic' && rs.length === 1 ? PLOT_X + (PLOT_W - boxW) / 2 : colX(col) + boxDx
+          } else if (kind === 'family') {
             /* centred over the real span of the columns it links to — the only
              * honest x for a record that belongs to no single root family. */
             const memberCols = rec.links
@@ -306,26 +316,28 @@ export function MemoryGraph(props: {
             x = colX(col) + boxDx
           }
           const inner = boxW - 14
-          const maxLines = Math.max(1, Math.floor((h - 34) / 13))
+          const maxLines = Math.max(1, Math.floor((h - (onlineMode ? 48 : 34)) / 13))
+          const nodeTop = nodesTop + (onlineMode ? Math.floor(recordIndex / cols.length) * 138 : 0)
+          const nodeRow = onlineMode ? { ...row, nodesTop: nodeTop, maxH: h, laneBase: nodeTop + h + LANE_STEP } : row
           const n: NodeGeom = {
             rec,
             col,
-            row,
+            row: nodeRow,
             x,
-            y: nodesTop,
+            y: nodeTop,
             w: boxW,
             h,
             cx: x + boxW / 2,
-            bottom: nodesTop + h,
+            bottom: nodeTop + h,
             /* − 40 keeps clear of the right-anchored reinforce tally */
-            lines: wrapLines(rec.text, fitChars(inner, 10.5, LS_TXT), maxLines),
+            lines: wrapLines(rec.text, onlineMode ? Math.floor(inner / 10.5) : fitChars(inner, 10.5, LS_TXT), maxLines),
             idText: midEllipsis(rec.memory_id, fitChars(inner - 40, 9.5, LS_ID)),
           }
           nodes.push(n)
           byId.set(rec.memory_id, n)
         }
 
-        y = row.laneBase + ROW_LANES * LANE_STEP
+        y = onlineMode ? nodesTop + (rs.length ? Math.ceil(rs.length / cols.length) * 138 : 22) : row.laneBase + ROW_LANES * LANE_STEP
         if (tier === 'semantic' && kind === 'family') {
           spineY = y + SPINE_ZONE / 2
           y += SPINE_ZONE
@@ -341,7 +353,7 @@ export function MemoryGraph(props: {
     const railBottom = bands[bands.length - 1].bottom
 
     return { cols, colW, colX, riserX, assocX, bands, nodes, byId, spineY, footTop, vbH, railBottom }
-  }, [records])
+  }, [records, onlineMode])
 
   /* ── 2 · state at the cursor, derived from the supplied event window ─────── */
   const state = useMemo(() => {
@@ -405,6 +417,7 @@ export function MemoryGraph(props: {
     const botAt = new Map<string, string[]>()
     const key = (p: [NodeGeom, NodeGeom]) => p[0].rec.memory_id + '|' + p[1].rec.memory_id
     const rowRank = (n: NodeGeom) => {
+      if (onlineMode) return n.y
       let i = 0
       for (const b of geom.bands) {
         for (const r of b.rows) {
@@ -421,7 +434,7 @@ export function MemoryGraph(props: {
     }
     for (const p of pairs) {
       const k = key(p)
-      if (isFamily(p[0].rec) || isFamily(p[1].rec)) {
+      if (!onlineMode && (isFamily(p[0].rec) || isFamily(p[1].rec))) {
         const [fam, mem] = isFamily(p[0].rec) ? [p[0], p[1]] : [p[1], p[0]]
         add(topAt, mem.rec.memory_id, k)
         add(botAt, fam.rec.memory_id, k)
@@ -442,7 +455,7 @@ export function MemoryGraph(props: {
     let assocSeq = 0
     for (const p of pairs) {
       const k = key(p)
-      const prov = isFamily(p[0].rec) || isFamily(p[1].rec)
+      const prov = !onlineMode && (isFamily(p[0].rec) || isFamily(p[1].rec))
       if (prov) {
         const [fam, mem] = isFamily(p[0].rec) ? [p[0], p[1]] : [p[1], p[0]]
         const ax = slot(mem, topAt, k)
@@ -485,7 +498,7 @@ export function MemoryGraph(props: {
       }
     }
     return out
-  }, [geom, state])
+  }, [geom, state, onlineMode])
 
   /* ── 4 · recall. included → rail slot · dropped → break mark. ───────────── */
   const rail = useMemo(() => {
@@ -595,9 +608,9 @@ export function MemoryGraph(props: {
              real edges, and a decorative rule beside them would read as one. ── */}
         <g className="mg-heads">
           <text x={FRAME_X} y={10} className="mg-kick">
-            {zh ? '每列一种根因 · 按首次写入顺序' : 'ONE ROOT CAUSE PER COLUMN · FIRST-WRITE ORDER'}
+            {onlineMode ? (zh ? '记忆层级 · 版本与更新' : 'MEMORY TIERS · VERSIONS AND UPDATES') : zh ? '每列一种根因 · 按首次写入顺序' : 'ONE ROOT CAUSE PER COLUMN · FIRST-WRITE ORDER'}
           </text>
-          {cols.map((k, i) => (
+          {!onlineMode && cols.map((k, i) => (
             <text key={k} x={colX(i) + 10} y={23} className="mg-colkey">
               {wrapLines(k, colChars, 2).map((l, j) => (
                 <tspan key={j} x={colX(i) + 10} dy={j ? 10 : 0}>
@@ -626,8 +639,9 @@ export function MemoryGraph(props: {
               y={b.top + 13}
               className="mg-band-lab"
             >
-              {BAND_LABEL[b.tier][zh ? 0 : 1]}
+              {onlineMode ? (zh ? {semantic:'归纳记录',procedural:'处理方法',episodic:'历史案例',asset_profile:'设备资料'} : {semantic:'Learned patterns',procedural:'Procedures',episodic:'Past incidents',asset_profile:'Device records'})[b.tier] : BAND_LABEL[b.tier][zh ? 0 : 1]}
             </text>
+            {onlineMode && !nodes.some(n => n.rec.tier === b.tier) && <text x={FRAME_X + 18} y={b.top + 42} className="mg-rail-s">{zh ? '此时间点 0 条记录' : 'No records at this point'}</text>}
             {b.rows.length > 1 &&
               b.rows.map((r) => (
                 <text key={r.kind} x={FRAME_R - 6} y={r.nodesTop - 5} className="mg-row-lab">
@@ -674,6 +688,14 @@ export function MemoryGraph(props: {
         )}
 
         {/* ── nodes ──────────────────────────────────────────────────────── */}
+        {online && <g className="mg-recall">{online.entries.map((entry, i) => {
+          const n = entry.memoryId ? geom.byId.get(entry.memoryId) : undefined
+          if (!n) return null
+          const sy = HEAD_H + 65 + i * Math.min(52, (railBottom - HEAD_H - 70) / Math.max(1, online.entries.length))
+          const vx = CORR_X + 8 + (i % 8) * 9
+          const d = `M${n.x + n.w - 12} ${n.bottom} V${n.row.laneBase + (i % 3) * 5} H${vx} V${sy} H${RAIL_X}`
+          return <g key={entry.id} className={`mg-conn ${entry.dropped ? 'out' : 'in'}${pinnedId === entry.memoryId || pinnedId === entry.id ? ' hot' : ''}`} data-memory-id={entry.memoryId} data-action={entry.write ? 'write' : entry.dropped ? 'drop' : 'read'}><path d={d} className="mg-conn-l"/><text x={vx + 2} y={sy - 4} className="mg-slot-n">{entry.write ? '写回 ←' : entry.dropped ? '过滤 ⊣' : '读取 →'}</text></g>
+        })}</g>}
         <g className="mg-nodes">
           {nodes.map((n) => {
             const id = n.rec.memory_id
@@ -737,7 +759,7 @@ export function MemoryGraph(props: {
                       </g>
                     )}
                     <text x={n.x + 7} y={n.y + 13} className="mg-id">
-                      {n.idText}
+                      {online?.versions[id] ?? n.idText}
                     </text>
                     {rf > 0 && (
                       <text x={n.x + n.w - 7} y={n.y + 13} className="mg-tally">
@@ -784,9 +806,12 @@ export function MemoryGraph(props: {
           <rect x={RAIL_X} y={HEAD_H} width={RAIL_W} height={railBottom - HEAD_H} className="mg-rail-box" />
           <rect x={RAIL_X} y={HEAD_H} width={RAIL_W} height={24} className="mg-rail-cap" />
           <text x={RAIL_X + 7} y={HEAD_H + 16} className="mg-rail-t">
-            {zh ? '本次采用' : 'USED THIS TIME'}
+            {onlineMode ? (zh ? '上下文' : 'CONTEXT') : zh ? '本次采用' : 'USED THIS TIME'}
           </text>
-          {rail && recall ? (
+          {online ? <><text x={RAIL_X + 7} y={HEAD_H + 38} className="mg-rail-s">{online.phase}</text>{online.entries.map((entry, i) => {
+            const sy = HEAD_H + 65 + i * Math.min(52, (railBottom - HEAD_H - 70) / Math.max(1, online.entries.length))
+            return <g key={entry.id} className="mg-slot" role="button" tabIndex={0} aria-label={entry.label} onClick={() => pick(entry.id)} onKeyDown={e => onKey(e, entry.id)}><rect x={RAIL_X + 2} y={sy - 19} width={RAIL_W - 4} height={46} fill={entry.changed ? 'var(--acid)' : 'transparent'}/><text x={RAIL_X + 8} y={sy - 5} className="mg-slot-n">{String(i + 1).padStart(2,'0')}{entry.dropped ? ' · 已过滤' : ''}</text><text x={RAIL_X + 8} y={sy + 8} className="mg-slot-id">{wrapLines(entry.label, 12, 2).map((line,j) => <tspan key={j} x={RAIL_X + 8} dy={j ? 12 : 0}>{line}</tspan>)}</text><line x1={RAIL_X + 6} x2={RAIL_X + RAIL_W - 6} y1={sy + 26} y2={sy + 26} className="mg-slot-rule"/></g>
+          })}</> : rail && recall ? (
             <>
               <text x={RAIL_X + 7} y={HEAD_H + 38} className="mg-rail-s">
                 {`P${recall.pass} · ${rail.included.length}/${rail.retrieved.length} ${zh ? '条' : 'IN'}`}
@@ -835,7 +860,7 @@ export function MemoryGraph(props: {
           <rect x={252} y={9} width={9} height={12} className="mg-lg-box" />
           <rect x={264} y={13} width={9} height={8} className="mg-lg-box" />
           <text x={280} y={20} className="mg-lg">
-            {zh ? '高度 = 当前重要度（√刻度）' : 'HEIGHT = CURRENT IMPORTANCE (√)'}
+            {onlineMode ? (zh ? '节点：当前游标版本' : 'NODES: VERSIONS AT CURSOR') : zh ? '高度 = 当前重要度（√刻度）' : 'HEIGHT = CURRENT IMPORTANCE (√)'}
           </text>
 
           <rect x={640} y={13} width={8} height={7} className="mg-cell" />

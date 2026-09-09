@@ -33,6 +33,7 @@ _PATH_ENV = {
     "AUTOPOIESIS_LLM_CACHE_DIR": _TEST_ROOT / "llm-cache",
     "AUTOPOIESIS_ARP_SNAPSHOT_PATH": _TEST_ROOT / "arp-snapshot.txt",
     "AUTOPOIESIS_L2_LEDGER_PATH": _TEST_ROOT / "l2-identity-history.jsonl",
+    "AUTOPOIESIS_KNOWLEDGE_DIR": _TEST_ROOT / "knowledge",
     "AUTOPOIESIS_REMEDIATION_STOP": _TEST_ROOT / "remediation-emergency-stop.json",
     "AUTOPOIESIS_REMEDIATION_BUDGET": _TEST_ROOT / "remediation-budget.json",
 }

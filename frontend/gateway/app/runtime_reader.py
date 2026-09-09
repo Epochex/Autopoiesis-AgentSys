@@ -1,6 +1,6 @@
-"""Read Autopoiesis event-pipeline output for the live-situation panel.
+"""Read standalone collector output for the live-situation panel.
 
-The event pipeline lands alert envelopes under ``{stream}/alerts``.  Optional
+The collector lands alert envelopes under ``{stream}/alerts``. Optional
 case-candidate files under ``{stream}/aiops`` remain supported for isolated
 replay fixtures.  Production investigation decisions come from the durable case
 service after it receives the exact incident fields.
@@ -25,7 +25,7 @@ _SINK_LOOKBACK_HOURS = 24
 # The disk sink still contains the older reasoning payload.  The live business
 # projection below deliberately exposes detection facts only.  Model stages,
 # confidence bars and draft runbooks do not become operator-facing decisions.
-_ALERT_PATH = ["correlator", "alerts-topic", "cluster-window"]
+_ALERT_PATH = ["collector", "in-process-window", "alert-store"]
 _SUGGESTION_PATH = ["cluster-window", "case-investigation"]
 
 
@@ -146,7 +146,7 @@ def _data_classification(raw: dict[str, Any]) -> str:
     explicit_test_identity = any(
         str(value or "").casefold().startswith(
             (
-                "controlled-", "redpanda-e2e-", "replay-", "bvaccept-",
+                "controlled-", "replay-", "bvaccept-",
                 "managed-host-", "synthetic-", "autopoiesis-acceptance-",
             )
         )
@@ -222,6 +222,8 @@ def _alert_incident_facts(raw: dict[str, Any]) -> dict[str, Any]:
         "alertId": str(raw.get("alert_id") or ""),
         "observedAt": str(raw.get("alert_ts") or event.get("event_ts") or ""),
         "sourceEventId": str(raw.get("source_event_id") or event.get("event_id") or ""),
+        "sourceEventIds": list(metrics.get("source_event_ids") or ()),
+        "sourceEventIdCount": metrics.get("source_event_id_count"),
         "sourceIp": str(event.get("srcip") or ""),
         "sourcePort": event.get("srcport"),
         "destinationIp": str(event.get("dstip") or ""),

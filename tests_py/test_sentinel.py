@@ -12,6 +12,7 @@ import threading
 import pytest
 
 from core.remediate.sentinel import Detection, Sentinel, timeline
+from domains.network_rca.detectors import failed_units
 
 
 @pytest.fixture(autouse=True)
@@ -48,7 +49,7 @@ def _sentinel(detections, *, eligible=True, outcome="passed", clock=None):
         if on_command is not None:
             on_command({"argv": ["systemctl", "restart", target], "rc": 0, "out": "", "truncated": False})
             calls["logged"].append("execute")
-        return {"ran": True, "needs_human": False, "verdict": {"outcome": outcome, "samples": []}}
+        return {"ran": True, "needs_human": False, "verdict": {"outcome": outcome, "samples": [{"healthy": True}], "target_recovered": outcome == "passed"}}
 
     sentinel = Sentinel(
         detectors=[lambda: list(detections)],
@@ -63,6 +64,28 @@ def test_one_sample_never_triggers_an_action():
     sentinel, calls = _sentinel([_detection()])
     sentinel.poll_once()
     assert calls["execute"] == []
+
+
+def test_empty_poll_does_not_append_cycle_noise():
+    sentinel, _calls = _sentinel([])
+    result = sentinel.poll_once()
+    assert result["memory_sync_due"] is False
+    assert timeline() == []
+
+
+def test_failed_unit_detector_ignores_foreign_host_services():
+    class Command:
+        def run(self, _argv):
+            return type("Result", (), {
+                "stdout": (
+                    "fwupd-refresh.service loaded failed failed\n"
+                    "autopoiesis-gateway.service loaded failed failed\n"
+                )
+            })()
+
+    assert [row.subject for row in failed_units(Command())] == [
+        "autopoiesis-gateway.service"
+    ]
 
 
 def test_a_confirmed_detection_is_acted_on():
@@ -84,6 +107,9 @@ def test_a_condition_that_clears_resets_its_streak():
     findings.append(_detection())
     sentinel.poll_once()
     assert sentinel._streak["d:demo.service"] == 1, "the streak must have restarted"
+    cleared = next(row for row in timeline() if row["kind"] == "condition_cleared")
+    assert cleared["detector"] == "d"
+    assert cleared["subject"] == "demo.service"
 
 
 def test_a_detection_with_no_safe_action_is_reported_not_improvised_on():
@@ -264,3 +290,22 @@ def test_every_command_reaches_the_timeline_as_it_runs():
     lines = [e for e in timeline(200) if e["kind"] == "command"]
     assert [e["argv"][1] for e in lines[-2:]] == ["show", "restart"]
     assert all(e["subject"] == "demo.service" for e in lines[-2:])
+
+
+def test_executor_error_is_a_terminal_auditable_event():
+    def explode(*args, **kwargs):
+        raise FileNotFoundError('test executable missing')
+    sentinel = Sentinel(detectors=[lambda: [_detection()]], execute=explode,
+                        preflight=lambda *args, **kwargs: {'eligible': True}, confirm_polls=1)
+    result = sentinel.poll_once()
+    assert result['acted'][0]['outcome'] == 'execution_error'
+    assert timeline()[-2]['kind'] == 'execution_error'
+    assert not any(e['kind'] == 'resolved' for e in timeline())
+
+
+def test_passed_label_without_verification_readings_does_not_resolve():
+    sentinel = Sentinel(detectors=[lambda: [_detection()]],
+        execute=lambda *args, **kwargs: {'verdict': {'outcome': 'passed', 'samples': []}},
+        preflight=lambda *args, **kwargs: {'eligible': True}, confirm_polls=1)
+    sentinel.poll_once()
+    assert not any(e['kind'] == 'resolved' for e in timeline())

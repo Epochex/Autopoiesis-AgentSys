@@ -92,3 +92,25 @@ def test_one_continuous_admin_auth_campaign_emits_one_critical_incident():
     assert alerts[0]["severity"] == "critical"
     assert alerts[0]["src_device_key"] == "FGT-1"
     assert alerts[0]["metrics"]["distinct_sources"] == 3
+    assert alerts[0]["metrics"]["source_event_ids"] == [
+        "event-1", "event-2", "event-3",
+    ]
+
+
+def test_detector_and_archive_exclude_non_admin_login_failures():
+    detector = EventDetector(DetectionPolicy(
+        auth_failure_threshold=1,
+        auth_distinct_source_threshold=1,
+        cooldown_seconds=0,
+    ))
+
+    assert detector.process(_event(
+        1,
+        type="event",
+        subtype="system",
+        action="login",
+        event_status="failed",
+        logdesc="User login failed",
+        user="guest",
+        device_key="FGT-1",
+    )) == []

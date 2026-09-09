@@ -4,9 +4,17 @@ CREATE TABLE IF NOT EXISTS operational_memory_records (
     record_id   TEXT NOT NULL CHECK (length(btrim(record_id)) > 0),
     version     BIGINT NOT NULL CHECK (version >= 1),
     payload     JSONB NOT NULL CHECK (jsonb_typeof(payload) = 'object'),
+    payload_sha256 TEXT,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (kind, record_id)
 );
+
+-- Upgrade installations created before digest-based idempotency. Existing rows
+-- are intentionally left NULL and are rewritten once by the next bounded
+-- commit. This avoids decoding or comparing a potentially large JSONB value on
+-- the web gateway's request-serving process.
+ALTER TABLE operational_memory_records
+    ADD COLUMN IF NOT EXISTS payload_sha256 TEXT;
 
 CREATE TABLE IF NOT EXISTS operational_memory_events (
     event_offset BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

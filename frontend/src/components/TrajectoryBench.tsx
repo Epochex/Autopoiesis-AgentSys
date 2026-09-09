@@ -3,9 +3,8 @@ import './trajectory.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import { rc } from '../i18n'
-import type { Observatory, TheaterEvent } from '../types'
+import type { Observatory } from '../types'
 import { MemoryObservatory } from './MemoryObservatory'
-import { LiveSituation } from './LiveSituation'
 
 /* Fixed-case replay for developer diagnostics. It checks deterministic routing,
  * retrieval and memory events. It does not measure a live incident lifecycle,
@@ -15,9 +14,8 @@ type PerEvent = { i: number; pass: number; case: string; correct: number; passed
 type CaseRow = { id: string; query: string; root_cause_key: string; assets: string[] }
 type Summary = { passes: number; n_cases: number; accuracy_warm: number; accuracy_cold: number; memory_grown: number; probes_warm: number; probes_cold: number; probes_saved_pct: number; insights: number }
 type Resp = {
-  ok: boolean; live: boolean; topic: string; topic_events: number | null
+  ok: boolean; live: boolean
   dataMode?: string; onlineMemory?: boolean
-  streamed?: { ok: boolean; produced: number; degraded: boolean; note?: string } | null
   cases: CaseRow[]; per_event: PerEvent[]; summary: Summary
   observatory?: Observatory | null
 }
@@ -29,26 +27,21 @@ const T = (zh: boolean) => ({
   kicker: zh ? '固定案例调试 · 检查调度、检索与写入事件' : 'FIXED-CASE DIAGNOSTIC · ROUTING, RETRIEVAL, AND WRITE EVENTS',
   loading: zh ? '正在运行固定案例调试回放…' : 'RUNNING FIXED-CASE DIAGNOSTIC REPLAY…',
   err: zh ? '回放端点不可达' : 'REPLAY ENDPOINT UNREACHABLE',
-  inject: zh ? '发送固定事件 → Redpanda' : 'SEND FIXED EVENT → REDPANDA', injecting: zh ? '发送中…' : 'SENDING…',
   play: zh ? '回放' : 'PLAY', pause: zh ? '暂停' : 'PAUSE', replay: zh ? '重放' : 'REPLAY',
   acc: zh ? '固定标签匹配率' : 'FIXTURE-LABEL MATCH', mem: zh ? '已有记录（回放中）' : 'RECORDS (DURING REPLAY)', ncase: zh ? '固定用例' : 'FIXED CASES', passes: zh ? '重复轮次' : 'PASSES',
   saved: zh ? '少做的检查' : 'CHECKS SAVED', ins: zh ? '归纳出的总结' : 'SUMMARIES',
-  topic: zh ? '流 topic' : 'STREAM TOPIC', ev: zh ? '事件' : 'events',
   offline: zh ? '离线规则固定集 · 只做开发者契约检查' : 'offline rule fixture · developer contract check only',
   ev_n: zh ? '事件' : 'event', round: zh ? '轮' : 'pass',
   note0: zh ? '这组固定输入只显示机制事件，不给出省时、准确率或业务完成度结论。' : 'This fixed input exposes mechanism events only; it does not score time saved, accuracy, or business readiness.',
   gridk: zh ? '重复故障的处理结果 · 每列一轮 · ✓=诊断正确 · 数字=当时已有记录数' : 'REPEATED-FAULT RESULTS · one pass per column · ✓=correct · number=records at that point',
-  streamed: zh ? '已发送' : 'streamed', degraded: zh ? '(网关无 rpk，仅本地回放)' : '(no rpk; local replay only)',
   cite: zh ? '源案例取自历史日志，回放使用固定标签和规则判断；结果不作为线上调查、动作安全或记忆收益证据。' : 'Source cases come from historical logs; replay uses fixed labels and rules. Results are excluded from live investigation, action-safety, and memory-benefit claims.',
   seam: zh ? '↓ 本轮采用了哪些旧记录，又写入了什么新记录' : '↓ WHICH OLD RECORDS THIS RUN USED AND WHAT IT WROTE',
-  liveh: zh ? '隔离事件投影 · 只展示固定案例的旁路输出' : 'ISOLATED EVENT PROJECTION · DISPLAYS FIXED-CASE SIDE-PATH OUTPUT ONLY',
 })
 
-export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (e: TheaterEvent) => void }) {
+export function TrajectoryBench({ lang }: { lang: Lang }) {
   const zh = lang === 'zh'
   const tx = T(zh)
   const [st, setSt] = useState<St>({ s: 'load' })
-  const [injecting, setInjecting] = useState(false)
   const [step, setStep] = useState(0)
   const [playing, setPlaying] = useState(false)
   const tmr = useRef<number | null>(null)
@@ -64,17 +57,16 @@ export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (
     }), STEP_MS)
   }, [])
 
-  const load = useCallback(async (inject = false) => {
-    if (inject) setInjecting(true); else setSt({ s: 'load' })
+  const load = useCallback(async () => {
+    setSt({ s: 'load' })
     try {
-      const r = await fetch(`/api/rca/replay?lang=${lang}&passes=4${inject ? '&inject=1' : ''}`, { headers: { Accept: 'application/json' } })
+      const r = await fetch(`/api/rca/replay?lang=${lang}&passes=4`, { headers: { Accept: 'application/json' } })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const d = (await r.json()) as Resp
       if (!d || !d.ok) throw new Error('NO DATA')
       setSt({ s: 'ok', d })
       play(d.per_event.length, 0)
     } catch (e) { setSt({ s: 'err', m: e instanceof Error ? e.message : String(e) }) }
-    finally { setInjecting(false) }
   }, [lang, play])
 
   useEffect(() => { void load() }, [load])
@@ -122,24 +114,9 @@ export function TrajectoryBench({ lang, onTheater }: { lang: Lang; onTheater?: (
         <span className="tb-counter">{tx.ev_n} {Math.min(step, total)}/{total}{cur ? ` · ${tx.round} P${cur.pass + 1}` : ''}</span>
       </div>
 
-      {/* Redpanda stream strip + live inject */}
+      {/* Local benchmark boundary */}
       <div className="tb-stream">
-        <span className="tb-stream-tag">{tx.topic}</span>
-        <code>{d.topic}</code>
-        {d.topic_events != null ? <span className="tb-stream-ev">{d.topic_events} {tx.ev}</span> : null}
-        <button className="tb-inject" onClick={() => void load(true)} disabled={injecting}>
-          <span className="tb-inject-dot" />{injecting ? tx.injecting : tx.inject}
-        </button>
-        {d.streamed ? <span className={`tb-streamed${d.streamed.degraded ? ' deg' : ''}`}>{tx.streamed} {d.streamed.produced} {tx.ev}{d.streamed.degraded ? ' ' + tx.degraded : ''}</span> : null}
         <span className="tb-offline">{tx.offline}</span>
-      </div>
-
-      {/* Running-pod LIVE self-heal: the isolated replay side-car (correlator →
-          alerts-sink → aiops-agent) consuming the injected faults in real time.
-          Same LiveSituation component as the live 长轨迹, benchmark data source. */}
-      <div className="tb-live">
-        <div className="tb-live-h">{tx.liveh}</div>
-        <LiveSituation zh={zh} scenario="bench" onTheater={onTheater} />
       </div>
 
       {/* self-evolution grid: cases × passes, fills as it replays */}

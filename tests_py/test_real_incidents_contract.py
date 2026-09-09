@@ -360,7 +360,7 @@ def test_gateway_http_contract_and_openapi_routes(monkeypatch) -> None:
 
     listing = asyncio.run(gateway.rca_incidents())
     detail = asyncio.run(gateway.rca_incident_detail(INCIDENT_27))
-    replay = asyncio.run(gateway.rca_incident_replay(INCIDENT_23, inject=0))
+    replay = asyncio.run(gateway.rca_incident_replay(INCIDENT_23))
     with pytest.raises(HTTPException) as unknown:
         asyncio.run(gateway.rca_incident_detail("does-not-exist"))
     assert unknown.value.status_code == 404
@@ -382,8 +382,6 @@ def test_gateway_http_contract_and_openapi_routes(monkeypatch) -> None:
     assert detail["incident"]["disposition"]["readback"]["source_kind"] == "readback"
 
     assert replay["live"] is False
-    assert replay["streamed"] is None
-    assert replay["topicStatus"] is None
     assert replay["source_kind"] == "simulated"
     for response in (listing, detail, replay):
         _assert_no_current_online_claim(response)

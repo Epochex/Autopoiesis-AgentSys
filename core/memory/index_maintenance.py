@@ -1,7 +1,8 @@
 """Background maintenance for versioned retrieval indexes.
 
-The worker deliberately knows nothing about FAISS or BM25.  It polls a cheap
-policy predicate and invokes one compaction at a time.  Failures remain visible
+The worker deliberately knows nothing about FAISS or BM25. It invokes one
+compaction at a time after an explicit dirty-state trigger, with optional
+periodic checks for deployments that request them. Failures remain visible
 through counters and the last error instead of terminating the serving process.
 """
 from __future__ import annotations
@@ -33,16 +34,20 @@ class IndexMaintenanceWorker:
         should_compact: Callable[[], bool],
         compact: Callable[[], object],
         *,
-        check_interval_seconds: float = 60.0,
+        check_interval_seconds: float | None = 60.0,
         name: str = "index-maintenance",
         around_run: Callable[[str, dict[str, Any] | None, Callable[[], bool]], bool]
         | None = None,
     ) -> None:
-        if check_interval_seconds <= 0:
+        if check_interval_seconds is not None and check_interval_seconds <= 0:
             raise ValueError("check_interval_seconds must be positive")
         self._should_compact = should_compact
         self._compact = compact
-        self._interval = float(check_interval_seconds)
+        self._interval = (
+            float(check_interval_seconds)
+            if check_interval_seconds is not None
+            else None
+        )
         self._name = name
         self._around_run = around_run
         self._stats = MaintenanceStats()
@@ -119,6 +124,20 @@ class IndexMaintenanceWorker:
         with self._stats_lock:
             self._pending_context = dict(context) if context is not None else None
         self._wake.set()
+
+    def trigger_if_due(self, context: dict[str, Any] | None = None) -> bool:
+        """Wake the worker only when its cheap dirty-state predicate is true."""
+        try:
+            due = bool(self._should_compact())
+        except Exception as exc:
+            with self._stats_lock:
+                self._stats.failures += 1
+                self._stats.last_error = f"{type(exc).__name__}: {exc}"
+            return False
+        if not due:
+            return False
+        self.trigger(context)
+        return True
 
     def stop(self, timeout: float = 5.0) -> bool:
         """Stop and join the worker; return whether it exited before timeout."""

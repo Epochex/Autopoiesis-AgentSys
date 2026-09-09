@@ -21,7 +21,7 @@ import { MemoryTimeline } from './MemoryTimeline'
 import './memory-observatory.css'
 
 /** One real event per tick: the current 185-event ledger plays in about 33s. */
-const TICK_MS = 180
+const TICK_MS = 800
 
 /* Read at mount, not subscribed to: playback intent is a decision taken once,
  * when the viewer arrives. Flipping a running replay because the OS setting
@@ -45,9 +45,8 @@ export function MemoryObservatory({
   // Under reduced motion the replay never runs on its own, so opening on cursor 0
   // would park the viewer on an empty store with no indication it fills in. Open
   // on the settled end state instead and let them scrub back.
-  const [reduced] = useState(reducedMotion)
   const [cursor, setCursor] = useState(() => (reducedMotion() ? Math.max(0, last) : 0))
-  const [playing, setPlaying] = useState(!reduced)
+  const [playing, setPlaying] = useState(false)
   /* No IntersectionObserver (jsdom, ancient engines) ⇒ no visibility signal to
    * gate on, so fall back to the old always-on behaviour rather than to a replay
    * that can never start. */
@@ -149,7 +148,7 @@ export function MemoryObservatory({
     let prev: MemRecall | null = null
     for (const r of recallsBySeq) {
       if (r.seq >= currentRecall.seq) break
-      prev = r
+      if (r.case_id === currentRecall.case_id) prev = r
     }
     return prev
   }, [recallsBySeq, currentRecall])
@@ -205,9 +204,9 @@ export function MemoryObservatory({
   return (
     <section className="mo" ref={rootRef} aria-label={zh ? '离线记忆算法回放' : 'Offline memory algorithm replay'}>
       <header className="mo-head">
-        <span className="mo-head-t">{zh ? '02 · 固定案例记忆机制调试' : '02 · FIXED-CASE MEMORY DIAGNOSTIC'}</span>
+        <span className="mo-head-t">{zh ? '检索与写入记录' : 'RETRIEVAL & WRITE RECORDS'}</span>
         <p className="mo-head-s">{zh
-          ? `${source.caseCount} 个固定案例 × ${source.passes} 轮，从空库重放；它用于调试检索、核查和写入事件，不计入业务效果。`
+          ? `${source.caseCount} 个固定案例 × ${source.passes} 轮，独立空库评估。用于核查检索结果、上下文选择和记忆写入。`
           : `${source.caseCount} fixed cases × ${source.passes} passes from an empty store; this view debugs retrieval, verification, and writes and is excluded from business results.`}</p>
         <div className="mo-source" aria-label={zh ? '记忆数据源' : 'Memory data source'} aria-live="polite">
           <span className="mo-source-main">{sourceText}</span>
@@ -218,7 +217,9 @@ export function MemoryObservatory({
         </div>
       </header>
 
-      <div className="mo-body">
+      <section className="mo-current" aria-live="polite"><div><small>{zh ? '当前回放案例' : 'CURRENT REPLAY CASE'}</small><h3>{caseRoot ?? (zh ? '等待案例记录' : 'Awaiting case record')}</h3><span>{currentRecall?.case_id ?? atCursor?.case_id}</span></div><div><small>{zh ? '记录序号 / 操作' : 'SEQUENCE / OPERATION'}</small><p>{atCursor?.seq ?? 0} · {atCursor?.op ?? '—'}</p><span>{currentRecall ? `${zh ? '轮次' : 'Pass'} ${currentRecall.pass}` : ''}</span></div></section>
+      <MemoryTimeline events={obs.events} cursorSeq={cursor} onCursor={scrub} playing={running} onTogglePlay={toggle} zh={zh} />
+      <details className="mo-graph-details"><summary>{zh ? '记忆关系图与字段审计' : 'Memory graph & field audit'}</summary><p>{zh ? '连线表示记录关系与上下文选择。调查结论与执行效果需结合对应会话的动作和结果记录。' : 'Edges show record relationships and context inclusion. Investigation outcomes require the corresponding session actions and results.'}</p><div className="mo-body">
         <div className="mo-space">
           <MemoryGraph
             records={obs.records}
@@ -243,7 +244,7 @@ export function MemoryObservatory({
             zh={zh}
           />
         </aside>
-      </div>
+      </div></details>
 
       <ContextPacket
         recall={currentRecall}
@@ -254,20 +255,12 @@ export function MemoryObservatory({
         zh={zh}
       />
 
-      <MemoryTimeline
-        events={obs.events}
-        cursorSeq={cursor}
-        onCursor={scrub}
-        playing={running}
-        onTogglePlay={toggle}
-        zh={zh}
-      />
       {/* The write router reads as a scale, so it belongs on a full-width band under
           the replay bar rather than squeezed into the side column. That also leaves
           the whole right column to the record inspector. */}
-      <div className="mo-route">
+      <details className="mo-route"><summary>{zh ? '写入判定明细' : 'Write decision details'}</summary>
         <RouteRuler decisions={decisions} zh={zh} />
-      </div>
+      </details>
     </section>
   )
 }

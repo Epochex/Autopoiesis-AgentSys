@@ -170,3 +170,59 @@ def test_test_runs_do_not_write_into_the_production_ledger(monkeypatch):
     monkeypatch.delenv("AUTOPOIESIS_COST_LEDGER", raising=False)
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "x")
     assert "autopoiesis-runtime" not in str(cost_module._default_ledger())
+
+
+def test_deepseek_cache_usage_is_preserved_without_changing_cost_estimate(ledger):
+    entry = cost.record('deepseek-chat', 'production_wan_threat', {
+        'prompt_tokens': 1000, 'completion_tokens': 100,
+        'prompt_cache_hit_tokens': 800, 'prompt_cache_miss_tokens': 200,
+    })
+    row = json.loads(ledger.read_text())
+    assert row['prompt_cache_hit_tokens'] == 800
+    assert row['prompt_cache_miss_tokens'] == 200
+    assert row['cache_usage_reported'] is True
+    assert entry.cost_cny() == cost.Usage('deepseek-chat', 'x', 1000, 100).cost_cny()
+
+
+def test_openai_cached_tokens_are_supported_and_unreported_misses_stay_unknown(ledger):
+    cost.record('m', 'p', {'prompt_tokens': 1000, 'prompt_tokens_details': {'cached_tokens': 750}})
+    row = json.loads(ledger.read_text())
+    assert row['prompt_cache_hit_tokens'] == 750
+    assert row['prompt_cache_miss_tokens'] is None
+    assert row['cache_usage_source'] == 'prompt_tokens_details.cached_tokens'
+
+
+def test_missing_cache_usage_is_unknown_not_zero(ledger):
+    cost.record('m', 'p', {'prompt_tokens': 1000})
+    row = json.loads(ledger.read_text())
+    assert row['prompt_cache_hit_tokens'] is None and row['prompt_cache_miss_tokens'] is None
+    assert row['cache_usage_reported'] is False
+    assert cost.summary()['provider_cache'] == {
+        'hit_tokens': None, 'miss_tokens': None, 'hit_reported_calls': 0,
+        'miss_reported_calls': 0, 'reported_calls': 0, 'total_calls': 1,
+    }
+
+
+def test_provider_cache_summary_tracks_partial_coverage_and_explicit_zero(ledger):
+    cost.record('m', 'p', {'prompt_tokens': 100, 'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 100})
+    cost.record('m', 'p', {'prompt_tokens': 100, 'prompt_tokens_details': {'cached_tokens': 80}})
+    cost.record('m', 'p', {'prompt_tokens': 100})
+    assert cost.summary()['provider_cache'] == {
+        'hit_tokens': 80, 'miss_tokens': 100, 'hit_reported_calls': 2,
+        'miss_reported_calls': 1, 'reported_calls': 2, 'total_calls': 3,
+    }
+
+
+def test_old_ledger_cache_coverage_remains_unknown(ledger):
+    from datetime import datetime, timezone
+    ledger.write_text(json.dumps({'at': datetime.now(timezone.utc).isoformat(), 'total_tokens': 30}) + '\n')
+    out = cost.summary()
+    assert out['calls'] == 1 and out['provider_cache']['reported_calls'] == 0
+    assert out['provider_cache']['hit_tokens'] is None
+
+
+@pytest.mark.parametrize('invalid', [True, -1, '10', 1.2, {}, []])
+def test_malformed_cache_counters_do_not_break_accounting(ledger, invalid):
+    cost.record('m', 'p', {'prompt_tokens': 100, 'prompt_cache_hit_tokens': invalid,
+                           'prompt_cache_miss_tokens': invalid, 'prompt_tokens_details': invalid})
+    assert cost.summary()['provider_cache']['reported_calls'] == 0

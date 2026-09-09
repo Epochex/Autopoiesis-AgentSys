@@ -93,6 +93,8 @@ def test_report_counts_only_executed_case_artifacts() -> None:
     rows = {row["key"]: row for row in report["rows"]}
 
     assert rows["automatic_incident_takeover"]["status"] == "proven"
+    assert rows["auditable_terminal_outcome"]["status"] == "proven"
+    assert rows["auditable_terminal_outcome"]["measured"]["terminalOutcomeRate"] == 1.0
     assert rows["grounded_decisions"]["status"] == "proven"
     assert rows["faster_investigation"]["status"] == "proven"
     assert rows["action_and_recovery_readback"]["status"] == "proven"
@@ -362,4 +364,35 @@ def test_suppressed_routine_observation_is_not_a_takeover_sample() -> None:
     }
 
     assert rows["automatic_incident_takeover"]["status"] == "not_observed"
+    assert rows["auditable_terminal_outcome"]["status"] == "not_observed"
     assert rows["grounded_decisions"]["status"] == "not_observed"
+
+
+def test_evidence_conflict_is_a_grounded_terminal_escalation() -> None:
+    decision = {
+        "state": "escalated",
+        "classification": "authentication_evidence_conflict",
+        "evidence": [
+            {"evidenceId": "ev-alert"},
+            {"evidenceId": "ev-archive"},
+        ],
+        "missingObservations": [{"code": "authentication_event_archive_reconciliation"}],
+    }
+    case = {
+        "caseId": "case-auth-conflict",
+        "businessDecision": decision,
+        "timeline": [{
+            "kind": "investigation_session_started",
+            "autoStarted": True,
+            "scopeQuality": "exact",
+            "faultDomain": "gateway-management-plane",
+            "managedAssets": ["gateway-device"],
+        }],
+    }
+
+    rows = {
+        row["key"]: row for row in evaluate_business_value([case], []) ["rows"]
+    }
+
+    assert rows["auditable_terminal_outcome"]["status"] == "proven"
+    assert rows["grounded_decisions"]["status"] == "proven"

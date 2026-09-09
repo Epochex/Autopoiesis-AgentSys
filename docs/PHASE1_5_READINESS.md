@@ -56,7 +56,7 @@ Run the optional R230 readonly ingestor on the log host with:
 ```bash
 python3 -m pip install -e '.[ingestor]'
 R230_FORTIGATE_LOG_PATHS=/data/fortigate-runtime/input/fortigate.log \
-  uvicorn domains.network_rca.ingestor_app:app --host 0.0.0.0 --port 8000
+  python3 frontend/gateway/ingest/facts_ingest.py live
 ```
 
 ## What Counts As Real For Phase 1.5
@@ -74,6 +74,4 @@ This repository started as a TypeScript self-evolution kernel; that `src/` tree 
 
 ## CI Boundary
 
-A Python CI workflow should run on stable Python 3.11.x. The repo includes `.python-version` with a concrete stable 3.11.x patch version and `pyproject.toml` restricts Python to the 3.11 series. The local `/usr/bin/python3.11` on this host is still `3.11.0rc1`, so local 3.11 verification is useful but does not satisfy the stable-runtime requirement by itself.
-
-The GitHub Actions workflow is prepared at `ci/github-workflows/python-phase15.yml`, but it is not currently committed under `.github/workflows/` because the available GitHub token previously lacked `workflow` scope and GitHub rejected pushes touching workflow files.
+A Python CI workflow runs on stable Python 3.11.x. The repo includes `.python-version` with a concrete stable 3.11.x patch version and `pyproject.toml` restricts Python to the 3.11 series. Active workflows under `.github/workflows/` run the release test profile before versioned image publication.

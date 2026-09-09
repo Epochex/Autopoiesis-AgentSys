@@ -337,7 +337,11 @@ def preflight(
             "target": target,
             "eligible": False,
             "refused": True,
-            "reason": f"global remediation pause is active: {stop.reason}",
+            "reason": ("New autonomous actions await write authorization; the authorization state has not been initialized."
+                       if stop.reason == 'state_read_error:FileNotFoundError' else f"New autonomous actions are paused: {stop.reason}"),
+            "reason_zh": ("新自动处置等待写入授权，授权状态尚未初始化。"
+                          if stop.reason == 'state_read_error:FileNotFoundError' else "新自动处置已暂停：" + stop.reason),
+            "reason_code": ('write_authorization_not_initialized' if stop.reason == 'state_read_error:FileNotFoundError' else 'new_actions_paused'),
             "emergency_stop": stop.to_dict(),
             "policy": action.policy.to_dict(),
         }
@@ -423,7 +427,7 @@ def execute(
     """
     action = _resolve(action_name)
     log = CommandLog(on_entry=on_command)
-    command = command or Command.local(log)
+    command = command.with_log(log) if command is not None else Command.local(log)
 
     # preflight runs through the same journaling command, so its reads land in
     # the one transcript rather than a second, separate list.
@@ -487,10 +491,13 @@ def execute(
     events: list[dict[str, Any]] = []
 
     def record(kind: str, payload: dict[str, Any]) -> None:
+        if kind in ('remediation_committed', 'bakein_opened'):
+            log.stage = 'verification'
         events.append({"kind": kind, "payload": payload})
         if emit is not None:
             emit(kind, payload)
 
+    log.stage = 'execution'
     follow_up = FollowUp(bake_in=bake_in or DEFAULT_BAKE_IN, emit=record)
     if sleep is not None:
         follow_up.sleep = sleep

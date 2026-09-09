@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import threading
 from typing import Any
 
+from frontend.gateway.app import situational_awareness
 from frontend.gateway.app.situational_awareness import build_situational_overview
 
 
@@ -86,6 +88,11 @@ def _query(sql: str) -> list[dict[str, Any]]:
         return [{"srcip": "192.168.1.4", "current_flows": 300, "current_denied": 280,
                  "current_peers": 12, "current_ports": 4, "baseline_flows": 40,
                  "baseline_denied": 5, "baseline_peers": 2}]
+    if "internet_outbound" in sql:
+        return [{"srcip": "192.168.1.4", "dstip": "8.8.4.4", "action": "accept",
+                 "srcintf": "users", "dstintf": "wan1", "service": "HTTPS", "dstport": 443,
+                 "country": "United States", "flows": 4, "bytes": 4096,
+                 "first_seen": "2026-08-31 11:30:00.000", "last_seen": "2026-08-31 11:59:00.000"}]
     if "GROUP BY srcip,dstip,action" in sql:
         return [{"srcip": "192.168.1.4", "dstip": "192.168.16.27", "action": "deny",
                  "srcintf": "users", "dstintf": "servers", "service": "SSH", "dstport": 22,
@@ -138,10 +145,26 @@ def test_projection_uses_live_sources_and_keeps_test_cases_out(tmp_path, monkeyp
     assert [case["caseId"] for case in result["cases"]] == ["case-real"]
     assert result["funnel"]["cases"] == 1
     assert result["funnel"]["facts"] == 1000
+    assert result["internetOutbound"]["records"][0]["destination"] == "8.8.4.4"
+    assert result["internetOutbound"]["records"][0]["destinationInterface"] == "wan1"
     assert result["effectMeasurement"]["qualified"] is False
     blind = {item["capability"]: item["state"] for item in result["coverage"]}
     assert blind["same_segment_movement"] == "blind"
     assert blind["user_behavior"] == "blind"
+
+
+def test_internet_query_excludes_zero_byte_denies() -> None:
+    seen: list[str] = []
+
+    def query(sql: str) -> list[dict[str, Any]]:
+        seen.append(sql)
+        return []
+
+    assert situational_awareness._internet_outbound_rows(query) == []
+    assert "(sentbyte + rcvdbyte) > 0" in seen[0]
+    assert "lower(action) NOT IN ('deny', 'blocked', 'reject')" in seen[0]
+    assert "GROUP BY srcip,dstip" in seen[0]
+    assert "LIMIT 20 BY srcip" not in seen[0]
 
 
 def test_empty_optional_sources_stay_empty_instead_of_becoming_claims(tmp_path, monkeypatch):
@@ -171,3 +194,88 @@ def test_empty_optional_sources_stay_empty_instead_of_becoming_claims(tmp_path, 
     assert result["candidatePaths"] == []
     assert result["externalSources"] == []
     assert result["intelFeed"]["configured"] is False
+
+
+def test_local_host_readback_wins_over_stale_router_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPOIESIS_INTEL_FEED", str(tmp_path / "missing.jsonl"))
+    monkeypatch.setattr(situational_awareness, "_local_host_identity", lambda: {
+        "ip": "192.168.16.27", "hostname": "netops-node1", "os": "Linux",
+    })
+
+    result = build_situational_overview(
+        _Repository(), None, query=_query, router_factory=_Router,
+        identity_provider=lambda: {
+            "byMac": {},
+            "byIp": {"192.168.16.27": {
+                "hostname": "netops-node2", "vendor": "Apple", "os": "macOS",
+                "type": "Computer", "family": "Mac",
+            }},
+            "fresh": True,
+        },
+        now=datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc),
+    )
+
+    local = next(a for a in result["inventory"]["assets"] if a["ip"] == "192.168.16.27")
+    assert local["name"] == "netops-node1"
+    assert local["identity"] == {"os": "Linux"}
+    assert local["deviceClass"] == "server"
+    assert local["sources"] == ["known_device", "local_host_readback"]
+    assert local["identityConflict"] == {
+        "source": "fortigate-live",
+        "reported": {"hostname": "netops-node2", "os": "macOS"},
+        "resolvedBy": "local_host_readback",
+    }
+
+
+def test_independent_source_queries_are_collected_concurrently(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPOIESIS_INTEL_FEED", str(tmp_path / "missing.jsonl"))
+    started = 0
+    started_lock = threading.Lock()
+    all_started = threading.Event()
+
+    def synchronized_empty_query(_sql: str) -> list[dict[str, Any]]:
+        nonlocal started
+        with started_lock:
+            started += 1
+            if started == 7:
+                all_started.set()
+        assert all_started.wait(timeout=1.0), "source queries ran serially"
+        return []
+
+    class EmptyRouter:
+        def __init__(self, **_options: Any) -> None:
+            pass
+
+        def fetch_all(self) -> dict[str, Any]:
+            return {
+                "fetched_at": None, "degraded": True,
+                "interfaces": {"items": []}, "devices": {"items": []},
+                "policies": {"items": []}, "changes": {"items": []},
+            }
+
+    result = build_situational_overview(
+        _Repository(), None, query=synchronized_empty_query, router_factory=EmptyRouter,
+        identity_provider=lambda: {},
+        now=datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert started == 7
+    assert result["ok"] is True
+
+
+def test_last_good_projection_survives_process_cache_reset(tmp_path, monkeypatch):
+    cache_path = tmp_path / "situational-overview.json"
+    payload = {
+        "ok": True,
+        "mode": "production_observed",
+        "observedAt": "2026-09-07T08:00:00+00:00",
+        "inventory": {"assets": []},
+    }
+    monkeypatch.setattr(situational_awareness, "_CACHE_PATH", cache_path)
+    monkeypatch.setattr(situational_awareness, "_cache", None)
+
+    situational_awareness._persist_situational_overview(payload)
+    restored, age = situational_awareness.cached_situational_overview()
+
+    assert restored == payload
+    assert age is not None and age >= 0

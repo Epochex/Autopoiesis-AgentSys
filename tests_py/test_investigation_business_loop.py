@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import threading
 import time
 
 from domains.network_rca.investigation_case import (
@@ -158,6 +159,156 @@ def test_stale_critical_auth_case_is_backfilled_after_reader_recovery(tmp_path, 
     assert len(started) == 1
     assert started[0]["case_id"] == case.case_id
     assert started[0]["decision"]["classification"] == "admin_bruteforce_lockout"
+
+
+def test_auth_trigger_archive_conflict_escalates_and_freezes_changes(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch)
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    observed_at = datetime.now(timezone.utc).isoformat()
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "auth-conflict"),
+        occurred_at=observed_at,
+        severity="critical",
+        subject="gateway-device",
+        service="fortigate-admin",
+        rule_id="admin_auth_attack_v1",
+        summary="gateway authentication attack",
+        payload={
+            "dataClassification": "observed",
+            "incidentFacts": {
+                "dataClassification": "observed",
+                "observedAt": observed_at,
+                "managedDevice": "gateway-device",
+                "failedLogins": 14,
+                "distinctSources": 5,
+                "failureThreshold": 12,
+                "distinctSourceThreshold": 5,
+                "windowSeconds": 60,
+            },
+        },
+    ))
+    monkeypatch.setattr(main, "_investigation_case_repository", repository)
+    monkeypatch.setattr(
+        investigation_tools,
+        "collect_admin_auth_window",
+        lambda *_args, **_kwargs: {
+            "available": True,
+            "failed_logins": 5,
+            "distinct_sources": 5,
+            "lockouts": 0,
+            "failure_threshold": 12,
+            "distinct_source_threshold": 5,
+            "evidence_consistency": {"state": "conflict"},
+        },
+    )
+
+    result = investigation_cases.auto_start_pending_cases(repository)[0]
+
+    assert result["decision"]["state"] == "escalated"
+    assert result["decision"]["classification"] == "authentication_evidence_conflict"
+    assert result["action_candidate"]["eligible"] is False
+    assert repository.get(case.case_id).status == "escalated"
+
+
+def test_dispatcher_returns_while_one_case_worker_is_busy(tmp_path, monkeypatch) -> None:
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    now = datetime.now(timezone.utc).isoformat()
+    repository.ingest(CaseObservation(
+        source=SourceReference("alert", "worker-busy"),
+        occurred_at=now,
+        severity="critical",
+        subject="gateway-device",
+        rule_id="admin_auth_attack_v1",
+        payload={"dataClassification": "observed"},
+    ))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def busy_worker(*_args, **_kwargs):
+        entered.set()
+        release.wait(2)
+        return []
+
+    monkeypatch.setattr(investigation_cases, "auto_start_pending_cases", busy_worker)
+    dispatcher = investigation_cases.AutoInvestigationDispatcher(
+        repository, workers=1, retry_interval_seconds=60,
+    )
+    started_at = time.monotonic()
+    try:
+        assert dispatcher.dispatch(limit=1) == 1
+        assert time.monotonic() - started_at < 0.2
+        assert entered.wait(1)
+        assert dispatcher.snapshot()["inFlight"] == 1
+        assert dispatcher.dispatch(limit=1) == 0
+    finally:
+        release.set()
+        dispatcher.close()
+
+
+def test_dispatcher_does_not_requeue_expired_unstarted_alerts(tmp_path, monkeypatch) -> None:
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    repository.ingest(CaseObservation(
+        source=SourceReference("alert", "expired-byte-spike"),
+        occurred_at=old,
+        severity="critical",
+        subject="192.0.2.40",
+        rule_id="byte_spike_v2",
+        payload={"dataClassification": "observed"},
+    ))
+    monkeypatch.setenv("AUTOPOIESIS_AUTO_INVESTIGATE_MAX_AGE_SECONDS", "300")
+    dispatcher = investigation_cases.AutoInvestigationDispatcher(
+        repository, workers=1, retry_interval_seconds=1,
+    )
+    try:
+        assert dispatcher.dispatch(limit=1) == 0
+        assert dispatcher.snapshot()["lastAgeFiltered"] == 1
+    finally:
+        dispatcher.close()
+
+
+def test_unresolved_auto_scope_gets_one_enrichment_cycle_then_escalates(tmp_path, monkeypatch) -> None:
+    _isolate(monkeypatch)
+    repository = InvestigationCaseRepository(tmp_path / "cases.sqlite3")
+    now = datetime.now(timezone.utc).isoformat()
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "scope-gap"),
+        occurred_at=now,
+        severity="critical",
+        subject="external-actor",
+        rule_id="byte_spike_v2",
+        payload={"dataClassification": "observed"},
+    ))
+    monkeypatch.setattr(main, "_investigation_case_repository", repository)
+    session = investigate.Session(
+        session_id="scope-gap-session",
+        question="unbound traffic spike",
+        family=None,
+        subject=None,
+        case_id=case.case_id,
+        scope_quality="unresolved",
+        scope_missing=["managedAsset"],
+        auto_started=True,
+        evidence=[{
+            "evidence_id": "ev-001",
+            "command": f"case:{case.case_id}",
+            "output": "unbound source record",
+            "ok": True,
+            "source": "case_ledger",
+            "observed_at": now,
+        }],
+    )
+    investigate._SESSIONS[session.session_id] = session
+
+    first = investigate.complete(session.session_id)
+    second = investigate.complete(session.session_id)
+
+    assert first["decision"]["state"] == "investigating"
+    assert first["decision"]["classification"] == "incident_scope_unresolved"
+    assert second["decision"]["state"] == "escalated"
+    assert second["decision"]["classification"] == "incident_scope_data_gap"
+    assert second["decision"]["evidence"][0]["evidenceId"] == "ev-001"
+    assert repository.get(case.case_id).status == "escalated"
 
 
 def test_explicit_recheck_creates_a_new_session_and_preserves_the_first(tmp_path, monkeypatch) -> None:

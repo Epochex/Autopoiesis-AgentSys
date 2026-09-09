@@ -45,7 +45,6 @@ core/memory/crag_gate.py
 core/memory/evolution.py
 core/memory/hybrid_kb.py
 core/memory/index_maintenance.py
-core/memory/index_projector.py
 core/memory/logical_retrieval.py
 core/memory/postgres_repository.py
 core/memory/query_expansion.py

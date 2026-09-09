@@ -346,6 +346,34 @@ def test_store_serialization_is_deterministic_and_round_trips():
     assert a == b
 
 
+def test_bounded_store_evicts_old_audit_rows_and_caps_feature_decision_ids():
+    store = FeatureStore(
+        max_observations=3,
+        max_decisions=2,
+        max_decision_ids_per_feature=2,
+    )
+    engine = NetworkFeatureEngine(store)
+
+    for index in range(8):
+        row = observation(f"bounded-{index}", at=T0 + timedelta(days=index))
+        engine.observe(row, now=row.observed_at)
+
+    assert len(store._observations) == 3
+    assert len(store._decisions) == 2
+    feature = store.get(observation("lookup").feature_id)
+    assert feature is not None
+    assert len(feature.decision_ids) == 2
+
+    restored = FeatureStore.loads(
+        store.dumps(),
+        max_observations=3,
+        max_decisions=2,
+        max_decision_ids_per_feature=2,
+    )
+    assert len(restored._observations) == 3
+    assert len(restored._decisions) == 2
+
+
 def test_observation_index_moves_revised_source_to_its_new_feature():
     store = FeatureStore()
     original = observation("inc-revised")

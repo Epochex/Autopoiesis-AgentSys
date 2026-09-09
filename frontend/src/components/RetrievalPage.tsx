@@ -18,15 +18,21 @@ const prefersReduced = () => typeof window !== 'undefined' && window.matchMedia?
 const STEP_MS = 1500
 
 const T = (zh: boolean) => ({
-  kicker: zh ? '查资料过程 · 真实案例实录' : 'HOW RECORDS WERE FOUND · REAL CASE',
+  kicker: zh ? '调查依据 · 按案件查看命中原因' : 'INVESTIGATION SOURCES · WHY EACH ITEM MATCHED',
   loading: zh ? '正在读取查找记录…' : 'FETCHING LOOKUP RECORD…',
   offline: zh ? '查找接口不可达' : 'LOOKUP ENDPOINT UNREACHABLE',
   empty: zh ? '还没有真实调查检索回执。请从实时事件打开调查，完成首次检索后再查看。' : 'No live investigation retrieval receipt yet. Open an investigation from a live event first.',
   refetch: zh ? '重取' : 'REFETCH', play: zh ? '播放' : 'PLAY', pause: zh ? '暂停' : 'PAUSE', replay: zh ? '重放' : 'REPLAY',
-  hint: zh ? '点击任一文档可查看全文和每一步处理记录，点击阶段名称可直接跳转' : 'Click any document for its full text and processing steps; click a stage to jump',
+  hint: zh ? '先看本次实际采用的资料，再展开命中原因和原始内容。' : 'Start with the sources used in this investigation, then inspect match reasons and raw content.',
 })
 
-export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenario?: 'live' | 'bench' }) {
+const caseOutcome = (c: Case, zh: boolean): string => {
+  const used = c.context.selected.length
+  if (c.flow === 'kb_hybrid') return zh ? `采用 ${used} 条知识资料` : `${used} KB SOURCES USED`
+  return zh ? `采用 ${used} 条历史处置记录` : `${used} PRIOR RECORDS USED`
+}
+
+export function RetrievalPage({ lang, scenario = 'live', focusCaseId, focusSubject }: { lang: Lang; scenario?: 'live' | 'bench'; focusCaseId?: string; focusSubject?: string }) {
   const zh = lang === 'zh'
   const tx = T(zh)
   const [st, setSt] = useState<St>({ s: 'load' })
@@ -37,7 +43,7 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
   const timer = useRef<number | null>(null)
 
   const d = st.s === 'ok' ? st.d : null
-  const cases = d?.cases ?? []
+  const cases = (d?.cases ?? []).filter(item => scenario !== 'live' || (focusCaseId ? item.case_id === focusCaseId : !focusSubject || item.subject === focusSubject))
   const c: Case | null = cases[Math.min(ci, Math.max(0, cases.length - 1))] ?? null
   const steps = c ? stepsOf(c) : []
   const last = steps.length - 1
@@ -52,20 +58,25 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
     }, STEP_MS)
   }, [])
 
+  const requestVersion = useRef(0)
   const load = useCallback(async () => {
-    setSt({ s: 'load' }); setSel(null)
+    const version = ++requestVersion.current
+    setSt({ s: 'load' }); setSel(null); setCi(0); stop()
     try {
-      const r = await fetch(`/api/rca/retrieval?lang=${lang}&scenario=${scenario}`, { headers: { Accept: 'application/json' } })
+      const params = new URLSearchParams({ lang, scenario })
+      if (focusCaseId) params.set('case_id', focusCaseId)
+      else if (focusSubject) params.set('subject', focusSubject)
+      const r = await fetch(`/api/rca/retrieval?${params}`,  { headers: { Accept: 'application/json' } })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const j = (await r.json()) as RetrievalResp
       if (!j || !j.ok || !Array.isArray(j.cases)) throw new Error('INVALID DATA')
-      setSt({ s: 'ok', d: j })
+      if (version === requestVersion.current) setSt({ s: 'ok', d: j })
     } catch (error) {
-      setSt({ s: 'err', m: error instanceof Error ? error.message : 'REQUEST FAILED' })
+      if (version === requestVersion.current) setSt({ s: 'err', m: error instanceof Error ? error.message : 'REQUEST FAILED' })
     }
-  }, [lang, scenario])
+  }, [lang, scenario, focusCaseId, focusSubject, stop])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void load(); return () => { requestVersion.current += 1 } }, [load])
   // (re)play from the top whenever payload lands or the case changes
   useEffect(() => {
     if (st.s === 'ok' && cases.length) { setSel(null); startPlay(0, stepsOf(cases[Math.min(ci, cases.length - 1)]).length) }
@@ -84,7 +95,7 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
           <div className="rt-head-code">
             <span>{tx.kicker}</span>
           </div>
-          <h1 className="rt-head-title">{zh ? <>怎么<mark>找到资料</mark></> : <>HOW RECORDS WERE <mark>FOUND</mark></>}</h1>
+          <h1 className="rt-head-title">{zh ? <>本次调查采用了<mark>哪些资料</mark></> : <>SOURCES USED IN <mark>THIS INVESTIGATION</mark></>}</h1>
         </div>
         <button className="rt-run" onClick={() => void load()} disabled={st.s === 'load'}><span className="rt-run-dot" />{tx.refetch}</button>
       </header>
@@ -97,7 +108,7 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
             <div className="rt-cases" role="tablist">
               {cases.map((cc, i) => (
                 <button key={cc.id} role="tab" aria-selected={i === ci} className={`rt-case${i === ci ? ' on' : ''}`} onClick={() => pickCase(i)}>
-                  <span className="rt-case-flow">{cc.flow === 'kb_hybrid' ? (zh ? '查知识库' : 'SEARCH KB') : (zh ? '查已有记录' : 'SEARCH RECORDS')}</span>
+                  <span className="rt-case-flow">{caseOutcome(cc, zh)}</span>
                   <span className="rt-case-l">{zh ? cc.label.zh : cc.label.en}</span>
                   <span className={`rt-case-badge${cc.triggers.live ? ' live' : ''}`}>{cc.triggers.count}× {cc.triggers.live ? (zh ? '实跑' : 'LIVE') : 'EVAL'}</span>
                 </button>
@@ -121,6 +132,7 @@ export function RetrievalPage({ lang, scenario = 'live' }: { lang: Lang; scenari
               <CaseRecord c={c} step={step} zh={zh} sel={sel} onSel={setSel} />
             </div>
             <div className="rt-hint">{tx.hint}</div>
+            {c.raw && <details><summary>{zh ? '原始检索证据' : 'Original retrieval evidence'}</summary><pre>{JSON.stringify(c.raw, null, 2)}</pre></details>}
           </>
         ) : st.s === 'ok' ? <div className="rt-state">{tx.empty}</div> : null}
     </div>

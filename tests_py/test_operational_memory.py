@@ -99,7 +99,7 @@ def test_refresh_merges_security_and_deny_sources_and_reports_source_health():
     view = service.audit_view()
     assert view["counts"]["risks"] == 2
     assert set(view["coverage"]["sources"]) == {
-        "environment.findings", "autopoiesis.facts",
+        "environment.findings", "autopoiesis.facts_v2",
         "autopoiesis.security_events", "sentinel.timeline"
     }
     assert all(row["source"] == "real" for row in view["risks"])
@@ -246,7 +246,7 @@ def test_oversize_aggregate_snapshots_are_rebuilt_instead_of_restored():
     class OversizeRepository(InMemoryOperationalRepository):
         def payload_size(self, kind, record_id):
             if kind in {"risk_pattern", "network_feature"}:
-                return 9 * 1024 * 1024
+                return 5 * 1024 * 1024
             return super().payload_size(kind, record_id)
 
         def get(self, kind, record_id):
@@ -257,6 +257,6 @@ def test_oversize_aggregate_snapshots_are_rebuilt_instead_of_restored():
     service = OperationalMemoryService(OversizeRepository(), durable=False)
 
     assert service.health_view()["sources"] == {
-        "restore.network_feature": "skipped_oversize:9437184>8388608",
-        "restore.risk_pattern": "skipped_oversize:9437184>8388608",
+        "restore.network_feature": "skipped_oversize:5242880>4194304",
+        "restore.risk_pattern": "skipped_oversize:5242880>4194304",
     }

@@ -3,7 +3,7 @@
 Two clearly-separated layers, because the passive telemetry has NO timing:
 
   Layer 1: PASSIVE congestion/pressure aggregate (real, from ClickHouse
-  ``autopoiesis.facts``). The FortiGate syslog carries no latency/RTT/jitter and the
+  configured event fact table). The FortiGate syslog carries no latency/RTT/jitter and the
   facts pipeline drops ``duration``, so this layer is explicitly NOT latency: it
   is traffic volume, deny-rate and activity spread, a congestion/pressure
   signal. Mirrors ``history.py`` (same ``_q`` helper, same env, same read-only
@@ -23,7 +23,7 @@ import threading
 import time
 from typing import Any
 
-from .history import _q  # reuse the exact ClickHouse query helper / conventions
+from .history import _CH_TABLE, _q  # reuse the exact ClickHouse query helper / conventions
 
 _CH_DB = os.getenv("CLICKHOUSE_DB", "autopoiesis")
 
@@ -52,7 +52,7 @@ def _prefix24(cidr: str) -> str | None:
 
 
 def vlan_diag(cidr: str, days: int = 7) -> dict[str, Any] | None:
-    """Passive /24 congestion/pressure portrait from ClickHouse ``autopoiesis.facts``.
+    """Passive /24 congestion/pressure portrait from the configured ClickHouse fact table.
 
     This is traffic volume, deny-rate and activity spread, with no latency claim.
     Returns None if ClickHouse is unreachable (console then hides this layer).
@@ -73,7 +73,7 @@ def vlan_diag(cidr: str, days: int = 7) -> dict[str, Any] | None:
             f"SELECT count() AS flows, sum(sentbyte) AS up, sum(rcvdbyte) AS down, "
             f"sum(sentbyte+rcvdbyte) AS bytes, countIf(action='deny') AS deny, "
             f"countIf(action='accept') AS accept, uniq(dstip) AS peers, "
-            f"uniq(srcip) AS devices FROM {_CH_DB}.facts WHERE {where}"
+            f"uniq(srcip) AS devices FROM {_CH_DB}.{_CH_TABLE} WHERE {where}"
         )
         if not totals or int(totals[0].get("flows") or 0) == 0:
             result = {"ok": True, "cidr": cidr, "days": days, "empty": True}
@@ -85,7 +85,7 @@ def vlan_diag(cidr: str, days: int = 7) -> dict[str, Any] | None:
             f"sum(rcvdbyte) AS down, countIf(action='deny') AS deny, "
             f"countIf(action='accept') AS accept, uniq(dstip) AS peers, "
             f"groupUniqArray(4)(dstport) AS topPorts "
-            f"FROM {_CH_DB}.facts WHERE {where} "
+            f"FROM {_CH_DB}.{_CH_TABLE} WHERE {where} "
             f"GROUP BY srcip ORDER BY sum(sentbyte+rcvdbyte) DESC LIMIT 60"
         )
     except Exception:

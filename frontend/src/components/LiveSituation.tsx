@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TheaterEvent } from '../types'
 import './live-situation.css'
+import { actionLabel, humanizeIncidentSummary } from './incident-copy'
 
 interface IncidentFacts {
   dataClassification?: string
@@ -160,7 +161,7 @@ export function LiveSituation({
 }: {
   zh: boolean
   onTheater?: (event: TheaterEvent) => void
-  onTrace?: (subject: string, caseId?: string) => void
+  onTrace?: (subject: string, caseId?: string, event?: TheaterEvent) => void
   scenario?: 'disk' | 'bench'
   focusSubject?: string
 }) {
@@ -192,10 +193,18 @@ export function LiveSituation({
     }
   }, [scenario, zh])
 
-  const suggestions = useMemo(
+  const observedSuggestions = useMemo(
     () => (snapshot?.suggestions ?? []).filter((item) => item.incidentFacts?.dataClassification !== 'controlled_test'),
     [snapshot],
   )
+  const suggestions = useMemo(() => {
+    if (!focusSubject) return observedSuggestions
+    const controlledFocus = (snapshot?.suggestions ?? []).find((item) => (
+      item.incidentFacts?.dataClassification === 'controlled_test'
+      && (item.deviceKey === focusSubject || item.device === focusSubject)
+    ))
+    return controlledFocus ? [controlledFocus, ...observedSuggestions] : observedSuggestions
+  }, [focusSubject, observedSuggestions, snapshot])
   const selected = useMemo(() => {
     if (pickedId) {
       const picked = suggestions.find((item) => item.id === pickedId)
@@ -208,21 +217,21 @@ export function LiveSituation({
     return suggestions.find((item) => item.id === snapshot?.defaultSuggestionId) ?? suggestions[0] ?? null
   }, [focusSubject, pickedId, snapshot, suggestions])
 
-  useEffect(() => {
-    if (focusSubject) document.querySelector('.ls')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [focusSubject])
-
   if (state === 'load') return <section className="ls ls-msg">{zh ? '读取实时案件…' : 'READING LIVE CASES…'}</section>
   if (state === 'err') return <section className="ls ls-msg err">{zh ? '实时案件接口不可达' : 'LIVE CASE ENDPOINT UNREACHABLE'}</section>
   if (state === 'empty' || !snapshot) return <section className="ls ls-msg">{zh ? '当前没有实时案件' : 'NO LIVE CASES'}</section>
 
   const latest = snapshot.runtime.latestSuggestionTs || snapshot.runtime.latestAlertTs
-  const resolved = suggestions.filter((item) => item.caseDecision?.state === 'resolved').length
-  const investigating = suggestions.filter((item) => !item.caseDecision || item.caseDecision.state === 'investigating').length
+  const resolved = observedSuggestions.filter((item) => item.caseDecision?.state === 'resolved').length
+  const investigating = observedSuggestions.filter((item) => !item.caseDecision || item.caseDecision.state === 'investigating').length
   const activeStep = stateStep(selected?.caseDecision?.state)
   const facts = selected?.incidentFacts ?? {}
   const decision = selected?.caseDecision ?? null
   const measured = facts.measured ?? {}
+  const incidentSummary = selected
+    ? humanizeIncidentSummary(selected.summary, facts, zh, selected.deviceKey || selected.device)
+    : ''
+  const nextAction = actionLabel(decision, zh)
   const factRows: Array<[string, string]> = facts.faultClass === 'duplicate_ip_static'
     ? [
         [zh ? '对象' : 'ASSET', selected?.deviceKey || 'N/A'],
@@ -246,7 +255,11 @@ export function LiveSituation({
 
   const openCase = () => {
     if (!selected) return
-    const jump = () => onTrace?.(selected.deviceKey || selected.device || selected.id, selected.caseId ?? undefined)
+    const jump = () => onTrace?.(
+      selected.deviceKey || selected.device || selected.id,
+      selected.caseId ?? undefined,
+      eventFor(selected),
+    )
     if (!selected.caseId || scenario === 'bench') { jump(); return }
     fetch(`/api/rca/investigation-cases/${encodeURIComponent(selected.caseId)}/open`, { method: 'POST' }).finally(jump)
   }
@@ -255,7 +268,7 @@ export function LiveSituation({
     <section className="ls ls-business" aria-label={zh ? '实时案件决策' : 'Live case decisions'}>
       <header className="ls-head">
         <div className="ls-head-l">
-          <span className="ls-kick">{zh ? '01 · 实时案件 · 业务结果' : '01 · LIVE CASES · BUSINESS OUTCOMES'}</span>
+          <span className="ls-kick">{zh ? '02 · 实时案件 · 业务结果' : '02 · LIVE CASES · BUSINESS OUTCOMES'}</span>
           <h2 className="ls-title">{zh ? <>事件<mark>处置台</mark></> : <>INCIDENT <mark>DECISIONS</mark></>}</h2>
         </div>
         <div className="ls-head-r">
@@ -267,9 +280,9 @@ export function LiveSituation({
 
       <div className="ls-decision-rail" aria-label={zh ? '案件状态' : 'Case state'}>
         {[
-          [zh ? '检测事实' : 'DETECTION', selected?.summary || ''],
-          [zh ? '案件调查' : 'INVESTIGATION', decision?.classification || (zh ? '等待决策' : 'PENDING')],
-          [zh ? '处置决定' : 'DECISION', decision?.action || (zh ? '未形成' : 'NOT READY')],
+          [zh ? '检测事实' : 'DETECTION', incidentSummary],
+          [zh ? '案件调查' : 'INVESTIGATION', decision?.headline || (zh ? '等待证据形成结论' : 'WAITING FOR EVIDENCE')],
+          [zh ? '下一步动作' : 'NEXT ACTION', nextAction],
           [zh ? '结果回读' : 'READBACK', String(decision?.readback?.outcome ?? (decision?.state === 'resolved' ? (zh ? '无需变更' : 'NO CHANGE') : (zh ? '等待' : 'PENDING')))],
         ].map(([label, value], index) => (
           <div className={`ls-decision-step ${index + 1 <= activeStep ? 'is-done' : ''}`} key={label}>
@@ -292,7 +305,7 @@ export function LiveSituation({
             >
               <time>{hms(item.ts)}</time>
               <span className={`ls-case-state is-${item.caseDecision?.state ?? 'investigating'}`}>{stateLabel(item.caseDecision?.state, zh)}</span>
-              <strong>{item.caseDecision?.headline || item.summary}</strong>
+              <strong>{item.caseDecision?.headline || humanizeIncidentSummary(item.summary, item.incidentFacts, zh, item.deviceKey || item.device)}</strong>
               <code>{item.caseId || item.id}</code>
             </button>
           )) : <p className="ls-case-empty">{zh ? '当前没有观测案件' : 'NO OBSERVED CASES'}</p>}
@@ -305,7 +318,7 @@ export function LiveSituation({
                 <span className={`ls-case-state is-${decision?.state ?? 'investigating'}`}>{stateLabel(decision?.state, zh)}</span>
                 <div>
                   <h3>{decision?.headline || (zh ? '检测已落案，调查尚未形成结论' : 'DETECTED; DECISION PENDING')}</h3>
-                  <p>{decision?.summary || selected.summary}</p>
+                  <p>{decision?.summary || incidentSummary}</p>
                 </div>
                 {selected.caseId ? <code>{selected.caseId}</code> : null}
               </div>

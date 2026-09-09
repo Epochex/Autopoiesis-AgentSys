@@ -61,10 +61,57 @@ DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_HNSW_M = 32
 DEFAULT_HNSW_EF_CONSTRUCTION = 200
 DEFAULT_HNSW_EF_SEARCH = 128
+DEFAULT_FLAT_MAX_DOCUMENTS = 100_000
 # bge-* asymmetric retrieval: the short query gets an instruction prefix, passages do not.
 BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 
 _CACHE_DIR = Path(os.environ.get("DENSE_CACHE_DIR") or (Path(__file__).resolve().parents[2] / ".dense_cache"))
+
+
+def select_index_type(
+    document_count: int,
+    requested: str = "auto",
+    *,
+    flat_max_documents: int | None = None,
+) -> str:
+    """Resolve the serving index using corpus scale and an operator override.
+
+    Flat remains the exact reference for small and medium corpora.  Auto moves
+    larger corpora to HNSW at a configurable boundary; held-out recall and
+    latency measurements should set that boundary for each deployment.
+    """
+    if requested in {"flat", "hnsw", "binary"}:
+        return requested
+    if requested != "auto":
+        raise ValueError(f"unknown index_type {requested!r}")
+    threshold = flat_max_documents
+    if threshold is None:
+        threshold = int(os.environ.get(
+            "AUTOPOIESIS_DENSE_FLAT_MAX_DOCUMENTS",
+            str(DEFAULT_FLAT_MAX_DOCUMENTS),
+        ))
+    if threshold <= 0:
+        raise ValueError("flat_max_documents must be positive")
+    return "flat" if document_count <= threshold else "hnsw"
+
+
+def select_hnsw_ef_search(
+    document_count: int,
+    *,
+    target_recall: float = 0.95,
+) -> int:
+    """Choose a measured HNSW search breadth for the supported scale bands."""
+    if document_count <= 0:
+        raise ValueError("document_count must be positive")
+    if not 0 < target_recall <= 1:
+        raise ValueError("target_recall must be in (0, 1]")
+    high_recall = target_recall >= 0.99
+    if document_count <= 100_000:
+        return 1024 if high_recall else 512
+    if document_count <= 1_000_000:
+        return 4608 if high_recall else 2304
+    baseline = 4608 if high_recall else 2304
+    return min(8192, int(math.ceil(baseline * math.sqrt(document_count / 1_000_000))))
 
 
 # ── encoder ─────────────────────────────────────────────────────────────────────
@@ -177,22 +224,38 @@ class DenseIndex:
         doc_texts: Sequence[str],
         *,
         model_name: str = DEFAULT_MODEL,
-        index_type: str = "flat",
+        index_type: str = "auto",
         cache_key: str | None = None,
         hnsw_m: int = DEFAULT_HNSW_M,
         hnsw_ef_construction: int = DEFAULT_HNSW_EF_CONSTRUCTION,
-        hnsw_ef_search: int = DEFAULT_HNSW_EF_SEARCH,
+        hnsw_ef_search: int | None = None,
     ) -> "DenseIndex":
+        resolved_index_type = select_index_type(len(doc_ids), index_type)
+        if hnsw_ef_search is None:
+            target_recall = float(os.environ.get("AUTOPOIESIS_HNSW_TARGET_RECALL", "0.95"))
+            resolved_ef_search = (
+                select_hnsw_ef_search(len(doc_ids), target_recall=target_recall)
+                if resolved_index_type == "hnsw"
+                else DEFAULT_HNSW_EF_SEARCH
+            )
+        else:
+            resolved_ef_search = hnsw_ef_search
         emb = embed(list(doc_texts), model_name=model_name, is_query=False, cache_key=cache_key)
         obj = cls(
             doc_ids,
             emb,
-            index_type,
+            resolved_index_type,
             hnsw_m=hnsw_m,
             hnsw_ef_construction=hnsw_ef_construction,
-            hnsw_ef_search=hnsw_ef_search,
+            hnsw_ef_search=resolved_ef_search,
         )
         obj.model_name = model_name
+        obj.selection_profile = {
+            "requested_index_type": index_type,
+            "resolved_index_type": resolved_index_type,
+            "document_count": len(doc_ids),
+            "hnsw_ef_search": resolved_ef_search,
+        }
         return obj
 
     def search_embeddings(self, query_emb, k: int) -> list[list[tuple[str, float]]]:

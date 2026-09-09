@@ -39,6 +39,31 @@ def _operational(chain: list[dict]):
     )
 
 
+def test_investigation_receipt_joins_exact_write_provenance(monkeypatch, inline_thread):
+    from frontend.gateway.app import investigate
+    records = [MemoryRecord(memory_id=mid, tier="procedural", text="verified", source_trace_ids=[source])
+               for mid, source in [("written", "session-exact"), ("retrieved-only", "older-session")]]
+    monkeypatch.setattr(gateway, "_memory_records", lambda: (True, records, None, None))
+    monkeypatch.setattr(gateway, "_completed_memory_chain", lambda *_: [])
+    monkeypatch.setattr(gateway, "_memory_trace_events", lambda: [])
+    monkeypatch.setattr(gateway, "_memory_influence_timeline", lambda: [])
+    monkeypatch.setattr(gateway, "_operational_memory", None)
+    monkeypatch.setattr(investigate, "_session_store", lambda: SimpleNamespace(recent=lambda _: [{
+        "session_id": "session-exact", "case_id": "case-exact", "subject": "device",
+        "memory_intervention": {"memory_ids": ["retrieved-only"]},
+    }]))
+    result = asyncio.run(gateway.rca_event_memory_receipt(subject="device", incident_ref="case-exact"))
+    assert [r["memory_id"] for r in result["current_memories"]] == ["written"]
+    other = asyncio.run(gateway.rca_event_memory_receipt(subject="device", incident_ref="case-other"))
+    assert other["current_memories"] == [] and other["investigation"] is None
+
+
+def test_investigation_memory_events_are_accepted_by_durable_trace_schema():
+    from core.trace.events import TraceEvent
+    for kind in ("memory_intervention_evaluated", "verified_procedure_indexed"):
+        assert TraceEvent(run_id="s", case_id="c", kind=kind).kind == kind
+
+
 def test_passed_incident_receipt_lists_only_records_from_that_chain(
     monkeypatch, inline_thread,
 ):
@@ -103,3 +128,23 @@ def test_safety_gated_receipt_has_dossier_and_no_successful_procedure(
     assert response["latest_incident"]["terminal_kind"] == "no_safe_action"
     assert [row["tier"] for row in response["current_memories"]] == ["episodic"]
     assert response["dossiers"][0]["status"] == "escalated"
+
+
+def test_case_receipt_accepts_managed_ip_session_for_serial_and_skips_evaluation(monkeypatch, inline_thread):
+    from frontend.gateway.app import investigate
+    records = [MemoryRecord(memory_id='written', tier='procedural', text='verified', source_trace_ids=['session-live'])]
+    monkeypatch.setattr(gateway, '_memory_records', lambda: (True, records, None, None))
+    monkeypatch.setattr(gateway, '_completed_memory_chain', lambda *_: [])
+    monkeypatch.setattr(gateway, '_memory_trace_events', lambda: [])
+    monkeypatch.setattr(gateway, '_memory_influence_timeline', lambda: [])
+    monkeypatch.setattr(gateway, '_operational_memory', None)
+    snapshots = [
+        {'session_id': 'evaluation', 'case_id': 'case-firewall', 'subject': '192.168.1.1', 'evaluation_source_case_id': 'case-firewall'},
+        {'session_id': 'other-case', 'case_id': 'case-other', 'subject': '192.168.1.1'},
+        {'session_id': 'session-live', 'case_id': 'case-firewall', 'subject': '192.168.1.1'},
+    ]
+    monkeypatch.setattr(investigate, '_session_store', lambda: SimpleNamespace(recent=lambda _: snapshots))
+    result = asyncio.run(gateway.rca_event_memory_receipt(subject='FG100ETK20014183', incident_ref='case-firewall'))
+    assert result['investigation']['session_id'] == 'session-live'
+    assert result['investigation']['subject'] == '192.168.1.1'
+    assert [row['memory_id'] for row in result['current_memories']] == ['written']

@@ -8,6 +8,8 @@ from domains.network_rca.investigation_case import (
 )
 from frontend.gateway.app.investigation_cases import (
     _case_family,
+    annotate_snapshot_cases,
+    prepare_case_repository,
     resolve_routine_observations,
     sync_environment_cases,
     sync_snapshot_cases,
@@ -295,6 +297,37 @@ def test_sentinel_business_transitions_join_action_and_readback_to_the_case(tmp_
     ]
 
 
+def test_continuing_sentinel_condition_merges_legacy_per_poll_cases(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    base = {
+        "scope": "sentinel",
+        "severity": "high",
+        "deviceKey": "udisks2.service",
+        "service": "udisks2.service",
+        "ruleId": "sentinel:failed_units",
+        "summary": "udisks2.service failed",
+        "dataClassification": "observed",
+        "incidentFacts": {"dataClassification": "observed", "detector": "failed_units"},
+    }
+    for index in range(3):
+        sync_snapshot_cases({
+            "ready": True,
+            "feed": [],
+            "runtime": {},
+            "suggestions": [{
+                **base,
+                "id": f"sentinel-legacy-cycle-{index}",
+                "incidentRef": f"sentinel:legacy-{index}",
+                "ts": f"2026-09-02T12:56:{20 + index:02d}+00:00",
+            }],
+        }, repository)
+
+    cases = repository.list()
+    assert len(cases) == 1
+    assert cases[0].subject == "udisks2.service"
+    assert len([source for source in cases[0].sources if source.kind == "suggestion"]) == 3
+
+
 def test_repeated_delivery_is_idempotent(tmp_path) -> None:
     repository = _repository(tmp_path)
     observation = CaseObservation(
@@ -311,6 +344,81 @@ def test_repeated_delivery_is_idempotent(tmp_path) -> None:
     assert second.occurrence_count == 1
     assert second.version == first.version
     assert second.sources == (SourceReference("alert", "alert-1"),)
+
+
+def test_read_projection_attaches_case_without_mutating_it(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("suggestion", "sentinel-stable"),
+        occurred_at="2026-08-29T10:00:00+00:00",
+        severity="high",
+        subject="demo.service",
+        service="demo.service",
+        rule_id="sentinel:failed_units",
+        scope="sentinel",
+        payload={"dataClassification": "observed"},
+    ))
+    before = repository.get(case.case_id)
+    snapshot = {
+        "ready": True,
+        "feed": [],
+        "suggestions": [{
+            "id": "sentinel-stable",
+            "ts": "2026-08-29T10:00:00+00:00",
+            "severity": "high",
+            "deviceKey": "demo.service",
+            "dataClassification": "observed",
+        }],
+        "runtime": {},
+    }
+
+    projected = annotate_snapshot_cases(snapshot, repository)
+    after = repository.get(case.case_id)
+
+    assert projected["suggestions"][0]["caseId"] == case.case_id
+    assert before is not None and after is not None
+    assert after.version == before.version
+    assert after.updated_at == before.updated_at
+
+
+def test_identical_delivery_skips_the_sqlite_write_transaction(tmp_path, monkeypatch) -> None:
+    repository = _repository(tmp_path)
+    observation = CaseObservation(
+        source=SourceReference("alert", "alert-stable"),
+        occurred_at="2026-08-29T10:00:00+00:00",
+        subject="r230",
+        rule_id="deny-burst",
+        payload={"count": 12},
+    )
+    created = repository.ingest(observation)
+    writes = 0
+    original = repository._connect
+
+    class ConnectionProxy:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.connection.__exit__(*args)
+
+        def execute(self, sql, parameters=()):
+            nonlocal writes
+            if sql.strip().upper().startswith(("BEGIN IMMEDIATE", "INSERT", "UPDATE", "DELETE")):
+                writes += 1
+            return self.connection.execute(sql, parameters)
+
+    monkeypatch.setattr(repository, "_connect", lambda: ConnectionProxy(original()))
+    repeated = repository.ingest(observation)
+
+    assert repeated.case_id == created.case_id
+    assert writes == 0
 
 
 def test_cluster_suggestion_merges_provisional_alert_cases(tmp_path) -> None:
@@ -472,6 +580,41 @@ def test_legacy_model_projection_is_removed_without_deleting_sources(tmp_path) -
     assert cleaned.sources == (SourceReference("suggestion", "legacy-draft"),)
 
 
+def test_case_projection_cleanup_is_a_startup_migration(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    repository.ingest(CaseObservation(
+        source=SourceReference("suggestion", "legacy-startup-draft"),
+        occurred_at="2026-08-29T10:01:00+00:00",
+        hypotheses={"items": [{"statement": "unsupported draft"}]},
+        timeline=(
+            {"kind": "inference", "ts": "2026-08-29T10:01:00+00:00"},
+            {"kind": "runbook", "ts": "2026-08-29T10:01:01+00:00"},
+        ),
+    ))
+
+    first = prepare_case_repository(repository)
+    second = prepare_case_repository(repository)
+
+    assert first == {"status": "completed", "removed": 3, "error": None}
+    assert second == {"status": "completed", "removed": 0, "error": None}
+
+
+def test_snapshot_sync_does_not_repeat_projection_migration(monkeypatch, tmp_path) -> None:
+    repository = _repository(tmp_path)
+
+    def fail_if_called() -> int:
+        raise AssertionError("startup migration reached the five-second sync path")
+
+    monkeypatch.setattr(repository, "remove_legacy_reasoning_projection", fail_if_called)
+
+    projected = sync_snapshot_cases(
+        {"feed": [], "suggestions": [], "runtime": {}}, repository
+    )
+
+    assert projected["feed"] == []
+    assert projected["suggestions"] == []
+
+
 def test_legacy_suggestion_projection_is_rebuilt_from_exact_alert_facts(tmp_path) -> None:
     repository = _repository(tmp_path)
     alert = SourceReference("alert", "alert-with-facts")
@@ -599,3 +742,100 @@ def test_case_query_and_open_http_api(tmp_path, monkeypatch) -> None:
     assert opened.status_code == 200
     assert opened.json()["case"]["status"] == "investigating"
     assert opened.json()["case"]["timeline"][-1]["actor"] == "tester"
+
+
+def test_equal_business_decision_with_new_delivery_id_is_idempotent(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("suggestion", "cycle-stable"),
+        occurred_at="2026-09-02T10:00:00+00:00",
+        subject="udisks2.service",
+    ))
+    decision = {
+        "state": "escalated",
+        "classification": "service_failed",
+        "action": "重启该 systemd 单元",
+        "disposition": "写操作未授权，转人工。",
+        "evidence": [{
+            "evidenceId": "ev-first",
+            "label": "巡检当前读数",
+            "value": "udisks2.service loaded failed failed",
+            "source": "sentinel:failed_units",
+            "observedAt": "2026-09-02T10:00:00+00:00",
+        }],
+    }
+    repository.append_event(
+        case.case_id,
+        kind="business_decision_recorded",
+        payload={"decision": decision},
+        status="escalated",
+        event_id="delivery-1",
+    )
+    repository.append_event(
+        case.case_id,
+        kind="business_decision_recorded",
+        payload={"decision": {
+            **decision,
+            "generatedAt": "2026-09-02T10:01:00+00:00",
+            "evidence": [{
+                **decision["evidence"][0],
+                "evidenceId": "ev-second",
+                "observedAt": "2026-09-02T10:01:00+00:00",
+            }],
+        }},
+        status="escalated",
+        event_id="delivery-2",
+    )
+
+    stored = repository.get(case.case_id)
+    assert stored is not None
+    assert len([
+        item for item in stored.timeline
+        if item.get("kind") == "business_decision_recorded"
+    ]) == 1
+
+
+def test_cleanup_compacts_historical_equal_decisions(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    base = {
+        "kind": "business_decision_recorded",
+        "decision": {
+            "state": "escalated",
+            "classification": "service_failed",
+            "action": "restart",
+            "disposition": "handoff",
+            "evidence": [{"label": "state", "value": "failed", "source": "sentinel"}],
+        },
+    }
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("suggestion", "legacy-repeat"),
+        occurred_at="2026-09-02T10:00:00+00:00",
+        timeline=(
+            {**base, "ts": "2026-09-02T10:00:00+00:00", "eventId": "one"},
+            {**base, "ts": "2026-09-02T10:01:00+00:00", "eventId": "two"},
+        ),
+    ))
+
+    assert repository.remove_legacy_reasoning_projection() >= 1
+    stored = repository.get(case.case_id)
+    assert stored is not None
+    decisions = [item for item in stored.timeline if item.get("kind") == "business_decision_recorded"]
+    assert len(decisions) == 1
+    assert decisions[0]["equivalentRecordCount"] == 2
+    assert decisions[0]["firstRecordedAt"] == "2026-09-02T10:00:00+00:00"
+    assert decisions[0]["lastRecordedAt"] == "2026-09-02T10:01:00+00:00"
+
+
+def test_large_source_index_is_summarised_in_case_projection(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    refs = tuple(SourceReference("incident", f"incident-{index:03d}") for index in range(50))
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("suggestion", "large-source-case"),
+        related_sources=refs,
+        occurred_at="2026-09-02T10:00:00+00:00",
+    ))
+
+    projected = case.as_dict()
+    assert projected["sourcesTruncated"] is True
+    assert len(projected["sources"]) == 40
+    assert projected["sourceCounts"] == {"incident": 50, "suggestion": 1}

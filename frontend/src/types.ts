@@ -1,3 +1,4 @@
+import type { AnalysisMetadata } from './components/analysis-read'
 export interface Evidence {
   evidenceId: string
   source: string
@@ -177,6 +178,12 @@ export interface ProfilePeer {
   services: string[]
   country: string | null
   rdns?: string | null
+  /** Latest flow observation for newest-first destination ordering. */
+  lastSeenAt?: string | null
+  /** Network context for a private peer when that relationship carried traffic. */
+  segment?: string | null
+  interface?: string | null
+  action?: string | null
   external: boolean
   kind: 'host' | 'bcast'
   dir: 'in' | 'out'
@@ -219,6 +226,7 @@ export interface HistoryDest {
   up?: number
   down?: number
   denied: number
+  lastSeenAt?: string | null
 }
 /** Historical device portrait over the last N days, from the ClickHouse flow store. */
 export interface DeviceHistory {
@@ -278,7 +286,7 @@ export interface GraphPattern {
   severity: 'high' | 'medium' | 'low'
   confidence?: number
 }
-export interface GraphAnalysis {
+export interface GraphAnalysis extends AnalysisMetadata {
   cidr: string
   loading?: boolean
   error?: string
@@ -324,6 +332,8 @@ export interface TheaterEvent {
   scenario?: string
   summary?: string
   scope?: string
+  /** Durable investigation opened from the same landed event. */
+  caseId?: string
   /** Pipeline stages this event actually reached in the incident chain. */
   stageIds: string[]
   /** Topology node this concerns, when the backend measured it. Preferred over
@@ -336,6 +346,9 @@ export interface TheaterEvent {
    *  how far this reaches. */
   blastSummary?: string
   blastScope?: string
+  /** Explicit source boundary used by the console to distinguish defence demos
+   *  from production-observed incidents without relying on visual inference. */
+  dataClassification?: string
 }
 
 export interface Anchor {

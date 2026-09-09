@@ -76,18 +76,17 @@ Memory retrieval no longer constructs a complete BM25 index inside each request.
 statistics, document versions and tombstones. `TieredMemoryStore.add`, `reindex`, and
 `quarantine` update that index synchronously, so a successful write is immediately visible.
 Compaction builds outside the mutation lock and swaps a complete generation under a short
-lock. `IndexMaintenanceWorker` performs threshold checks outside request handling and exposes
-attempt, abort, failure and duration counters.
+lock. The service creates maintenance workers only for enabled indexes and wakes them after a
+committed learning update when the corresponding index reports pending compaction. Workers
+expose attempt, abort, failure and duration counters.
 
 When `AUTOPOIESIS_MEMORY_DSN` is configured, `PostgresMemoryRepository` is the durable source
 of truth. A current-state row and a full-snapshot event are committed in one transaction;
-per-record versions reject lost updates, a database trigger makes events append-only, and
-monotonic consumer checkpoints cannot pass the committed high-water mark. Startup restores
-all records and rebuilds the local indexes. `MemoryIndexProjector` consumes events in offset
-order and advances its checkpoint only after BM25, assets and the enabled vector route accept the event. Store
-flushes carry loaded versions, so concurrent processes cannot silently overwrite one another;
-a failed flush reloads the durable snapshot before another request is served. Without a DSN,
-the deterministic test/default mode remains in process.
+per-record versions reject lost updates and a database trigger makes events append-only.
+The standalone process restores current records and rebuilds its local indexes at startup.
+Store flushes carry loaded versions, so concurrent writes cannot silently overwrite one
+another; a failed flush reloads the durable snapshot before another request is served.
+Without a DSN, the deterministic test/default mode remains in process.
 
 Online semantic memory retrieval is optional and disabled by default. Setting
 `AUTOPOIESIS_ENABLE_VECTOR_MEMORY=1` enables the same lifecycle boundary through
@@ -125,10 +124,6 @@ combined memory snapshot once. Those memory changes cross the repository boundar
 transaction. The sentinel first persists its incident timeline and later consolidates learned
 memory; those are separate durable writes. A timeline replay also consolidates each completed
 incident chain with its own repository transaction.
-[`grpo.py`](../core/evolve/grpo.py) exports group-relative advantages and a
-confidence-update rule — **roadmap: not wired into the online loop, and not LLM/GPU policy
-training.**
-
 ## Verification — `core/verifier`
 
 - **Citation verifier** — every cited fact must have been observed; root-cause-specific

@@ -217,3 +217,12 @@ def test_evolution_labels_the_offline_replay(monkeypatch, inline_thread):
     assert response["dataMode"] == "offline_benchmark_replay"
     assert response["onlineMemory"] is False
     assert response["benchmark"] == {"caseCount": 7, "passes": 3}
+
+
+def test_global_memory_pagination_reports_full_inventory(monkeypatch, inline_thread):
+    records = [_record(f'memory-{index}', 'semantic', 1) for index in range(5)]
+    monkeypatch.setattr(gateway, '_memory_records', lambda: (True, records, None, None))
+    pages = [asyncio.run(gateway.rca_memory(tier=None, limit=2, include_quarantined=True, details=True, offset=offset)) for offset in (0, 2, 4)]
+    assert [page['total'] for page in pages] == [5, 5, 5]
+    assert [page['next_offset'] for page in pages] == [2, 4, None]
+    assert len({record['memory_id'] for page in pages for record in page['records']}) == 5

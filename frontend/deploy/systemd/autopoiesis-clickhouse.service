@@ -1,0 +1,21 @@
+[Unit]
+Description=Autopoiesis standalone ClickHouse historical fact store
+Requires=docker.service
+After=docker.service local-fs.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/autopoiesis.env
+ExecStartPre=-/usr/bin/docker rm -f autopoiesis-clickhouse
+ExecStart=/usr/bin/docker run --name autopoiesis-clickhouse --publish 127.0.0.1:8123:8123 --publish 127.0.0.1:9000:9000 --ulimit nofile=262144:262144 --env CLICKHOUSE_DB=autopoiesis --env CLICKHOUSE_USER --env CLICKHOUSE_PASSWORD --volume /var/lib/autopoiesis-clickhouse:/var/lib/clickhouse clickhouse/clickhouse-server:24.8
+ExecStop=/usr/bin/docker stop --time 30 autopoiesis-clickhouse
+Restart=always
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=45
+MemoryHigh=3G
+MemoryMax=4G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

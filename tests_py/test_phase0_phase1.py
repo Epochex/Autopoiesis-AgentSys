@@ -13,7 +13,6 @@ from domains.network_rca.adapters.fortios_syslog import (
     R230IngestorLogAdapter,
     parse_fortios_kv_line,
 )
-from domains.network_rca.adapters.live_device import LiveDeviceAdapter
 from domains.network_rca.factory import build_network_rca_orchestrator, load_ground_truth, load_seed_cases
 
 
@@ -132,11 +131,7 @@ def test_core_components_can_be_disabled_for_ablation(tmp_path):
     assert len(exposed) >= 10
 
 
-def test_live_adapter_is_feature_flagged_off_by_default(monkeypatch):
-    monkeypatch.delenv("AUTOPOIESIS_ENABLE_LIVE_DEVICE_ADAPTER", raising=False)
-    monkeypatch.delenv("SELFEVO_ENABLE_LIVE_DEVICE_ADAPTER", raising=False)
-    with pytest.raises(RuntimeError):
-        LiveDeviceAdapter()
+def test_retired_r230_adapter_is_feature_flagged_off_by_default(monkeypatch):
     monkeypatch.delenv("AUTOPOIESIS_ENABLE_R230_INGESTOR", raising=False)
     monkeypatch.delenv("SELFEVO_ENABLE_R230_INGESTOR", raising=False)
     with pytest.raises(RuntimeError):

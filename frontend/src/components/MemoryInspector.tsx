@@ -5,6 +5,7 @@
    (see MemCapabilities) is rendered as an explicit note instead of a number.
    --acid means exactly one thing here: THIS field changed at THIS cursor step. */
 import './memory-inspector.css'
+import { useDisplayTranslation } from './useDisplayTranslation'
 import type { ReactNode } from 'react'
 import type { MemCapabilities, MemEvent, MemRecall, MemRecord, MemSnapshot, MemTier } from '../types'
 import { buildRelationRows } from './memory-relations'
@@ -12,8 +13,8 @@ import { buildRelationRows } from './memory-relations'
 /* ── i18n · EN is uppercased by CSS on label classes, so EN labels stay short.
       Prose notes use .mi-note, which deliberately does NOT uppercase. ── */
 const L: Record<string, [string, string]> = {
-  kick: ['记录详情 · 每一步改了什么', 'RECORD DETAILS · WHAT CHANGED AT EACH STEP'],
-  real: ['R230 · 内网', 'R230 · LAN'],
+  kick: ['记录详情 · 字段变更', 'RECORD DETAILS · FIELD CHANGES'],
+  real: ['R230 · 固定案例', 'R230 · FIXED CASES'],
   emptyT: ['未选中条目', 'NO RECORD SELECTED'],
   emptyB: [
     '在左侧选中一条记录，这里会显示全文、来源、每一步改了什么，以及原始数据没有提供什么。',
@@ -29,10 +30,10 @@ const L: Record<string, [string, string]> = {
   unbornB: ['该条目在游标位置尚未写入。首次出现于 seq', 'This record does not exist at the cursor yet. First written at seq'],
   state: ['游标处状态', 'STATE @ CURSOR'],
   from: ['取自 seq', 'FROM SEQ'],
-  conf: ['可信度', 'CONFIDENCE'],
+  conf: ['置信字段值', 'CONFIDENCE FIELD'],
   imp: ['重要度', 'IMPORTANCE'],
   str: ['保留强度', 'RETENTION'],
-  inert: ['当前不会慢慢淡忘', 'FADING IS OFF'],
+  inert: ['衰减未启用', 'DECAY DISABLED'],
   noteDecay: [
     '每条记录的保留强度都是 1.00，当前没有启用慢慢淡忘（decay_wired=false）。',
     'Retention is 1.00 on every record because fading is off (decay_wired=false).',
@@ -44,7 +45,7 @@ const L: Record<string, [string, string]> = {
   created: ['创建', 'CREATED'],
   noPrior: ['首次写入 · 无前值可比', 'First write · no prior value'],
   initial: ['初始值', 'INITIAL'],
-  route: ['为何这样写入', 'WHY IT WAS WRITTEN THIS WAY'],
+  route: ['写入判定', 'WRITE DECISION'],
   edge: ['新增连接', 'EDGE CREATED'],
   noSnap: ['这个动作没有记录修改前后的值', 'This action has no before-and-after values.'],
   absFrom: ['这条总结来自', 'SUMMED FROM'],
@@ -57,13 +58,13 @@ const L: Record<string, [string, string]> = {
     '系统每轮都会重新计算这组记录的总结和重要度，新值会覆盖“又见到一次”带来的增加，因此单独记作“更新总结”。',
     'Each run recalculates this group summary and its importance. The new value replaces the SEEN AGAIN increase, so it is recorded as SUMMARY UPDATED.',
   ],
-  noteQuar: ['打入冷宫的原因原文', 'RAW REASON IT WAS SHELVED'],
+  noteQuar: ['隔离原因原文', 'RAW QUARANTINE REASON'],
   addedT: ['新增标签', 'TAGS ADDED'],
   addedA: ['新增资产', 'ASSETS ADDED'],
   addedL: ['新增连接', 'LINKS ADDED'],
 
-  ctx: ['本次排查用到的记录', 'RECORDS USED FOR THIS CHECK'],
-  inCtx: ['本次已采用', 'USED THIS TIME'],
+  ctx: ['本轮上下文收录', 'CONTEXT INCLUSION'],
+  inCtx: ['已纳入上下文', 'INCLUDED IN CONTEXT'],
   dropCtx: ['找到但没采用', 'FOUND BUT NOT USED'],
   missCtx: ['本次没找到', 'NOT FOUND THIS TIME'],
   noCtx: ['当前位置没有查找记录', 'NO LOOKUP AT THIS POSITION'],
@@ -299,6 +300,7 @@ export function MemoryInspector({
   onUnpin: () => void
   zh: boolean
 }) {
+  const { translate, error, retry } = useDisplayTranslation([record?.text ?? '', ...(record?.evidence_snapshot ?? []).map(e => e.summary ?? '')], zh ? 'zh' : 'en')
   if (!record) {
     return (
       <section className="mi-root empty">
@@ -362,7 +364,7 @@ export function MemoryInspector({
 
         <section className="mi-sec">
           <h4 className="mi-h">{t('text', zh)}</h4>
-          <p className="mi-text">{record.text}</p>
+          <p className="mi-text">{translate(record.text)}</p>{error && <p role="alert">{error} <button onClick={retry}>Retry translation</button></p>}
           {!capabilities.update_text_mutation && <div className="mi-note">{t('noteText', zh)}</div>}
         </section>
 
@@ -468,7 +470,7 @@ export function MemoryInspector({
               <div className="mi-ev" key={e.evidence_id ?? i}>
                 <span className="mi-ev-id">{e.evidence_id ?? '—'}</span>
                 {e.source && <span className="mi-ev-src">{e.source}</span>}
-                {e.summary && <p className="mi-ev-sum">{e.summary}</p>}
+                {e.summary && <p className="mi-ev-sum">{translate(e.summary)}</p>}
               </div>
             ))}
           </section>

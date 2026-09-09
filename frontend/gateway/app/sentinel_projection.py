@@ -26,8 +26,6 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from domains.network_rca.incident_memory import incident_ref
-
 # Events that belong to one subject's chain. `cycle` and `sentinel_started` are
 # loop bookkeeping with no subject and are skipped.
 _CHAIN_KINDS = frozenset({
@@ -36,6 +34,7 @@ _CHAIN_KINDS = frozenset({
     "escalation_cleared", "remediation_committed", "bakein_opened",
     "bakein_sampled", "bakein_passed", "bakein_regressed",
     "remediation_reverted", "revert_unverified",
+    "condition_cleared", "command", "execution_error",
 })
 
 # Cards older than this are history the ledger already keeps; the live list is
@@ -64,6 +63,7 @@ _STEP_LABEL: dict[str, tuple[str, str]] = {
     "cooldown": ("冷却中", "cooling down"),
     "escalated": ("复发预算已用尽，升级人工处置", "RECURRENCE BUDGET EXHAUSTED, ESCALATED"),
     "escalation_cleared": ("目标恢复，升级解除", "TARGET RECOVERED, ESCALATION LIFTED"),
+    "condition_cleared": ("当前巡检已恢复", "CURRENT CHECK HAS CLEARED"),
 }
 
 _ACTION_LABEL: dict[str, tuple[str, str]] = {
@@ -158,7 +158,7 @@ def _data_classification(subject: str, detection: dict[str, Any]) -> str:
     normalized = subject.casefold()
     if normalized.startswith((
         "autopoiesis-acceptance-", "bvaccept-", "managed-host-",
-        "controlled-", "redpanda-e2e-", "replay-", "synthetic-",
+        "controlled-", "replay-", "synthetic-",
     )):
         return "controlled_test"
     explicit = str(detection.get("data_classification") or "").casefold()
@@ -184,9 +184,9 @@ def _last(chain: list[dict[str, Any]], kind: str) -> dict[str, Any] | None:
 def _latest_cycle(chain: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Slice one subject's append-only history to its current incident cycle.
 
-    A detection after a closed decision starts a new cycle.  Escalation stays
-    sticky while the detector keeps firing: those later detections belong to
-    the same incident the safety policy refused to touch.
+    A detection after a measured recovery starts a new cycle. Safety-gated,
+    declined and cooling decisions stay sticky while the detector keeps firing:
+    later observations belong to the same continuing condition.
     """
     start = 0
     next_detection_starts_cycle = False
@@ -195,10 +195,7 @@ def _latest_cycle(chain: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if kind == "detected" and next_detection_starts_cycle:
             start = index
             next_detection_starts_cycle = False
-        if (
-            kind in {"resolved", "no_safe_action", "declined", "cooldown", "escalation_cleared"}
-            or (kind == "remediated" and event.get("needs_human") is True)
-        ):
+        if kind in {"resolved", "condition_cleared", "escalation_cleared"}:
             next_detection_starts_cycle = True
     return chain[start:]
 
@@ -206,6 +203,15 @@ def _latest_cycle(chain: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _outcome(chain: list[dict[str, Any]]) -> tuple[str, str, bool]:
     """(verdict_status, disposition, still_running) for this subject's chain."""
     remediated = _last(chain, "remediated")
+    latest_settled = max((i for i, event in enumerate(chain) if event.get('kind') in
+                          {'remediated', 'resolved', 'condition_cleared', 'escalation_cleared'}), default=-1)
+    later_failure = next((event for event in reversed(chain[latest_settled + 1:])
+                          if event.get('kind') in {'execution_error', 'bakein_regressed', 'revert_unverified'}), None)
+    if later_failure:
+        return 'needs_human', str(later_failure['kind']), False
+    cleared = _last(chain, "condition_cleared")
+    if cleared is not None:
+        return "closed", "condition_cleared", False
     # First, and above every other terminal: a chain that escalated contains the
     # *previous* cycles' `remediated` and `resolved` events, because those cycles
     # are what caused the escalation. Reading the last success would report this
@@ -218,12 +224,23 @@ def _outcome(chain: list[dict[str, Any]]) -> tuple[str, str, bool]:
         cleared = _last(chain, "escalation_cleared")
         if cleared is None or str(cleared.get("at", "")) < str(escalated.get("at", "")):
             return "escalated", "needs_human", False
-    if _last(chain, "resolved"):
-        return "closed", "resolved", False
     if remediated is not None:
-        if remediated.get("needs_human"):
-            return "needs_human", str(remediated.get("outcome") or "revert_unverified"), False
-        return "closed", str(remediated.get("outcome") or "passed"), False
+        outcome = str(remediated.get('outcome') or 'unknown')
+        if (outcome == 'passed' and int(remediated.get('samples') or 0) > 0
+                and remediated.get('target_recovered') is not False
+                and not remediated.get('needs_human')):
+            return "closed", "resolved" if _last(chain, 'resolved') else "passed", False
+        if outcome == 'refused':
+            return 'declined', 'preconditions_failed', False
+        return "needs_human", outcome, False
+    resolved = _last(chain, 'resolved')
+    if resolved:
+        if (resolved.get('outcome') == 'passed' and int(resolved.get('samples') or 0) > 0
+                and resolved.get('target_recovered') is not False):
+            return 'closed', 'resolved', False
+        return 'needs_human', 'verification_unavailable', False
+    if _last(chain, 'execution_error'):
+        return 'needs_human', 'execution_error', False
     if _last(chain, "no_safe_action"):
         return "reported", "no_safe_action", False
     if _last(chain, "declined"):
@@ -235,6 +252,30 @@ def _outcome(chain: list[dict[str, Any]]) -> tuple[str, str, bool]:
     if _last(chain, "remediation_committed"):
         return "in_flight", "acting", True
     return "in_flight", "prechecking" if _last(chain, "preflight") else "confirming", True
+
+
+def execution_telemetry(chain: list[dict[str, Any]]) -> dict[str, Any]:
+    """Join started/result receipts by command identity, preserving old completed rows."""
+    commands: dict[str, dict[str, Any]] = {}
+    for index, event in enumerate(chain):
+        if event.get('kind') != 'command':
+            continue
+        key = str(event.get('command_id') or f'legacy-{index}')
+        commands[key] = {**commands.get(key, {}), **event, 'command_id': key,
+                         'phase': event.get('phase') or 'completed'}
+    rows = list(commands.values())
+    status, disposition, _ = _outcome(chain)
+    remediated = _last(chain, 'remediated') or {}
+    samples = [event for event in chain if event.get('kind') == 'bakein_sampled']
+    error = _last(chain, 'execution_error')
+    return {'status': status, 'disposition': disposition, 'commands': rows,
+            'currentCommand': next((row for row in reversed(rows) if row['phase'] == 'started'), None),
+            'error': error,
+            'verification': {
+                'status': 'passed' if status == 'closed' else 'failed' if status == 'needs_human' else 'observing' if disposition == 'observing' else 'pending',
+                'samples': int(remediated.get('samples') or len([row for row in samples if row.get('phase') != 'baseline'])),
+                'fastSamples': remediated.get('fast_samples'), 'stabilitySamples': remediated.get('stability_samples'),
+                'targetRecovered': remediated.get('target_recovered'), 'readings': samples}}
 
 
 def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any]:
@@ -249,6 +290,7 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     escalated = _last(chain, "escalated")
     committed = _last(chain, "remediation_committed")
     observation = _last(chain, "bakein_opened")
+    condition_cleared = _last(chain, "condition_cleared")
     sampled = [event for event in chain if event.get("kind") == "bakein_sampled"]
     no_action_reason = _no_action_reason(subject, detection, no_action, en=en) if no_action else ""
     candidate_action = str(
@@ -261,6 +303,10 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     )[1 if en else 0]
     radius = (preflight or {}).get("blast_radius") or {}
     verdict_status, disposition, running = _outcome(chain)
+    if verdict_status == 'closed':
+        # Keep old holds in the audit timeline; they do not override the completed run.
+        no_action = declined = cooldown = escalated = None
+        no_action_reason = ''
     action = str(detection.get("action") or (preflight or {}).get("action") or "")
     last_ts = str(chain[-1].get("at") or "")
 
@@ -346,7 +392,7 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "ts": str(remediated.get("at") or ""),
             "detail": watch,
         })
-    if resolved:
+    if resolved and verdict_status == 'closed':
         stages.append({
             "stageId": "verify",
             "label": "回读验证" if not en else "grounded readback",
@@ -396,6 +442,11 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "detail": str(escalated.get("reason") or ""),
         })
 
+    execution_error = _last(chain, 'execution_error')
+    if execution_error and verdict_status != 'closed':
+        stages.append({'stageId': 'error', 'label': '执行失败' if not en else 'Execution failed',
+                       'provider': 'safe-exec', 'ts': str(execution_error.get('at') or ''),
+                       'detail': str(execution_error.get('error') or '')})
     statement = str(detection.get("summary") or "")
     hypothesis_id = _stable_id(subject, "hypothesis", statement)
     reasons = [str(detection.get("detector") or "")]
@@ -442,7 +493,7 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         for cycle in ((escalated or {}).get("prior_cycles") or [])
         if isinstance(cycle, dict)
     ]
-    cycle_opened_at = next(
+    cycle_opened_at = str(detection.get("cycle_opened_at") or "") or next(
         (str(event.get("at") or "") for event in chain if event.get("kind") == "detected"),
         str(detection.get("at") or ""),
     )
@@ -478,18 +529,30 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         "observedAt": str(detection.get("at") or ""),
     }]
 
+    current_statement = (
+        f"{subject} 当前巡检已不再发现该故障条件。"
+        if condition_cleared and not en else
+        f"The current check no longer detects the fault condition on {subject}."
+        if condition_cleared else statement
+    )
+
     def decision(state: str, *, readback: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "caseId": "",
             "sessionId": "",
             "state": state,
             "classification": classification,
-            "headline": statement,
-            "summary": statement,
+            "headline": current_statement,
+            "summary": current_statement,
             "disposition": (
                 str((escalated or {}).get("reason") or no_action_reason)
                 if state == "escalated"
-                else str((resolved or {}).get("note") or (remediated or {}).get("detail") or disposition)
+                else str(
+                    (condition_cleared or {}).get("note")
+                    or (resolved or {}).get("note")
+                    or (remediated or {}).get("detail")
+                    or disposition
+                )
             ),
             "action": action_text if action else candidate_action_text or "不执行操作",
             "service": subject,
@@ -525,7 +588,7 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
             "kind": "remediation_completed",
             "ts": str(remediated.get("at") or last_ts),
             "eventId": f"{evidence_id}:remediation-completed",
-            "caseStatus": "resolved" if not remediated.get("needs_human") else "escalated",
+            "caseStatus": "resolved" if verdict_status == 'closed' else "escalated" if verdict_status == 'needs_human' else "waiting",
             "action": action,
             "target": subject,
             "outcome": str(remediated.get("outcome") or ""),
@@ -537,12 +600,17 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         else "investigating"
     )
     readback = None
-    if remediated or resolved:
+    if condition_cleared or remediated or resolved:
         readback = {
-            "outcome": str((remediated or {}).get("outcome") or "passed"),
+            "outcome": str((remediated or {}).get("outcome") or "cleared"),
             "samples": int((remediated or {}).get("samples") or 0),
-            "detail": str((resolved or {}).get("note") or (remediated or {}).get("detail") or ""),
-            "observedAt": str((resolved or remediated or {}).get("at") or last_ts),
+            "detail": str(
+                (condition_cleared or {}).get("note")
+                or (resolved or {}).get("note")
+                or (remediated or {}).get("detail")
+                or ""
+            ),
+            "observedAt": str((condition_cleared or resolved or remediated or {}).get("at") or last_ts),
         }
     business_transitions.append({
         "kind": "business_decision_recorded",
@@ -559,9 +627,10 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
     return {
         "id": f"sentinel-{_stable_id(subject, cycle_opened_at)[:16]}",
         "dataClassification": _data_classification(subject, detection),
-        "incidentRef": incident_ref(chain) if any(
-            row.get("kind") == "detected" for row in chain
-        ) else None,
+        "incidentRef": (
+            f"sentinel:{_stable_id(str(detection.get('detector') or ''), subject, cycle_opened_at)[:32]}"
+            if any(row.get("kind") == "detected" for row in chain) else None
+        ),
         "detectedAt": str(detection.get("at") or ""),
         "ts": last_ts,
         "scope": "sentinel",
@@ -585,9 +654,10 @@ def _card(subject: str, chain: list[dict[str, Any]], lang: str) -> dict[str, Any
         "clusterSize": 1,
         "adaptiveMode": "自动巡检（无人值守）" if not en else "unattended sweep",
         "triggerReasons": [r for r in reasons if r],
-        "impactLevel": str(radius.get("scope") or ("待评估" if not en else "not yet measured")),
+        "impactLevel": str(radius.get("scope") or ("本轮影响范围未记录" if not en else "Impact scope not recorded for this cycle")),
         "timeline": timeline,
         "stageTelemetry": stages,
+        "executionTelemetry": execution_telemetry(chain),
         # Empty and zero on every card that never escalated, so a consumer can read
         # these without first asking what kind of chain it is holding.
         "priorCycles": prior_cycles,

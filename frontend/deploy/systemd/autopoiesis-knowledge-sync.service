@@ -1,0 +1,17 @@
+[Unit]
+Description=Autopoiesis official device knowledge synchronization
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/data/Autopoiesis-AgentSys
+EnvironmentFile=/etc/autopoiesis.env
+Environment=AUTOPOIESIS_REPO_ROOT=/data/Autopoiesis-AgentSys
+ExecStart=/data/Autopoiesis-AgentSys/frontend/.venv/bin/python -m core.memory.knowledge_sync
+TimeoutStartSec=15min
+MemoryHigh=512M
+MemoryMax=768M
+TasksMax=64
+

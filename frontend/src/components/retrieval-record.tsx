@@ -19,7 +19,7 @@ function HitRow({ c, h, zh, sel, onSel, tone }: { c: Case; h: RtHit | RtTierHit;
       <button className="rt-hit-head" onClick={() => onSel(on ? null : h.doc_id)} aria-expanded={on}>
         <span className="rt-hit-rank">{h.rank}</span>
         <span className="rt-hit-title">{h.title}</span>
-        {via?.length ? <span className="rt-hit-via">{via.map((v) => <i key={v} className={`v-${v}`}>{zh ? VIA_LABEL[v].zh : VIA_LABEL[v].en}</i>)}</span> : null}
+        {via?.length ? <span className="rt-hit-via">{via.map((v) => <i key={v} className={`v-${v}`}>{zh ? VIA_LABEL[v]?.zh ?? v : VIA_LABEL[v]?.en ?? v}</i>)}</span> : null}
         {inCtx ? <span className="rt-hit-inctx" title={zh ? '本次实际采用' : 'used this time'}>→ {zh ? '已采用' : 'USED'}</span> : null}
         <span className="rt-hit-score" style={tone ? { color: tone } : undefined}>{h.score >= 10 ? h.score.toFixed(1) : h.score.toFixed(h.score >= 2 ? 1 : 3)}</span>
       </button>
@@ -59,7 +59,7 @@ export function CaseRecord({ c, step, zh, sel, onSel }: { c: Case; step: number;
         <>
           {/* routes */}
           <section className={S(1)}>
-            <div className="rt-step-k">02 · {zh ? '同时用三种方法查资料' : 'SEARCH THREE WAYS AT ONCE'}</div>
+            <div className="rt-step-k">02 · {zh ? '同时查询关键词、向量和关系' : 'SEARCH THREE WAYS AT ONCE'}</div>
             {(c.routes ?? []).map((r) => (
               <div key={r.id} className="rt-route-blk">
                 <div className="rt-route-hd">{zh ? r.label.zh : r.label.en}{r.enabled ? <em>{zh ? `命中 ${r.hits.length}` : `${r.hits.length} hits`}</em> : <em className="off">{zh ? '离线' : 'offline'}</em>}</div>
@@ -70,7 +70,7 @@ export function CaseRecord({ c, step, zh, sel, onSel }: { c: Case; step: number;
           </section>
           {/* fusion */}
           <section className={S(2)}>
-            <div className="rt-step-k">03 · {zh ? '把三路结果合到一起' : 'MERGE THE THREE RESULT LISTS'}</div>
+            <div className="rt-step-k">03 · {zh ? '合并三路候选并去重排序' : 'MERGE THE THREE RESULT LISTS'}</div>
             <div className="rt-formula">score(d) = Σ 1 / (c + rankᵣ) · c={c.fusion?.c ?? 60}</div>
             {(c.fusion?.ranked ?? []).map((f) => {
               const on = sel === f.doc_id
@@ -85,7 +85,7 @@ export function CaseRecord({ c, step, zh, sel, onSel }: { c: Case; step: number;
           </section>
           {/* gate */}
           <section className={S(3)}>
-            <div className="rt-step-k">04 · {zh ? '检查结果够不够可靠' : 'CHECK WHETHER THE RESULTS ARE RELIABLE'}</div>
+            <div className="rt-step-k">04 · {zh ? '按阈值筛选可用结果' : 'CHECK WHETHER THE RESULTS ARE RELIABLE'}</div>
             {c.gate ? (
               <div className={`rt-gate v-${c.gate.verdict}`}>
                 <span className="rt-gate-v">{c.gate.verdict.toUpperCase()}</span>
@@ -96,7 +96,7 @@ export function CaseRecord({ c, step, zh, sel, onSel }: { c: Case; step: number;
           </section>
           {/* rerank */}
           <section className={S(4)}>
-            <div className="rt-step-k">05 · {zh ? '重新排序' : 'SORT AGAIN'}</div>
+            <div className="rt-step-k">05 · {zh ? '按案件相关性重新排序' : 'SORT AGAIN'}</div>
             {c.rerank?.enabled ? c.rerank.ordered.map((o) => (
               <div key={o.doc_id} className={`rt-rr${sel === o.doc_id ? ' on' : ''}`} onMouseEnter={() => onSel(o.doc_id)} onMouseLeave={() => onSel(null)}>
                 <span className="rt-hit-rank">{o.rank}</span><span className="rt-hit-title">{c.docs[o.doc_id]?.title ?? o.doc_id}</span>
@@ -109,7 +109,7 @@ export function CaseRecord({ c, step, zh, sel, onSel }: { c: Case; step: number;
         <>
           {/* tiers */}
           <section className={S(1)}>
-            <div className="rt-step-k">02 · {zh ? '按记录类型分别查找' : 'SEARCH EACH RECORD TYPE'}</div>
+            <div className="rt-step-k">02 · {zh ? '分别查询资产、处置、案例和规律' : 'SEARCH EACH RECORD TYPE'}</div>
             {(c.tiers ?? []).map((t) => (
               <div key={t.id} className="rt-route-blk">
                 <div className="rt-route-hd">{zh ? t.label.zh : t.label.en}<em>{t.hits.length ? (zh ? `命中 ${t.hits.length}` : `${t.hits.length}`) : (zh ? '无命中' : 'none')}</em></div>
@@ -119,7 +119,7 @@ export function CaseRecord({ c, step, zh, sel, onSel }: { c: Case; step: number;
           </section>
           {/* graph-hop */}
           <section className={S(2)}>
-            <div className="rt-step-k">03 · {zh ? '沿已有关系继续查找' : 'FOLLOW EXISTING LINKS'} <em>{zh ? `最多 ${c.graph?.hops ?? 0} 层关系` : `up to ${c.graph?.hops ?? 0} links away`}</em></div>
+            <div className="rt-step-k">03 · {zh ? '沿资产和事件关系扩展候选' : 'FOLLOW EXISTING LINKS'} <em>{zh ? `最多 ${c.graph?.hops ?? 0} 层关系` : `up to ${c.graph?.hops ?? 0} links away`}</em></div>
             {c.graph?.expanded.length ? c.graph.expanded.map((e, i) => (
               <div key={i} className="rt-hop" onMouseEnter={() => onSel(e.doc_id)} onMouseLeave={() => onSel(null)}>
                 <span className="rt-hop-from">{c.docs[e.from]?.title ?? e.from}</span>
@@ -133,7 +133,7 @@ export function CaseRecord({ c, step, zh, sel, onSel }: { c: Case; step: number;
 
       {/* context — the payload actually handed downstream */}
       <section className={S(kb ? 5 : 3)}>
-        <div className="rt-step-k">{kb ? '06' : '04'} · {zh ? '实际交给下游的内容' : 'WHAT DOWNSTREAM ACTUALLY GETS'}</div>
+        <div className="rt-step-k">{kb ? '06' : '04'} · {zh ? '实际用于本次判断的资料' : 'WHAT DOWNSTREAM ACTUALLY GETS'}</div>
         <ContextTray c={c} sel={sel} onSel={onSel} filled />
       </section>
     </div>
@@ -141,7 +141,7 @@ export function CaseRecord({ c, step, zh, sel, onSel }: { c: Case; step: number;
 }
 
 export function ContextTray({ c, sel, onSel, filled }: { c: Case; sel: string | null; onSel: (id: string | null) => void; filled: boolean }) {
-  const pct = Math.round((c.context.total_tokens / c.context.budget_tokens) * 100)
+  const pct = c.context.budget_tokens > 0 ? Math.round((c.context.total_tokens / c.context.budget_tokens) * 100) : 0
   return (
     <div className="rt-ctx">
       <div className="rt-ctx-bar"><span className="rt-ctx-fill" style={{ width: filled ? `${Math.min(100, pct)}%` : '0%' }} /></div>

@@ -51,7 +51,16 @@ _INCIDENT_RISK_TYPES = frozenset({
 })
 _INCIDENT_RISK_THRESHOLD = 20
 _MAX_AGGREGATE_RESTORE_BYTES = int(
-    os.getenv("AUTOPOIESIS_OPERATIONAL_RESTORE_MAX_BYTES", str(8 * 1024 * 1024))
+    os.getenv("AUTOPOIESIS_OPERATIONAL_RESTORE_MAX_BYTES", str(4 * 1024 * 1024))
+)
+_MAX_FEATURE_OBSERVATIONS = int(
+    os.getenv("AUTOPOIESIS_OPERATIONAL_MAX_FEATURE_OBSERVATIONS", "4096")
+)
+_MAX_FEATURE_DECISIONS = int(
+    os.getenv("AUTOPOIESIS_OPERATIONAL_MAX_FEATURE_DECISIONS", "4096")
+)
+_MAX_FEATURE_DECISION_IDS = int(
+    os.getenv("AUTOPOIESIS_OPERATIONAL_MAX_FEATURE_DECISION_IDS", "64")
 )
 
 
@@ -62,7 +71,7 @@ class OperationalRepository(Protocol):
         *, expected_version: int | None = None,
     ) -> Any: ...
     def get(self, kind: OperationalKind, record_id: str) -> Any: ...
-    def load(self, kind: OperationalKind) -> list[Any]: ...
+    def load(self, kind: OperationalKind, *, limit: int | None = None) -> list[Any]: ...
     def payload_size(self, kind: OperationalKind, record_id: str) -> int | None: ...
 
 
@@ -100,17 +109,38 @@ class OperationalMemoryService:
         self.source_status: dict[str, str] = {}
         self.risks = RiskPatternStore(
             max_patterns=512,
-            max_dimension_values=512,
-            max_evidence_refs=64,
-            max_event_ids_per_pattern=2_000,
+            max_dimension_values=128,
+            max_evidence_refs=32,
+            max_event_ids_per_pattern=256,
         )
-        self.features = NetworkFeatureEngine()
+        self.features = NetworkFeatureEngine(
+            FeatureStore(
+                max_observations=_MAX_FEATURE_OBSERVATIONS,
+                max_decisions=_MAX_FEATURE_DECISIONS,
+                max_decision_ids_per_feature=_MAX_FEATURE_DECISION_IDS,
+            )
+        )
         self.dossiers = InMemoryDossierStore()
         self._restore()
 
     def _restore(self) -> None:
         restored_dossiers: list[IncidentDossier] = []
-        for snapshot in self.repository.load("incident_dossier"):
+        dossier_limit = max(1, int(os.getenv(
+            "AUTOPOIESIS_OPERATIONAL_RESTORE_MAX_DOSSIERS", "100",
+        )))
+        try:
+            dossier_snapshots = self.repository.load(
+                "incident_dossier", limit=dossier_limit,
+            )
+        except TypeError:
+            # Compatibility for small injected repositories used by callers
+            # outside the production adapter.
+            dossier_snapshots = self.repository.load("incident_dossier")[:dossier_limit]
+        if len(dossier_snapshots) == dossier_limit:
+            self.source_status["restore.incident_dossier"] = (
+                f"bounded_recent_working_set:{dossier_limit}"
+            )
+        for snapshot in dossier_snapshots:
             if snapshot.payload.get("schema_version") == "1.0":
                 dossier = IncidentDossier.model_validate(snapshot.payload)
                 self.dossiers.ingest(dossier)
@@ -128,27 +158,44 @@ class OperationalMemoryService:
             )
             return False
 
+        risk_within_budget = within_restore_budget("risk_pattern", _RISK_STORE_ID)
         risk = (
             self.repository.get("risk_pattern", _RISK_STORE_ID)
-            if within_restore_budget("risk_pattern", _RISK_STORE_ID)
+            if risk_within_budget
             else None
         )
         if risk is not None:
-            self.risks = RiskPatternStore.from_snapshot(risk.payload)
+            self.risks = RiskPatternStore.from_snapshot(
+                risk.payload,
+                max_patterns=512,
+                max_dimension_values=128,
+                max_evidence_refs=32,
+                max_event_ids_per_pattern=256,
+            )
+        feature_within_budget = within_restore_budget("network_feature", _FEATURE_STORE_ID)
         feature = (
             self.repository.get("network_feature", _FEATURE_STORE_ID)
-            if within_restore_budget("network_feature", _FEATURE_STORE_ID)
+            if feature_within_budget
             else None
         )
         if feature is not None:
-            self.features = NetworkFeatureEngine(FeatureStore.from_dict(feature.payload))
+            self.features = NetworkFeatureEngine(FeatureStore.from_dict(
+                feature.payload,
+                max_observations=_MAX_FEATURE_OBSERVATIONS,
+                max_decisions=_MAX_FEATURE_DECISIONS,
+                max_decision_ids_per_feature=_MAX_FEATURE_DECISION_IDS,
+            ))
         before = self.features.store.dumps()
         now = _now()
         for dossier in restored_dossiers:
             self.features.update(dossier, now=max(now, dossier.updated_at))
         for pattern in self.risks.list_patterns():
             self.features.update(pattern, now=max(now, pattern.last_seen))
-        if self.features.store.dumps() != before:
+        if (
+            self.features.store.dumps() != before
+            and risk_within_budget
+            and feature_within_budget
+        ):
             self.repository.upsert(
                 "network_feature", _FEATURE_STORE_ID, self.features.store.to_dict()
             )
@@ -392,12 +439,14 @@ class OperationalMemoryService:
         """Read bounded real source windows and merge them idempotently."""
         query = self._query
         if query is None:
-            from .history import _CH_DB, _q
+            from .history import _CH_DB, _CH_TABLE, _q
 
             query = _q
             database = _CH_DB
+            facts_table = _CH_TABLE
         else:
             database = "autopoiesis"
+            facts_table = os.getenv("FACTS_CLICKHOUSE_TABLE", "facts_v2")
         try:
             lookback_days = int(os.getenv("AUTOPOIESIS_OPERATIONAL_LOOKBACK_DAYS", "7"))
         except ValueError:
@@ -419,10 +468,10 @@ class OperationalMemoryService:
                 "ORDER BY event_ts DESC LIMIT 20000",
             ),
             (
-                f"{database}.facts",
+                f"{database}.{facts_table}",
                 "SELECT event_ts, device_key, srcip, dstip, dstport, proto, action, "
                 "service, app, type, subtype "
-                f"FROM {database}.facts "
+                f"FROM {database}.{facts_table} "
                 f"WHERE event_ts >= now() - INTERVAL {lookback_days} DAY "
                 "AND action IN ('deny','blocked','block') "
                 "ORDER BY event_ts DESC LIMIT 10000",

@@ -143,128 +143,49 @@ def test_fact_row_has_same_stable_event_key_across_retries():
     assert row["srcip"] == "192.0.2.6"
 
 
-def test_redpanda_outbox_retains_then_deletes_acknowledged_batches(tmp_path, monkeypatch):
-    outbox = facts_ingest.RedpandaOutbox(
-        enabled=True,
-        proxy_url="http://redpanda.invalid:8082",
-        directory=tmp_path,
-        max_bytes=1_000_000,
-    )
-    events = [
-        {"event_id": "event-1", "event_ts": "2026-08-23T12:00:00Z", "type": "traffic", "subtype": "forward"},
-        {"event_id": "event-2", "event_ts": "2026-08-23T12:00:01Z", "type": "event", "subtype": "vpn"},
-    ]
-    sent: list[list[dict[str, object]]] = []
-    monkeypatch.setattr(outbox, "_publish", lambda rows: sent.append(rows))
-
-    outbox.enqueue(events)
-    assert outbox.pending()[0] == 1
-    stored = next(tmp_path.glob("*.jsonl"))
-    assert [json.loads(line)["event_id"] for line in stored.read_text().splitlines()] == [
-        "event-1",
-        "event-2",
-    ]
-
-    assert outbox.drain() == 2
-    assert sent == [events]
-    assert outbox.pending() == (0, 0)
-
-
-def test_redpanda_outbox_keeps_batch_when_publish_fails(tmp_path, monkeypatch):
-    outbox = facts_ingest.RedpandaOutbox(
-        enabled=True,
-        proxy_url="http://redpanda.invalid:8082",
-        directory=tmp_path,
-        max_bytes=1_000_000,
-    )
-    outbox.enqueue([
-        {"event_id": "event-1", "event_ts": "2026-08-23T12:00:00Z", "type": "traffic", "subtype": "forward"}
-    ])
-    monkeypatch.setattr(
-        outbox,
-        "_publish",
-        lambda rows: (_ for _ in ()).throw(TimeoutError("proxy unavailable")),
-    )
-
-    with pytest.raises(TimeoutError, match="proxy unavailable"):
-        outbox.drain()
-    assert outbox.pending()[0] == 1
-
-
-def test_live_batch_reaches_stream_before_clickhouse_archive():
+def test_live_batch_archives_then_runs_in_process_detection():
     order: list[str] = []
 
-    class _Outbox:
-        def enqueue(self, events):
-            order.append("outbox")
+    class _AlertPipeline:
+        def process_batch(self, events):
+            order.append("detect-alert")
+            return {
+                "events_seen": len(events),
+                "events_accepted": len(events),
+                "events_rejected": 0,
+                "alerts_persisted": 1,
+            }
 
-        def drain(self):
-            order.append("redpanda")
-            return 1
-
-    published, error = facts_ingest.commit_live_batch_sinks(
+    result = facts_ingest.commit_live_batch_sinks(
         [["fact"]],
         [["security"]],
         [{"event_id": "event-1"}],
-        outbox=_Outbox(),
+        alert_pipeline=_AlertPipeline(),
         fact_sink=lambda rows: order.append("clickhouse-facts"),
         security_sink=lambda rows: order.append("clickhouse-security"),
     )
 
-    assert order == ["outbox", "redpanda", "clickhouse-facts", "clickhouse-security"]
-    assert published == 1
-    assert error is None
+    assert order == ["clickhouse-facts", "clickhouse-security", "detect-alert"]
+    assert result["alerts_persisted"] == 1
 
 
-def test_live_batch_archives_while_broker_batch_stays_queued(capsys):
+def test_live_batch_stops_before_detection_when_archive_fails():
     order: list[str] = []
 
-    class _Outbox:
-        def enqueue(self, events):
-            order.append("outbox")
+    class _AlertPipeline:
+        def process_batch(self, events):
+            order.append("detect-alert")
+            return {}
 
-        def drain(self):
-            order.append("redpanda")
-            raise TimeoutError("broker unavailable")
-
-    published, error = facts_ingest.commit_live_batch_sinks(
-        [["fact"]],
-        [],
-        [{"event_id": "event-1"}],
-        outbox=_Outbox(),
-        fact_sink=lambda rows: order.append("clickhouse-facts"),
-    )
-
-    assert order == ["outbox", "redpanda", "clickhouse-facts"]
-    assert published == 0
-    assert error == "TimeoutError"
-    assert "publish deferred" in capsys.readouterr().err
-
-
-def test_redpanda_proxy_accepts_partition_level_batch_ack(tmp_path, monkeypatch):
-    outbox = facts_ingest.RedpandaOutbox(
-        enabled=True,
-        proxy_url="http://redpanda.invalid:8082",
-        directory=tmp_path,
-        max_bytes=1_000_000,
-    )
-
-    class _Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def read(self):
-            return b'{"offsets":[{"partition":0,"offset":123}]}'
-
-    monkeypatch.setattr(facts_ingest.urllib.request, "urlopen", lambda *args, **kwargs: _Response())
-    outbox._publish([
-        {"event_id": "event-1"},
-        {"event_id": "event-2"},
-        {"event_id": "event-3"},
-    ])
+    with pytest.raises(OSError, match="archive unavailable"):
+        facts_ingest.commit_live_batch_sinks(
+            [["fact"]],
+            [],
+            [{"event_id": "event-1"}],
+            alert_pipeline=_AlertPipeline(),
+            fact_sink=lambda rows: (_ for _ in ()).throw(OSError("archive unavailable")),
+        )
+    assert order == []
 
 
 def test_create_and_insert_security_events_use_independent_table(monkeypatch):
@@ -284,6 +205,7 @@ def test_create_and_insert_security_events_use_independent_table(monkeypatch):
     assert "provenance Enum8('real' = 1, 'replay' = 2, 'drill' = 3)" in ddl
     assert "ENGINE = ReplacingMergeTree(ingested_at)" in ddl
     assert "ORDER BY event_id" in ddl
+    assert "security_by_device_time" in ddl
     assert insert.startswith("INSERT INTO autopoiesis.security_events")
     assert payload is not None and b"admin_login_failed" in payload
 
@@ -299,6 +221,7 @@ def test_fact_archive_uses_stable_event_key_and_replacing_engine(monkeypatch):
     assert "event_id String" in ddl
     assert "ENGINE = ReplacingMergeTree(ingested_at)" in ddl
     assert "ORDER BY event_id" in ddl
+    assert "facts_by_src_flow_time" in ddl
 
 
 class _FakeStdout:
@@ -444,7 +367,7 @@ def test_finite_source_poll_does_not_checkpoint_partial_line(monkeypatch):
     assert offsets == [10 + len(complete)]
 
 
-def test_live_batch_contains_all_real_event_types_for_redpanda(monkeypatch):
+def test_live_batch_contains_all_real_event_types_for_in_process_detection(monkeypatch):
     vpn = (
         'date=2026-08-23 time=12:05:00 devid="FG-1" type="event" subtype="vpn" '
         'level="information" logdesc="SSL VPN new connection" action="ssl-new-con"\n'
@@ -564,6 +487,7 @@ def test_live_fatal_error_is_logged_and_propagated(monkeypatch, capsys):
 
 def test_backfill_creates_and_routes_security_sink(monkeypatch):
     calls: list[tuple] = []
+    monkeypatch.setattr(facts_ingest, "create_facts_table", lambda: None)
     monkeypatch.setattr(
         facts_ingest.subprocess,
         "run",
@@ -632,7 +556,8 @@ def test_security_backfill_never_writes_historical_facts(monkeypatch):
     assert len(inserted) == 2
 
 
-def test_ssh_command_is_detached_from_standard_input():
+def test_ssh_command_is_detached_from_standard_input(monkeypatch):
+    monkeypatch.setattr(facts_ingest, "FORTIGATE_SOURCE_LOCAL", False)
     cmd = facts_ingest._ssh_cmd("tail -F /tmp/example.log")
 
     ssh_index = cmd.index("ssh")
@@ -652,13 +577,11 @@ def test_systemd_unit_routes_standard_streams_and_restarts_only_on_failure():
     assert "StateDirectory=autopoiesis-facts-ingest" in unit
 
 
-def test_redpanda_http_service_targets_the_brokers():
-    manifest = (
+def test_systemd_unit_has_no_message_broker_dependency():
+    unit = (
         facts_ingest.Path(__file__).parents[1]
-        / "frontend/deployments/11-data-plane-services.yaml"
+        / "frontend/deploy/systemd/autopoiesis-facts-ingest.service"
     ).read_text(encoding="utf-8")
 
-    assert "name: autopoiesis-redpanda-http" in manifest
-    assert "port: 8082" in manifest
-    assert "targetPort: 8082" in manifest
-    assert "app.kubernetes.io/component: redpanda-statefulset" in manifest
+    assert "REDPANDA" not in unit
+    assert "AUTOPOIESIS_ALERT_DIRECTORY" in unit

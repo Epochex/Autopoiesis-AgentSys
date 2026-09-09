@@ -48,6 +48,18 @@ from core.memory.segmented_bm25 import SegmentedBM25Index
 
 
 MemoryTier = Literal["episodic", "semantic", "procedural", "asset_profile"]
+MemoryClaimKind = Literal[
+    "symptom",
+    "observation",
+    "root_cause",
+    "applicability",
+    "trigger",
+    "probe",
+    "expected_signal",
+    "action",
+    "outcome",
+    "constraint",
+]
 
 # --- lexical base weights ---------------------------------------------------
 # Shared assets are a strong structured identity signal (exact, not lexical);
@@ -57,6 +69,7 @@ _W_ASSET_HIT = 2.0
 # Both identify a concrete object, while counting each distinct entity only once
 # prevents repetition across text, tags, and asset_ids from inflating its vote.
 _W_ENTITY_HIT = 2.0
+_W_ROOT_HIT = 2.0
 _GRAPH_HOP_DECAY = 0.35
 _DENSE_ROUTE_COEF = 0.35
 
@@ -144,6 +157,18 @@ class MemoryRelation(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
 
 
+class MemoryClaim(BaseModel):
+    """One atomic, evidence-addressable statement inside a memory.
+
+    The list is sparse by design.  Producers write observed claims only, which
+    prevents empty template slots from creating the appearance of depth.
+    """
+
+    kind: MemoryClaimKind
+    statement: str
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class MemoryRecord(BaseModel):
     memory_id: str
     tier: MemoryTier
@@ -157,6 +182,10 @@ class MemoryRecord(BaseModel):
     # Provenance-linked historical evidence.  It may explain why a memory exists,
     # but it is never current-run evidence; a recurrence must be freshly probed.
     evidence_snapshot: list[dict] = Field(default_factory=list)
+    claims: list[MemoryClaim] = Field(default_factory=list)
+    quality_score: float = 1.0
+    retrieval_ready: bool = True
+    quality_issues: list[str] = Field(default_factory=list)
     # Phase B memory dynamics (see core/evolve/memory_ops.py):
     #   links        — A-MEM associative links to same-family memory_ids (Xu+ 2025)
     #   importance   — Generative-Agents salience, gates reflection (Park+ 2023)
@@ -279,6 +308,27 @@ def _extract_query_entities(query_terms: Sequence[str]) -> list[str]:
     return list(entities.values())
 
 
+def _has_semantic_query(
+    query_terms: Sequence[str], entities: Sequence[str], assets: set[str]
+) -> bool:
+    """Use dense recall for prose, and skip it for pure structured lookup keys.
+
+    This decision depends on query shape rather than text length or corpus size.
+    Exact IPs, unit names, error codes and asset ids already have deterministic
+    routes.  Natural-language residue, including CJK text unsupported by the
+    sparse tokenizer, earns the semantic route.
+    """
+    raw = " ".join(str(term) for term in query_terms if term).strip()
+    if not raw:
+        return False
+    if re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", raw):
+        return True
+    residual = raw.casefold()
+    for value in sorted({*entities, *assets}, key=len, reverse=True):
+        residual = residual.replace(value.casefold(), " ")
+    return bool(tokenize(residual))
+
+
 def _literal_entity_hits(record: "MemoryRecord", entities: Sequence[str]) -> list[str]:
     """Find query entities as complete literals in text, tags, or asset ids."""
     fields = (record.text, *record.tags, *record.asset_ids)
@@ -349,9 +399,7 @@ class TieredMemoryStore:
         self._repository_snapshots: dict[str, dict[str, Any]] = {}
         self._vector = vector_index
         self._vector_degraded_reason: str | None = None
-        self._projection_lock = threading.RLock()
-        self._projected_offset = 0
-        self._projected_versions: dict[str, int] = {}
+        self._state_lock = threading.RLock()
         self._last_retrieval_details: list[dict[str, Any]] = []
         self._lexical_options = {
             "seal_threshold": lexical_seal_threshold,
@@ -365,6 +413,7 @@ class TieredMemoryStore:
         repository: MemoryRepository,
         *,
         enabled: bool = True,
+        include_quarantined: bool = True,
         lexical_seal_threshold: int = 1_000,
         lexical_compact_segment_threshold: int = 8,
     ) -> "TieredMemoryStore":
@@ -377,7 +426,7 @@ class TieredMemoryStore:
         )
         load_versioned = getattr(repository, "load_versioned_records", None)
         if callable(load_versioned):
-            loaded = load_versioned(include_quarantined=True)
+            loaded = load_versioned(include_quarantined=include_quarantined)
             store.seed([record for record, _version in loaded])
             store._repository_versions = {
                 record.memory_id: int(version) for record, version in loaded
@@ -386,7 +435,7 @@ class TieredMemoryStore:
                 record.memory_id: store._snapshot(record) for record, _version in loaded
             }
         else:
-            store.seed(repository.load_records(include_quarantined=True))
+            store.seed(repository.load_records(include_quarantined=include_quarantined))
         return store
 
     def flush(self) -> list[Any]:
@@ -429,7 +478,7 @@ class TieredMemoryStore:
         copies = [record.model_copy(deep=True) for record in records]
         if len({record.memory_id for record in copies}) != len(copies):
             raise ValueError("replacement snapshot contains duplicate memory ids")
-        with self._projection_lock:
+        with self._state_lock:
             if self._vector is not None:
                 for record in self._records:
                     if not record.quarantined:
@@ -456,7 +505,6 @@ class TieredMemoryStore:
             self._repository_snapshots = {
                 record.memory_id: self._snapshot(record) for record, _version in loaded
             }
-            self._projected_versions.update(self._repository_versions)
         else:
             self.replace_records(
                 self._repository.load_records(include_quarantined=True)
@@ -469,12 +517,18 @@ class TieredMemoryStore:
 
     @staticmethod
     def _lexical_tokens(record: MemoryRecord) -> list[str]:
-        return tokenize(record.text) + [tag.lower() for tag in record.tags]
+        claim_text = " ".join(claim.statement for claim in record.claims)
+        return tokenize(f"{record.text} {claim_text}") + [tag.lower() for tag in record.tags]
 
     @staticmethod
     def vector_document(record: MemoryRecord) -> str:
         """Stable text projected into the dense index for one memory version."""
-        parts = [record.text, *record.tags, *record.asset_ids]
+        parts = [
+            record.text,
+            *(f"{claim.kind}: {claim.statement}" for claim in record.claims),
+            *record.tags,
+            *record.asset_ids,
+        ]
         return "\n".join(part for part in parts if part)
 
     def attach_vector_index(self, vector_index: VectorMemoryProjection) -> None:
@@ -493,115 +547,9 @@ class TieredMemoryStore:
         self._vector_degraded_reason = reason
 
     @property
-    def projected_offset(self) -> int:
-        """Highest durable event offset installed by an index projector."""
-        with self._projection_lock:
-            return self._projected_offset
-
-    @property
     def repository(self) -> MemoryRepository | None:
         """Durable source attached to this store, when persistence is enabled."""
         return self._repository
-
-    def prime_projection(self, event_offset: int) -> None:
-        """Align a snapshot-built store with an existing consumer checkpoint."""
-        if isinstance(event_offset, bool) or not isinstance(event_offset, int):
-            raise TypeError("event_offset must be an integer")
-        if event_offset < 0:
-            raise ValueError("event_offset must be non-negative")
-        with self._projection_lock:
-            if event_offset < self._projected_offset:
-                raise ValueError("projection offset cannot move backwards")
-            self._projected_offset = event_offset
-
-    def apply_index_event(
-        self,
-        record: MemoryRecord,
-        *,
-        event_type: Literal["UPSERT", "QUARANTINE", "REDACT"],
-        event_offset: int,
-        version: int,
-    ) -> bool:
-        """Apply one ordered source event to the snapshot, BM25, assets and HNSW.
-
-        Source offsets are tracked here rather than copied into each index's
-        private generation clock: a process may rebuild those indexes from a
-        newer PostgreSQL snapshot before resuming its consumer checkpoint.
-        Retrying an already installed event is therefore a no-op.
-        """
-        if event_type not in {"UPSERT", "QUARANTINE", "REDACT"}:
-            raise ValueError(f"unknown memory event type: {event_type}")
-        if isinstance(event_offset, bool) or not isinstance(event_offset, int):
-            raise TypeError("event_offset must be an integer")
-        if event_offset <= 0:
-            raise ValueError("event_offset must be positive")
-        if isinstance(version, bool) or not isinstance(version, int):
-            raise TypeError("version must be an integer")
-        if version <= 0:
-            raise ValueError("version must be positive")
-        if event_type in {"QUARANTINE", "REDACT"} and not record.quarantined:
-            raise ValueError(f"{event_type} event must carry a quarantined snapshot")
-
-        with self._projection_lock:
-            if event_offset <= self._projected_offset:
-                return False
-            current_version = max(
-                self._projected_versions.get(record.memory_id, 0),
-                self._repository_versions.get(record.memory_id, 0),
-            )
-            if version <= current_version:
-                self._projected_offset = event_offset
-                return False
-
-            projected = record.model_copy(deep=True)
-            if event_type in {"QUARANTINE", "REDACT"}:
-                projected.quarantined = True
-
-            # Embedding is the fallible part, so finish it before replacing the
-            # authoritative in-memory record. If a process dies after the vector
-            # append, its version filter hides the extra physical version on retry.
-            if self._vector is not None:
-                if projected.quarantined:
-                    self._vector.delete(
-                        projected.memory_id,
-                        offset=event_offset,
-                        version=version,
-                    )
-                else:
-                    self._vector.upsert(
-                        projected.memory_id,
-                        self.vector_document(projected),
-                        offset=event_offset,
-                        version=version,
-                    )
-
-            existing = self._by_id.get(projected.memory_id)
-            if existing is not None:
-                self._unindex_assets(projected.memory_id)
-                position = self._records.index(existing)
-                self._records[position] = projected
-            else:
-                self._records.append(projected)
-            self._by_id[projected.memory_id] = projected
-
-            if projected.quarantined:
-                self._lexical.delete(projected.memory_id)
-            else:
-                assets = set(projected.asset_ids)
-                self._indexed_assets[projected.memory_id] = assets
-                for asset_id in assets:
-                    self._asset_to_ids.setdefault(asset_id, set()).add(projected.memory_id)
-                self._lexical.upsert(
-                    projected.memory_id,
-                    self._lexical_tokens(projected),
-                )
-
-            self._projected_versions[projected.memory_id] = version
-            if self._repository_uses_versions:
-                self._repository_versions[projected.memory_id] = version
-                self._repository_snapshots[projected.memory_id] = self._snapshot(projected)
-            self._projected_offset = event_offset
-            return True
 
     def _unindex_assets(self, memory_id: str) -> bool:
         was_indexed = memory_id in self._indexed_assets
@@ -626,7 +574,7 @@ class TieredMemoryStore:
         if record is None:
             return False
         was_indexed = self._unindex_assets(memory_id)
-        if record.quarantined:
+        if record.quarantined or not record.retrieval_ready:
             if was_indexed:
                 self._lexical.delete(memory_id)
             if self._vector is not None:
@@ -665,7 +613,7 @@ class TieredMemoryStore:
 
     def active(self) -> list[MemoryRecord]:
         """Non-quarantined records in insertion order (copy)."""
-        return [r for r in self._records if not r.quarantined]
+        return [r for r in self._records if not r.quarantined and r.retrieval_ready]
 
     def quarantine(self, memory_id: str, reason: str) -> None:
         """Exclude an untrusted record from retrieval while retaining its content."""
@@ -774,9 +722,6 @@ class TieredMemoryStore:
             tombstone, version = loaded
             self._repository_versions[memory_id] = int(version)
             self._repository_snapshots[memory_id] = self._snapshot(tombstone)
-            event_offset = getattr(write, "event_offset", None)
-            if event_offset is not None:
-                self._projected_versions[memory_id] = int(version)
 
         self._replace_with_tombstone(memory_id, tombstone)
         return True
@@ -812,12 +757,23 @@ class TieredMemoryStore:
         del self._by_id[memory_id]
         self._repository_versions.pop(memory_id, None)
         self._repository_snapshots.pop(memory_id, None)
-        self._projected_versions.pop(memory_id, None)
         return True
 
     def index_health(self) -> dict[str, Any]:
         """Expose sparse and optional dense projection lifecycle state."""
         health: dict[str, Any] = self._lexical.health()
+        learned = [record for record in self._records if record.claims]
+        health["memory_records"] = len(self._records)
+        health["retrieval_ready_records"] = sum(
+            not record.quarantined and record.retrieval_ready for record in self._records
+        )
+        health["quality_blocked_records"] = sum(
+            not record.quarantined and not record.retrieval_ready for record in self._records
+        )
+        health["average_learned_quality"] = (
+            round(sum(record.quality_score for record in learned) / len(learned), 4)
+            if learned else 1.0
+        )
         health["vector_enabled"] = self._vector is not None
         health["vector_degraded"] = self._vector_degraded_reason is not None
         health["vector_degraded_reason"] = self._vector_degraded_reason
@@ -891,7 +847,8 @@ class TieredMemoryStore:
         details: dict[str, dict[str, Any]] = {}
 
         dense_scores: dict[str, float] = {}
-        if self._vector is not None and (query or assets):
+        dense_eligible = _has_semantic_query(query_terms, query_entities, assets)
+        if self._vector is not None and dense_eligible:
             query_text = " ".join([*query, *sorted(assets)])
             dense_k = max(32, limit_per_tier * len(_EMPTY_TIERS) * 4)
             for hit in self._vector.search(query_text, k=dense_k):
@@ -918,7 +875,12 @@ class TieredMemoryStore:
             asset_hits = len(assets.intersection(record.asset_ids))
             entity_hits = entity_hits_by_id.get(memory_id, [])
             entity_score = _W_ENTITY_HIT * len(entity_hits)
-            base = lexical + _W_ASSET_HIT * asset_hits + entity_score
+            root_hits = sorted({
+                term for term in query
+                if f"root:{term}" in {tag.casefold() for tag in record.tags}
+            })
+            root_score = _W_ROOT_HIT * len(root_hits)
+            base = lexical + _W_ASSET_HIT * asset_hits + entity_score + root_score
             if base > 0.0:
                 candidate_scores[memory_id] = base
                 details[memory_id] = {
@@ -928,6 +890,8 @@ class TieredMemoryStore:
                     "asset_hits": asset_hits,
                     "entity_hits": list(entity_hits),
                     "entity_score": round(entity_score, 6),
+                    "root_hits": root_hits,
+                    "root_score": round(root_score, 6),
                     "vector_score": round(dense_scores.get(memory_id, 0.0), 6),
                     "graph_hop": 0,
                     "graph_parent_id": None,
@@ -950,6 +914,8 @@ class TieredMemoryStore:
                         "asset_hits": 0,
                         "entity_hits": [],
                         "entity_score": 0.0,
+                        "root_hits": [],
+                        "root_score": 0.0,
                         "graph_hop": 0,
                         "graph_parent_id": None,
                     },
@@ -989,6 +955,8 @@ class TieredMemoryStore:
                                 "asset_hits": 0,
                                 "entity_hits": [],
                                 "entity_score": 0.0,
+                                "root_hits": [],
+                                "root_score": 0.0,
                                 "vector_score": 0.0,
                                 "graph_hop": hop_index + 1,
                                 "graph_parent_id": source_id,

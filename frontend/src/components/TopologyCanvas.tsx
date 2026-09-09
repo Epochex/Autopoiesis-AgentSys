@@ -1,9 +1,12 @@
+import { observationFor, observedCount } from './analysis-read'
+import { AnalysisStatus } from './AnalysisStatus'
+import { ThreatCard } from './ThreatCard'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DataStats, Device, DeviceHistory, DeviceProfile, GraphAnalysis, ProfilePeer, Subnet, SubnetGraph, TheaterEvent, Topology } from '../types'
 import { Scramble } from './Motion'
 import { SubnetGraphLayer } from './SubnetGraph'
 import { TheaterStage } from './TheaterStage'
-import { Analyzing, type Threat, type WanThreat } from './ThreatCard'
+import { type Threat, type WanThreat } from './ThreatCard'
 import type { Lang } from '../i18n'
 
 type Pt = { x: number; y: number }
@@ -35,6 +38,17 @@ const bw = (bps?: number | null) => {
   if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`
   if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)} kbps`
   return `${bps} bps`
+}
+const isPublicIpv4 = (ip: string) => {
+  const parts = ip.split('.').map(Number)
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
+  const [a, b] = parts
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false
+  if (a === 169 && b === 254) return false
+  if (a === 172 && b >= 16 && b <= 31) return false
+  if (a === 192 && b === 168) return false
+  if (a === 100 && b >= 64 && b <= 127) return false
+  return true
 }
 const clipS = (s: string, n: number) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s)
 const weight = (f: number) => Math.max(1, Math.min(5.5, 1 + Math.log10(f + 1) * 0.7))
@@ -300,7 +314,7 @@ function WanSiege({
                   <div className="ws-card-row">{zh ? '网段/子网' : 'net'} {blockGeom.find((b) => b.ips.some((x) => x.ip === selNode.ip))?.cidr ?? linkedDev?.cidr ?? '—'}</div>
                   <div className="ws-card-row">{zh ? '目标 · FortiGate 管理登录 · 已锁定 ' : 'target · admin login · '}{lockouts}{zh ? ' 次' : ' locks'}</div>
                   {linkedDev && <div className="ws-card-corr">⚠ {zh ? `内外同一实体:${linkedDev.cidr} 的${roleZh[linkedDev.role ?? ''] ?? linkedDev.role}·威胁${(linkedDev.threat ?? 'ok').toUpperCase()}·被拒${nfmt(linkedDev.deny ?? 0)}` : `same entity: ${linkedDev.role} on ${linkedDev.cidr} · ${linkedDev.threat}`}</div>}
-                  <button className="ws-card-btn" onClick={() => onWan(selNode.ip)}>{zh ? 'DeepSeek 深度研判 ▸' : 'DEEPSEEK ANALYZE ▸'}</button>
+                  <button className="ws-card-btn" onClick={() => onWan(selNode.ip)}>{zh ? '查看来源观测 ▸' : 'VIEW SOURCE OBSERVATIONS ▸'}</button>
                 </div>
               </foreignObject>
             </>
@@ -518,6 +532,8 @@ export function TopologyCanvas({
   onHoverDev,
   onGraphAnalyze,
   onCloseGraphAnalysis,
+  onAnalyzeWan,
+  onAnalyzeHost,
   onWan,
   onCloseWan,
   onHoverSubnet,
@@ -552,7 +568,9 @@ export function TopologyCanvas({
   graphAnalysis: GraphAnalysis | null
   hoverDev: string | null
   onHoverDev: (ip: string | null) => void
-  onGraphAnalyze: (cidr: string) => void
+  onGraphAnalyze: (cidr: string, force?: boolean) => void
+  onAnalyzeWan?: (ip: string, force?: boolean) => void
+  onAnalyzeHost?: (ip: string, force?: boolean) => void
   onCloseGraphAnalysis: () => void
   onWan: (ip: string) => void
   onCloseWan: () => void
@@ -658,16 +676,21 @@ export function TopologyCanvas({
       queueMicrotask(() => { if (!gone) setProfile(null) })
       return () => { gone = true }
     }
-    if (production) {
-      const current = production.profiles[focusDev] ?? null
-      queueMicrotask(() => { if (!gone) setProfile(current) })
-      return () => { gone = true }
-    }
+    const productionProfile = production?.profiles[focusDev] ?? null
     // Bench memory node: a memory_id has no live traffic profile — skip the probe
     // entirely (it would 404) and let the memory-record panel render instead.
     let timer: ReturnType<typeof setTimeout> | undefined
     queueMicrotask(() => {
-      if (!gone) setProfile({ ip: focusDev, loading: true } as DeviceProfile)
+      if (!gone) setProfile((current) => {
+        if (!productionProfile) return { ip: focusDev, loading: true } as DeviceProfile
+        if (current?.ip !== focusDev) return productionProfile
+        return {
+          ...productionProfile,
+          device: current.device ?? productionProfile.device,
+          status: current.status ?? productionProfile.status,
+          live: current.live ?? productionProfile.live,
+        }
+      })
     })
     // poll while a host stays focused so live bandwidth/sessions stay current
     // and the router-side rolling rate baseline stays warm.
@@ -676,13 +699,20 @@ export function TopologyCanvas({
         .then((r) => (r.ok ? r.json() : null))
         .then((j: DeviceProfile | null) => {
           if (gone) return
-          if (j?.ok) setProfile(j)
-          else if (first) setProfile(null)
+          if (j?.ok) {
+            setProfile((current) => productionProfile ? {
+              ...productionProfile,
+              device: j.device ?? current?.device ?? productionProfile.device,
+              status: j.status ?? current?.status ?? productionProfile.status,
+              live: j.live ?? current?.live ?? productionProfile.live,
+              tags: [...new Set([...(j.tags ?? []), ...(productionProfile.tags ?? [])])],
+            } : j)
+          } else if (first && !productionProfile) setProfile(null)
           if (!gone) timer = setTimeout(() => tick(false), 5000)
         })
         .catch(() => {
           if (gone) return
-          if (first) setProfile(null)
+          if (first && !productionProfile) setProfile(null)
           timer = setTimeout(() => tick(false), 5000)
         })
     }
@@ -696,8 +726,6 @@ export function TopologyCanvas({
   // ── historical portrait (ClickHouse autopoiesis.facts, last 7 days). Fetched once
   //    per focus; independent of the live poll since history moves slowly.
   const [history, setHistory] = useState<DeviceHistory | null>(null)
-  const [histFull, setHistFull] = useState<DeviceHistory | null>(null)  // all historical targets, fetched on expand
-  const [histBusy, setHistBusy] = useState(false)
   const [latency, setLatency] = useState<{ loading?: boolean; reachable?: boolean; loss_pct?: number | null; rtt_min?: number | null; rtt_avg?: number | null; rtt_max?: number | null; jitter?: number | null; degraded?: boolean } | null>(null)
   const [vlanDiag, setVlanDiag] = useState<VlanDiag | null>(null)
   const [vlanLat, setVlanLat] = useState<VlanLat | null>(null)
@@ -722,14 +750,12 @@ export function TopologyCanvas({
       queueMicrotask(() => {
         if (gone) return
         setHistory(null)
-        setHistFull(null)
         setLatency(null)
       })
       return () => { gone = true }
     }
     queueMicrotask(() => {
       if (gone) return
-      setHistFull(null)
       setLatency(null)
     })
     fetch(`/api/rca/device_history?ip=${encodeURIComponent(focusDev)}&days=7`)
@@ -761,6 +787,10 @@ export function TopologyCanvas({
   }
   const focusOn = (ip: string | null, pos: Record<string, Pt>) => {
     setFocusDev(ip)
+    // Focusing a host opens its traffic portrait. Risk assessment is a separate,
+    // explicit action below; opening every host used to manufacture an empty
+    // "pending verification" card even when no assessment existed.
+    onCloseThreat()
     if (!ip || !graph) {
       resetView()
       return
@@ -860,6 +890,7 @@ export function TopologyCanvas({
             theater={theater}
             lang={lang}
             onClose={() => onCloseTheater?.()}
+            onOpenCase={onDiagnose}
             onNode={(ip) => onWan(ip)}
             busyIp={wan?.loading ? wan.ip : null}
             impactNodes={wan && !wan.loading && !wan.error ? wan.impactNodes ?? [] : []}
@@ -1039,7 +1070,7 @@ export function TopologyCanvas({
                     showPanel={!threat}
                     onHover={onHoverDev}
                     onFocus={(ip) => focusOn(ip, devPos)}
-                    onAnalyze={() => onGraphAnalyze(graph.cidr)}
+                    onAnalyze={force => onGraphAnalyze(graph.cidr, force)}
                     onCloseAnalysis={onCloseGraphAnalysis}
                   />
                 </g>
@@ -1133,75 +1164,12 @@ export function TopologyCanvas({
           </>
         ) : null}
 
-        {/* in-canvas analysis layer: leader line + panel + impact subgraph */}
-        {threat && anchor ? (
-          (() => {
-            const panelTop: Pt = { x: 360, y: 706 }
-            const cx = 1240
-            const cy = 824
-            const peers = threat.impactPeers ?? []
-            return (
-              <g className="analysis-layer">
-                <path d={bez(anchor, panelTop)} className="leader" />
-                <path d={bez(anchor, { x: cx, y: cy - 30 })} className="leader" />
-                {threat.loading ? (
-                  <foreignObject x={40} y={690} width={560} height={120}>
-                    <div className="an-panel">
-                      <div className="an-head"><span className="an-kicker">{lang === 'zh' ? 'AI 分析' : 'AI'} · {threat.ip}</span></div>
-                      <Analyzing lang={lang} />
-                    </div>
-                  </foreignObject>
-                ) : threat.error ? (
-                  <foreignObject x={40} y={690} width={560} height={90}>
-                    <div className="an-panel"><div className="an-body err">{threat.error}</div></div>
-                  </foreignObject>
-                ) : (
-                  <>
-                    <foreignObject x={40} y={680} width={600} height={300}>
-                      <div className={`an-panel sev-${threat.severity}`}>
-                        <div className="an-head">
-                          <span className="an-kicker">{lang === 'zh' ? 'AI 分析' : 'AI'} · {threat.ip}</span>
-                          <button className="an-x" onClick={onCloseThreat}>✕</button>
-                        </div>
-                        <div className="an-verdict">
-                          <span className={`sev-dot ${threat.severity}`} />
-                          <Scramble className="an-vtxt" text={threat.verdict ?? ''} />
-                          <span className={`sev-tag ${threat.severity ?? ''}`}>{sevLabel(threat.severity, lang)}</span>
-                        </div>
-                        <p className="an-analysis">{threat.analysis}</p>
-                        <div className="an-pred">
-                          <div><span className="pl">{lang === 'zh' ? '最可能' : 'likely'}</span>{threat.mostLikely}</div>
-                          <div><span className="pl bad">{lang === 'zh' ? '最坏' : 'worst'}</span>{threat.worstCase}</div>
-                          <div><span className="pl ok">{lang === 'zh' ? '恢复' : 'recovery'}</span>{threat.recovery?.action} <b>· {threat.recovery?.eta}</b></div>
-                        </div>
-                      </div>
-                    </foreignObject>
-
-                    <text x={cx} y={cy - 96} className="impact-tag" textAnchor="middle">
-                      {lang === 'zh' ? '影响范围' : 'IMPACT MAP'}
-                    </text>
-                    <circle cx={cx} cy={cy} r="11" className="m-dev alert sel" />
-                    <text x={cx} y={cy + 26} className="n-ip" textAnchor="middle">{threat.ip}</text>
-                    {peers.map((p, i) => {
-                      const py = cy + (i - (peers.length - 1) / 2) * 70
-                      const px = cx + 200
-                      const real = devPos[p.ip]
-                      return (
-                        <g key={p.ip} className="branch-in">
-                          <path d={bez({ x: cx, y: cy }, { x: px, y: py })} className="branch alert flow-alert" />
-                          {real ? <path d={bez({ x: px, y: py }, real)} className="link-up" /> : null}
-                          <circle cx={px} cy={py} r="7" className="m-dev high" />
-                          <text x={px + 14} y={py - 1} className="n-ip" textAnchor="start">{p.ip}</text>
-                          <text x={px + 14} y={py + 12} className="n-verdict alert" textAnchor="start">{p.relation}</text>
-                        </g>
-                      )
-                    })}
-                  </>
-                )}
-              </g>
-            )
-          })()
-        ) : null}
+        {threat && anchor ? <g className="analysis-layer">
+          <path d={bez(anchor, { x: 360, y: 706 })} className="leader" />
+          <foreignObject x={40} y={640} width={640} height={355}>
+            <ThreatCard th={threat} lang={lang} onClose={onCloseThreat} onAnalyze={onAnalyzeHost ? force => onAnalyzeHost(threat.ip, force) : undefined}/>
+          </foreignObject>
+        </g> : null}
 
         {/* WAN intrusion deep-analysis: campaign lockstep → admin target → cross-canvas
             pivots. In theater mode the geometry belongs to TheaterStage (impact lines
@@ -1209,37 +1177,45 @@ export function TopologyCanvas({
         {wan ? (
           (() => {
             const wa = layout.atk.find((a) => a.ip === wan.ip)
-            const anchorP: Pt = wa ? wa.p : { x: 70, y: 280 }
+            const sourceIndex = production?.externalSources.slice(0, 14).findIndex((source) => source.ip === wan.ip) ?? -1
+            const anchorP: Pt = sourceIndex >= 0
+              ? { x: 104 + (sourceIndex % 4) * 126, y: 218 + Math.floor(sourceIndex / 4) * 76 }
+              : wa ? wa.p : { x: 70, y: 280 }
             const fg = core
             const sibs = wan.siblings ?? []
             const inter = wan.internalCorrelation ?? []
             const stage = wan.killChain ?? ''
+            const observed = observationFor(wan.facts, wan.ip)
+            const eventTypes = Array.isArray(observed?.eventTypes) ? observed.eventTypes.filter((value): value is string => typeof value === 'string') : Array.isArray(wan.facts?.eventTypes) ? wan.facts.eventTypes.filter((value): value is string => typeof value === 'string') : []
+            const ports = Array.isArray(observed?.ports) ? observed.ports : Array.isArray(wan.facts?.ports) ? wan.facts.ports : []
+            const eventCount = Array.isArray(wan.facts?.selected) ? observedCount(observed?.events) : observedCount(wan.eventCount)
+            const lastSeen = typeof observed?.lastSeenAt === 'string' ? observed.lastSeenAt : wan.observedAt
             return (
               <g className="wan-layer">
                 {!inTheater ? (
                   <>
                     <path d={bez(anchorP, fg)} className="wan-spine appear" />
                     <text x={(anchorP.x + fg.x) / 2 - 6} y={(anchorP.y + fg.y) / 2 - 10} className="wan-spine-tag" textAnchor="middle">
-                      {short(wan.attempts ?? 0)} {lang === 'zh' ? '次登录尝试' : 'login attempts'}
+                      {eventCount != null || wan.attempts != null ? short(eventCount ?? wan.attempts!) : (lang === 'zh' ? '数量未记录' : 'Count not recorded')} {wan.sourceMode === 'production_observed' ? (lang === 'zh' ? '条观测事件' : 'observed events') : (lang === 'zh' ? '次登录尝试' : 'login attempts')}
                     </text>
 
                     {/* /24 lockstep sibling cluster */}
-                    <text x={anchorP.x} y={anchorP.y - 26} className="wan-netblock" textAnchor="start">
-                      ◇ {lang === 'zh' ? '整段 IP 协同' : 'whole IP block'} · {short(wan.netblockAttempts ?? 0)}
-                    </text>
-                    {sibs.map((s, k) => {
+                    {!production ? <text x={anchorP.x} y={anchorP.y - 26} className="wan-netblock" textAnchor="start">
+                      ◇ {lang === 'zh' ? '同网段来源关联' : 'SAME-NETBLOCK CORRELATION'} · {wan.netblock ?? ''}
+                    </text> : null}
+                    {(production ? [] : sibs).map((s, k) => {
                       const sp: Pt = { x: anchorP.x + 78, y: clamp(anchorP.y - 44 + k * 30, 20, VBH - 20) }
                       return (
                         <g key={s.ip} className="branch-in">
                           <path d={bez(anchorP, sp)} className="wan-sib-link" />
                           <rect x={sp.x - 5} y={sp.y - 5} width="10" height="10" className="m-attack sib" transform={`rotate(45 ${sp.x} ${sp.y})`} />
-                          <text x={sp.x + 12} y={sp.y + 3} className="wan-sib-ip" textAnchor="start">{s.ip} · {short(s.attempts ?? 0)}</text>
+                          <text x={sp.x + 12} y={sp.y + 3} className="wan-sib-ip" textAnchor="start">{s.ip} · {s.attempts == null ? (lang === 'zh' ? '数量未记录' : 'Count not recorded') : short(s.attempts)}</text>
                         </g>
                       )
                     })}
 
                     {/* FortiGate admin target + lockout impact */}
-                    {!wan.loading && !wan.error ? (
+                    {!wan.loading && !wan.error && wan.lockouts != null ? (
                       <>
                         <circle cx={fg.x} cy={fg.y} r="34" className="wan-lockring" />
                         <text x={fg.x} y={fg.y + 54} className="wan-lock" textAnchor="middle">⊘ {wan.lockouts ?? 0} {lang === 'zh' ? '次账号锁定' : 'account lockouts'}</text>
@@ -1249,7 +1225,7 @@ export function TopologyCanvas({
                     {/* cross-canvas post-compromise pivots */}
                     {inter.length ? (
                       <text x={1560} y={112} className="impact-tag" textAnchor="start">
-                        {lang === 'zh' ? '内网扩散' : 'INTERNAL SPREAD'}
+                        {lang === 'zh' ? '内网关联线索' : 'INTERNAL CORRELATION LEADS'}
                       </text>
                     ) : null}
                     {inter.map((c, k) => {
@@ -1259,7 +1235,7 @@ export function TopologyCanvas({
                         <g key={c.ip} className="branch-in wan-pivot">
                           <path d={bez(fg, ip_)} className="wan-pivot-link" />
                           <circle cx={ip_.x} cy={ip_.y} r="6" className="m-dev high" />
-                          <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip} · {short(c.deny ?? 0)} {lang === 'zh' ? '次拦截' : 'blocked'}</text>
+                          <text x={ip_.x + 12} y={ip_.y - 1} className="n-ip" textAnchor="start">{c.ip}{c.deny != null ? ` · ${short(c.deny)} ${lang === 'zh' ? '次拦截' : 'blocked'}` : ''}</text>
                           <text x={ip_.x + 12} y={ip_.y + 12} className="wan-rel" textAnchor="start">{clipS(c.relation, 26)}</text>
                         </g>
                       )
@@ -1267,61 +1243,57 @@ export function TopologyCanvas({
                   </>
                 ) : null}
 
-                {/* deep-analysis panel */}
-                {wan.loading ? (
-                  <foreignObject x={36} y={678} width={580} height={130}>
-                    <div className="an-panel wan-panel">
-                      <div className="an-head"><span className="an-kicker">{lang === 'zh' ? 'AI 分析' : 'AI'} · {wan.ip}</span></div>
-                      <Analyzing lang={lang} />
-                    </div>
-                  </foreignObject>
-                ) : wan.error ? (
-                  <foreignObject x={36} y={670} width={560} height={130}>
-                    <div className="an-panel wan-panel">
-                      <div className="an-head">
-                        <span className="an-kicker">{lang === 'zh' ? 'AI 分析' : 'AI'} · {wan.ip}</span>
-                        <button className="an-x" onClick={onCloseWan}>✕</button>
-                      </div>
-                      <div className="an-body err">{wan.error}</div>
-                      <button className="an-retry" onClick={() => onWan(wan.ip)}>{lang === 'zh' ? '↻ 重试' : '↻ RETRY'}</button>
-                    </div>
-                  </foreignObject>
-                ) : (
+                {/* Observations remain visible while cached or deep analysis loads. */}
                   <foreignObject x={28} y={520} width={700} height={472}>
-                    <div className={`an-panel wan-panel sev-${wan.severity}`}>
+                    <div className={`an-panel wan-panel sev-${wan.analysisAvailable ? wan.severity : 'pending'}`}>
                       <div className="an-head">
-                        <span className="an-kicker">{lang === 'zh' ? 'AI 分析 · 入侵判定' : 'AI · INTRUSION'} · {wan.ip}</span>
+                        <span className="an-kicker">{lang === 'zh' ? '公网来源 · 观测与研判' : 'PUBLIC SOURCE · OBSERVATIONS AND ASSESSMENT'} · {wan.ip}</span>
                         <button className="an-x" onClick={onCloseWan}>✕</button>
                       </div>
                       <div className="an-verdict">
-                        <span className={`sev-dot ${wan.severity}`} />
+                        {wan.analysisAvailable && <span className={`sev-dot ${wan.severity}`} />}
                         <Scramble className="an-vtxt" text={wan.verdict ?? ''} />
-                        <span className={`sev-tag ${wan.severity ?? ''}`}>{sevLabel(wan.severity, lang)}</span>
+                        {wan.analysisAvailable && <span className={`sev-tag ${wan.severity ?? ''}`}>{sevLabel(wan.severity, lang)}</span>}
                         {typeof wan.confidence === 'number' ? <span className="wan-conf">{Math.round(wan.confidence * 100)}%</span> : null}
                       </div>
-                      <div className="kc-rail">
+                      {wan.analysisAvailable && stage ? <div className="kc-rail">
                         {KILLCHAIN.map((s) => (
                           <span key={s.k} className={`kc-step ${s.k === stage ? 'on' : ''}`}>{lang === 'zh' ? s.zh : s.en}</span>
                         ))}
-                      </div>
-                      <p className="an-analysis">{wan.campaign}</p>
-                      <div className="wan-meta">
-                        <span><i>{lang === 'zh' ? '疑似来自' : 'SOURCE'}</i>{wan.attribution}</span>
-                        <span><i className="bad">{lang === 'zh' ? '影响' : 'IMPACT'}</i>{wan.blast}</span>
-                      </div>
+                      </div> : null}
+                      {wan.model ? <p className="an-analysis">{wan.model} · {wan.observedAt ?? ''}</p> : null}
+                      {wan.analysisAvailable && wan.campaign ? <p className="an-analysis">{wan.campaign}</p> : null}
+                      <div className="an-facts"><strong>{lang === 'zh' ? '观测事实' : 'Observed facts'}</strong><dl>
+                        <div><dt>{lang === 'zh' ? '事件类型' : 'Event types'}</dt><dd>{eventTypes.join(' · ') || (lang === 'zh' ? '未记录' : 'Not recorded')}</dd></div>
+                        <div><dt>{lang === 'zh' ? '端口' : 'Ports'}</dt><dd>{ports.join(', ') || (lang === 'zh' ? '未记录' : 'Not recorded')}</dd></div>
+                        <div><dt>{lang === 'zh' ? '事件数量' : 'Event count'}</dt><dd>{eventCount ?? (lang === 'zh' ? '未记录' : 'Not recorded')}</dd></div>
+                        <div><dt>{lang === 'zh' ? '最近观测' : 'Last observed'}</dt><dd>{lastSeen ?? (lang === 'zh' ? '未记录' : 'Not recorded')}</dd></div>
+                      </dl></div>
+                      <AnalysisStatus value={wan} lang={lang} onAnalyze={onAnalyzeWan ? force => onAnalyzeWan(wan.ip, force) : undefined}/>
+                      {wan.analysisAvailable ? <div className="wan-meta">
+                        <span><i>{lang === 'zh' ? '来源研判' : 'SOURCE ASSESSMENT'}</i>{wan.attribution || (lang === 'zh' ? '待核实' : 'Pending verification')}</span>
+                        <span><i className="bad">{lang === 'zh' ? '影响研判' : 'IMPACT ASSESSMENT'}</i>{wan.blast || (lang === 'zh' ? '待核实' : 'Pending verification')}</span>
+                      </div> : null}
                       {/* impact surface: every node on the attack path (the panel names them; the
                           matching topology nodes carry the .impact class while this panel is open) */}
                       {wan.impactNodes && wan.impactNodes.length ? (
                         <div className="wan-impact">
-                          <span className="wan-impact-lab">{lang === 'zh' ? '影响面 · 攻击链节点' : 'IMPACT SURFACE'}</span>
+                          <span className="wan-impact-lab">{wan.riskAssessment?.businessImpact === true ? (lang === 'zh' ? '已确认影响所涉资产' : 'ASSETS WITH CONFIRMED IMPACT') : (lang === 'zh' ? '关联资产 · 影响待核实' : 'RELATED ASSETS · IMPACT UNCONFIRMED')}</span>
                           {wan.impactNodes.map((n, i) => <span key={i} className={`wan-impact-node ${n === '192.168.1.1' ? 'fw' : ''}`}>{n}</span>)}
                         </div>
                       ) : null}
+                      {production && sibs.length ? <div className="wan-impact">
+                        <span className="wan-impact-lab">{lang === 'zh' ? '同网段来源关联' : 'SAME-NETBLOCK CORRELATION'} · {wan.netblock}</span>
+                        {sibs.map((source) => {
+                          const count = observedCount(observationFor(wan.facts, source.ip, 'sameNetblock')?.events) ?? observedCount(source.attempts)
+                          return <p key={source.ip}>{source.ip}{count != null ? ` · ${count} ${lang === 'zh' ? '条事件' : 'events'}` : ''}{source.note ? ` · ${source.note}` : ''}</p>
+                        })}
+                      </div> : null}
                       {/* runnable playbook, display-only — the console never executes any of it */}
                       {wan.playbook && wan.playbook.length ? (
                         <div className="wan-pb">
                           <div className="wan-pb-h">
-                            <span>{lang === 'zh' ? '处置预案 · 可运行剧本' : 'REMEDIATION PLAYBOOK'}</span>
+                            <span>{lang === 'zh' ? 'Playbook · 预执行审阅' : 'PLAYBOOK · PRE-EXECUTION REVIEW'}</span>
                             <span className="wan-pb-gate">🔒 {lang === 'zh' ? '仅供审阅 · 系统不执行' : 'REVIEW ONLY · NOT EXECUTED'}</span>
                           </div>
                           {wan.playbook.map((s, i) => (
@@ -1332,7 +1304,10 @@ export function TopologyCanvas({
                                 <span className="wan-pb-layer">{s.layer}</span>
                                 <span className="wan-pb-why">{s.why}</span>
                               </div>
+                              {s.preconditions ? <p>{lang === 'zh' ? '前置条件：' : 'Prerequisites: '}{s.preconditions}</p> : null}
                               <pre className="wan-pb-cmds">{s.commands.join('\n')}</pre>
+                              {s.expected ? <p>{lang === 'zh' ? '预期结果：' : 'Expected: '}{s.expected}</p> : null}
+                              {s.rollback ? <p>{lang === 'zh' ? '回退方式：' : 'Rollback: '}{s.rollback}</p> : null}
                             </div>
                           ))}
                         </div>
@@ -1349,7 +1324,6 @@ export function TopologyCanvas({
                       ) : null}
                     </div>
                   </foreignObject>
-                )}
               </g>
             )
           })()
@@ -1433,8 +1407,12 @@ export function TopologyCanvas({
                     ))}
                   </div>
                   {f.threat !== 'ok' && !isMemNode(f.ip) ? (
-                    <button className="sg-ego-ai" onClick={() => onDev({ ip: f.ip, flows: f.flows, deny: f.deny, accept: f.accept, threat: f.threat, top_ports: f.topPorts }, graph.cidr)}>
-                      ⚡ {lang === 'zh' ? 'AI 威胁研判' : 'AI THREAT VERDICT'}
+                    <button className="sg-ego-ai" onClick={() => onAnalyzeHost
+                      ? onAnalyzeHost(f.ip)
+                      : onDev({ ip: f.ip, flows: f.flows, deny: f.deny, accept: f.accept, threat: f.threat, top_ports: f.topPorts }, graph.cidr)}>
+                      ⚡ {onAnalyzeHost
+                        ? (lang === 'zh' ? '启动设备风险研判' : 'RUN DEVICE RISK ASSESSMENT')
+                        : (lang === 'zh' ? '查看观测与已有研判' : 'VIEW OBSERVATIONS AND SAVED ANALYSIS')}
                     </button>
                   ) : null}
                 </div>
@@ -1450,6 +1428,20 @@ export function TopologyCanvas({
       {drilled && graph && focusDev && profile
         ? (() => {
             const p = profile
+            const observedAt = (value?: string | null) => {
+              const timestamp = value ? Date.parse(value) : Number.NaN
+              return Number.isFinite(timestamp) ? timestamp : 0
+            }
+            const newestFirst = <T extends { lastSeenAt?: string | null },>(rows: T[]) =>
+              [...rows].sort((a, b) => observedAt(b.lastSeenAt) - observedAt(a.lastSeenAt))
+            const observedLabel = (value?: string | null) => {
+              if (!value) return ''
+              const timestamp = Date.parse(value)
+              if (!Number.isFinite(timestamp)) return value
+              return new Date(timestamp).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-GB', {
+                month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+              })
+            }
             const svcOf = (r: ProfilePeer) => r.services.slice(0, 2).join('/') || r.ports.slice(0, 2).map((x) => `:${x}`).join(' ')
             const peerRow = (r: ProfilePeer) => (
               <div key={`${r.dir}${r.ip}`} className={`dp-row ${r.deny > r.accept ? 'denied' : ''}`}>
@@ -1457,14 +1449,22 @@ export function TopologyCanvas({
                 <span className="dp-ip" title={r.rdns ? r.ip : undefined}>
                   {r.rdns ?? r.ip}
                   {r.kind === 'bcast' ? (lang === 'zh' ? ' · 广播' : ' · bcast') : ''}
-                  {r.external && r.country ? ` · ${r.country}` : ''}
+                  {r.country ? ` · ${r.country}` : ''}
+                  {!r.external && r.segment ? ` · ${r.segment}` : ''}
+                  {!r.external && r.interface ? ` · ${r.interface}` : ''}
                 </span>
                 <span className="dp-svc">{svcOf(r)}</span>
+                {r.lastSeenAt ? <time className="dp-time" title={r.lastSeenAt}>{observedLabel(r.lastSeenAt)}</time> : null}
                 <span className="dp-n">{short(r.hits)}</span>
               </div>
             )
+            const livePublic = (p.live?.destinations ?? []).filter((destination) => isPublicIpv4(destination.ip))
+            const outboundPublic = newestFirst((p.outbound ?? []).filter((peer) => peer.external && (peer.bytes > 0 || peer.accept > 0)))
+            const outboundPrivate = newestFirst((p.outbound ?? []).filter((peer) => !peer.external && (peer.bytes > 0 || peer.accept > 0)))
+            const inboundUseful = newestFirst((p.inbound ?? []).filter((peer) => peer.bytes > 0 || peer.accept > 0))
             const hourMax = Math.max(...(p.hours ?? [0]), 1)
-            const empty = !p.loading && !(p.outbound?.length || p.inbound?.length)
+            const hasHours = (p.hours ?? []).some((count) => count > 0)
+            const empty = !p.loading && !(livePublic.length || outboundPublic.length || outboundPrivate.length || inboundUseful.length)
             return (
               <foreignObject x={VBW - 516} y={90} width={496} height={860} className="ego-fo">
                 <div className="dp-panel xl">
@@ -1514,16 +1514,16 @@ export function TopologyCanvas({
                           ) : null}
                         </div>
                       ) : null}
-                      {p.live && p.live.destinations.length ? (
+                      {p.live && livePublic.length ? (
                         <>
                           <div className="dp-sec live">
-                            {lang === 'zh' ? `实时访问去向 · ${p.live.destinations.length}` : `LIVE DESTINATIONS · ${p.live.destinations.length}`}
+                            {lang === 'zh' ? `实时公网访问对象 · ${livePublic.length}` : `LIVE PUBLIC DESTINATIONS · ${livePublic.length}`}
                             <span className="dp-live-badge" title={lang === 'zh' ? 'FortiGate 实时会话(只读)' : 'FortiGate realtime (read-only)'}>
                               {bw(p.live.totalBps) ? `${bw(p.live.totalBps)} · ` : ''}{p.live.sessionCount} {lang === 'zh' ? '会话' : 'active'}
                             </span>
                           </div>
                           <div className="dp-list">
-                            {p.live.destinations.map((d, i) => (
+                            {livePublic.map((d, i) => (
                               <div key={i} className="dp-row live">
                                 <span className="dp-dir">▸</span>
                                 <span className="dp-ip" title={d.resolved ? d.ip : undefined}>
@@ -1544,24 +1544,24 @@ export function TopologyCanvas({
                           </div>
                         </>
                       ) : null}
-                      {empty && !(p.live && p.live.destinations.length) ? (
+                      {empty ? (
                         <div className="dp-empty">
-                          {lang === 'zh' ? '采样窗内无流量记录 — 该设备仅以 DHCP 心跳可见' : 'no flows in the sample window — DHCP heartbeat only'}
+                          {lang === 'zh' ? '当前没有可展示的公网访问或有效内网通信' : 'no public access or effective private traffic to show'}
                         </div>
-                      ) : empty ? null : (
+                      ) : (
                         <>
                           <div className="dp-stats">
-                            <span><b>{short(p.totals?.outHits ?? 0)}</b> {lang === 'zh' ? '出向' : 'out'}</span>
-                            <span><b>{short(p.totals?.inHits ?? 0)}</b> {lang === 'zh' ? '入向' : 'in'}</span>
-                            <span><b>{p.totals?.extPeers ?? 0}</b> {lang === 'zh' ? '外部端点' : 'ext peers'}</span>
-                            <span><b>{p.totals?.intPeers ?? 0}</b> {lang === 'zh' ? '内网端点' : 'lan peers'}</span>
+                            <span><b>{outboundPublic.length || livePublic.length}</b> {lang === 'zh' ? '全部公网对象' : 'all public destinations'}</span>
+                            <span><b>{fmtBytes(p.totals?.bytes ?? 0)}</b> {lang === 'zh' ? (p.window?.from === 'latest 24h' ? '近24小时流量' : '采样流量') : (p.window?.from === 'latest 24h' ? 'last 24h traffic' : 'sample traffic')}</span>
                           </div>
-                          <div className="dp-sec">{lang === 'zh' ? '活跃时段' : 'ACTIVITY BY HOUR'}</div>
-                          <div className="dp-hours">
-                            {(p.hours ?? []).map((h, i) => (
-                              <span key={i} className={h ? 'on' : ''} style={{ height: `${3 + (h / hourMax) * 24}px` }} title={`${i}:00 · ${h}`} />
-                            ))}
-                          </div>
+                          {hasHours ? <>
+                            <div className="dp-sec">{lang === 'zh' ? '活跃时段' : 'ACTIVITY BY HOUR'}</div>
+                            <div className="dp-hours">
+                              {(p.hours ?? []).map((h, i) => (
+                                <span key={i} className={h ? 'on' : ''} style={{ height: `${3 + (h / hourMax) * 24}px` }} title={`${i}:00 · ${h}`} />
+                              ))}
+                            </div>
+                          </> : null}
                           {p.ports && (p.ports.local.length || p.ports.remote.length) ? (
                             <>
                               {p.ports.local.length ? (
@@ -1592,16 +1592,22 @@ export function TopologyCanvas({
                               ) : null}
                             </>
                           ) : null}
-                          {p.outbound?.length ? (
+                          {outboundPublic.length ? (
                             <>
-                              <div className="dp-sec">{lang === 'zh' ? `流量去向 · ${p.outbound.length}` : `DESTINATIONS · ${p.outbound.length}`}</div>
-                              <div className="dp-list">{p.outbound.map(peerRow)}</div>
+                              <div className="dp-sec">{lang === 'zh' ? `公网访问对象 · ${outboundPublic.length}` : `PUBLIC DESTINATIONS · ${outboundPublic.length}`}</div>
+                              <div className="dp-list">{outboundPublic.map(peerRow)}</div>
                             </>
                           ) : null}
-                          {p.inbound?.length ? (
+                          {outboundPrivate.length ? (
                             <>
-                              <div className="dp-sec">{lang === 'zh' ? `访问它的流量 · ${p.inbound.length}` : `INBOUND · ${p.inbound.length}`}</div>
-                              <div className="dp-list">{p.inbound.map(peerRow)}</div>
+                              <div className="dp-sec">{lang === 'zh' ? `有效内网通信 · ${outboundPrivate.length}` : `EFFECTIVE PRIVATE TRAFFIC · ${outboundPrivate.length}`}</div>
+                              <div className="dp-list">{outboundPrivate.map(peerRow)}</div>
+                            </>
+                          ) : null}
+                          {inboundUseful.length ? (
+                            <>
+                              <div className="dp-sec">{lang === 'zh' ? `访问它的有效流量 · ${inboundUseful.length}` : `EFFECTIVE INBOUND · ${inboundUseful.length}`}</div>
+                              <div className="dp-list">{inboundUseful.map(peerRow)}</div>
                             </>
                           ) : null}
                         </>
@@ -1609,24 +1615,26 @@ export function TopologyCanvas({
                       {history && !history.empty && history.flows > 0 ? (() => {
                         const dmax = Math.max(...(history.daily ?? []).map((x) => x.flows), 1)
                         const fmtB = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}G` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K` : `${n}`)
-                        const allDests = histFull?.destinations ?? history.destinations ?? []
-                        const shownDests = histFull ? allDests : allDests.slice(0, 8)
-                        const moreDests = (history.peers ?? allDests.length) - shownDests.length
+                        const shownDests = newestFirst((history.destinations ?? [])
+                          .filter((destination) => destination.bytes > 0 || destination.denied < destination.flows))
                         return (
                           <>
                             <div className="dp-sec hist">
-                              {lang === 'zh' ? `历史记录 · ${history.days} 天` : `HISTORY · ${history.days}d`}
+                              {lang === 'zh' ? `历史记录 · 最近 ${history.days} 天` : `HISTORY · LAST ${history.days} DAYS`}
                               {history.widened ? (lang === 'zh' ? ' · 近7天无流量,已扩至全保留期' : ' · widened to full retention') : ''}
                               <span className="dp-hist-badge" title={lang === 'zh' ? 'ClickHouse 全量日志(R230)' : 'ClickHouse full log (R230)'}>ClickHouse</span>
                             </div>
+                            {history.first && history.last ? <div className="dp-window">
+                              {lang === 'zh' ? '实际覆盖' : 'ACTUAL COVERAGE'} · {observedLabel(history.first)} → {observedLabel(history.last)}
+                            </div> : null}
                             <div className="dp-stats">
                               <span><b>{short(history.flows)}</b> {lang === 'zh' ? '条流' : 'flows'}</span>
                               <span><b>{history.peers ?? 0}</b> {lang === 'zh' ? '目标' : 'peers'}</span>
                               <span><b>{short(history.denied ?? 0)}</b> {lang === 'zh' ? '被拦' : 'denied'}</span>
                             </div>
                             <div className="dp-stats io">
-                              <span className="up"><b>↑ {fmtB(history.up ?? 0)}</b> {lang === 'zh' ? '上行' : 'up'}</span>
-                              <span className="down"><b>↓ {fmtB(history.down ?? 0)}</b> {lang === 'zh' ? '下行' : 'down'}</span>
+                              <span className="up"><b>↑ {fmtB(history.up ?? 0)}</b> {lang === 'zh' ? '该设备发出' : 'sent by device'}</span>
+                              <span className="down"><b>↓ {fmtB(history.down ?? 0)}</b> {lang === 'zh' ? '该设备收到' : 'received by device'}</span>
                               <span><b>{fmtB(history.bytes ?? 0)}</b> {lang === 'zh' ? '总量' : 'total'}</span>
                             </div>
                             {history.topPorts?.length ? (
@@ -1653,33 +1661,20 @@ export function TopologyCanvas({
                                 </div>
                               </>
                             ) : null}
-                            {allDests.length ? (
+                            {shownDests.length ? (
                               <>
-                                <div className="dp-sub">{lang === 'zh' ? `历史访问对象 · 按字节${histFull ? ` · 全部 ${shownDests.length}` : ''}` : `ACCESS TARGETS · by bytes${histFull ? ` · all ${shownDests.length}` : ''}`}</div>
+                                <div className="dp-sub">{lang === 'zh' ? `全部历史访问对象 · 按最近观测 · ${shownDests.length}` : `ALL ACCESS TARGETS · NEWEST FIRST · ${shownDests.length}`}</div>
                                 <div className="dp-list">
                                   {shownDests.map((d) => (
                                     <div key={d.ip} className={`dp-row ${d.denied > d.flows / 2 ? 'denied' : ''}`}>
                                       <span className="dp-dir">▸</span>
                                       <span className="dp-ip">{d.ip}{d.country ? ` · ${d.country}` : ''}</span>
                                       <span className="dp-svc">{d.services.slice(0, 2).join('/')}</span>
+                                      {d.lastSeenAt ? <time className="dp-time" title={d.lastSeenAt}>{observedLabel(d.lastSeenAt)}</time> : null}
                                       <span className="dp-io" title={`${short(d.flows)} ${lang === 'zh' ? '条' : 'flows'}`}>↑{fmtB(d.up ?? 0)} ↓{fmtB(d.down ?? 0)}</span>
                                     </div>
                                   ))}
                                 </div>
-                                {!histFull && moreDests > 0 ? (
-                                  <button className="dp-expand" disabled={histBusy} onClick={async () => {
-                                    if (histBusy) return
-                                    setHistBusy(true)
-                                    try {
-                                      const rr = await fetch(`/api/rca/device_history?ip=${encodeURIComponent(focusDev)}&days=${history.days}&full=1`)
-                                      const jj = await rr.json()
-                                      if (jj?.ok) setHistFull(jj)
-                                    } catch { /* keep collapsed */ }
-                                    setHistBusy(false)
-                                  }}>
-                                    {histBusy ? (lang === 'zh' ? '展开中…' : 'loading…') : (lang === 'zh' ? `展开全部历史访问对象 · +${moreDests}` : `SHOW ALL · +${moreDests}`)}
-                                  </button>
-                                ) : null}
                               </>
                             ) : null}
                           </>

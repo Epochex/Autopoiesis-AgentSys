@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
@@ -474,12 +474,63 @@ class FeatureMatch:
 class FeatureStore:
     """In-memory repository with deterministic snapshots and idempotent upserts."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_observations: int | None = None,
+        max_decisions: int | None = None,
+        max_decision_ids_per_feature: int | None = None,
+    ) -> None:
+        for name, value in (
+            ("max_observations", max_observations),
+            ("max_decisions", max_decisions),
+            ("max_decision_ids_per_feature", max_decision_ids_per_feature),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive")
+        self.max_observations = max_observations
+        self.max_decisions = max_decisions
+        self.max_decision_ids_per_feature = max_decision_ids_per_feature
         self._observations: dict[str, FeatureObservation] = {}
         self._observation_ids_by_feature: dict[str, set[str]] = {}
         self._features: dict[str, NetworkFeature] = {}
         self._decisions: dict[str, PromotionDecision] = {}
         self._decision_ids_by_feature: dict[str, set[str]] = {}
+
+    def _prune_observations(self) -> None:
+        while (
+            self.max_observations is not None
+            and len(self._observations) > self.max_observations
+        ):
+            # Preserve one current observation per feature whenever the global
+            # capacity permits it, then evict the oldest redundant evidence.
+            candidates = [
+                row
+                for row in self._observations.values()
+                if len(self._observation_ids_by_feature.get(row.feature_id, ())) > 1
+            ] or list(self._observations.values())
+            oldest = min(candidates, key=lambda row: (row.observed_at, row.observation_id))
+            self._observations.pop(oldest.observation_id, None)
+            feature_ids = self._observation_ids_by_feature.get(oldest.feature_id)
+            if feature_ids is not None:
+                feature_ids.discard(oldest.observation_id)
+                if not feature_ids:
+                    self._observation_ids_by_feature.pop(oldest.feature_id, None)
+
+    def _prune_decisions(self) -> None:
+        while self.max_decisions is not None and len(self._decisions) > self.max_decisions:
+            candidates = [
+                row
+                for row in self._decisions.values()
+                if len(self._decision_ids_by_feature.get(row.feature_id, ())) > 1
+            ] or list(self._decisions.values())
+            oldest = min(candidates, key=lambda row: (row.decided_at, row.decision_id))
+            self._decisions.pop(oldest.decision_id, None)
+            feature_ids = self._decision_ids_by_feature.get(oldest.feature_id)
+            if feature_ids is not None:
+                feature_ids.discard(oldest.decision_id)
+                if not feature_ids:
+                    self._decision_ids_by_feature.pop(oldest.feature_id, None)
 
     def upsert_observation(self, observation: FeatureObservation) -> bool:
         previous = self._observations.get(observation.observation_id)
@@ -495,6 +546,7 @@ class FeatureStore:
         self._observation_ids_by_feature.setdefault(observation.feature_id, set()).add(
             observation.observation_id
         )
+        self._prune_observations()
         return True
 
     def observations_for(self, feature_id: str) -> tuple[FeatureObservation, ...]:
@@ -510,6 +562,14 @@ class FeatureStore:
         return tuple(sorted(self._observation_ids_by_feature))
 
     def put_feature(self, feature: NetworkFeature) -> None:
+        if (
+            self.max_decision_ids_per_feature is not None
+            and len(feature.decision_ids) > self.max_decision_ids_per_feature
+        ):
+            feature = replace(
+                feature,
+                decision_ids=feature.decision_ids[-self.max_decision_ids_per_feature:],
+            )
         self._features[feature.feature_id] = feature
 
     def get(self, feature_id: str) -> NetworkFeature | None:
@@ -525,6 +585,7 @@ class FeatureStore:
         self._decision_ids_by_feature.setdefault(decision.feature_id, set()).add(
             decision.decision_id
         )
+        self._prune_decisions()
         return True
 
     def decisions_for(self, feature_id: str) -> tuple[PromotionDecision, ...]:
@@ -552,10 +613,21 @@ class FeatureStore:
         return _canonical(self.to_dict())
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "FeatureStore":
+    def from_dict(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        max_observations: int | None = None,
+        max_decisions: int | None = None,
+        max_decision_ids_per_feature: int | None = None,
+    ) -> "FeatureStore":
         if int(payload.get("schema_version", 0)) != 1:
             raise ValueError("unsupported FeatureStore schema version")
-        store = cls()
+        store = cls(
+            max_observations=max_observations,
+            max_decisions=max_decisions,
+            max_decision_ids_per_feature=max_decision_ids_per_feature,
+        )
         for row in payload.get("observations", []):
             store.upsert_observation(FeatureObservation.from_dict(row))
         for row in payload.get("features", []):
@@ -565,11 +637,23 @@ class FeatureStore:
         return store
 
     @classmethod
-    def loads(cls, payload: str) -> "FeatureStore":
+    def loads(
+        cls,
+        payload: str,
+        *,
+        max_observations: int | None = None,
+        max_decisions: int | None = None,
+        max_decision_ids_per_feature: int | None = None,
+    ) -> "FeatureStore":
         value = json.loads(payload)
         if not isinstance(value, Mapping):
             raise ValueError("FeatureStore snapshot must be a JSON object")
-        return cls.from_dict(value)
+        return cls.from_dict(
+            value,
+            max_observations=max_observations,
+            max_decisions=max_decisions,
+            max_decision_ids_per_feature=max_decision_ids_per_feature,
+        )
 
 
 class NetworkFeatureEngine:

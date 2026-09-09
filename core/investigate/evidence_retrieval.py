@@ -41,6 +41,13 @@ _POLARITIES = {"supports", "opposes", "neutral"}
 _REFERENCE_KINDS = {"document", "historical_incident", "hypothesis"}
 
 
+def _version_matches(applicable: str, current: str) -> bool:
+    """Match an exact release or a documented major/minor release family."""
+    left = applicable.casefold().strip().removeprefix("v")
+    right = current.casefold().strip().removeprefix("v")
+    return left == right or right.startswith(f"{left}.")
+
+
 def _normalise_ids(values: Sequence[str]) -> tuple[str, ...]:
     return tuple(sorted({str(value).strip() for value in values if str(value).strip()}))
 
@@ -470,7 +477,11 @@ class EvidenceRetriever:
         }
         if applicable_versions and not current_versions:
             reasons.append("device_version_unknown")
-        elif applicable_versions and not applicable_versions.intersection(current_versions):
+        elif applicable_versions and not any(
+            _version_matches(applicable, current)
+            for applicable in applicable_versions
+            for current in current_versions
+        ):
             reasons.append("version_mismatch")
 
         as_of = scope.incident_end

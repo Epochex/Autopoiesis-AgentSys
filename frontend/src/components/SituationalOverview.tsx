@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import './situational-overview.css'
+import { readProductionOverviewCache, writeProductionOverviewCache } from '../production-overview-cache'
+import { DemoScenarioPanel } from './DemoScenarioPanel'
+import type { InvestigationSourceEventInput } from './investigation-context'
 
 type Severity = 'critical' | 'high' | 'medium' | 'low' | string
 
@@ -165,12 +168,12 @@ const clock = (value?: string | null): string => {
   if (!value) return 'N/A'
   const parsed = new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`)
   if (Number.isNaN(parsed.valueOf())) return value.slice(11, 19)
-  return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
 const relativeFreshness = (seconds?: number | null, zh = true): string => {
-  if (seconds == null) return zh ? '事实流时间未知' : 'fact stream time unavailable'
-  if (seconds < 15) return zh ? '事实流刚刚更新' : 'fact stream current'
+  if (seconds == null) return zh ? '更新时间待确认' : 'update time unavailable'
+  if (seconds < 15) return zh ? '数据已更新' : 'data current'
   if (seconds < 120) return zh ? `${seconds} 秒前更新` : `updated ${seconds}s ago`
   return zh ? `${Math.floor(seconds / 60)} 分钟前更新` : `updated ${Math.floor(seconds / 60)}m ago`
 }
@@ -178,7 +181,7 @@ const relativeFreshness = (seconds?: number | null, zh = true): string => {
 const caseStatus = (status: string, zh: boolean): string => {
   const labels: Record<string, [string, string]> = {
     open: ['待调查', 'OPEN'], investigating: ['调查中', 'INVESTIGATING'],
-    escalated: ['需进一步处置', 'ESCALATED'], resolved: ['已关闭', 'RESOLVED'],
+    escalated: ['待人工处置', 'ESCALATED'], resolved: ['已关闭', 'RESOLVED'],
   }
   return (labels[status] ?? [status, status])[zh ? 0 : 1]
 }
@@ -186,33 +189,63 @@ const caseStatus = (status: string, zh: boolean): string => {
 export function SituationalOverview({
   lang,
   onOpenCase,
+  onOpenTrace,
 }: {
   lang: Lang
-  onOpenCase: (subject: string, caseId: string) => void
+  onOpenCase: (subject: string, caseId: string, sourceEvent?: InvestigationSourceEventInput) => void
+  onOpenTrace: (subject: string, caseId?: string) => void
 }) {
   const zh = lang === 'zh'
-  const [data, setData] = useState<Overview | null>(null)
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [data, setData] = useState<Overview | null>(() => readProductionOverviewCache<Overview>())
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>(
+    () => readProductionOverviewCache<Overview>() ? 'ready' : 'loading',
+  )
+  const [usingCache, setUsingCache] = useState(
+    () => readProductionOverviewCache<Overview>() !== null,
+  )
   const [selection, setSelection] = useState<Selection>(null)
+  const [view, setView] = useState<'cases' | 'assets' | 'activity' | 'demo'>('cases')
+  const [caseFilter, setCaseFilter] = useState<'active' | 'resolved'>('active')
+  const [query, setQuery] = useState('')
   const [segment, setSegment] = useState<string>('all')
+  const hasData = useRef(data !== null)
+  const request = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
+    if (request.current) return
+    const controller = new AbortController()
+    request.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 12_000)
     try {
-      const response = await fetch('/api/rca/situational-overview', { headers: { Accept: 'application/json' } })
+      const response = await fetch('/api/rca/situational-overview', {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const result = await response.json() as Overview
+      const servedStale = response.headers.get('X-Autopoiesis-Cache') === 'stale'
+      writeProductionOverviewCache(result)
+      hasData.current = true
       setData(result)
       setState('ready')
-      setSelection((current) => current ?? (result.changes[0] ? { type: 'change', id: result.changes[0].id } : null))
+      setUsingCache(servedStale)
     } catch {
-      setState((current) => current === 'loading' ? 'error' : current)
+      setState((current) => current === 'loading' && !hasData.current ? 'error' : current)
+      if (hasData.current) setUsingCache(true)
+    } finally {
+      window.clearTimeout(timeout)
+      if (request.current === controller) request.current = null
     }
   }, [])
 
   useEffect(() => {
     void load()
     const timer = window.setInterval(() => void load(), 15_000)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearInterval(timer)
+      request.current?.abort()
+      request.current = null
+    }
   }, [load])
 
   const selected = useMemo(() => {
@@ -231,6 +264,11 @@ export function SituationalOverview({
   const visibleAssets = data.inventory.assets.filter((item) => segment === 'all' || item.segment === segment)
   const blind = data.coverage.filter((item) => item.state === 'blind')
   const activeCases = data.cases.filter((item) => ['open', 'investigating', 'escalated'].includes(item.status))
+  const resolvedCases = data.cases.filter((item) => item.status === 'resolved').length
+  const priority: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+  const listedCases = (caseFilter === 'active' ? activeCases : data.cases.filter((item) => item.status === 'resolved'))
+    .filter((item) => `${item.title} ${item.subject}`.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => (priority[a.severity] ?? 4) - (priority[b.severity] ?? 4) || b.lastSeenAt.localeCompare(a.lastSeenAt))
   const selectedCases = selection?.type === 'change'
     ? data.cases.filter((item) => (selected as Change | null)?.caseIds?.includes(item.caseId))
     : selection?.type === 'risk'
@@ -238,44 +276,71 @@ export function SituationalOverview({
       : []
 
   return (
-    <main className="sa" aria-label={zh ? '生产内网态势' : 'Production network situation'}>
+    <main className="sa sa-focused" aria-label={zh ? '事件中心' : 'Incident centre'} onKeyDown={(event) => { if (event.key === 'Escape') setSelection(null) }}>
+      {usingCache ? <div className="sa-cache-state">{zh ? '缓存快照 · 正在后台重连' : 'CACHED SNAPSHOT · RECONNECTING'}</div> : null}
       <header className="sa-intro">
         <div>
-          <span className="sa-eyebrow">{zh ? '生产观测 · 当前网络' : 'PRODUCTION OBSERVATION · CURRENT NETWORK'}</span>
-          <h1>{zh ? <>内网现在<mark>发生了什么</mark></> : <>WHAT IS <mark>HAPPENING NOW</mark></>}</h1>
-          <p>
-            {zh
-              ? `${data.inventory.knownAssets} 个可寻址资产，${data.inventory.active24h} 个在 24 小时内留下记录，${activeCases.length} 起高影响案件仍需处理。`
-              : `${data.inventory.knownAssets} addressable assets, ${data.inventory.active24h} active in 24 hours, ${activeCases.length} high-impact cases need attention.`}
-          </p>
+          <span className="sa-eyebrow">{zh ? '网络运维 / 生产环境' : 'NETWORK OPERATIONS / PRODUCTION'}</span>
+          <h1>{zh ? '事件中心' : 'Incident centre'}</h1>
         </div>
         <div className="sa-source-stamp">
           <span className={data.freshness.lagSeconds != null && data.freshness.lagSeconds < 120 ? 'is-live' : 'is-stale'} />
           <b>{relativeFreshness(data.freshness.lagSeconds, zh)}</b>
-          <small>ClickHouse · FortiGate · {zh ? '生产案件库' : 'production case store'}</small>
+          <small>{zh ? '最近观测' : 'Last observed'} {clock(data.observedAt)}</small>
         </div>
       </header>
 
-      <section className="sa-pulse" aria-label={zh ? '生产链路漏斗' : 'production funnel'}>
-        {[
-          [zh ? '网络记录' : 'NETWORK FACTS', data.funnel.facts],
-          [zh ? '安全事件' : 'SECURITY EVENTS', data.funnel.security_events],
-          [zh ? '规则告警' : 'RULE ALERTS', data.funnel.alerts],
-          [zh ? '高影响案件' : 'HIGH-IMPACT CASES', data.funnel.cases],
-          [zh ? '结果已回读' : 'VERIFIED OUTCOMES', data.funnel.actionsVerified],
-        ].map(([label, value], index) => (
-          <div className="sa-pulse-step" key={String(label)}>
-            <span>{String(index + 1).padStart(2, '0')}</span>
-            <b>{compact(Number(value))}</b>
-            <small>{label}</small>
-          </div>
-        ))}
-      </section>
+      <div className="sa-summary-line">
+        <button onClick={() => { setView('cases'); setCaseFilter('active'); setSelection(null) }}><b>{activeCases.length}</b><span>{zh ? '待处理' : 'Active'}</span></button>
+        <button onClick={() => { setView('cases'); setCaseFilter('resolved'); setSelection(null) }}><b>{resolvedCases}</b><span>{zh ? '已关闭' : 'Closed'}</span></button>
+        <span><b>{data.funnel.actionsVerified}</b>{zh ? '已验证回读' : 'Verified readbacks'}</span>
+        <button className="sa-demo-entry" aria-pressed={view === 'demo'} onClick={() => { setView('demo'); setSelection(null) }}>{zh ? '演示与验收 ↗' : 'Demos & acceptance ↗'}</button>
+      </div>
+      <nav className="sa-view-tabs" aria-label={zh ? '事件中心视图' : 'Incident centre views'}>
+        {(['cases', 'assets', 'activity'] as const).map((id) => <button key={id} aria-pressed={view === id} onClick={() => { setView(id); setSelection(null) }}>{({cases: zh ? '案件' : 'Cases', assets: zh ? '资产' : 'Assets', activity: zh ? '网络活动' : 'Network activity'})[id]}</button>)}
+      </nav>
 
-      <section className="sa-field">
-        <div className="sa-segments">
+      {view === 'demo' ? <DemoScenarioPanel lang={lang} onOpenCase={onOpenCase} onOpenTrace={onOpenTrace} /> : null}
+
+      {view === 'cases' ? <section className="sa-case-queue">
+        <div className="sa-section-title">
+          <div className="sa-queue-filters"><button aria-pressed={caseFilter === 'active'} onClick={() => setCaseFilter('active')}>{zh ? '待处理' : 'Active'} {activeCases.length}</button><button aria-pressed={caseFilter === 'resolved'} onClick={() => setCaseFilter('resolved')}>{zh ? '已关闭' : 'Closed'} {resolvedCases}</button></div>
+          <label className="sa-case-search"><span>{zh ? '搜索' : 'Search'}</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={zh ? 'IP、资产或案件名称' : 'IP, asset or case'} /></label>
+        </div>
+        <div className="sa-case-columns" aria-hidden="true">
+          <span>{zh ? '状态' : 'STATE'}</span>
+          <span>{zh ? '案件与对象' : 'CASE AND SUBJECT'}</span>
+          <span>{zh ? '优先级' : 'PRIORITY'}</span>
+          <span>{zh ? '证据' : 'EVIDENCE'}</span>
+          <span>{zh ? '最后观测' : 'LAST SEEN'}</span>
+          <span>{zh ? '动作' : 'ACTION'}</span>
+        </div>
+        <div className="sa-case-queue-list">
+          {listedCases.map((item) => (
+            <button key={item.caseId} type="button" onClick={() => onOpenCase(item.subject, item.caseId, {
+              id: item.caseId,
+              kind: 'production_case',
+              observedAt: item.lastSeenAt,
+              summary: item.title,
+              severity: item.severity,
+            })}>
+              <span className="sa-case-state"><em className={`sev-${item.severity}`} /><b>{caseStatus(item.status, zh)}</b></span>
+              <span className="sa-case-main"><b>{item.title}</b><code>{item.subject}</code></span>
+              <span className="sa-case-service">{zh ? ({critical: '紧急', high: '高', medium: '中', low: '低'}[item.severity] ?? '待评估') : item.severity}</span>
+              <span className="sa-case-evidence"><b>{item.evidenceCount}</b><small>{zh ? '项' : 'ITEMS'}</small></span>
+              <time>{clock(item.lastSeenAt)}</time>
+              <span className="sa-case-enter">{zh ? '调查' : 'OPEN'} →</span>
+            </button>
+          ))}
+          {!listedCases.length ? <p className="sa-empty">{zh ? '当前筛选没有匹配案件。' : 'No cases match these filters.'}</p> : null}
+        </div>
+        <footer className="sa-list-caption">{zh ? `共 ${listedCases.length} 起 · 按优先级与最近观测排序` : `${listedCases.length} cases · ordered by priority and latest observation`}</footer>
+      </section> : null}
+
+      {view === 'assets' || view === 'activity' ? <section className="sa-field">
+        {view === 'assets' ? <div className="sa-segments">
           <div className="sa-section-title">
-            <span>{zh ? '资产平面' : 'ASSET PLANE'}</span>
+            <span>{zh ? '网段与资产' : 'ASSET PLANE'}</span>
             <button className={segment === 'all' ? 'is-on' : ''} onClick={() => setSegment('all')}>
               {zh ? '全网' : 'ALL'}
             </button>
@@ -303,14 +368,14 @@ export function SituationalOverview({
             })}
           </div>
           <div className="sa-field-caption">
-            <span>{zh ? `当前范围 ${segment === 'all' ? '全网' : segment}` : `scope ${segment}`}</span>
+            <span>{zh ? `显示范围 ${segment === 'all' ? '全网' : segment}` : `scope ${segment}`}</span>
             <span>{visibleAssets.filter((item) => item.active24h).length} {zh ? '个活跃地址' : 'active addresses'}</span>
             <span>{visibleRisks.length} {zh ? '个需关注对象' : 'objects need attention'}</span>
           </div>
-        </div>
+        </div> : null}
 
-        <div className="sa-change-line">
-          <div className="sa-section-title"><span>{zh ? '刚刚发生的变化' : 'RECENT CHANGES'}</span><small>{clock(data.changes[0]?.at)}</small></div>
+        {view === 'activity' ? <div className="sa-change-line">
+          <div className="sa-section-title"><span>{zh ? '最新事件记录' : 'WHAT CHANGED'}</span><small>{clock(data.changes[0]?.at)}</small></div>
           <ol>
             {data.changes.slice(0, 7).map((item) => (
               <li key={item.id} className={`sev-${item.severity}`}>
@@ -322,12 +387,12 @@ export function SituationalOverview({
               </li>
             ))}
           </ol>
-        </div>
-      </section>
+        </div> : null}
+      </section> : null}
 
-      <section className="sa-boundaries">
+      {view === 'activity' ? <section className="sa-boundaries">
         <div className="sa-section-title">
-          <span>{zh ? '跨区访问留下的网络证据链' : 'CROSS-ZONE NETWORK EVIDENCE'}</span>
+          <span>{zh ? '跨网段访问' : 'CROSS-ZONE ACCESS'}</span>
           <small>{data.crossSegment.acceptedVisible ? (zh ? '包含成功与阻断记录' : 'allowed and blocked visible') : (zh ? '当前数据只含阻断记录' : 'current data contains blocked records only')}</small>
         </div>
         {data.candidatePaths.length ? (
@@ -343,23 +408,23 @@ export function SituationalOverview({
             ))}
           </div>
         ) : <p className="sa-empty">{zh ? '最近 24 小时没有跨网段记录。' : 'No cross-zone records in the latest 24 hours.'}</p>}
-      </section>
+      </section> : null}
 
-      <section className="sa-workbench">
-        <div className="sa-risk-radar">
+      {view === 'assets' || selected ? <section className="sa-workbench">
+        {view === 'assets' ? <div className="sa-risk-radar">
           <div className="sa-section-title"><span>{zh ? '需要处理的对象' : 'OBJECTS REQUIRING ACTION'}</span><small>{visibleRisks.length}</small></div>
-          <div className="sa-risk-head"><span>{zh ? '资产' : 'ASSET'}</span><span>{zh ? '为什么出现' : 'WHY IT APPEARS'}</span><span>{zh ? '状态' : 'STATE'}</span></div>
-          {visibleRisks.slice(0, 10).map((item) => (
+          <div className="sa-risk-head"><span>{zh ? '资产' : 'ASSET'}</span><span>{zh ? '风险依据' : 'WHY IT APPEARS'}</span><span>{zh ? '状态' : 'STATE'}</span></div>
+          {visibleRisks.map((item) => (
             <button key={item.asset} className={`sa-risk-row sev-${item.severity}`} onClick={() => setSelection({ type: 'risk', id: item.asset })} aria-current={selection?.type === 'risk' && selection.id === item.asset}>
               <span><b>{item.name}</b><code>{item.asset}</code></span>
               <span>{item.reasons[0]}</span>
               <span>{item.caseIds.length ? (zh ? '已开案' : 'CASE OPEN') : (zh ? '持续观察' : 'UNDER WATCH')}</span>
             </button>
           ))}
-        </div>
+        </div> : null}
 
-        <aside className="sa-inspector" aria-live="polite">
-          <div className="sa-section-title"><span>{zh ? '所选对象' : 'SELECTED OBJECT'}</span><small>{selection?.type ?? ''}</small></div>
+        {selected ? <aside className="sa-inspector" aria-label={zh ? '记录详情' : 'Record details'}>
+          <div className="sa-section-title"><span>{zh ? '记录详情' : 'RECORD DETAILS'}</span><button autoFocus onClick={() => setSelection(null)} aria-label={zh ? '关闭详情' : 'Close details'}>×</button></div>
           {!selected ? <p className="sa-empty">{zh ? '选择一条变化、路径或资产查看依据。' : 'Select a change, path, or asset to inspect.'}</p> : null}
 
           {selection?.type === 'change' && selected ? (
@@ -402,14 +467,20 @@ export function SituationalOverview({
           ) : null}
 
           {selectedCases.map((item) => (
-            <button className="sa-case-link" key={item.caseId} onClick={() => onOpenCase(item.subject, item.caseId)}>
+            <button className="sa-case-link" key={item.caseId} onClick={() => onOpenCase(item.subject, item.caseId, {
+              id: item.caseId,
+              kind: 'production_case',
+              observedAt: item.lastSeenAt,
+              summary: item.title,
+              severity: item.severity,
+            })}>
               <span>{caseStatus(item.status, zh)}</span><b>{item.title}</b><small>{item.evidenceCount} {zh ? '项证据' : 'evidence items'} · {zh ? '打开调查' : 'open investigation'} ▸</small>
             </button>
           ))}
-        </aside>
-      </section>
+        </aside> : null}
+      </section> : null}
 
-      {data.externalSources.length ? (
+      {view === 'activity' && data.externalSources.length ? (
         <section className="sa-external">
           <div className="sa-section-title"><span>{zh ? '公网入口压力' : 'INTERNET-FACING PRESSURE'}</span><small>{zh ? '管理探测、登录失败与成功会话记录' : 'management probes, login failures and successful session records'}</small></div>
           <div className="sa-external-track">
@@ -422,7 +493,7 @@ export function SituationalOverview({
         </section>
       ) : null}
 
-      {data.effectMeasurement.qualified ? (
+      {view === 'cases' && data.effectMeasurement.qualified ? (
         <section className="sa-effect">
           <b>{zh ? '长期效果已有足够生产样本' : 'LONG-TERM EFFECT HAS ENOUGH PRODUCTION SAMPLES'}</b>
           <span>{data.effectMeasurement.completedInvestigations} {zh ? '起调查' : 'investigations'}</span>
@@ -432,7 +503,8 @@ export function SituationalOverview({
       ) : null}
 
       <details className="sa-coverage">
-        <summary>{zh ? `当前还有 ${blind.length} 个观测盲区，展开查看接入条件` : `${blind.length} observation gaps, open for required sensors`}</summary>
+        <summary>{zh ? `数据状态 · ${blind.length} 项采集待完善` : `Data status · ${blind.length} observation gaps`}</summary>
+        <p>{zh ? '网络记录' : 'Network records'} {compact(data.funnel.facts)} · {zh ? '安全事件' : 'Security events'} {compact(data.funnel.security_events)} · {zh ? '规则告警' : 'Rule alerts'} {data.funnel.alerts}</p>
         <div>
           {blind.map((item) => <p key={item.capability}><b>{item.label}</b><span>{item.requires}</span></p>)}
         </div>

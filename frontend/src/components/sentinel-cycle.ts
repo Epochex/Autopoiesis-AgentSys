@@ -2,10 +2,9 @@
  * Return the current incident cycle for one sentinel subject.
  *
  * The append-only ledger deliberately keeps earlier successful repairs.  A new
- * detection after a closed decision opens a new cycle; without this boundary,
- * an old `resolved` paints the newly failed service as healthy.  Escalation is
- * intentionally sticky while detections continue because those detections are
- * the same refused incident, not fresh attempts.
+ * detection after a measured recovery opens a new cycle; without this boundary,
+ * an old `resolved` paints the newly failed service as healthy. Safety-gated,
+ * cooling and escalated decisions stay in one cycle while detections continue.
  */
 export function latestIncidentCycle<T extends { kind?: unknown; needs_human?: unknown }>(events: T[]): T[] {
   let start = 0
@@ -20,15 +19,17 @@ export function latestIncidentCycle<T extends { kind?: unknown; needs_human?: un
 
     if (
       kind === 'resolved'
-      || kind === 'no_safe_action'
-      || kind === 'declined'
-      || kind === 'cooldown'
+      || kind === 'condition_cleared'
       || kind === 'escalation_cleared'
-      || (kind === 'remediated' && event.needs_human === true)
     ) {
       nextDetectionStartsCycle = true
     }
   })
 
   return events.slice(start)
+}
+
+/** Match an exact device/service key before selecting its latest cycle. */
+export function subjectIncidentCycle<T extends { subject?: string; kind?: unknown }>(events: T[], subject: string): T[] {
+  return latestIncidentCycle(events.filter(event => event.subject === subject))
 }

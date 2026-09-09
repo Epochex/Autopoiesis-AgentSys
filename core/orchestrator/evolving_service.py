@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Iterator, Protocol, Sequence
 from uuid import uuid4
 
 from core.memory.index_maintenance import IndexMaintenanceWorker
-from core.memory.index_projector import MemoryIndexProjector
 from core.memory.store import MemoryRecord
 
 if TYPE_CHECKING:
@@ -146,16 +145,12 @@ class EvolvingRCAService:
         self,
         orchestrator: Any,
         *,
-        projector: MemoryIndexProjector | None = None,
         maintenance_workers: Sequence[MaintenanceWorker] | None = None,
-        maintenance_interval_seconds: float = 60.0,
+        maintenance_interval_seconds: float | None = None,
         start_maintenance: bool = True,
         raise_on_evolution_error: bool = False,
-        projection_max_batches: int = 10,
         consolidation_options: dict[str, Any] | None = None,
     ) -> None:
-        if projection_max_batches <= 0:
-            raise ValueError("projection_max_batches must be positive")
         self._memory_budget = _configured_memory_budget()
         self._memory_decay_interval_seconds = _configured_decay_interval_seconds()
         self.orchestrator = orchestrator
@@ -171,34 +166,38 @@ class EvolvingRCAService:
             self._observer = ExecutionObserver(
                 Path(self._temporary_observer_dir.name) / "nodes.jsonl"
             )
-        self.projector = projector
-        self.projection_max_batches = projection_max_batches
         self.raise_on_evolution_error = raise_on_evolution_error
         self.consolidation_options = dict(consolidation_options or {})
         self.last_consolidation: ConsolidationReport | None = None
         self._stats = EvolutionRuntimeStats()
         # SingleAgentRCAOrchestrator keeps the current trace/evidence on the
-        # instance. Serialising the complete request also prevents projection or
-        # consolidation from changing memory halfway through another diagnosis.
+        # instance. Serialising the complete request also prevents consolidation
+        # from changing memory halfway through another diagnosis.
         self._request_lock = threading.RLock()
         if maintenance_workers is None:
             memory = orchestrator.memory
-            maintenance_workers = (
-                IndexMaintenanceWorker(
-                    lambda: bool(memory.index_health().get("compaction_due")),
-                    memory.compact_index,
-                    check_interval_seconds=maintenance_interval_seconds,
-                    name="memory-bm25-maintenance",
-                    around_run=self._observe_index_maintenance,
-                ),
-                IndexMaintenanceWorker(
-                    memory.vector_index_should_compact,
-                    memory.compact_vector_index,
-                    check_interval_seconds=maintenance_interval_seconds,
-                    name="memory-vector-maintenance",
-                    around_run=self._observe_index_maintenance,
-                ),
-            )
+            default_workers: list[MaintenanceWorker] = []
+            if memory.enabled:
+                default_workers.append(
+                    IndexMaintenanceWorker(
+                        lambda: bool(memory.index_health().get("compaction_due")),
+                        memory.compact_index,
+                        check_interval_seconds=maintenance_interval_seconds,
+                        name="memory-bm25-maintenance",
+                        around_run=self._observe_index_maintenance,
+                    )
+                )
+            if memory.enabled and memory.index_health().get("vector_enabled"):
+                default_workers.append(
+                    IndexMaintenanceWorker(
+                        memory.vector_index_should_compact,
+                        memory.compact_vector_index,
+                        check_interval_seconds=maintenance_interval_seconds,
+                        name="memory-vector-maintenance",
+                        around_run=self._observe_index_maintenance,
+                    )
+                )
+            maintenance_workers = default_workers
         self._maintenance_workers = list(maintenance_workers)
         self._closed = False
         self._close_complete = False
@@ -279,34 +278,6 @@ class EvolvingRCAService:
         run_id: str,
         session_id: str | None,
     ) -> tuple[Any, Any]:
-        # A replica catches up before reading memories. Projection failure is a
-        # foreground safety failure: serving against a known-stale index would
-        # be less honest than failing this request.
-        if self.projector is not None:
-            with self.observer.span(
-                trace_id=run_id,
-                session_id=session_id,
-                case_id=case.id,
-                node_name="memory.project.catchup",
-                node_type="index",
-                input={"max_batches": self.projection_max_batches},
-            ) as projection_span:
-                applied = self.projector.sync_pending(
-                    max_batches=self.projection_max_batches
-                )
-                pending = self.projector.has_pending()
-                projection_span.set_result(
-                    output={"pending": pending},
-                    metrics={"events_applied": applied, "pending": pending},
-                    attributes={"projector": self.projector.stats()},
-                    status="error" if pending else "ok",
-                )
-                if pending:
-                    raise RuntimeError(
-                        "memory index remains behind the durable event stream after "
-                        f"{self.projection_max_batches} projection batches"
-                    )
-
         if self._observer_aware_runtime:
             diagnosis, verification = self.orchestrator.diagnose(
                 case,
@@ -396,21 +367,28 @@ class EvolvingRCAService:
                 node_type="index",
                 input={"workers": len(self._maintenance_workers)},
             ) as maintenance_span:
+                triggered_workers = 0
+                context = {
+                    "triggered_by_run_id": run_id,
+                    "session_id": session_id,
+                    "case_id": case.id,
+                }
                 for worker in self._maintenance_workers:
                     if isinstance(worker, IndexMaintenanceWorker):
-                        worker.trigger(
-                            {
-                                "triggered_by_run_id": run_id,
-                                "session_id": session_id,
-                                "case_id": case.id,
-                            }
-                        )
+                        triggered = worker.trigger_if_due(context)
                     else:
                         worker.trigger()
-                    self._stats.maintenance_triggers += 1
+                        triggered = True
+                    if triggered:
+                        triggered_workers += 1
+                        self._stats.maintenance_triggers += 1
                 maintenance_span.set_result(
-                    output={"worker_stats": [worker.stats() for worker in self._maintenance_workers]},
-                    metrics={"workers_triggered": len(self._maintenance_workers)},
+                    output={
+                        "worker_stats": [
+                            worker.stats() for worker in self._maintenance_workers
+                        ]
+                    },
+                    metrics={"workers_triggered": triggered_workers},
                 )
         except Exception as exc:
             self._stats.consolidation_failures += 1
@@ -445,7 +423,6 @@ class EvolvingRCAService:
                 **asdict(self._stats),
                 "closed": self._closed,
                 "close_complete": self._close_complete,
-                "projection": self.projector.stats() if self.projector is not None else None,
                 "maintenance": [worker.stats() for worker in self._maintenance_workers],
                 "memory_index": self.orchestrator.memory.index_health(),
                 "memory_retention": {

@@ -8,7 +8,7 @@ than to a date.
 
 On the money figure: the token counts are ground truth, reported by the API.
 The **cost is computed from a local rate table and is an estimate** — rates
-change, and cache-hit pricing is not visible in the usage object. The vendor
+change, and the local estimate does not apply provider cache discounts. The vendor
 dashboard remains authoritative; this exists to answer "which feature spent
 it, and is it accelerating" between dashboard refreshes.
 """
@@ -78,6 +78,9 @@ class Usage:
     completion_tokens: int
     session_id: str = ""
     at: str = ""
+    prompt_cache_hit_tokens: int | None = None
+    prompt_cache_miss_tokens: int | None = None
+    cache_usage_source: str | None = None
 
     @property
     def total_tokens(self) -> int:
@@ -101,7 +104,44 @@ class Usage:
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
             "cost_cny": self.cost_cny(),
+            "prompt_cache_hit_tokens": self.prompt_cache_hit_tokens,
+            "prompt_cache_miss_tokens": self.prompt_cache_miss_tokens,
+            "cache_usage_reported": self.prompt_cache_hit_tokens is not None or self.prompt_cache_miss_tokens is not None,
+            "cache_usage_source": self.cache_usage_source,
         }
+
+
+def _reported_tokens(value: Any) -> int | None:
+    """Missing and malformed cache counters remain unknown, including old rows."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _cache_usage(usage: dict[str, Any]) -> tuple[int | None, int | None, str | None]:
+    hit = _reported_tokens(usage.get("prompt_cache_hit_tokens"))
+    miss = _reported_tokens(usage.get("prompt_cache_miss_tokens"))
+    source = "prompt_cache_tokens" if hit is not None or miss is not None else None
+    if hit is None:
+        details = usage.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            hit = _reported_tokens(details.get("cached_tokens"))
+            if hit is not None:
+                source = "prompt_tokens_details.cached_tokens" if source is None else "mixed_usage_fields"
+    return hit, miss, source
+
+
+def _cache_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    hit_values = [_reported_tokens(row.get("prompt_cache_hit_tokens")) for row in rows]
+    miss_values = [_reported_tokens(row.get("prompt_cache_miss_tokens")) for row in rows]
+    hits = [value for value in hit_values if value is not None]
+    misses = [value for value in miss_values if value is not None]
+    return {
+        "hit_tokens": sum(hits) if hits else None,
+        "miss_tokens": sum(misses) if misses else None,
+        "hit_reported_calls": len(hits),
+        "miss_reported_calls": len(misses),
+        "reported_calls": sum(hit is not None or miss is not None for hit, miss in zip(hit_values, miss_values)),
+        "total_calls": len(rows),
+    }
 
 
 def record(
@@ -118,6 +158,7 @@ def record(
     """
     prompt = int((usage or {}).get("prompt_tokens") or 0)
     completion = int((usage or {}).get("completion_tokens") or 0)
+    hit, miss, cache_source = _cache_usage(usage or {})
     entry = Usage(
         model=model,
         purpose=purpose,
@@ -125,6 +166,9 @@ def record(
         completion_tokens=completion,
         session_id=session_id,
         at=datetime.now(timezone.utc).isoformat(),
+        prompt_cache_hit_tokens=hit,
+        prompt_cache_miss_tokens=miss,
+        cache_usage_source=cache_source,
     )
     row = entry.as_row()
     row["usage_reported"] = bool(usage)
@@ -194,6 +238,7 @@ def summary(hours: int = 24) -> dict[str, Any]:
         "window_hours": hours,
         "calls": len(rows),
         "total_tokens": total_tokens,
+        "provider_cache": _cache_summary(rows),
         "total_cost_cny": total_cost,
         "average_tokens_per_call": round(total_tokens / len(rows)) if rows else 0,
         "by_purpose": {k: dict(v) for k, v in sorted(by_purpose.items(), key=lambda kv: -kv[1]["cost_cny"])},

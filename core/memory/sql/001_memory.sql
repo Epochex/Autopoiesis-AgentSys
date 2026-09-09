@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS memory_records (
             AND jsonb_typeof(record -> 'evidence_snapshot') = 'array'
             AND jsonb_typeof(record -> 'links') = 'array'
             AND jsonb_typeof(record -> 'relations') = 'array'
+            AND (NOT record ? 'claims' OR jsonb_typeof(record -> 'claims') = 'array')
+            AND (NOT record ? 'quality_issues' OR jsonb_typeof(record -> 'quality_issues') = 'array')
+            AND (NOT record ? 'quality_score' OR jsonb_typeof(record -> 'quality_score') = 'number')
+            AND (NOT record ? 'retrieval_ready' OR jsonb_typeof(record -> 'retrieval_ready') = 'boolean')
         )
 );
 
@@ -76,6 +80,10 @@ CREATE TABLE IF NOT EXISTS memory_events (
             AND jsonb_typeof(record -> 'evidence_snapshot') = 'array'
             AND jsonb_typeof(record -> 'links') = 'array'
             AND jsonb_typeof(record -> 'relations') = 'array'
+            AND (NOT record ? 'claims' OR jsonb_typeof(record -> 'claims') = 'array')
+            AND (NOT record ? 'quality_issues' OR jsonb_typeof(record -> 'quality_issues') = 'array')
+            AND (NOT record ? 'quality_score' OR jsonb_typeof(record -> 'quality_score') = 'number')
+            AND (NOT record ? 'retrieval_ready' OR jsonb_typeof(record -> 'retrieval_ready') = 'boolean')
         ),
     CONSTRAINT memory_events_quarantine_type_ck
         CHECK (
@@ -411,9 +419,3 @@ $$;
 REVOKE ALL ON TABLE memory_event_mutation_authorizations FROM PUBLIC;
 REVOKE ALL ON FUNCTION redact_memory(TEXT, BIGINT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION purge_memory(TEXT, TEXT, TEXT) FROM PUBLIC;
-
-CREATE TABLE IF NOT EXISTS index_checkpoints (
-    index_name          TEXT PRIMARY KEY CHECK (length(btrim(index_name)) > 0),
-    event_offset       BIGINT NOT NULL CHECK (event_offset >= 0),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
-);

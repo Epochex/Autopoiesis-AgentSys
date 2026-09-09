@@ -26,6 +26,16 @@ class FakeClient:
         return self.payloads.pop(0) if self.payloads else {}
 
 
+def test_adapter_request_annotations_are_bound_to_the_session_probe():
+    assert investigate._canonical_probe_command(
+        "adapter:admin_auth_window （逐条核对来源地址）"
+    ) == "adapter:admin_auth_window"
+    assert investigate._canonical_probe_command(
+        "adapter:live_flows 192.168.1.1 (check sessions)"
+    ) == "adapter:live_flows"
+    assert investigate._canonical_probe_command("rm -rf /") == "rm -rf /"
+
+
 @pytest.fixture()
 def session_id():
     opened = investigate.start("eth2 现在什么状态", family="fam-host-config-drift")

@@ -641,16 +641,38 @@ class RiskPatternStore:
         )
 
     @classmethod
-    def from_snapshot(cls, raw: Mapping[str, Any]) -> "RiskPatternStore":
+    def from_snapshot(
+        cls,
+        raw: Mapping[str, Any],
+        *,
+        max_patterns: int | None = None,
+        max_dimension_values: int | None = None,
+        max_evidence_refs: int | None = None,
+        max_event_ids_per_pattern: int | None = None,
+    ) -> "RiskPatternStore":
         if int(raw.get("version", 0)) != cls.SNAPSHOT_VERSION:
             raise ValueError("unsupported risk-pattern snapshot version")
         config = dict(raw.get("config") or {})
         store = cls(
             retention=timedelta(seconds=int(config["retention_seconds"])),
-            max_patterns=int(config["max_patterns"]),
-            max_dimension_values=int(config["max_dimension_values"]),
-            max_evidence_refs=int(config["max_evidence_refs"]),
-            max_event_ids_per_pattern=int(config["max_event_ids_per_pattern"]),
+            max_patterns=(
+                max_patterns if max_patterns is not None else int(config["max_patterns"])
+            ),
+            max_dimension_values=(
+                max_dimension_values
+                if max_dimension_values is not None
+                else int(config["max_dimension_values"])
+            ),
+            max_evidence_refs=(
+                max_evidence_refs
+                if max_evidence_refs is not None
+                else int(config["max_evidence_refs"])
+            ),
+            max_event_ids_per_pattern=(
+                max_event_ids_per_pattern
+                if max_event_ids_per_pattern is not None
+                else int(config["max_event_ids_per_pattern"])
+            ),
         )
         if raw.get("watermark"):
             store._watermark = _timestamp(raw["watermark"])
@@ -698,6 +720,23 @@ class RiskPatternStore:
                 }
             if pattern.pattern_id in store._patterns:
                 raise ValueError(f"duplicate pattern in snapshot: {pattern.pattern_id}")
+            for field_name in (
+                "_source_ips", "_source_networks", "_target_accounts",
+                "_target_assets", "_source_tables",
+            ):
+                values = getattr(pattern, field_name)
+                if len(values) > store.max_dimension_values:
+                    setattr(pattern, field_name, set(sorted(values)[:store.max_dimension_values]))
+                    pattern.dimensions_truncated = True
+            if len(pattern._evidence_ref_tables) > store.max_evidence_refs:
+                pattern._evidence_ref_tables = dict(
+                    sorted(pattern._evidence_ref_tables.items())[:store.max_evidence_refs]
+                )
+                pattern.dimensions_truncated = True
+            pattern._prune(
+                retention=store.retention,
+                max_event_ids=store.max_event_ids_per_pattern,
+            )
             store._patterns[pattern.pattern_id] = pattern
         store._enforce_pattern_bound()
         return store

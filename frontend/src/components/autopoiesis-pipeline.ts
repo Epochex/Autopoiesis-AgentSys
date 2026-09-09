@@ -36,9 +36,50 @@ export const SENTINEL_REPORT_LOOP: { id: string; zh: string; en: string }[] = [
 
 export const railFor = (scope?: string, timeline: { kind: string }[] = []) => {
   if (scope !== 'sentinel') return PIPELINE
-  return currentRound(timeline).some((step) => step.kind === 'no_safe_action')
-    ? SENTINEL_REPORT_LOOP
-    : SENTINEL_LOOP
+  const round = currentRound(timeline)
+  const refusal = round.findLastIndex(step => step.kind === 'no_safe_action')
+  const resumed = round.findLastIndex(step => ['preflight', 'remediation_started', 'remediation_committed', 'bakein_opened', 'bakein_sampled', 'bakein_passed', 'remediated', 'resolved', 'execution_error'].includes(step.kind))
+  return refusal > resumed ? SENTINEL_REPORT_LOOP : SENTINEL_LOOP
+}
+
+/** Map persisted facts onto the one rail shared by the card and theater. */
+export function stageIdForEvent(kind: string, event: Record<string, unknown> = {}): string | null {
+  const direct: Record<string, string> = {
+    detected: 'detector',
+    condition_cleared: 'detector',
+    awaiting_confirmation: 'confirm',
+    investigation_session_started: 'confirm',
+    evidence_collected: 'confirm',
+    retrieval_completed: 'confirm',
+    preflight: 'preflight',
+    declined: 'preflight',
+    remediation_started: 'act',
+    remediation_committed: 'act',
+    remediated: 'act',
+    bakein_opened: 'watch',
+    bakein_sampled: 'watch',
+    bakein_passed: 'verify',
+    bakein_regressed: 'verify',
+    remediation_completed: 'verify',
+    remediation_reverted: 'verify',
+    revert_unverified: 'verify',
+    resolved: 'verify',
+    no_safe_action: 'gate',
+    escalated: 'handoff',
+    escalation_cleared: 'handoff',
+  }
+  if (direct[kind]) return direct[kind]
+  if (kind === 'business_decision_recorded') {
+    const decision = event.decision && typeof event.decision === 'object'
+      ? event.decision as Record<string, unknown>
+      : {}
+    if (decision.state === 'escalated') return 'handoff'
+    if (decision.state === 'resolved') return 'verify'
+    if (decision.state === 'observing') return 'watch'
+    if (decision.state === 'action_ready') return 'preflight'
+    return 'confirm'
+  }
+  return null
 }
 
 /* Which rail steps a sentinel chain actually reached, read off its timeline. */
@@ -81,6 +122,8 @@ export function currentRound<T extends { kind: string }>(timeline: T[]): T[] {
   const kinds = timeline.map((s) => s.kind)
   const end = kinds.lastIndexOf('escalated')
   if (end < 0) return timeline
+  const resumed = timeline.slice(end + 1).some(step => ['preflight', 'remediation_started', 'remediation_committed', 'bakein_opened', 'bakein_sampled', 'bakein_passed', 'remediated', 'resolved', 'condition_cleared', 'escalation_cleared', 'execution_error'].includes(step.kind))
+  if (resumed) return timeline.slice(Math.max(0, kinds.slice(0, end).lastIndexOf('detected')))
   const start = kinds.slice(0, end).lastIndexOf('detected')
   return timeline.slice(start < 0 ? end : start, end + 1)
 }

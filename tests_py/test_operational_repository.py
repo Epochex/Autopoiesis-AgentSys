@@ -62,4 +62,5 @@ def test_postgres_schema_declares_all_business_objects_and_append_only_events() 
     assert "incident_dossier" in sql
     assert "risk_pattern" in sql
     assert "network_feature" in sql
+    assert "payload_sha256" in sql
     assert "operational_memory_events is append-only" in sql

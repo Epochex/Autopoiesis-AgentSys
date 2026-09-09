@@ -192,7 +192,43 @@ _STATIC_RUNBOOK = (
     "conditions stay under observation. Provider owned or otherwise out of scope "
     "faults are escalated with evidence and no local modification. For an in scope "
     "fault prepare the smallest reversible change and identify its expected state "
-    "transition rollback trigger and approval owner. Never infer permission from an "
+    "transition rollback trigger and approval owner. "
+    "Classify every input by source role before analysis. A direct device or host "
+    "readback establishes current state. A bounded event query establishes the "
+    "incident timeline and frequency. A historical case proposes a useful probe. "
+    "A manual passage explains product behavior and supplies a repair reference. "
+    "Record observation time query time and ingestion delay so a stale archive row "
+    "cannot outweigh a fresh readback. If the current state conflicts with an event "
+    "archive keep both and investigate clock skew delayed delivery and recovery after "
+    "the event. Build a blast radius from distinct assets peers interfaces services "
+    "and failure types. Separate one-device faults from shared dependency failures by "
+    "checking a healthy peer over the same path. Construct at least two plausible "
+    "causes and choose the next read by how strongly it separates them. A probe earns "
+    "a conclusion only when its output has a stored predicate and evidence identity. "
+    "Correlate configuration revisions software versions administrative actions and "
+    "topology changes with the first observed failure. Compare the relevant objects "
+    "before and after the change instead of treating temporal proximity as causality. "
+    "For packet delivery inspect source identity route choice neighbor resolution "
+    "interface state policy match translation session state and return path. For name "
+    "resolution inspect client resolver configuration authoritative answers cache age "
+    "reachability and timeouts. For authentication inspect the target device time "
+    "window source diversity account status method lockout threshold and audit action. "
+    "For service failure inspect unit state restart count dependency state recent logs "
+    "resource pressure and endpoint readback. For cluster and container failures inspect "
+    "placement readiness dependency endpoints resource limits events and network policy. "
+    "For tunnels inspect control association data association peer reachability route "
+    "selection selectors proposals certificates lifetime and packet counters. For "
+    "SD-WAN inspect member state SLA latency loss jitter route selection and state change "
+    "time. Treat absent data as a collection failure with a named source and retry path. "
+    "Bound every response before adding it to model context, while keeping the complete "
+    "source receipt outside the prompt. Deduplicate repeated events by stable identity, "
+    "then retain counts first and last timestamps and distinct entities as incident "
+    "features. Before a change capture the current configuration revision management "
+    "reachability and rollback handle. After a change read the target signal and guard "
+    "signals over both a fast regression window and a longer stability window. Store a "
+    "future memory only after verification, and attach the symptom decisive observations "
+    "root cause applicable assets probes acceptance signal outcome and source trace. "
+    "Never infer permission from an "
     "alert. Execute only after explicit human approval through an authorized change "
     "path. After a change repeat the original probes and verify the user visible symptom plus the "
     "supporting device state. Stop when verification fails or new evidence conflicts "
@@ -434,8 +470,21 @@ def _memory_line(record: MemoryRecord) -> str:
         )
     if record.source_trace_ids:
         timeline.append("traces=" + ",".join(record.source_trace_ids[-3:]))
+    if record.claims:
+        timeline.append(f"quality={record.quality_score:.2f}")
     prefix = f" [{' '.join(timeline)}]" if timeline else ""
-    return f"{record.tier}{prefix}: {record.text}"
+    if record.claims:
+        content = " | ".join(
+            f"{claim.kind}={claim.statement}"
+            + (
+                f" [evidence={','.join(claim.evidence_ids[:4])}]"
+                if claim.evidence_ids else ""
+            )
+            for claim in record.claims[:8]
+        )
+    else:
+        content = record.text
+    return f"{record.tier}{prefix}: {content}"
 
 
 def _token_count(text: str) -> int:

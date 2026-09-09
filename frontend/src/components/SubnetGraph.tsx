@@ -1,3 +1,4 @@
+import { AnalysisStatus } from './AnalysisStatus'
 import { useMemo } from 'react'
 import type { DeviceProfile, GraphAnalysis, GraphDevice, ProfilePeer, SubnetGraph } from '../types'
 import type { Lang } from '../i18n'
@@ -179,7 +180,7 @@ export function SubnetGraphLayer({
   showPanel: boolean
   onHover: (ip: string | null) => void
   onFocus: (ip: string | null) => void
-  onAnalyze: () => void
+  onAnalyze: (force?: boolean) => void
   onCloseAnalysis: () => void
 }) {
   const zh = lang === 'zh'
@@ -600,7 +601,7 @@ export function SubnetGraphLayer({
             {st.edges - st.observedEdges} {zh ? '推断' : 'inferred'} · <b>{graph.clusters.length}</b> {zh ? '社区' : 'communities'}
           </div>
           {!analysis && graph.cidr !== 'mem://autopoiesis' ? (
-            <button className="sg-cta" onClick={onAnalyze}>
+            <button className="sg-cta" onClick={() => onAnalyze(false)}>
               ⚡ {zh ? 'Agent 关联分析' : 'AGENT · CORRELATE'}
             </button>
           ) : null}
@@ -613,16 +614,12 @@ export function SubnetGraphLayer({
         <foreignObject x={20} y={620} width={640} height={372} className="sg-tip-fo">
           <div className="sg-panel">
             <div className="sg-panel-h">
-              <span>{zh ? 'AGENT · 网段关联模型' : 'AGENT · SEGMENT MODEL'} · {analysis.cidr}</span>
+              <span>{zh ? '网段观测与关联研判' : 'SEGMENT OBSERVATIONS AND ASSESSMENT'} · {analysis.cidr}</span>
               <button onClick={onCloseAnalysis}>✕</button>
             </div>
-            {analysis.loading ? (
-              <div className="sg-panel-b sg-wait">{zh ? '正在关联全网设备…' : 'correlating every host…'}</div>
-            ) : analysis.error ? (
-              <div className="sg-panel-b sg-err">{analysis.error}</div>
-            ) : (
               <div className="sg-panel-b">
                 <p className="sg-sum">{analysis.summary}</p>
+                <AnalysisStatus value={analysis} lang={lang} onAnalyze={onAnalyze}/>
                 <ul className="sg-pats">
                   {(analysis.patterns ?? []).map((p, i) => (
                     <li key={i} className={`sev-${p.severity}`}>
@@ -641,7 +638,6 @@ export function SubnetGraphLayer({
                   <div><i className="bad">{zh ? '盲区' : 'BLIND SPOT'}</i>{analysis.blindSpot}</div>
                 </div>
               </div>
-            )}
           </div>
         </foreignObject>
       ) : null}

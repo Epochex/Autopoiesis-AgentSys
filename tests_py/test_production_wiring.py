@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from core.memory.store import MemoryRecord, TieredMemoryStore
 from core.orchestrator.evolving_service import EvolvingRCAService
+from core.remediate.sentinel import Detection
 from core.skills.registry import SkillRegistry
 from domains.network_rca.incident_memory import consolidate_incident_timeline
 
@@ -106,9 +107,18 @@ def test_sentinel_memory_sync_never_blocks_the_next_detection_cycle(monkeypatch)
         slow_memory_sync,
     )
     sentinel = sentinel_wiring._LearningSentinel(
-        detectors=[lambda: []],
-        execute=lambda *_args, **_kwargs: {},
-        preflight=lambda *_args, **_kwargs: {},
+        detectors=[lambda: [Detection(
+            detector="failed_units",
+            family="service_health",
+            subject="demo-api.service",
+            severity="high",
+            summary="failed",
+            action="restart_unit",
+            target="demo-api.service",
+        )]],
+        execute=lambda *_args, **_kwargs: {"verdict": {"outcome": "passed", "samples": []}},
+        preflight=lambda *_args, **_kwargs: {"eligible": True},
+        confirm_polls=1,
     )
 
     started = time.monotonic()

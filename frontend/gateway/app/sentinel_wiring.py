@@ -116,7 +116,8 @@ class _LearningSentinel(Sentinel):
         result = super().poll_once(detectors, blocking=blocking)
         if result.get("busy"):
             return result
-        _schedule_completed_incident_memory()
+        if result.get("memory_sync_due"):
+            _schedule_completed_incident_memory()
         return result
 
 

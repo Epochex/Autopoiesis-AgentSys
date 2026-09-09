@@ -1,0 +1,78 @@
+.change-workbench { padding: 20px 0; color: var(--ink, #171916); }
+.change-workbench > header { display: flex; justify-content: space-between; align-items: start; border-bottom: 1px solid #aeb0a6; padding-bottom: 14px; gap: 20px; }
+.change-workbench h3 { font-size: 22px; margin: 0 0 8px; }
+.change-workbench p { font-size: 14px; line-height: 1.7; margin: 7px 0; }
+.change-workbench button, .change-workbench input, .change-workbench select, .change-workbench textarea { font: inherit; padding: 9px 12px; border: 1px solid #a5a89d; background: #efeee9; color: #171916; }
+.change-workbench button { cursor: pointer; }
+.change-workbench button:disabled { opacity: .5; cursor: default; }
+.change-workbench label { display: grid; gap: 7px; font-size: 14px; }
+.change-workbench input, .change-workbench textarea, .change-workbench select { min-width: 0; width: 100%; box-sizing: border-box; }
+.change-workbench textarea { min-height: 75px; }
+.change-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; padding-top: 20px; }
+.change-layout aside { border-right: 1px solid #b8bbaf; padding-right: 14px; }
+.change-layout aside button { display: grid; text-align: left; gap: 7px; width: 100%; border: 0; border-bottom: 1px solid #c7c9bf; background: transparent; margin-bottom: 8px; }
+.change-layout aside button.selected { border-left: 3px solid #171916; background: #dddcd5; }
+.change-layout aside small { overflow-wrap: anywhere; line-height: 1.6; }
+.change-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.change-fields .wide { grid-column: 1/-1; }
+.change-workbench pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; margin: 5px 0; max-height: 360px; overflow: auto; }
+.change-summary { border-bottom: 1px solid #aeb0a6; padding-bottom: 16px; }
+.change-summary > span { display: inline-block; padding: 4px 8px; background: #ccff00; margin-bottom: 10px; font-size: 13px; }
+.change-summary small { display: block; margin-top: 12px; overflow-wrap: anywhere; }
+.change-diff table { border-collapse: collapse; table-layout: fixed; width: 100%; font-size: 13px; }
+.change-diff th, .change-diff td { border-bottom: 1px solid #c7c9bf; padding: 10px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.change-diff th:first-child { width: 20%; }
+.change-diff td:nth-child(2) { background: #e3dfda; }
+.change-diff td:nth-child(3) { background: #e2e7d8; }
+.change-approval { padding: 20px 0; display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.change-approval label { flex: 1 1 300px; }
+.change-events { list-style: none; padding: 0; }
+.change-events li { display: grid; grid-template-columns: 85px minmax(0, 1fr); gap: 16px; padding: 12px 0; border-bottom: 1px solid #c7c9bf; font-size: 13px; }
+.change-workbench summary { cursor: pointer; }
+.change-error { padding: 12px; border-left: 3px solid #b83549; background: #eee0dc; }
+.change-workbench { background: #e7e7e9; padding: clamp(18px, 3vw, 48px); font-family: var(--font-display, sans-serif); }
+.change-workbench > header { border-bottom: 2px solid #171916; padding-bottom: 26px; }
+.change-workbench > header h3 { font-size: clamp(28px, 3vw, 44px); letter-spacing: -.035em; margin: 12px 0; }
+.change-workbench mark { color: inherit; background: #ccff00; padding: 0 5px; }
+.change-eyebrow { font-size: 12px; letter-spacing: .1em; }
+.change-workbench button { transition: background 160ms ease, border-color 160ms ease; min-height: 42px; }
+.change-workbench button:hover:not(:disabled) { background: #dce6bb; border-color: #171916; }
+.change-workbench :is(button,input,select,textarea,summary):focus-visible { outline: 2px solid #171916; outline-offset: 4px; }
+.change-layout { grid-template-columns: 230px minmax(0, 1fr); gap: clamp(24px, 4vw, 64px); padding-top: 32px; }
+.change-layout main { min-width: 0; }
+.change-layout aside button.selected { border-left: 4px solid #171916; background: #ccff00; }
+.change-layout aside small { color: #555750; font-size: 12px; }
+.change-layout aside b { font-size: 15px; }
+.change-fields { gap: 24px; }
+.change-fields > button, .change-primary { background: #171916 !important; color: #ccff00 !important; border-color: #171916 !important; }
+.change-workbench :is(input,select,textarea) { background: #f4f4f1; border: 0; border-bottom: 1px solid #93968d; min-height: 44px; }
+.change-summary { padding-bottom: 24px; }
+.change-summary h3 { font-size: 28px; }
+.change-summary > span { background: transparent; border-left: 3px solid #171916; padding-left: 9px; }
+.change-purpose { font-size: 18px !important; max-width: 65ch; }
+.change-target { overflow-wrap: anywhere; color: #42463f; }
+.change-target > span { padding: 0 12px; }
+.change-audit { font-size: 12px; margin: 14px 0; color: #4c5149; overflow-wrap: anywhere; }
+.change-steps { display: flex; gap: 24px; margin: 24px 0; }
+.change-steps button { flex: 1; display: flex; align-items: center; gap: 12px; background: transparent; border: 0; border-bottom: 2px solid #b9bdb3; text-align: left; padding: 16px; }
+.change-steps button[aria-pressed=true] { background: #ccff00; border-color: #171916; }
+.change-steps button span { font-size: 12px; }
+.change-steps button b { margin-left: auto; font-size: 22px; }
+.change-diff h4 { font-size: 16px; margin: 24px 0 14px; }
+.change-diff h4 small { font-weight: normal; color: #555; margin-left: 16px; }
+.change-diff th, .change-diff td { padding: 16px; }
+.change-diff td:nth-child(2) { background: #eeeeed; }
+.change-diff td:nth-child(3) { background: #edf4d7; border-left: 3px solid #ccff00; }
+.change-diff pre { font-size: 14px; }
+.change-control { padding: 15px 0; border-bottom: 1px solid #c4c6bf; font-size: 13px; }
+.change-control label { max-width: 560px; margin: 15px 0; }
+.change-observation { padding: 22px 0 30px; }
+.change-observation strong { font-size: 52px; font-weight: 600; }
+.change-observation strong small { font-size: 16px; font-weight: normal; }
+.change-health { display: flex; gap: 40px; margin-top: 24px; flex-wrap: wrap; }
+.change-health dt { color: #53584f; font-size: 13px; }
+.change-health dd { font-size: 20px; margin: 8px 0 0; }
+.change-events li { border-left: 2px solid #b8bdb1; padding-left: 16px; }
+.change-events li:last-child { border-left-color: #171916; }
+@media (prefers-reduced-motion: reduce) { .change-workbench button { transition: none; } }
+@media (max-width: 900px) { .change-layout { grid-template-columns: 1fr; } .change-layout aside { display: flex; overflow: auto; border-right: 0; max-height: 150px; } .change-layout aside button { min-width: 180px; } .change-fields { grid-template-columns: 1fr; } }

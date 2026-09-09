@@ -33,6 +33,9 @@ export interface RtTriggers { count: number; live: boolean; source: string; note
 export interface RtIntent { tier: string; zh: string; en: string }
 
 export interface Case {
+  case_id?: string | null
+  subject?: string | null
+  raw?: unknown
   id: string
   flow: FlowKind
   label: RtI18n
@@ -148,7 +151,7 @@ export const RETRIEVAL_FIXTURE: RetrievalResp = {
       id: 'case_showroom_unreachable', flow: 'memory_recall',
       label: { zh: 'showroom→office 不可达', en: 'showroom→office unreachable' },
       query: 'Traffic from 192.168.1.0/24 showroom to 192.168.16.0/20 office is unreachable.',
-      intent: { tier: 'library_recall', zh: '查已有记录 · 找到设备资料和处理办法', en: 'search records · found asset info and how-tos' },
+      intent: { tier: 'library_recall', zh: '查询目的 · 设备资料和处置步骤', en: 'search records · found asset info and how-tos' },
       corpus: { size: 5, source: 'R230 运行记忆(seed)' },
       triggers: { count: 5, live: true, source: 'artifacts/network_rca_phase1_trace.jsonl · memory_read', note: { zh: '一期落盘 trace 中 5 个真实网络 RCA 案例各触发一次', en: '5 real network-RCA cases in the one persisted phase-1 trace' } },
       tiers: [
@@ -172,7 +175,7 @@ export const RETRIEVAL_FIXTURE: RetrievalResp = {
       id: 'case_eno1_no_carrier', flow: 'memory_recall',
       label: { zh: 'eno1 无载波', en: 'eno1 no carrier' },
       query: 'Dell R230 eno1 reports no carrier; determine whether this is a NIC fault.',
-      intent: { tier: 'library_recall', zh: '查已有记录 · 找到设备资料和排障办法', en: 'search records · found asset info and troubleshooting how-to' },
+      intent: { tier: 'library_recall', zh: '查询目的 · 设备资料和排障步骤', en: 'search records · found asset info and troubleshooting how-to' },
       corpus: { size: 5, source: 'R230 运行记忆(seed)' },
       triggers: { count: 5, live: true, source: 'artifacts/network_rca_phase1_trace.jsonl · memory_read', note: { zh: '与上一案例同属一期落盘的 5 个真实案例', en: 'same persisted phase-1 batch of 5 real cases' } },
       tiers: [
@@ -253,8 +256,8 @@ const FIXTURE_EN: Record<string, string> = {
   '结果可用 · 采用前 4 篇': 'Results usable · use the top 4 documents',
   '历史事件 INC-2041 · 管理口锁定': 'Historical incident INC-2041 · management lockout',
   '原始证据 · 直接命中': 'Raw evidence · direct match',
-  '查已有记录 · 找到设备资料和处理办法': 'Search records · found asset info and how-tos',
-  '查已有记录 · 找到设备资料和排障办法': 'Search records · found asset info and troubleshooting how-to',
+  '查询目的 · 设备资料和处置步骤': 'Search records · found asset info and how-tos',
+  '查询目的 · 设备资料和排障步骤': 'Search records · found asset info and troubleshooting how-to',
   '查知识库资料': 'Search the knowledge base',
   '排障时先做这一步': 'First troubleshooting step',
   '无生产 trace · eval-only': 'No production trace · eval-only',

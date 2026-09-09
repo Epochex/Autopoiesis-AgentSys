@@ -4,19 +4,32 @@ import type { RcaCase, RcaSnapshot } from './types'
 import { type Lang } from './i18n'
 import { TopologyCanvas } from './components/TopologyCanvas'
 import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components/ThreatCard'
-import { TrajectoryPage } from './components/TrajectoryPage'
-import { CostPage } from './components/CostPage'
 import { LiveAlerts } from './components/LiveAlerts'
-import { DiagnosePage } from './components/DiagnosePage'
-import { RetrievalPage } from './components/RetrievalPage'
-import { BenchConsole } from './components/BenchConsole'
 import { TopoSearch } from './components/TopoSearch'
-import { TrajectoryBench } from './components/TrajectoryBench'
-import { SituationalOverview } from './components/SituationalOverview'
 import { ProductionTopologyPage } from './components/ProductionTopologyPage'
 import { lazy, Suspense } from 'react'
+import { InvestigationFlowBar } from './components/InvestigationFlowBar'
+import {
+  createInvestigationContext,
+  investigationView,
+  readInvestigationContext,
+  visitInvestigationContext,
+  writeInvestigationContext,
+  type InvestigationIntent,
+  type InvestigationSourceEventInput,
+  type InvestigationView,
+} from './components/investigation-context'
 
 const Constellation3D = lazy(() => import('./components/Constellation3D').then((m) => ({ default: m.Constellation3D })))
+const TrajectoryPage = lazy(() => import('./components/TrajectoryPage').then((m) => ({ default: m.TrajectoryPage })))
+const CostPage = lazy(() => import('./components/CostPage').then((m) => ({ default: m.CostPage })))
+const DiagnosePage = lazy(() => import('./components/DiagnosePage').then((m) => ({ default: m.DiagnosePage })))
+const RetrievalPage = lazy(() => import('./components/RetrievalPage').then((m) => ({ default: m.RetrievalPage })))
+const BenchConsole = lazy(() => import('./components/BenchConsole').then((m) => ({ default: m.BenchConsole })))
+const TrajectoryBench = lazy(() => import('./components/TrajectoryBench').then((m) => ({ default: m.TrajectoryBench })))
+const GlobalMemoryPage = lazy(() => import('./components/GlobalMemoryPage').then((m) => ({ default: m.GlobalMemoryPage })))
+const CaseInvestigationPage = lazy(() => import('./components/CaseInvestigationPage').then((m) => ({ default: m.CaseInvestigationPage })))
+const SituationalOverview = lazy(() => import('./components/SituationalOverview').then((m) => ({ default: m.SituationalOverview })))
 
 type MeshModel = {
   links: { src: string; dst: string; relation: string; strength: number }[]
@@ -24,13 +37,22 @@ type MeshModel = {
 }
 import type { DataStats, Device, GraphAnalysis, SubnetGraph, TheaterEvent, Topology } from './types'
 
-type View = 'console' | 'overview' | 'trajectory' | 'diagnose' | 'retrieval' | 'cost'
+type View = InvestigationView | 'network' | 'memory' | 'cost'
 type Scenario = 'live' | 'bench'
 
 type State =
   | { s: 'load' }
   | { s: 'err'; m: string }
   | { s: 'ok'; d: RcaSnapshot }
+
+const sourceFromTheater = (event?: TheaterEvent): InvestigationSourceEventInput => ({
+  id: event?.id,
+  kind: event?.kind,
+  observedAt: event?.ts,
+  summary: event?.summary,
+  severity: event?.severity,
+  scope: event?.scope,
+})
 
 function App() {
   const [lang, setLang] = useState<Lang>('zh')
@@ -39,6 +61,9 @@ function App() {
   // diagnose page opens focused on that subject instead of everything.
   const [traceSubject, setTraceSubject] = useState<string | null>(null)
   const [traceCaseId, setTraceCaseId] = useState<string | null>(null)
+  const [investigationContext, setInvestigationContext] = useState(readInvestigationContext)
+  const [investigationActive, setInvestigationActive] = useState(false)
+  const focusedContext = investigationActive ? investigationContext : null
   const [scenario, setScenario] = useState<Scenario>('live')
   const [provider, setProvider] = useState('rule')
   const [st, setSt] = useState<State>({ s: 'load' })
@@ -65,6 +90,53 @@ function App() {
   const [allGraphs, setAllGraphs] = useState<Record<string, SubnetGraph>>({})
   // bench full-chain theater: the benchmark memory topology (same snapshot BenchConsole uses)
   const [benchSnap, setBenchSnap] = useState<{ topology: Topology; stats: DataStats; graph: SubnetGraph; cidr: string } | null>(null)
+
+  useEffect(() => writeInvestigationContext(investigationContext), [investigationContext])
+
+  const beginInvestigation = useCallback((
+    subject: string,
+    caseId?: string | null,
+    sourceEvent: InvestigationSourceEventInput = {},
+    originView?: InvestigationView,
+    intent: InvestigationIntent = 'evidence_hypotheses',
+    navigate = true,
+  ) => {
+    const sourceView: InvestigationView = originView ?? (view === 'cost' || view === 'network' || view === 'memory' ? 'overview' : view)
+    const started = createInvestigationContext({
+      caseId,
+      subject,
+      sourceEvent,
+      originView: sourceView,
+      intent: 'event_facts',
+    })
+    const focused = visitInvestigationContext(started, intent, navigate ? investigationView(intent) : sourceView)
+    setTraceSubject(subject)
+    setTraceCaseId(caseId ?? null)
+    setInvestigationActive(true)
+    setInvestigationContext(focused)
+    if (navigate) setView(investigationView(intent))
+  }, [view])
+
+  const navigateInvestigation = useCallback((intent: InvestigationIntent) => {
+    setInvestigationActive(true)
+    setInvestigationContext((current) => current ? visitInvestigationContext(current, intent) : current)
+    setView(investigationView(intent))
+  }, [])
+
+  const openInvestigationView = useCallback((nextView: InvestigationView, intent: InvestigationIntent) => {
+    setInvestigationActive(true)
+    setInvestigationContext((current) => current
+      ? visitInvestigationContext(current, intent, nextView)
+      : current)
+    setView(nextView)
+  }, [])
+
+  const openGlobalView = (nextView: View) => {
+    setInvestigationActive(false)
+    setTraceSubject(null)
+    setTraceCaseId(null)
+    setView(nextView)
+  }
 
   /* the theater expands EVERY subnet at once, so it needs every mined graph */
   const loadAllGraphs = useCallback(async (cidrs: string[]) => {
@@ -242,7 +314,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (scenario === 'live' && view === 'trajectory') void load(provider)
+    if (scenario === 'bench' && view !== 'trajectory') void load(provider)
   }, [provider, load, scenario, view])
 
   const researchDevice = async (dev: Device | null, cidr: string) => {
@@ -303,17 +375,19 @@ function App() {
         </div>
         <div className="top-right">
           <div className="scen" role="group" aria-label={lang === 'zh' ? '场景切换' : 'scenario'}>
-            <button className={scenario === 'live' ? 'on' : ''} onClick={() => setScenario('live')}>{lang === 'zh' ? '内网实时' : 'LIVE NET'}</button>
-            <button className={scenario === 'bench' ? 'on' : ''} onClick={() => { setScenario('bench'); if (view === 'overview') setView('console') }}>{lang === 'zh' ? '基准 · ITBench+LME' : 'BENCHMARK'}</button>
+            <button className={scenario === 'live' ? 'on' : ''} onClick={() => setScenario('live')}>{lang === 'zh' ? '生产环境' : 'PRODUCTION'}</button>
+            <button className={scenario === 'bench' ? 'on' : ''} onClick={() => { setScenario('bench'); setInvestigationActive(false); if (['overview', 'constellation', 'memory', 'investigation'].includes(view)) setView('console') }}>{lang === 'zh' ? '基准 · ITBench+LME' : 'BENCHMARK'}</button>
           </div>
-            <div className="pager">
-              <button className={view === 'console' ? 'on' : ''} onClick={() => setView('console')}>{lang === 'zh' ? '实时图谱' : 'LIVE MAP'}</button>
-              {scenario === 'live' ? <button className={view === 'overview' ? 'on' : ''} onClick={() => setView('overview')}>{lang === 'zh' ? '事件总览' : 'OVERVIEW'}</button> : null}
-              <button className={view === 'trajectory' ? 'on' : ''} onClick={() => setView('trajectory')}>{lang === 'zh' ? '多轮故障回放' : 'MULTI-RUN REPLAY'}</button>
-              <button className={view === 'diagnose' ? 'on' : ''} onClick={() => setView('diagnose')}>{lang === 'zh' ? '诊断处置' : 'DIAGNOSE'}</button>
-              <button className={view === 'retrieval' ? 'on' : ''} onClick={() => setView('retrieval')}>{lang === 'zh' ? '查资料' : 'FIND RECORDS'}</button>
-              <button className={view === 'cost' ? 'on' : ''} onClick={() => setView('cost')}>{lang === 'zh' ? '成本' : 'COST'}</button>
-            </div>
+            <nav className="pager" aria-label={lang === 'zh' ? '常态工作区' : 'Global workspaces'}>
+              <button className={view === 'console' ? 'on' : ''} onClick={() => openGlobalView('console')}>{lang === 'zh' ? '网络态势' : 'NETWORK MAP'}</button>
+              {scenario === 'live' ? <button className={view === 'constellation' ? 'on' : ''} onClick={() => openGlobalView('constellation')}>{lang === 'zh' ? '3D 星图' : '3D MAP'}</button> : null}
+              {scenario === 'live' ? <button className={view === 'overview' ? 'on' : ''} onClick={() => openGlobalView('overview')}>{lang === 'zh' ? '待处理事件' : 'INCIDENTS'}</button> : null}
+              {scenario === 'live' ? <button className={view === 'memory' ? 'on' : ''} onClick={() => openGlobalView('memory')}>{lang === 'zh' ? '长期记忆' : 'LONG-TERM MEMORY'}</button> : <button className={view === 'trajectory' ? 'on' : ''} onClick={() => openGlobalView('trajectory')}>{lang === 'zh' ? '案例与记忆' : 'CASES & MEMORY'}</button>}
+              <button className={view === 'network' ? 'on' : ''} onClick={() => openGlobalView('network')}>{lang === 'zh' ? '网络背景' : 'NETWORK CONTEXT'}</button>
+              <button className={view === 'diagnose' ? 'on' : ''} onClick={() => openGlobalView('diagnose')}>{lang === 'zh' ? '配置与处置' : 'CHANGES & ACTIONS'}</button>
+              <button className={view === 'retrieval' ? 'on' : ''} onClick={() => openGlobalView('retrieval')}>{lang === 'zh' ? '调查依据' : 'SOURCES USED'}</button>
+              <button className={view === 'cost' ? 'on' : ''} onClick={() => openGlobalView('cost')}>{lang === 'zh' ? '成本' : 'COST'}</button>
+            </nav>
 
           {/* The selector governs exactly one thing: the case diagnosis in
               /api/rca/snapshot. Baselines, evolution and the live threat cards
@@ -331,7 +405,7 @@ function App() {
                     className={`eng ${p.id === d.provider ? 'on' : ''} ${off ? 'off' : ''}`}
                     disabled={off}
                     onClick={() => setProvider(p.id)}
-                    title={off ? `${p.label} · ${lang === 'zh' ? '不可达' : 'unreachable'} — ${p.note}` : `${p.label} · ${p.model}`}
+                    title={off ? `${p.label} · ${lang === 'zh' ? '不可达' : 'unreachable'}；${p.note}` : `${p.label} · ${p.model}`}
                   >
                     <span className={`gem ${p.reachable ? 'live' : ''}`} />
                     <span className="eng-name">{p.label.split(' ')[0]}</span>
@@ -353,58 +427,102 @@ function App() {
         </div>
       </header>
 
-      {view === 'console' && scenario === 'live' ? (
+      {scenario === 'live' && focusedContext ? (
+        <InvestigationFlowBar
+          context={focusedContext}
+          lang={lang}
+          onNavigate={navigateInvestigation}
+          onClose={() => {
+            setInvestigationActive(false)
+            setInvestigationContext(null)
+            setTraceSubject(null)
+            setTraceCaseId(null)
+            setView('overview')
+          }}
+        />
+      ) : null}
+
+      {scenario === 'live' && !investigationActive && investigationContext ? <div className="investigation-resume">
+        <span>{lang === 'zh' ? '保留的调查' : 'SAVED INVESTIGATION'} · {investigationContext.subject}</span>
+        <button onClick={() => navigateInvestigation(investigationContext.currentIntent)}>{lang === 'zh' ? '继续调查' : 'RESUME INVESTIGATION'} →</button>
+      </div> : null}
+      <Suspense fallback={<div className="boot"><span className="orbit" /></div>}>
+      {(view === 'console' || view === 'constellation') && scenario === 'live' ? (
         <ProductionTopologyPage
           lang={lang}
-          onOpenCase={(subject, caseId) => {
-            setTraceSubject(subject)
-            setTraceCaseId(caseId ?? null)
-            setView('diagnose')
-          }}
+          focusSubject={focusedContext?.subject ?? (investigationActive ? traceSubject ?? undefined : undefined)}
+          showConstellation={view === 'constellation'}
+          onShowConstellation={(show) => setView(show ? 'constellation' : 'console')}
+          onOpenExposure={() => openGlobalView('network')}
+          onTrackIncident={(subject, event, caseId) => beginInvestigation(
+            subject, caseId, sourceFromTheater(event), view === 'constellation' ? 'constellation' : 'console', 'impact_scope', false,
+          )}
+          onOpenCase={(subject, caseId, sourceEvent) => beginInvestigation(
+            subject, caseId, sourceEvent, view === 'constellation' ? 'constellation' : 'console', 'evidence_hypotheses', true,
+          )}
         />
       ) : view === 'overview' && scenario === 'live' ? (
         <SituationalOverview
           lang={lang}
-          onOpenCase={(subject, caseId) => {
-            setTraceSubject(subject)
-            setTraceCaseId(caseId)
-            setView('diagnose')
+          onOpenCase={(subject, caseId, sourceEvent) => beginInvestigation(
+            subject, caseId, sourceEvent, 'overview', sourceEvent?.kind === 'controlled_demo' ? 'related_memory' : 'evidence_hypotheses', true,
+          )}
+          onOpenTrace={(subject, caseId) => {
+            beginInvestigation(subject, caseId, {}, 'overview', 'impact_scope')
           }}
         />
+      ) : view === 'memory' && scenario === 'live' ? (
+        <GlobalMemoryPage lang={lang} onOpenSource={({ caseId, subject }) => beginInvestigation(subject, caseId, {}, 'trajectory', 'event_facts')} />
+      ) : view === 'investigation' && scenario === 'live' ? (
+        <CaseInvestigationPage
+          lang={lang}
+          caseId={focusedContext?.caseId ?? traceCaseId ?? undefined}
+          subject={focusedContext?.subject ?? traceSubject ?? undefined}
+          onOpenSources={() => navigateInvestigation('retrieval_evidence')}
+          onOpenMemory={() => navigateInvestigation('related_memory')}
+          onOpenActions={() => navigateInvestigation('remediation_readback')}
+        />
+      ) : view === 'network' ? (
+        <DiagnosePage key={`network:${scenario}`} lang={lang} scenario={scenario} workspace="network" />
       ) : view === 'cost' ? (
         <CostPage lang={lang} />
       ) : view === 'retrieval' ? (
-        <RetrievalPage lang={lang} scenario={scenario} />
+        <RetrievalPage lang={lang} scenario={scenario} focusCaseId={focusedContext?.caseId ?? undefined} focusSubject={focusedContext?.subject} />
       ) : view === 'diagnose' ? (
         <DiagnosePage
+          key={`response:${focusedContext?.caseId ?? "global"}`}
+          workspace={scenario === 'bench' ? 'network' : 'response'}
           lang={lang}
           scenario={scenario}
-          focusSubject={traceSubject ?? undefined}
-          focusCaseId={traceCaseId ?? undefined}
+          focusSubject={focusedContext?.subject ?? (investigationActive ? traceSubject ?? undefined : undefined)}
+          focusCaseId={focusedContext?.caseId ?? (investigationActive ? traceCaseId ?? undefined : undefined)}
+          investigationIntent={focusedContext?.currentIntent}
+          onIntentChange={focusedContext ? (intent) => openInvestigationView('diagnose', intent) : undefined}
         />
       ) : view === 'console' && scenario === 'bench' ? (
         <BenchConsole lang={lang} />
       ) : view === 'trajectory' && scenario === 'bench' ? (
-        <TrajectoryBench lang={lang} onTheater={openTheater} />
-      ) : st.s === 'load' ? (
-        <div className="boot"><span className="orbit" /></div>
-      ) : st.s === 'err' ? (
-        <div className="boot err">gateway · {st.m}</div>
-      ) : view === 'trajectory' && d?.datasetReady && c ? (
+        <TrajectoryBench lang={lang} />
+      ) : view === 'trajectory' ? (
         <TrajectoryPage
           key={`${active}:${lang}`}
-          cases={d.cases}
+          cases={d?.cases ?? []}
           lang={lang}
           activeId={active}
           onPick={setActive}
           onTheater={openTheater}
-          onTrace={(subject, caseId) => {
-            setTraceSubject(subject)
-            setTraceCaseId(caseId ?? null)
-            setView('diagnose')
-          }}
-          focusSubject={traceSubject ?? undefined}
+          onSourceChange={(subject, caseId) => beginInvestigation(subject, caseId, {}, 'trajectory', 'related_memory', true)}
+          onTrace={(subject, caseId, event) => beginInvestigation(
+            subject, caseId, sourceFromTheater(event), 'trajectory', 'evidence_hypotheses', true,
+          )}
+          focusSubject={focusedContext?.subject ?? (investigationActive ? traceSubject ?? undefined : undefined)}
+          focusCaseId={focusedContext?.caseId ?? (investigationActive ? traceCaseId ?? undefined : undefined)}
+          focusArea={focusedContext?.currentIntent === 'related_memory' ? 'live-memory' : undefined}
         />
+      ) : st.s === 'load' ? (
+        <div className="boot"><span className="orbit" /></div>
+      ) : st.s === 'err' ? (
+        <div className="boot err">gateway · {st.m}</div>
       ) : d?.datasetReady && s && c ? (
         <>
           {scenario === 'live' ? (
@@ -412,11 +530,9 @@ function App() {
               lang={lang}
               theaterActive={Boolean(theater)}
               activeSubject={theater?.device}
-              onOpen={(subject, event) => {
-                setTraceSubject(subject)
-                setTraceCaseId(null)
+              onOpen={(subject, event, caseId) => {
+                beginInvestigation(subject, caseId, sourceFromTheater(event), view === 'memory' ? 'overview' : view, 'evidence_hypotheses', true)
                 if (theater) openTheater(event)
-                else setView('trajectory')
               }}
             />
           ) : null}
@@ -463,7 +579,7 @@ function App() {
               />
             ) : null}
             {rate !== null ? (
-              <div className="live-rate"><span className="rate-dot" />{rate}/s · R230</div>
+              <div className="live-rate"><span className="rate-dot" />{rate}/s · {lang === 'zh' ? '实时事实流' : 'LIVE FACT STREAM'}</div>
             ) : null}
             {show3D && d.meshes && topo ? (
               <>
@@ -520,6 +636,7 @@ function App() {
       ) : (
         <div className="boot err">{d?.note ?? (lang === 'zh' ? '当前视图没有可用数据' : 'NO DATA FOR THIS VIEW')}</div>
       )}
+      </Suspense>
 
       {/* Bench full-chain theater: standalone full-screen overlay REUSING the live
           TopologyCanvas in theater mode, fed the benchmark memory snapshot. Opened from
