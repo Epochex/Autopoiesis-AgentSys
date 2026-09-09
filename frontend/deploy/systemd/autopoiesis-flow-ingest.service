@@ -1,0 +1,21 @@
+[Unit]
+Description=Autopoiesis normalized flow ingest
+After=autopoiesis-clickhouse.service autopoiesis-flow-collector.service
+Wants=autopoiesis-clickhouse.service autopoiesis-flow-collector.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/data/Autopoiesis-AgentSys
+EnvironmentFile=/etc/autopoiesis.env
+Environment=PYTHONUNBUFFERED=1
+RuntimeDirectory=autopoiesis-flow-ingest
+StateDirectory=autopoiesis-flow-ingest
+ExecStart=/usr/bin/python3 /data/Autopoiesis-AgentSys/frontend/gateway/ingest/flow_ingest.py live
+Restart=on-failure
+RestartSec=5s
+MemoryHigh=256M
+MemoryMax=384M
+
+[Install]
+WantedBy=multi-user.target

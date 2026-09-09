@@ -46,6 +46,15 @@ log "Refresh gateway deps into .venv"
 "$VENV/bin/python" -m pip install --quiet --upgrade pip
 "$VENV/bin/python" -m pip install --quiet -r "$APP_DIR/frontend/gateway/requirements.txt"
 
+log "Install flow telemetry service definitions"
+install -m 0644 "$APP_DIR/frontend/deploy/systemd/autopoiesis-flow-collector.service" /etc/systemd/system/
+install -m 0644 "$APP_DIR/frontend/deploy/systemd/autopoiesis-flow-ingest.service" /etc/systemd/system/
+install -m 0644 "$APP_DIR/frontend/deploy/systemd/autopoiesis-endpoint-flow-probe@.service" /etc/systemd/system/
+systemctl daemon-reload
+if [ "${ENABLE_FLOW_TELEMETRY:-0}" = "1" ]; then
+  "$APP_DIR/frontend/script/install-flow-telemetry.sh" collector
+fi
+
 log "Restart service: $SERVICE"
 systemctl restart "$SERVICE"
 

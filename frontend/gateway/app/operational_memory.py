@@ -458,6 +458,16 @@ class OperationalMemoryService:
 
         source_queries = (
             (
+                f"{database}.alerts",
+                "SELECT alert_ts AS event_ts, alert_id AS event_id, "
+                "src_device_key AS device_key, srcip, dstip, 0 AS dstport, "
+                "'alert' AS action, service, 'event' AS type, rule_id AS subtype, "
+                "rule_id AS risk_type, 'real' AS provenance "
+                f"FROM {database}.alerts "
+                f"WHERE alert_ts >= now() - INTERVAL {lookback_days} DAY "
+                "ORDER BY alert_ts DESC LIMIT 10000",
+            ),
+            (
                 f"{database}.security_events",
                 "SELECT event_ts, event_id, if(device_id='', device_name, device_id) AS device_key, "
                 "srcip, dstip, dstport, action, method AS service, "
@@ -780,7 +790,9 @@ class OperationalMemoryService:
         }
 
 
-def build_operational_memory_service() -> OperationalMemoryService:
+def build_operational_memory_service(
+    *, environment_reader: Callable[[], dict[str, Any]] | None = None,
+) -> OperationalMemoryService:
     """Prefer PostgreSQL and report a truthful degraded mode when unavailable."""
     dsn = autopoiesis_env("MEMORY_DSN")
     if dsn:
@@ -792,10 +804,16 @@ def build_operational_memory_service() -> OperationalMemoryService:
                 ),
             )
             repository.initialize_schema()
-            return OperationalMemoryService(repository, durable=True)
+            return OperationalMemoryService(
+                repository, environment_reader=environment_reader, durable=True,
+            )
         except Exception:
             pass
-    return OperationalMemoryService(InMemoryOperationalRepository(), durable=False)
+    return OperationalMemoryService(
+        InMemoryOperationalRepository(),
+        environment_reader=environment_reader,
+        durable=False,
+    )
 
 
 __all__ = ["OperationalMemoryService", "build_operational_memory_service"]

@@ -87,7 +87,7 @@ def test_build_runtime_stream_delta_from_new_alert_feed():
     assert delta["kind"] == "alert"
     assert delta["reason"] == "feed"
     assert delta["feedIds"] == ["feed-alert-1"]
-    assert delta["stageIds"] == ["correlator", "alerts-topic", "cluster-window"]
+    assert delta["stageIds"] == ["collector", "in-process-window", "alert-store"]
 
 
 def test_build_runtime_stream_delta_marks_cluster_suggestion_path():

@@ -113,12 +113,19 @@ def _query(sql: str) -> list[dict[str, Any]]:
         return [{"srcip": "192.168.1.4", "dstip": "8.8.4.4", "action": "accept",
                  "srcintf": "users", "dstintf": "wan1", "service": "HTTPS", "dstport": 443,
                  "country": "United States", "flows": 4, "bytes": 4096,
+                 "sent_bytes": 1024, "received_bytes": 3072,
                  "first_seen": "2026-08-31 11:30:00.000", "last_seen": "2026-08-31 11:59:00.000"}]
     if "GROUP BY srcip,dstip,action" in sql:
-        return [{"srcip": "192.168.1.4", "dstip": "192.168.16.27", "action": "deny",
-                 "srcintf": "users", "dstintf": "servers", "service": "SSH", "dstport": 22,
-                 "flows": 30, "bytes": 0, "first_seen": "2026-08-31 11:00:00.000",
-                 "last_seen": "2026-08-31 11:59:00.000"}]
+        return [
+            {"srcip": "192.168.1.4", "dstip": "192.168.16.27", "action": "deny",
+             "srcintf": "users", "dstintf": "servers", "service": "SSH", "dstport": 22,
+             "flows": 30, "bytes": 0, "sent_bytes": 0, "received_bytes": 0,
+             "first_seen": "2026-08-31 11:00:00.000", "last_seen": "2026-08-31 11:59:00.000"},
+            {"srcip": "192.168.1.4", "dstip": "192.168.1.1", "action": "accept",
+             "srcintf": "users", "dstintf": "users", "service": "DNS", "dstport": 53,
+             "flows": 40, "bytes": 8000, "sent_bytes": 2000, "received_bytes": 6000,
+             "first_seen": "2026-08-31 10:00:00.000", "last_seen": "2026-08-31 11:58:00.000"},
+        ]
     if "GROUP BY srcip ORDER BY unique_events" in sql:
         return [{"srcip": "8.8.8.8", "events": 10, "unique_events": 10,
                  "event_types": ["management_probe"], "ports": [443],
@@ -161,6 +168,10 @@ def test_projection_uses_live_sources_and_keeps_test_cases_out(tmp_path, monkeyp
     assert result["inventory"]["active24h"] == 2
     assert result["behaviorDeviations"][0]["asset"] == "192.168.1.4"
     assert result["crossSegment"]["records"][0]["action"] == "deny"
+    assert result["crossSegment"]["records"][0]["sentBytes"] == 0
+    assert result["gatewayServices"]["records"][0]["destination"] == "192.168.1.1"
+    assert result["gatewayServices"]["records"][0]["sentBytes"] == 2000
+    assert result["gatewayServices"]["records"][0]["receivedBytes"] == 6000
     assert result["candidatePaths"][0]["state"] == "blocked"
     assert result["candidatePaths"][0]["steps"][1]["label"] == "策略 8 · deny"
     assert [case["caseId"] for case in result["cases"]] == ["case-real"]
@@ -168,6 +179,8 @@ def test_projection_uses_live_sources_and_keeps_test_cases_out(tmp_path, monkeyp
     assert result["funnel"]["facts"] == 1000
     assert result["internetOutbound"]["records"][0]["destination"] == "8.8.4.4"
     assert result["internetOutbound"]["records"][0]["destinationInterface"] == "wan1"
+    assert result["internetOutbound"]["records"][0]["sentBytes"] == 1024
+    assert result["internetOutbound"]["records"][0]["receivedBytes"] == 3072
     assert result["effectMeasurement"]["qualified"] is False
     blind = {item["capability"]: item["state"] for item in result["coverage"]}
     assert blind["same_segment_movement"] == "blind"

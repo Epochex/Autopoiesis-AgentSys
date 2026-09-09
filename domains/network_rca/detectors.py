@@ -117,7 +117,8 @@ def admin_bruteforce(command: Command | None = None, threshold: int = 8,
     # unit, and those are exactly the ones a rehearsal or a remote relay
     # produces. Querying only by unit silently misses them.
     result = command.run([
-        "journalctl", "-t", "sshd", "-t", "ssh", "--since", window, "--no-pager", "-n", "500",
+        "journalctl", "-t", "sshd", "-t", "ssh", "--since", window,
+        "--reverse", "--no-pager", "-n", "500",
     ])
     text = result.stdout or ""
     sources: dict[str, int] = {}

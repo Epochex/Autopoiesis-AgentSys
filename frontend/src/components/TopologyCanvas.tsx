@@ -8,6 +8,7 @@ import { SubnetGraphLayer } from './SubnetGraph'
 import { TheaterStage } from './TheaterStage'
 import { type Threat, type WanThreat } from './ThreatCard'
 import type { Lang } from '../i18n'
+import { GatewayInterfaces, type GatewayDevice } from './GatewayInterfaces'
 
 type Pt = { x: number; y: number }
 export interface ProductionTopologyContext {
@@ -548,7 +549,13 @@ export function TopologyCanvas({
   onCloseTheater,
   onOpenTheater,
   production,
+  managedDevices,
+  gatewayFocus,
+  onGatewayFocus,
 }: {
+  managedDevices?: GatewayDevice[]
+  gatewayFocus?: { deviceId: string; interfaceId?: string } | null
+  onGatewayFocus?: (focus: { deviceId: string; interfaceId?: string } | null) => void
   topo: Topology
   stats: DataStats
   activeKey: string
@@ -593,6 +600,9 @@ export function TopologyCanvas({
    * FortiGate → interfaces → segments. The old core sat at (452,340) of a 1360
    * box, which pinned every mark into the upper-left quadrant. */
   const core: Pt = { x: 700, y: 430 }
+  const gateway = managedDevices?.find(device => device.id === gatewayFocus?.deviceId) ?? managedDevices?.[0]
+  const gatewayExpanded = !!gateway && !!gatewayFocus
+  const toggleGateway = () => { if (gateway) onGatewayFocus?.(gatewayExpanded ? null : { deviceId: gateway.id }) }
   // WAN attack-surface deep data + the in-place offense drill focus. The topology
   // itself reshapes across focus levels (sources → attacker → target); this is the
   // interactive offense layer the left WAN field expands into, not a side panel.
@@ -939,7 +949,7 @@ export function TopologyCanvas({
             </g>
           ) : <WanSiege core={core} atk={layout.atk} asData={asData} wanFocus={wanFocus} setWanFocus={setWanFocus} devByIp={devByIp} distinctSrc={stats.distinctSrc} lockouts={stats.lockouts ?? 0} lang={lang} wan={wan} onWan={onWan} />
         ) : null}
-        {!drilled && !inTheater
+        {!drilled && !inTheater && !gatewayExpanded
           ? layout.ifs.map((f, i) => {
               const focused = drillSub === f.sub?.cidr
               const fade = g === 'attack' || (drillSub && !focused) || !!wan
@@ -954,14 +964,17 @@ export function TopologyCanvas({
 
         {!drilled && !inTheater ? (
           <>
-            <g className="node gw-node appear" style={{ animationDelay: '0.3s' }}>
+            <g className="node gw-node appear" role={gateway ? 'button' : undefined} tabIndex={gateway ? 0 : undefined} aria-label={gateway ? `${gateway.name} · ${lang === 'zh' ? '展开或收起接口关系' : 'Toggle interfaces'}` : undefined} onClick={toggleGateway} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGateway() } }} style={{ animationDelay: '0.3s', cursor: gateway ? 'pointer' : undefined }}>
               <rect x={core.x - 60} y={core.y - 32} width="120" height="64" rx="1" />
-              <text x={core.x} y={core.y - 5} className="n-title">{topo.core.name}</text>
-              <text x={core.x} y={core.y + 14} className="n-sub">{topo.core.ip}</text>
+              <text x={core.x} y={core.y - 5} className="n-title">{gateway ? 'FortiGate' : topo.core.name}</text>
+              <text x={core.x} y={core.y + 14} className="n-sub">{gateway ? `${gateway.interfaces.filter(i => i.addresses.length).length} ${lang === 'zh' ? '个有地址接口' : 'interfaces'} ${gatewayExpanded ? '▾' : '▸'}` : topo.core.ip}</text>
+              {gateway && <text x={core.x} y={core.y + 64} className="n-sub">{gateway.name} · {gateway.serial}</text>}
             </g>
             <CoreReticle core={core} />
           </>
         ) : null}
+
+        {!drilled && !inTheater && gatewayExpanded && gateway && <GatewayInterfaces device={gateway} selected={gatewayFocus?.interfaceId} subnets={topo.subnets} lang={lang} onSelect={interfaceId => onGatewayFocus?.({ deviceId: gateway.id, interfaceId })} onSubnet={onSub} />}
 
         {/* drilled breadcrumb — the collapsed gateway chain, one click back to全网
             (hidden during ego focus, which shows its own "返回网段" control) */}
@@ -1030,14 +1043,16 @@ export function TopologyCanvas({
 
         {layout.ifs.map((f, i) => {
           const focused = drillSub === f.sub?.cidr
-          if (drilled || inTheater) return null
+          if (drilled || inTheater || gatewayExpanded) return null
           const dimIf = g === 'attack' || (drillSub && !focused) || !!wan
           const highThreat = f.sub?.devices?.some((dv) => dv.threat === 'high')
           return (
             <g key={`ifn${i}`} className={`node appear ${dimIf ? 'node-dim' : ''}`} style={{ animationDelay: `${0.5 + i * 0.06}s` }}>
+              <g role={gateway ? 'button' : undefined} tabIndex={gateway ? 0 : undefined} aria-label={gateway ? `${gateway.name} / ${f.it.name}` : undefined} style={{ cursor: gateway ? 'pointer' : undefined }} onClick={() => { const intf = gateway?.interfaces.find(it => it.name === f.it.name); if (gateway && intf) onGatewayFocus?.({ deviceId: gateway.id, interfaceId: intf.id }) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const intf = gateway?.interfaces.find(it => it.name === f.it.name); if (gateway && intf) onGatewayFocus?.({ deviceId: gateway.id, interfaceId: intf.id }) } }}>
               <rect x={f.p.x - 52} y={f.p.y - 16} width="104" height="32" className="m-intf" />
               <text x={f.p.x} y={f.p.y - 1} className="n-intf">{f.it.name}</text>
               <text x={f.p.x} y={f.p.y + 12} className="n-sub">{short(f.it.flows)} {lang === 'zh' ? '连接' : 'conns'}</text>
+              </g>
               {f.sub ? (
                 <g
                   className={`subnet ${focused ? 'open' : ''} ${hover3DCidr === f.sub.cidr ? 'mapped' : ''}`}
@@ -1462,7 +1477,7 @@ export function TopologyCanvas({
             }
             const svcOf = (r: ProfilePeer) => r.services.slice(0, 2).join('/') || r.ports.slice(0, 2).map((x) => `:${x}`).join(' ')
             const peerRow = (r: ProfilePeer) => (
-              <div key={`${r.dir}${r.ip}`} className={`dp-row ${r.deny > r.accept ? 'denied' : ''}`}>
+              <div key={`${r.dir}:${r.ip}:${r.action ?? ''}:${r.services.join(',')}:${r.ports.join(',')}`} className={`dp-row ${r.deny > r.accept ? 'denied' : ''}`}>
                 <span className="dp-dir">{r.dir === 'out' ? '▸' : '◂'}</span>
                 <span className="dp-ip" title={r.rdns ? r.ip : undefined}>
                   {r.rdns ?? r.ip}
@@ -1480,9 +1495,11 @@ export function TopologyCanvas({
             const outboundPublic = newestFirst((p.outbound ?? []).filter((peer) => peer.external && (peer.bytes > 0 || peer.accept > 0)))
             const outboundPrivate = newestFirst((p.outbound ?? []).filter((peer) => !peer.external && (peer.bytes > 0 || peer.accept > 0)))
             const inboundUseful = newestFirst((p.inbound ?? []).filter((peer) => peer.bytes > 0 || peer.accept > 0))
+            const blockedOutbound = newestFirst((p.outbound ?? []).filter((peer) => !peer.external && peer.deny > 0 && peer.accept === 0 && peer.bytes === 0))
+            const blockedInbound = newestFirst((p.inbound ?? []).filter((peer) => !peer.external && peer.deny > 0 && peer.accept === 0 && peer.bytes === 0))
             const hourMax = Math.max(...(p.hours ?? [0]), 1)
             const hasHours = (p.hours ?? []).some((count) => count > 0)
-            const empty = !p.loading && !(livePublic.length || outboundPublic.length || outboundPrivate.length || inboundUseful.length)
+            const empty = !p.loading && !(livePublic.length || outboundPublic.length || outboundPrivate.length || inboundUseful.length || blockedOutbound.length || blockedInbound.length)
             return (
               <foreignObject x={VBW - 516} y={90} width={496} height={860} className="ego-fo">
                 <div className="dp-panel xl">
@@ -1626,6 +1643,18 @@ export function TopologyCanvas({
                             <>
                               <div className="dp-sec">{lang === 'zh' ? `访问它的有效流量 · ${inboundUseful.length}` : `EFFECTIVE INBOUND · ${inboundUseful.length}`}</div>
                               <div className="dp-list">{inboundUseful.map(peerRow)}</div>
+                            </>
+                          ) : null}
+                          {blockedOutbound.length ? (
+                            <>
+                              <div className="dp-sec risk">{lang === 'zh' ? `它发起的拦截尝试 · ${blockedOutbound.length}` : `BLOCKED ATTEMPTS FROM DEVICE · ${blockedOutbound.length}`}</div>
+                              <div className="dp-list">{blockedOutbound.map(peerRow)}</div>
+                            </>
+                          ) : null}
+                          {blockedInbound.length ? (
+                            <>
+                              <div className="dp-sec risk">{lang === 'zh' ? `指向它的拦截尝试 · ${blockedInbound.length}` : `BLOCKED ATTEMPTS TO DEVICE · ${blockedInbound.length}`}</div>
+                              <div className="dp-list">{blockedInbound.map(peerRow)}</div>
                             </>
                           ) : null}
                         </>

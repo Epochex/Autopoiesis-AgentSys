@@ -63,6 +63,18 @@ def test_verified_independent_dossiers_promote_and_persist_a_feature():
 
 def test_refresh_merges_security_and_deny_sources_and_reports_source_health():
     def query(sql: str) -> list[dict]:
+        if ".alerts" in sql:
+            return [{
+                "event_ts": (NOW + timedelta(seconds=2)).isoformat(),
+                "event_id": "alert-1",
+                "device_key": "192.168.1.110",
+                "srcip": "192.168.1.110",
+                "dstip": "203.0.113.9",
+                "action": "alert",
+                "service": "https",
+                "risk_type": "byte_spike_v2",
+                "provenance": "real",
+            }]
         if "security_events" in sql:
             return [{
                 "event_ts": NOW.isoformat(),
@@ -95,12 +107,12 @@ def test_refresh_merges_security_and_deny_sources_and_reports_source_health():
     result = service.refresh()
 
     assert result["ok"] is True
-    assert result["updated_patterns"] == 2
+    assert result["updated_patterns"] == 3
     view = service.audit_view()
-    assert view["counts"]["risks"] == 2
+    assert view["counts"]["risks"] == 3
     assert set(view["coverage"]["sources"]) == {
         "environment.findings", "autopoiesis.facts_v2",
-        "autopoiesis.security_events", "sentinel.timeline"
+        "autopoiesis.security_events", "autopoiesis.alerts", "sentinel.timeline"
     }
     assert all(row["source"] == "real" for row in view["risks"])
     assert service.refresh()["updated_patterns"] == 0

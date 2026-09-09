@@ -1,0 +1,24 @@
+[Unit]
+Description=Autopoiesis NetFlow IPFIX and sFlow collector
+Documentation=https://github.com/netsampler/goflow2/tree/v2.2.6
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+Environment=FLOW_LISTEN_ADDRESS=0.0.0.0
+Environment=FLOW_NETFLOW_PORT=2055
+Environment=FLOW_SFLOW_PORT=6343
+Environment=FLOW_METRICS_ADDRESS=127.0.0.1:9091
+EnvironmentFile=-/etc/autopoiesis-flow.env
+ExecStartPre=/usr/bin/python3 /data/Autopoiesis-AgentSys/frontend/script/validate-flow-collector.py
+ExecStartPre=/usr/bin/install -d -o 100 -g 65533 -m 0750 /var/lib/autopoiesis-flow
+ExecStartPre=-/usr/bin/docker rm -f autopoiesis-flow-collector
+ExecStart=/usr/bin/docker run --name autopoiesis-flow-collector --network host --read-only --cap-drop ALL --security-opt no-new-privileges --mount type=bind,source=/var/lib/autopoiesis-flow,target=/var/lib/autopoiesis-flow netsampler/goflow2:v2.2.6@sha256:b930e69d1bc7bd765da5b45d12f04edd10970c310b33ba44fd12a07a870da8e6 -addr=${FLOW_METRICS_ADDRESS} -listen=netflow://${FLOW_LISTEN_ADDRESS}:${FLOW_NETFLOW_PORT},sflow://${FLOW_LISTEN_ADDRESS}:${FLOW_SFLOW_PORT} -transport=file -transport.file=/var/lib/autopoiesis-flow/goflow2.jsonl
+ExecStop=/usr/bin/docker stop --time 20 autopoiesis-flow-collector
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

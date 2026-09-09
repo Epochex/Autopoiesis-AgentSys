@@ -126,7 +126,7 @@ export interface GraphDevice {
     quarantined: boolean
   } | null
 }
-export type EdgeKind = 'clash' | 'bcast' | 'codst' | 'fleet' | 'family' | 'lease' | 'portfp' | 'wan'
+export type EdgeKind = 'clash' | 'bcast' | 'codst' | 'fleet' | 'family' | 'flow' | 'lease' | 'portfp' | 'wan'
 export interface GraphEdge {
   src: string
   dst: string
@@ -135,6 +135,13 @@ export interface GraphEdge {
   hits: number
   evidence: string
   observed: boolean
+  /** Result and volume of an observed directional flow. Absent on inferred relations. */
+  outcome?: 'allowed' | 'blocked' | 'unknown'
+  bytes?: number
+  sentBytes?: number
+  receivedBytes?: number
+  services?: string[]
+  lastSeenAt?: string | null
 }
 export interface GraphCluster {
   id: string
@@ -156,6 +163,12 @@ export interface SubnetGraph {
   edges: GraphEdge[]
   clusters: GraphCluster[]
   anomalies: GraphAnomaly[]
+  /** What the current collectors can prove for this segment. */
+  coverage?: {
+    acceptedCrossSegment: boolean
+    sameSegment: boolean
+    sameSegmentRequires?: string
+  }
   stats: {
     devices: number
     withTraffic: number

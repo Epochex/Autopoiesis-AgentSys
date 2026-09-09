@@ -410,8 +410,8 @@ def build_runtime_stream_delta(
 ) -> dict[str, Any] | None:
     """What changed between two snapshots, as a stage-path the frontend can animate.
 
-    Returns None when nothing moved. A new alert lights the ingest path
-    (correlator → alerts-topic → cluster-window); a new cluster-scoped suggestion
+    Returns None when nothing moved. A new alert lights the standalone ingest path
+    (collector → in-process-window → alert-store); a new cluster-scoped suggestion
     lights the remediation path (cluster-window → aiops-agent → suggestions-topic →
     remediation).
     """

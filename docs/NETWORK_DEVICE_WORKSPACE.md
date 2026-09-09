@@ -10,10 +10,15 @@ all-network layout, subnet mesh, endpoint relationships, traffic portrait,
 pan/zoom and incident views. Search also opens the endpoint ego portrait.
 Ordinary browsing does not automatically open a baseline risk-assessment card.
 
-`GatewayInterfaces` adds a small, initially collapsed interface-address annotation
-at the top right of the existing canvas. Addresses are grouped under the attested
-FortiGate serial, with interface names, primary/secondary IPs, roles and aggregate
-members. This annotation does not move nodes or replace traffic relationships.
+Clicking the FortiGate node or an existing interface expands `GatewayInterfaces`
+inside the same SVG canvas, anchored at the original gateway and interface columns.
+Dashed links encode configuration ownership; they do not animate or imply traffic.
+Primary and secondary IPs share an interface node. Selecting an interface highlights
+its ownership path and shows aggregate members or VLAN parent. Clicking its subnet
+opens the original terminal mesh and traffic portraits. Search includes managed
+device names, serials, interfaces and addresses and focuses the matching interface.
+Clicking the gateway again restores the original overview. The top-right table
+has been removed. Existing external-source links and subnet interactions remain.
 
 The superseded directory workspace, interface-ring graph and their styles were
 removed. They remain recoverable from commits `b713eb4` and `ddf318d`.

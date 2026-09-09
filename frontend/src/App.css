@@ -1994,9 +1994,16 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
    words on hover ("关联 / LINKS"), where it is actually readable. */
 .sg-edge { fill: none; stroke: var(--net); stroke-linecap: round; transition: opacity 0.25s ease; }
 .sg-edge.inf { stroke: var(--net); opacity: 0.32; stroke-dasharray: 2 4; }
-.sg-edge.obs { opacity: 0.72; }
+.sg-edge.obs { opacity: 0.62; }
+.sg-edge.obs.outcome-blocked { stroke: var(--wan); opacity: 0.74; stroke-dasharray: 5 4; }
+.sg-edge.obs.outcome-unknown { stroke: var(--fog); }
 .sg-edge.dim { opacity: 0.06; }
 .sg-drip { fill: var(--net); opacity: 0.85; }
+.sg-drip.outcome-blocked { fill: var(--wan); }
+.sg-drip.outcome-unknown { fill: var(--fog); }
+.sg-arrow.allowed { fill: var(--net); }
+.sg-arrow.blocked { fill: var(--wan); }
+.sg-arrow.unknown { fill: var(--fog); }
 
 /* pivot corridor = a lateral-movement PATH the agent found → threat, so coral */
 .sg-corridor {
@@ -2063,6 +2070,9 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 }
 .sg-head-s { font-size: 10px; color: var(--fog); line-height: 1.7; }
 .sg-head-s b { color: var(--ink); }
+.sg-head-s.traffic .allowed { color: var(--net-ink); font-weight: 600; }
+.sg-head-s.traffic .blocked { color: var(--wan-ink); font-weight: 600; }
+.sg-head-s.coverage { color: var(--fog); font-size: 9px; max-width: 530px; }
 .sg-cta {
   margin-top: 5px; padding: 4px 10px; border: 1.5px solid var(--ink);
   background: var(--acid); color: var(--ink); cursor: pointer;
@@ -2111,6 +2121,7 @@ body:has(.stage[data-view='trajectory']) { background: #e7e7e3; }
 .sg-lg-r { display: flex; align-items: center; gap: 6px; line-height: 1.55; }
 .sg-lg-line { width: 18px; height: 0; border-top: 2px solid var(--net); flex: 0 0 18px; }
 .sg-lg-line.obs { border-color: var(--net); }
+.sg-lg-line.blocked { border-color: var(--wan); border-top-style: dashed; }
 .sg-lg-line.inf { border-color: var(--net); opacity: 0.5; border-top-style: dashed; }
 
 /* ── EGO FOCUS ── click a host → its relation sub-graph is promoted to the whole

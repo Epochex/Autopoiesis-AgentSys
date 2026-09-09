@@ -44,7 +44,7 @@ from core.net.addr import is_private
 import statistics
 import urllib.parse
 import urllib.request
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -63,6 +63,7 @@ ARP_SNAPSHOT_ENV_VAR: str = "AUTOPOIESIS_ARP_SNAPSHOT_PATH"
 # Ownership drift is only visible across captures, which is why the history is a
 # separate source from the snapshot and why the drift detector needs it.
 L2_LEDGER_ENV_VAR: str = "AUTOPOIESIS_L2_LEDGER_PATH"
+L2_HISTORY_MAX_CAPTURES_ENV_VAR: str = "AUTOPOIESIS_L2_HISTORY_MAX_CAPTURES"
 
 _KV = re.compile(r'(\w+)=("[^"]*"|\S+)')
 _CLASH_SRC = re.compile(r"(\d+\.\d+\.\d+\.\d+):\d+->")
@@ -426,33 +427,80 @@ def load_l2_history(path: str | Path | None = None) -> list[dict[str, Any]]:
     if not candidate.is_file():
         return []
 
-    captures: list[dict[str, Any]] = []
-    for line in candidate.read_text(errors="ignore").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(entry, dict) or not isinstance(entry.get("records"), list):
-            continue
-        captures.append(
-            {
-                "captured_at": str(entry.get("captured_at") or ""),
-                "records": [
-                    {
-                        "ip": str(record.get("ip", "")),
-                        "mac": _normalize_mac(str(record.get("mac", ""))),
-                        "interface": str(record.get("interface", "")),
-                    }
-                    for record in entry["records"]
-                    if isinstance(record, dict) and record.get("ip") and record.get("mac")
-                ],
-            }
-        )
-    captures.sort(key=lambda capture: capture["captured_at"])
-    return captures
+    try:
+        maximum = max(2, int(os.environ.get(L2_HISTORY_MAX_CAPTURES_ENV_VAR, "256")))
+    except ValueError:
+        maximum = 256
+    # The production ledger grows continuously. Reading it with read_text() held
+    # the complete 27 MB string, split copies and every decoded capture at once;
+    # concurrent UI/background sweeps exceeded the gateway memory cgroup. Stream
+    # the file and retain a bounded recent investigation window instead. At the
+    # production capture cadence, 256 snapshots currently span about 21 hours;
+    # claimant selection uses l2_claimants_for_ip() below to retain full-ledger
+    # identity evidence without expanding this broad environment scan.
+    captures: deque[dict[str, Any]] = deque(maxlen=maximum)
+    with candidate.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict) or not isinstance(entry.get("records"), list):
+                continue
+            captures.append(
+                {
+                    "captured_at": str(entry.get("captured_at") or ""),
+                    "records": [
+                        {
+                            "ip": str(record.get("ip", "")),
+                            "mac": _normalize_mac(str(record.get("mac", ""))),
+                            "interface": str(record.get("interface", "")),
+                        }
+                        for record in entry["records"]
+                        if isinstance(record, dict) and record.get("ip") and record.get("mac")
+                    ],
+                }
+            )
+    return sorted(captures, key=lambda capture: capture["captured_at"])
+
+
+def l2_claimants_for_ip(
+    ip: str, path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Aggregate one address across the full ledger with constant memory."""
+    resolved = path if path is not None else os.environ.get(L2_LEDGER_ENV_VAR)
+    if not resolved or not Path(resolved).is_file():
+        return []
+    claimants: dict[str, dict[str, Any]] = {}
+    with Path(resolved).open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict) or not isinstance(entry.get("records"), list):
+                continue
+            captured_at = str(entry.get("captured_at") or "")
+            for record in entry["records"]:
+                if not isinstance(record, dict) or str(record.get("ip") or "") != ip:
+                    continue
+                mac = _normalize_mac(str(record.get("mac") or ""))
+                if not mac:
+                    continue
+                current = claimants.setdefault(mac, {
+                    "mac": mac, "first_seen": captured_at, "last_seen": captured_at,
+                    "samples": 0, "interface": "",
+                })
+                current["samples"] += 1
+                if captured_at and (not current["first_seen"] or captured_at < current["first_seen"]):
+                    current["first_seen"] = captured_at
+                if captured_at and captured_at >= current["last_seen"]:
+                    current["last_seen"] = captured_at
+                    current["interface"] = str(record.get("interface") or "")
+    return [claimants[key] for key in sorted(claimants)]
 
 
 def detect_l2_ownership_drift(

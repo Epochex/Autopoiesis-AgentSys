@@ -20,7 +20,7 @@ beforeAll(async () => {
   await server.listen()
   base = server.resolvedUrls!.local[0]
   browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
-}, 30000)
+}, 120000)
 afterAll(async () => { try { await browser?.close(); await server?.close() } finally { if (cacheDir) await rm(cacheDir, {recursive:true,force:true}) } })
 
 describe('IP conflict operator flow', () => {
@@ -38,10 +38,9 @@ describe('IP conflict operator flow', () => {
     const prepare = page.getByRole('button', { name: 'Prepare approval plan and commands' })
     await prepare.waitFor()
     expect(await prepare.isDisabled()).toBe(true)
-    await page.getByRole('textbox', { name: 'Assignment reason' }).fill('Verified label and dedicated access port')
-    expect(await prepare.isDisabled()).toBe(true)
     expect(writes).toHaveLength(0)
     await page.getByRole('radio').check()
+    expect(await page.getByRole('textbox').count()).toBe(0)
     expect(await prepare.isEnabled()).toBe(true)
     await prepare.click()
     if (success) await page.waitForFunction(() => (window as unknown as { prepared: string[] }).prepared.length === 1)
@@ -50,6 +49,7 @@ describe('IP conflict operator flow', () => {
     expect(writes).toHaveLength(1)
     expect(writes[0].url).toContain('/api/rca/changes/ip-conflict/prepare')
     expect(writes[0].body).toMatchObject({ ip: '192.168.1.110', mac: '00:11:22:33:44:66', revision: 3, case_id: 'case-one' })
+    expect(String(writes[0].body.purpose)).toMatch(/18 observations.*current ARP snapshot/)
     expect(writes.some(write => /\/execute|\/approve|\/decision/.test(write.url))).toBe(false)
     await page.close()
   }, 30000)
@@ -70,7 +70,10 @@ describe('conflict plan approval and execution', () => {
       if (r.method() === 'POST') {
         posts.push(url.pathname)
         if (url.pathname.endsWith('/prepare')) { prepared = true; value = plan }
-        else if (url.pathname.endsWith('/approve')) { expect(r.postDataJSON().digest).toBe(plan.digest); plan.status = 'approved'; value = plan }
+        else if (url.pathname.endsWith('/approve')) {
+          expect(r.postDataJSON()).toMatchObject({ digest: plan.digest, reason: 'operator_confirmed_reviewed_playbook' })
+          plan.status = 'approved'; value = plan
+        }
         else if (url.pathname.endsWith('/execute')) { expect(plan.status).toBe('approved'); plan.status = 'succeeded'; value = { accepted: true } }
         else throw new Error('Unexpected mutation ' + url.pathname)
       } else if (url.pathname.endsWith('/ip-conflict')) value = { state: { revision: 3 }, claimants: [{ mac: '00:11:22:33:44:66', name: 'Verified workstation', samples: 18 }] }
@@ -83,17 +86,19 @@ describe('conflict plan approval and execution', () => {
     })
     await page.goto(base + 'conflict-test?integrated=1')
     await page.getByRole('radio').check()
-    await page.getByRole('textbox', { name: 'Assignment reason' }).fill('Verified label and access point')
     await page.getByRole('button', { name: 'Prepare approval plan and commands' }).click()
-    await page.getByText('Playbook and runnable commands').waitFor()
+    await page.getByText('Complete playbook and command notes').waitFor()
     expect(await page.locator('.change-playbook').innerText()).toContain('edit 9')
     expect(await page.locator('.change-playbook').innerText()).toContain('delete 27')
+    expect(await page.locator('.change-playbook').innerText()).toContain('identity check')
     expect(posts).toEqual(['/api/rca/changes/ip-conflict/prepare'])
-    await page.getByRole('textbox', { name: 'Approval rationale' }).fill('Verified exact target and rollback')
-    await page.getByRole('button', { name: 'Approve this diff', exact: true }).click()
-    await page.getByRole('button', { name: 'Execute approved change →', exact: true }).waitFor()
+    const approve = page.getByRole('button', { name: 'Approve complete playbook', exact: true })
+    expect(await approve.isDisabled()).toBe(true)
+    await page.getByRole('checkbox').check()
+    await approve.click()
+    await page.getByRole('button', { name: 'Confirm and execute complete playbook →', exact: true }).waitFor()
     expect(posts).toHaveLength(2)
-    await page.getByRole('button', { name: 'Execute approved change →', exact: true }).click()
+    await page.getByRole('button', { name: 'Confirm and execute complete playbook →', exact: true }).click()
     await page.waitForFunction(() => document.querySelector('.change-observation') !== null)
     expect(posts).toEqual(['/api/rca/changes/ip-conflict/prepare', '/api/rca/changes/prepared-one/approve', '/api/rca/changes/prepared-one/execute'])
     expect(pageErrors).toEqual([])

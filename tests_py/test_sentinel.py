@@ -12,7 +12,7 @@ import threading
 import pytest
 
 from core.remediate.sentinel import Detection, Sentinel, timeline
-from domains.network_rca.detectors import failed_units
+from domains.network_rca.detectors import admin_bruteforce, failed_units
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +86,21 @@ def test_failed_unit_detector_ignores_foreign_host_services():
     assert [row.subject for row in failed_units(Command())] == [
         "autopoiesis-gateway.service"
     ]
+
+
+def test_admin_auth_probe_reads_newest_journal_rows_first():
+    class Command:
+        argv = None
+
+        def run(self, argv):
+            self.argv = argv
+            return type("Result", (), {"stdout": ""})()
+
+    command = Command()
+    assert admin_bruteforce(command) == []
+    assert command.argv is not None
+    assert "--reverse" in command.argv
+    assert command.argv[-2:] == ["-n", "500"]
 
 
 def test_a_confirmed_detection_is_acted_on():

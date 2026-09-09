@@ -1,5 +1,9 @@
 """MAC-specific evidence joined to an independently maintained operator decision."""
-from domains.network_rca.environment import load_arp_snapshot, arp_snapshot_provenance
+from domains.network_rca.environment import (
+    arp_snapshot_provenance,
+    l2_claimants_for_ip,
+    load_arp_snapshot,
+)
 from domains.network_rca.ownership_decisions import read_decisions, current_state, assess_assignment
 
 
@@ -11,19 +15,27 @@ def ownership_view(ip: str, report: dict, identities: dict) -> dict:
         raise ValueError('address_has_no_ownership_finding')
     finding = finding or {'measured': {}, 'verification': None}
     measured = finding['measured']
+    claimant_stats = {
+        row['mac']: row for row in l2_claimants_for_ip(ip)
+    }
+    claimant_stats.update({
+        row['mac']: row for row in measured.get('claimants', [])
+        if row.get('mac') and row['mac'] not in claimant_stats
+    })
     arp = [r for r in load_arp_snapshot() if r['ip'] == ip]
     provenance = arp_snapshot_provenance()
     observed = sorted({r['mac'].lower() for r in arp})
     state = current_state(history)
     macs = sorted(set(measured.get('macs', [])) | set(measured.get('arp_macs', [])) |
-                  set(measured.get('dhcp_leased_macs', [])) | set(observed) | {e['mac'] for e in history})
+                  set(measured.get('dhcp_leased_macs', [])) | set(observed) |
+                  set(claimant_stats) | {e['mac'] for e in history})
     if state['expected_mac']:
         macs = sorted(set(macs) | {state['expected_mac']})
     rows = []
     for mac in macs:
         # Never join a conflicted address to a hostname by IP alone.
         identity = identities.get('byMac', {}).get(mac, {})
-        stats = next((r for r in measured.get('claimants', []) if r['mac'] == mac), {})
+        stats = claimant_stats.get(mac, {})
         manual_name = state['device_names'].get(mac)
         rows.append({'mac': mac, 'name': manual_name or identity.get('hostname') or None,
                      'name_source': 'operator' if manual_name else 'device_inventory',

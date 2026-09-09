@@ -1,0 +1,17 @@
+[Unit]
+Description=Autopoiesis IPFIX endpoint probe on %I
+Documentation=https://github.com/pmacct/pmacct/tree/v1.7.9
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f autopoiesis-endpoint-flow-probe-%i
+ExecStart=/usr/bin/docker run --name autopoiesis-endpoint-flow-probe-%i --network host --read-only --cap-drop ALL --cap-add NET_RAW --cap-add NET_ADMIN --security-opt no-new-privileges --mount type=bind,source=/etc/autopoiesis/flow-probes/%i.conf,target=/etc/pmacct/pmacctd.conf,readonly pmacct/pmacctd:v1.7.9@sha256:b91625f21574338f69bcfd1e8c607db11eb831bdc446d832cf8f3d933ff06dda
+ExecStop=/usr/bin/docker stop --time 20 autopoiesis-endpoint-flow-probe-%i
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

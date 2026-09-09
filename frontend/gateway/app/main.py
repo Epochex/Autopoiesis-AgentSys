@@ -48,7 +48,7 @@ _PRODUCTION_CONSOLIDATION_OPTIONS = {"resolve_conflicts": True}
 # longer than the live snapshot; ?refresh=1 forces a re-sweep after a source or
 # ARP snapshot changes.
 _ENVIRONMENT_TTL_SEC = 300.0
-_environment_lock = asyncio.Lock()
+_environment_build_lock = threading.Lock()
 _environment_report: dict[str, Any] | None = None
 _environment_loaded_at = 0.0
 _incident_repository = IncidentRepository(
@@ -99,6 +99,19 @@ def _case_repository():
             settings.investigation_case_store_path
         )
     return _investigation_case_repository
+
+
+def _load_environment_report(*, force: bool = False) -> dict[str, Any]:
+    """Build at most one memory-heavy environment sweep at a time."""
+    global _environment_report, _environment_loaded_at
+    with _environment_build_lock:
+        stale = time.monotonic() - _environment_loaded_at > _ENVIRONMENT_TTL_SEC
+        if force or _environment_report is None or stale:
+            from domains.network_rca.environment import build_environment_report
+
+            _environment_report = build_environment_report()
+            _environment_loaded_at = time.monotonic()
+        return _environment_report
 
 
 def _configure_production_memory_budget() -> None:
@@ -310,7 +323,9 @@ async def _lifespan(app: FastAPI):
 
     def restore_operational_memory() -> None:
         global _operational_memory
-        restored = build_operational_memory_service()
+        restored = build_operational_memory_service(
+            environment_reader=_load_environment_report,
+        )
         _operational_memory = restored
 
     threading.Thread(
@@ -421,11 +436,8 @@ async def _lifespan(app: FastAPI):
                     sync_snapshot_cases(snapshot, repository)
                     routine_resolved = resolve_routine_observations(repository)
                     if time.monotonic() >= environment_due_at:
-                        report = build_environment_report()
+                        report = _load_environment_report(force=True)
                         sync_environment_cases(report, repository)
-                        global _environment_report, _environment_loaded_at
-                        _environment_report = report
-                        _environment_loaded_at = time.monotonic()
                         environment_due_at = time.monotonic() + environment_interval
                     submitted = 0
                     if os.getenv("AUTOPOIESIS_AUTO_INVESTIGATE", "1") != "0":
@@ -1837,15 +1849,9 @@ async def rca_environment(refresh: int = Query(default=0, ge=0, le=1)) -> dict[s
     decoration: a fault class with no source present is reported as ``blind``
     so an empty findings list can never be misread as a healthy segment.
     """
-    global _environment_report, _environment_loaded_at
-    from domains.network_rca.environment import build_environment_report
-
-    async with _environment_lock:
-        stale = time.monotonic() - _environment_loaded_at > _ENVIRONMENT_TTL_SEC
-        if refresh == 1 or _environment_report is None or stale:
-            _environment_report = await asyncio.to_thread(build_environment_report)
-            _environment_loaded_at = time.monotonic()
-        return _environment_report
+    return await asyncio.to_thread(
+        _load_environment_report, force=refresh == 1,
+    )
 
 
 class OwnershipDecisionRequest(BaseModel):
@@ -2152,11 +2158,7 @@ async def rca_situational_overview(
     cached, cache_age = cached_situational_overview()
 
     def rebuild() -> dict[str, Any]:
-        report = _environment_report
-        if report is None:
-            from domains.network_rca.environment import build_environment_report
-
-            report = build_environment_report()
+        report = _load_environment_report()
         return build_situational_overview(
             _case_repository(), report, refresh=True,
         )

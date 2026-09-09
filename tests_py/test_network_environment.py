@@ -33,6 +33,7 @@ from domains.network_rca.environment import (
     detect_unmanaged_address,
     detect_unmanaged_identity,
     load_arp_snapshot,
+    l2_claimants_for_ip,
     load_l2_history,
     parse_arp_table,
     sensor_coverage,
@@ -342,6 +343,46 @@ def test_a_truncated_ledger_line_is_skipped_not_fatal(tmp_path):
         + "\n{\"captured_at\": \"2026-08-05T15:3\n"
     )
     assert len(load_l2_history(path)) == 1
+
+
+def test_l2_history_stream_is_bounded_to_recent_captures(tmp_path, monkeypatch):
+    path = _ledger(
+        tmp_path,
+        [(f"2026-08-05T15:0{minute}:00Z", SERVER_MAC) for minute in range(5)],
+    )
+    monkeypatch.setenv("AUTOPOIESIS_L2_HISTORY_MAX_CAPTURES", "2")
+
+    history = load_l2_history(path)
+
+    assert [row["captured_at"] for row in history] == [
+        "2026-08-05T15:03:00Z", "2026-08-05T15:04:00Z",
+    ]
+
+
+def test_single_ip_claimants_preserve_full_history_outside_environment_window(tmp_path):
+    path = _ledger(
+        tmp_path,
+        [
+            ("2026-08-01T10:00:00Z", SQUATTER_MAC),
+            ("2026-08-02T10:00:00Z", SERVER_MAC),
+            ("2026-08-03T10:00:00Z", SQUATTER_MAC),
+        ],
+    )
+
+    claimants = l2_claimants_for_ip("192.168.1.23", path)
+
+    assert claimants == [
+        {
+            "mac": SERVER_MAC, "first_seen": "2026-08-02T10:00:00Z",
+            "last_seen": "2026-08-02T10:00:00Z", "samples": 1,
+            "interface": "eth2",
+        },
+        {
+            "mac": SQUATTER_MAC, "first_seen": "2026-08-01T10:00:00Z",
+            "last_seen": "2026-08-03T10:00:00Z", "samples": 2,
+            "interface": "eth2",
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------

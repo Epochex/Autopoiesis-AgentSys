@@ -66,7 +66,7 @@ const text = (zh: boolean) => ({
   dropped: zh ? '已过滤' : 'FILTERED',
   source: zh ? '来源' : 'SOURCE',
   match: zh ? '匹配' : 'MATCH',
-  reason: zh ? '选择依据' : 'SELECTION',
+  reason: zh ? '证据' : 'EVIDENCE',
   empty: zh ? '本轮没有检索候选' : 'NO RETRIEVAL CANDIDATES',
   boundary: zh
     ? '历史事故和文档用于提出候选；现场探针负责确认当前状态。'

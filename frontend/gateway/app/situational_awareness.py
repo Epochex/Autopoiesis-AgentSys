@@ -142,6 +142,25 @@ def _segment_catalog(interfaces: Iterable[dict[str, Any]]) -> list[dict[str, Any
     return catalog
 
 
+def _interface_addresses(interfaces: Iterable[dict[str, Any]]) -> set[str]:
+    """Addresses configured on the observed firewall interfaces."""
+    addresses: set[str] = set()
+    for item in interfaces:
+        for raw in (item.get("ip"), *(item.get("secondary_ips") or ())):
+            value = str(raw or "").strip()
+            if not value:
+                continue
+            parts = value.split()
+            candidate = f"{parts[0]}/{parts[1]}" if len(parts) >= 2 else value.replace(" ", "/")
+            try:
+                address = ipaddress.ip_interface(candidate).ip
+            except ValueError:
+                continue
+            if isinstance(address, ipaddress.IPv4Address) and not address.is_unspecified:
+                addresses.add(str(address))
+    return addresses
+
+
 def _segment_for(ip: str, catalog: list[dict[str, Any]]) -> str:
     parsed = _private_ip(ip)
     if parsed is None:
@@ -214,6 +233,7 @@ def _asset_activity(query: Callable[[str], list[dict[str, Any]]]) -> list[dict[s
         "WITH (SELECT max(event_ts) FROM {db}.{table}) AS anchor "
         "SELECT srcip, anyLast(srcname) AS srcname, anyLast(srcintf) AS srcintf, "
         "count() AS flows, sum(sentbyte + rcvdbyte) AS bytes, "
+        "sum(sentbyte) AS sent_bytes, sum(rcvdbyte) AS received_bytes, "
         "countIf(action='deny') AS denied, uniqExact(dstip) AS peers, "
         "groupUniqArray(8)(service) AS services, toString(max(event_ts)) AS last_seen "
         "FROM {db}.{table} WHERE event_ts >= anchor - INTERVAL 24 HOUR AND srcip != '' "
@@ -250,6 +270,7 @@ def _cross_segment_rows(query: Callable[[str], list[dict[str, Any]]]) -> list[di
         "SELECT srcip, dstip, action, srcintf, dstintf, service, dstport, "
         "anyLast(dstcountry) AS country, "
         "count() AS flows, sum(sentbyte + rcvdbyte) AS bytes, "
+        "sum(sentbyte) AS sent_bytes, sum(rcvdbyte) AS received_bytes, "
         "toString(min(event_ts)) AS first_seen, toString(max(event_ts)) AS last_seen "
         "FROM {db}.{table} WHERE event_ts >= anchor - INTERVAL 24 HOUR "
         "AND srcip != '' AND dstip != '' "
@@ -268,6 +289,7 @@ def _internet_outbound_rows(query: Callable[[str], list[dict[str, Any]]]) -> lis
         "argMax(service, event_ts) AS service, argMax(dstport, event_ts) AS dstport, "
         "argMax(dstcountry, event_ts) AS country, "
         "count() AS flows, sum(sentbyte + rcvdbyte) AS bytes, "
+        "sum(sentbyte) AS sent_bytes, sum(rcvdbyte) AS received_bytes, "
         "toString(min(event_ts)) AS first_seen, toString(max(event_ts)) AS last_seen "
         "FROM {db}.{table} WHERE event_ts >= anchor - INTERVAL 24 HOUR "
         "AND srcip != '' AND dstip != '' "
@@ -507,7 +529,7 @@ def _build(
     catalog = _segment_catalog(interfaces)
     from .network_inventory import managed_devices, owned_addresses
     managed = managed_devices(router)
-    gateway_addresses = owned_addresses(managed)
+    gateway_addresses = owned_addresses(managed) | _interface_addresses(interfaces)
 
     device_by_ip: dict[str, dict[str, Any]] = {}
     for item in devices:
@@ -528,6 +550,8 @@ def _build(
         active_by_ip[ip] = {
             "flows24h": _number(row.get("flows")),
             "bytes24h": _number(row.get("bytes")),
+            "sentBytes24h": _number(row.get("sent_bytes")),
+            "receivedBytes24h": _number(row.get("received_bytes")),
             "denied24h": _number(row.get("denied")),
             "peers24h": _number(row.get("peers")),
             "lastSeenAt": row.get("last_seen"),
@@ -602,6 +626,7 @@ def _build(
     behaviors.sort(key=lambda item: (item["severity"] == "high", item["current"]["flows"]), reverse=True)
 
     cross_segment: list[dict[str, Any]] = []
+    gateway_services: list[dict[str, Any]] = []
     for row in cross_rows:
         source = str(row.get("srcip") or "")
         destination = str(row.get("dstip") or "")
@@ -610,6 +635,26 @@ def _build(
         source_segment = _segment_for(source, catalog)
         destination_segment = _segment_for(destination, catalog)
         if source_segment == destination_segment:
+            # Traffic addressed to a FortiGate interface is observable even
+            # when source and destination share a subnet. Keep it as a gateway
+            # service relation; ordinary endpoint-to-endpoint L2 traffic still
+            # does not traverse the firewall and remains outside coverage.
+            if source not in gateway_addresses and destination in gateway_addresses:
+                action = str(row.get("action") or "unknown").casefold()
+                gateway_services.append({
+                    "id": f"gateway-service:{source}:{destination}:{row.get('dstport')}:{action}",
+                    "source": source, "destination": destination,
+                    "sourceSegment": source_segment, "destinationSegment": destination_segment,
+                    "service": str(row.get("service") or ""),
+                    "port": _number(row.get("dstport")) or None,
+                    "action": action, "flows": _number(row.get("flows")),
+                    "bytes": _number(row.get("bytes")),
+                    "sentBytes": _number(row.get("sent_bytes")),
+                    "receivedBytes": _number(row.get("received_bytes")),
+                    "firstSeenAt": row.get("first_seen"), "lastSeenAt": row.get("last_seen"),
+                    "sourceInterface": str(row.get("srcintf") or ""),
+                    "destinationInterface": str(row.get("dstintf") or ""),
+                })
             continue
         action = str(row.get("action") or "unknown").casefold()
         cross_segment.append({
@@ -618,12 +663,16 @@ def _build(
             "sourceSegment": source_segment, "destinationSegment": destination_segment,
             "service": str(row.get("service") or ""), "port": _number(row.get("dstport")) or None,
             "action": action, "flows": _number(row.get("flows")), "bytes": _number(row.get("bytes")),
+            "sentBytes": _number(row.get("sent_bytes")),
+            "receivedBytes": _number(row.get("received_bytes")),
             "firstSeenAt": row.get("first_seen"), "lastSeenAt": row.get("last_seen"),
             "sourceInterface": str(row.get("srcintf") or ""),
             "destinationInterface": str(row.get("dstintf") or ""),
         })
     cross_segment.sort(key=lambda item: item["flows"], reverse=True)
     cross_segment = cross_segment[:30]
+    gateway_services.sort(key=lambda item: item["flows"], reverse=True)
+    gateway_services = gateway_services[:200]
 
     # Internet egress has its own query budget, so LAN discovery bursts cannot
     # crowd public destinations out of a host's traffic portrait.
@@ -642,6 +691,8 @@ def _build(
             "destination": destination, "country": str(row.get("country") or ""),
             "service": str(row.get("service") or ""), "port": _number(row.get("dstport")) or None,
             "action": action, "flows": _number(row.get("flows")), "bytes": _number(row.get("bytes")),
+            "sentBytes": _number(row.get("sent_bytes")),
+            "receivedBytes": _number(row.get("received_bytes")),
             "lastSeenAt": row.get("last_seen"),
             "sourceInterface": str(row.get("srcintf") or ""),
             "destinationInterface": str(row.get("dstintf") or ""),
@@ -894,6 +945,7 @@ def _build(
             "acceptedVisible": has_allowed_cross_segment,
             "sameSegmentVisible": False,
         },
+        "gatewayServices": {"records": gateway_services},
         "internetOutbound": {"records": internet_outbound},
         "riskFusion": risk_assets[:30],
         "candidatePaths": paths,

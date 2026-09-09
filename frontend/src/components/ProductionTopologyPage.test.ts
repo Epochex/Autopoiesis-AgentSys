@@ -21,7 +21,8 @@ describe('production topology projection', () => {
         ],
       },
       changes: [{ id: 'change-1', asset: '192.168.16.56', severity: 'high', title: 'activity changed' }],
-      crossSegment: { records: [{ source: '192.168.16.56', destination: '192.168.1.20', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.1.0/24', service: 'DNS', port: 53, action: 'deny', flows: 7, lastSeenAt: '2026-09-01T11:59:59Z' }] },
+      crossSegment: { records: [{ source: '192.168.16.56', destination: '192.168.1.20', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.1.0/24', service: 'DNS', port: 53, action: 'deny', flows: 7, bytes: 0, sentBytes: 0, receivedBytes: 0, lastSeenAt: '2026-09-01T11:59:59Z' }] },
+      gatewayServices: { records: [{ source: '192.168.16.56', destination: '192.168.16.1', sourceSegment: '192.168.16.0/20', destinationSegment: '192.168.16.0/20', service: 'DNS', port: 53, action: 'accept', flows: 12, bytes: 400, sentBytes: 120, receivedBytes: 280, lastSeenAt: '2026-09-01T11:59:59Z' }] },
       riskFusion: [{ asset: '192.168.16.56', name: 'workstation', segment: '192.168.16.0/20', severity: 'high', reasons: ['deny rate changed'], caseIds: ['case-1'] }],
       externalSources: [{ ip: '203.0.113.7', events: 5, eventTypes: ['admin_login_failed'], ports: [443], lastSeenAt: '2026-09-01T11:59:58Z' }],
       cases: [{ caseId: 'case-1', status: 'investigating', severity: 'high', subject: '192.168.16.56', title: 'case' }],
@@ -31,8 +32,13 @@ describe('production topology projection', () => {
     const projection = projectProductionOverview(overview)
 
     expect(projection.topology.subnets.map((item) => item.cidr)).toEqual(['192.168.1.0/24', '192.168.16.0/20'])
-    expect(projection.graphs['192.168.16.0/20'].edges).toHaveLength(0)
-    expect(projection.context.profiles['192.168.16.56'].outbound).toEqual([])
+    const blocked = projection.graphs['192.168.16.0/20'].edges[0]
+    expect(blocked).toMatchObject({ src: '192.168.16.56', dst: '192.168.1.20', kind: 'flow', outcome: 'blocked', observed: true, hits: 7 })
+    expect(projection.graphs['192.168.16.0/20'].devices).toContainEqual(expect.objectContaining({ ip: '192.168.16.1', role: 'gateway-service' }))
+    expect(projection.context.profiles['192.168.16.56'].outbound).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ip: '192.168.1.20', deny: 7, action: 'deny' }),
+      expect.objectContaining({ ip: '192.168.16.1', accept: 12, bytes: 400 }),
+    ]))
     expect(projection.context.activeCases).toBe(1)
     expect(JSON.stringify(projection)).not.toMatch(/R230|192\.168\.1\.23|2026-06-1[67]/)
   })

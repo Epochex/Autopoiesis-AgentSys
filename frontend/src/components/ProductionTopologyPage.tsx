@@ -16,7 +16,7 @@ import type {
   Topology,
 } from '../types'
 import { LiveAlerts } from './LiveAlerts'
-import { GatewayInterfaces, type GatewayDevice } from './GatewayInterfaces'
+import type { GatewayDevice } from './GatewayInterfaces'
 import { TopologyCanvas, type ProductionTopologyContext } from './TopologyCanvas'
 import { readAnalysis, type AnalysisMode } from './analysis-read'
 import { ThreatCard, type Threat, type WanThreat } from './ThreatCard'
@@ -40,6 +40,8 @@ interface Segment {
 interface Activity {
   flows24h: number
   bytes24h: number
+  sentBytes24h?: number
+  receivedBytes24h?: number
   denied24h: number
   peers24h: number
   lastSeenAt?: string
@@ -73,6 +75,8 @@ interface BoundaryRecord {
   action: string
   flows: number
   bytes?: number
+  sentBytes?: number
+  receivedBytes?: number
   country?: string
   sourceInterface?: string
   destinationInterface?: string
@@ -89,6 +93,8 @@ interface EgressRecord {
   action: string
   flows: number
   bytes: number
+  sentBytes?: number
+  receivedBytes?: number
   sourceInterface?: string
   destinationInterface?: string
   lastSeenAt?: string
@@ -111,7 +117,8 @@ interface ProductionOverview {
   freshness: { lagSeconds?: number | null }
   inventory: { managedDevices?: GatewayDevice[]; knownAssets: number; active24h: number; segments: Segment[]; assets: Asset[] }
   changes: { id: string; asset: string; severity: string; title: string }[]
-  crossSegment: { records: BoundaryRecord[] }
+  crossSegment: { records: BoundaryRecord[]; acceptedVisible?: boolean; sameSegmentVisible?: boolean }
+  gatewayServices?: { records: BoundaryRecord[] }
   internetOutbound?: { records: EgressRecord[] }
   riskFusion: RiskAsset[]
   externalSources: { ip: string; events: number; eventTypes: string[]; ports: number[]; lastSeenAt: string }[]
@@ -432,12 +439,28 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
   for (const segment of data.inventory.segments) {
     const native = data.inventory.assets.filter((asset) => asset.segment === segment.cidr)
     const boundary = data.crossSegment.records.filter((record) =>
-      (record.sourceSegment === segment.cidr || record.destinationSegment === segment.cidr)
-      && carriesUsefulTraffic(record),
+      record.sourceSegment === segment.cidr || record.destinationSegment === segment.cidr,
     )
+    const gatewayTraffic = (data.gatewayServices?.records ?? []).filter((record) =>
+      record.sourceSegment === segment.cidr || record.destinationSegment === segment.cidr,
+    )
+    const measuredRecords = [...boundary, ...gatewayTraffic]
     const peerIps = [...new Set(boundary.map((record) => record.sourceSegment === segment.cidr ? record.destination : record.source))]
     const nativeIps = new Set(native.map((asset) => asset.ip))
     const peerAssets = peerIps.filter((ip) => !nativeIps.has(ip)).map((ip) => assets.get(ip) ?? ({ ip, name: ip, segment: 'cross-segment', active24h: true } as Asset))
+    const gatewayAssets = [...new Set(gatewayTraffic.map((record) => record.destination))].map((ip) => {
+      const records = gatewayTraffic.filter((record) => record.destination === ip)
+      const flows = records.reduce((sum, record) => sum + record.flows, 0)
+      const bytes = records.reduce((sum, record) => sum + (record.bytes ?? 0), 0)
+      const denied = records.filter((record) => ['deny', 'blocked', 'reject'].includes(record.action.toLowerCase())).reduce((sum, record) => sum + record.flows, 0)
+      return {
+        ip,
+        name: `FortiGate 服务 · ${ip}`,
+        segment: segment.cidr,
+        active24h: true,
+        activity: { flows24h: flows, bytes24h: bytes, denied24h: denied, peers24h: new Set(records.map((record) => record.source)).size },
+      } as Asset
+    })
 
     const byClass = new Map<string, Asset[]>()
     for (const asset of native) {
@@ -481,21 +504,59 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
         mass: severityThreat(asset.risk) !== 'ok' ? 1.7 : asset.active24h ? 1.2 : 0.55,
       }))),
       ...peerAssets.map((asset) => ({ base: baseDevice(asset, 'cross-segment peer'), group: 'peers', mass: 1.1 })),
+      ...gatewayAssets.map((asset) => ({ base: baseDevice(asset, 'gateway-service'), group: 'gateway', mass: 2.1 })),
       ...endpoints.map((endpoint) => ({ base: endpointBase(endpoint), group: 'wan', mass: 1.6 })),
     ]
     const deviceIps = new Set(roster.map((item) => item.base.ip))
 
-    const edges: GraphEdge[] = boundary
-      .filter((record) => deviceIps.has(record.source) && deviceIps.has(record.destination))
-      .map((record) => ({
-        src: record.source,
-        dst: record.destination,
-        kind: 'codst',
-        weight: Math.max(0.7, Math.min(4, Math.log10(record.flows + 1))),
-        hits: record.flows,
-        evidence: `${record.action} · ${record.service || (record.port ? `:${record.port}` : 'service unknown')} · ${record.lastSeenAt}`,
+    /* Collapse repeated log rows into directional source/destination/outcome
+     * relations. This avoids overpainting the same path while retaining the
+     * services, byte direction and policy result that make the line useful. */
+    const measured = new Map<string, {
+      src: string; dst: string; outcome: 'allowed' | 'blocked' | 'unknown'
+      hits: number; bytes: number; sentBytes: number; receivedBytes: number
+      services: Set<string>; lastSeenAt: string | null
+    }>()
+    for (const record of measuredRecords) {
+      if (!deviceIps.has(record.source) || !deviceIps.has(record.destination)) continue
+      const action = record.action.toLowerCase()
+      const outcome = ['deny', 'blocked', 'reject'].includes(action)
+        ? 'blocked'
+        : ['accept', 'allow', 'pass', 'close'].includes(action) ? 'allowed' : 'unknown'
+      const key = `${record.source}|${record.destination}|${outcome}`
+      const item = measured.get(key) ?? {
+        src: record.source, dst: record.destination, outcome,
+        hits: 0, bytes: 0, sentBytes: 0, receivedBytes: 0,
+        services: new Set<string>(), lastSeenAt: null,
+      }
+      item.hits += record.flows
+      item.bytes += record.bytes ?? 0
+      item.sentBytes += record.sentBytes ?? 0
+      item.receivedBytes += record.receivedBytes ?? 0
+      const service = record.service || (record.port ? `:${record.port}` : '')
+      if (service) item.services.add(service)
+      if (!item.lastSeenAt || record.lastSeenAt > item.lastSeenAt) item.lastSeenAt = record.lastSeenAt
+      measured.set(key, item)
+    }
+    const edges: GraphEdge[] = [...measured.values()].map((item) => {
+      const services = [...item.services].slice(0, 4)
+      const state = item.outcome === 'blocked' ? '已拦截尝试' : item.outcome === 'allowed' ? '成功通信' : '结果未知'
+      return {
+        src: item.src,
+        dst: item.dst,
+        kind: 'flow',
+        weight: Math.max(0.7, Math.min(4, Math.log10(item.hits + 1))),
+        hits: item.hits,
+        bytes: item.bytes,
+        sentBytes: item.sentBytes,
+        receivedBytes: item.receivedBytes,
+        services,
+        lastSeenAt: item.lastSeenAt,
+        outcome: item.outcome,
+        evidence: `${state} · ${services.join('/') || '服务未知'} · ${item.hits} 条 · ↑${item.sentBytes}B ↓${item.receivedBytes}B · ${item.lastSeenAt ?? '时间未知'}`,
         observed: true,
-      }))
+      }
+    })
 
     /* Same-destination inference: the FortiGate routes, so lateral L2 traffic
      * never reaches the log — but two hosts measured against the SAME boundary
@@ -503,7 +564,7 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
      * Star per destination (hub = heaviest talker), dashed as inferred. */
     const seen = new Set(edges.map((edge) => [edge.src, edge.dst].sort().join('|')))
     const byDest = new Map<string, { src: string; flows: number }[]>()
-    for (const record of boundary) {
+    for (const record of measuredRecords) {
       if (record.sourceSegment !== segment.cidr || !nativeIps.has(record.source)) continue
       const key = `${record.destination} · ${record.service || (record.port ? `:${record.port}` : '')}`
       byDest.set(key, [...(byDest.get(key) ?? []), { src: record.source, flows: record.flows }])
@@ -531,23 +592,29 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
     }
 
     /* Measured internet egress edges — merged per (host, endpoint). */
-    const wanPairs = new Map<string, { src: string; dst: string; hits: number; evidence: string }>()
+    const wanPairs = new Map<string, { src: string; dst: string; hits: number; bytes: number; outcome: 'allowed' | 'blocked' | 'unknown'; evidence: string }>()
     for (const record of egress) {
       if (!endpointIps.has(record.destination)) continue
-      const key = `${record.source}|${record.destination}`
+      const action = record.action.toLowerCase()
+      const outcome = ['deny', 'blocked', 'reject'].includes(action)
+        ? 'blocked'
+        : ['accept', 'allow', 'pass', 'close'].includes(action) ? 'allowed' : 'unknown'
+      const key = `${record.source}|${record.destination}|${outcome}`
       const svc = record.service || (record.port ? `:${record.port}` : '')
       const pair = wanPairs.get(key) ?? {
-        src: record.source, dst: record.destination, hits: 0,
+        src: record.source, dst: record.destination, hits: 0, bytes: 0, outcome,
         evidence: `${record.action} · ${svc}${record.country ? ` · ${record.country}` : ''} · ${record.lastSeenAt ?? ''}`,
       }
       pair.hits += record.flows
+      pair.bytes += record.bytes
       wanPairs.set(key, pair)
     }
     for (const pair of wanPairs.values()) {
       edges.push({
         src: pair.src, dst: pair.dst, kind: 'wan',
         weight: Math.max(0.7, Math.min(4, Math.log10(pair.hits + 1))),
-        hits: pair.hits, evidence: pair.evidence, observed: true,
+        hits: pair.hits, bytes: pair.bytes, outcome: pair.outcome,
+        evidence: pair.evidence, observed: true,
       })
     }
 
@@ -581,10 +648,16 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
           boundBy: [],
           deny: members.reduce((sum, asset) => sum + (asset.activity?.denied24h ?? 0), 0),
         })),
-        ...(peerAssets.length ? [{ id: 'boundary-peers', members: peerAssets.map((asset) => asset.ip), role: 'cross-segment', vendor: 'boundary peers', size: peerAssets.length, boundBy: ['codst' as const], deny: 0 }] : []),
+        ...(peerAssets.length ? [{ id: 'boundary-peers', members: peerAssets.map((asset) => asset.ip), role: 'cross-segment', vendor: 'boundary peers', size: peerAssets.length, boundBy: ['flow' as const], deny: 0 }] : []),
+        ...(gatewayAssets.length ? [{ id: 'gateway-services', members: gatewayAssets.map((asset) => asset.ip), role: 'gateway-service', vendor: 'FortiGate', size: gatewayAssets.length, boundBy: ['flow' as const], deny: gatewayAssets.reduce((sum, asset) => sum + (asset.activity?.denied24h ?? 0), 0) }] : []),
         ...(endpoints.length ? [{ id: 'internet-endpoints', members: endpoints.map((endpoint) => endpoint.ip), role: 'internet', vendor: '', size: endpoints.length, boundBy: ['wan' as const], deny: endpoints.reduce((sum, endpoint) => sum + endpoint.denied, 0) }] : []),
       ],
       anomalies: risky.length ? [{ kind: 'production-risk', members: risky, detail: '当前风险融合或未关闭案件命中' }] : [],
+      coverage: {
+        acceptedCrossSegment: data.crossSegment.acceptedVisible ?? edges.some((edge) => edge.outcome === 'allowed'),
+        sameSegment: data.crossSegment.sameSegmentVisible ?? false,
+        sameSegmentRequires: '交换机流量镜像、NetFlow/IPFIX 或端点网络探针',
+      },
       stats: {
         devices: devices.length,
         withTraffic: devices.filter((device) => device.flows > 0).length,
@@ -623,10 +696,14 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
         dir: 'out',
       }))
     const outbound = [
-      ...data.crossSegment.records.filter((record) => record.source === asset.ip && carriesUsefulTraffic(record)).map((record) => peerFrom(record, 'out')),
+      ...data.crossSegment.records.filter((record) => record.source === asset.ip).map((record) => peerFrom(record, 'out')),
+      ...(data.gatewayServices?.records ?? []).filter((record) => record.source === asset.ip).map((record) => peerFrom(record, 'out')),
       ...egressPeers,
     ]
-    const inbound = data.crossSegment.records.filter((record) => record.destination === asset.ip && carriesUsefulTraffic(record)).map((record) => peerFrom(record, 'in'))
+    const inbound = [
+      ...data.crossSegment.records.filter((record) => record.destination === asset.ip).map((record) => peerFrom(record, 'in')),
+      ...(data.gatewayServices?.records ?? []).filter((record) => record.destination === asset.ip).map((record) => peerFrom(record, 'in')),
+    ]
     const graphDev = Object.values(graphs).flatMap((graph) => graph.devices).find((device) => device.ip === asset.ip)
     profiles[asset.ip] = {
       ok: true,
@@ -684,8 +761,9 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
   }
 }
 
-function ProductionSearch({ data, onPick, lang }: { data: ProductionOverview; onPick: (ip: string, cidr: string) => void; lang: Lang }) {
+function ProductionSearch({ data, onPick, onGateway, lang }: { data: ProductionOverview; onPick: (ip: string, cidr: string) => void; onGateway: (deviceId: string, interfaceId: string) => void; lang: Lang }) {
   const [query, setQuery] = useState('')
+  const gatewayHits = query.trim() ? (data.inventory.managedDevices ?? []).flatMap(device => device.interfaces.filter(intf => intf.addresses.length && `${device.name} ${device.serial} ${intf.name} ${intf.addresses.map(a => `${a.cidr} ${a.network}`).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())).map(intf => ({ device, intf }))) : []
   const hits = useMemo(() => {
     const value = query.trim().toLowerCase()
     if (!value) return []
@@ -694,7 +772,8 @@ function ProductionSearch({ data, onPick, lang }: { data: ProductionOverview; on
   return (
     <div className="topo-search">
       <div className="ts-box"><span className="ts-ico">⌕</span><input className="ts-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={lang === 'zh' ? '搜索当前资产 · IP / 主机名 / MAC / 网段' : 'search current assets'} /></div>
-      {query && hits.length ? <div className="ts-results">{hits.map((asset) => <button key={asset.ip} className={`ts-hit t-${severityThreat(asset.risk)}`} onClick={() => { onPick(asset.ip, asset.segment); setQuery('') }}><span className="ts-hit-ip">{asset.ip}</span><span className="ts-hit-name">{asset.name}</span><span className="ts-hit-meta">{asset.segment} · {asset.activity?.flows24h ?? 0} flows/24h</span><span className="ts-hit-th">{asset.risk ?? 'observed'}</span></button>)}</div> : null}
+      {gatewayHits.length > 0 && <div className="ts-results">{gatewayHits.map(({ device, intf }) => <button key={intf.id} className="ts-hit" onClick={() => { onGateway(device.id, intf.id); setQuery('') }}><span className="ts-hit-ip">{intf.addresses.map(a => a.ip).join(' / ')}</span><span className="ts-hit-name">{device.name} / {intf.name}</span><span className="ts-hit-meta">{lang === 'zh' ? '定位设备接口关系' : 'Locate device interfaces'}</span></button>)}</div>}
+      {query && hits.length && !gatewayHits.length ? <div className="ts-results">{hits.map((asset) => <button key={asset.ip} className={`ts-hit t-${severityThreat(asset.risk)}`} onClick={() => { onPick(asset.ip, asset.segment); setQuery('') }}><span className="ts-hit-ip">{asset.ip}</span><span className="ts-hit-name">{asset.name}</span><span className="ts-hit-meta">{asset.segment} · {asset.activity?.flows24h ?? 0} flows/24h</span><span className="ts-hit-th">{asset.risk ?? 'observed'}</span></button>)}</div> : null}
     </div>
   )
 }
@@ -765,6 +844,7 @@ export function ProductionTopologyPage({
   )
   const [drillSub, setDrillSub] = useState<string | null>(null)
   const [drillDev, setDrillDev] = useState<string | null>(null)
+  const [gatewayFocus, setGatewayFocus] = useState<{ deviceId: string; interfaceId?: string } | null>(null)
   const [hoverDev, setHoverDev] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<GraphAnalysis | null>(null)
   const [threat, setThreat] = useState<Threat | null>(null)
@@ -991,9 +1071,11 @@ export function ProductionTopologyPage({
       ) : null}
       {theater && theater.kind !== 'browse' ? <ProductionImpactStrip theater={theater} data={data} lang={lang} /> : null}
       <section className={`canvas-wrap ${theater ? 'theater-mode ' : ''}${showConstellation ? 'full3d' : threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>
-        {!showConstellation && <GatewayInterfaces devices={data.inventory.managedDevices ?? []} lang={lang} />}
-        {!showConstellation ? <ProductionSearch data={data} lang={lang} onPick={(ip, cidr) => { setDrillSub(cidr); setDrillDev(ip); setThreat(null) }} /> : null}
+        {!showConstellation ? <ProductionSearch data={data} lang={lang} onGateway={(deviceId, interfaceId) => { openSubnet(null); setTheater(null); setGatewayFocus({ deviceId, interfaceId }) }} onPick={(ip, cidr) => { setDrillSub(cidr); setDrillDev(ip); setThreat(null) }} /> : null}
         {!showConstellation ? <TopologyCanvas
+          managedDevices={data.inventory.managedDevices}
+          gatewayFocus={gatewayFocus}
+          onGatewayFocus={setGatewayFocus}
           topo={projection.topology}
           stats={projection.stats}
           activeKey="production_observed"

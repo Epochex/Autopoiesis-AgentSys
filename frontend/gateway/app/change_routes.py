@@ -70,7 +70,7 @@ def control(request: Request):
 
 class Control(BaseModel):
     paused: bool
-    reason: str = Field(min_length=3, max_length=1000)
+    reason: str = Field(default='operator_changed_write_channel', min_length=3, max_length=1000)
 
 
 @router.post('/control')

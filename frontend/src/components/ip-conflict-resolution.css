@@ -3,11 +3,17 @@
 .ip-resolution h3 { margin: 0; font-size: 22px; }
 .ip-resolution h3 code { font-size: 16px; }
 .ip-resolution p { max-width: 1100px; line-height: 1.6; }
+.ip-resolution .ip-resolution-warning { border-left: 3px solid #b44a20; background: #fff0e8; padding: 10px 12px; }
 .ip-resolution fieldset { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-block: 18px; border: 1px solid var(--rule, #aaa); }
 .ip-resolution-candidate { display: flex; align-items: start; gap: 10px; padding: 12px; border: 1px solid var(--rule, #aaa); cursor: pointer; }
 .ip-resolution-candidate:has(input:checked) { border-color: var(--ink, #111); background: var(--paper-2, #efeee9); }
 .ip-resolution-candidate span { display: grid; gap: 7px; }
 .ip-resolution-reason { display: grid; gap: 6px; margin-bottom: 12px; max-width: 900px; }
 .ip-resolution-reason input { padding: 10px; }
-.ip-resolution-steps { padding-left: 22px; display: grid; gap: 14px; }
+.ip-resolution-progress { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--rule, #aaa); border: 1px solid var(--rule, #aaa); margin-top: 24px; }
+.ip-resolution-progress li { display: grid; gap: 7px; min-height: 88px; padding: 12px; background: var(--paper, #f4f4f1); }
+.ip-resolution-progress li.active { box-shadow: inset 0 4px #171916; }
+.ip-resolution-progress li.done { background: #e7f3c9; }
+.ip-resolution-progress span, .ip-resolution-progress small { font-size: 12px; color: #555750; }
 .ip-resolution pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper-2, #efeee9); padding: 12px; }
+@media (max-width: 800px) { .ip-resolution-progress { grid-template-columns: 1fr 1fr; } }

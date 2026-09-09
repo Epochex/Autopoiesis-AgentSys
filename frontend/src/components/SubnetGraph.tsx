@@ -11,6 +11,7 @@ const KIND_ZH: Record<string, string> = {
   codst: '同目的服务',
   fleet: '同厂商 OUI',
   family: '同命名族',
+  flow: '跨网段流量',
   lease: 'DHCP 同步续约',
   portfp: '端口指纹相同',
   wan: '互联网外联',
@@ -21,6 +22,7 @@ const KIND_EN: Record<string, string> = {
   codst: 'shared destination',
   fleet: 'same vendor OUI',
   family: 'hostname family',
+  flow: 'cross-segment flow',
   lease: 'DHCP lockstep',
   portfp: 'port fingerprint',
   wan: 'internet egress',
@@ -28,6 +30,7 @@ const KIND_EN: Record<string, string> = {
 const ROLE_ZH: Record<string, string> = {
   camera: '摄像头', intercom: '门禁对讲', mobile: '移动端', workstation: '工作站', server: '服务器', unknown: '未识别',
   'cross-segment peer': '跨段对端', 'internet-endpoint': '互联网端点',
+  'gateway-service': '网关服务',
 }
 const short = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`)
 
@@ -98,6 +101,9 @@ function DotShape({ role, x, y, r }: { role: string; x: number; y: number; r: nu
         />
       </g>
     )
+  }
+  if (role === 'gateway-service') {
+    return <rect x={x - s} y={y - s} width={2 * s} height={2 * s} className="sg-dot" transform={`rotate(45 ${x} ${y})`} />
   }
   return <circle cx={x} cy={y} r={r} className="sg-dot" />
 }
@@ -234,6 +240,28 @@ export function SubnetGraphLayer({
     return d
   }, [graph])
 
+  /* Keep the resting map useful without turning a dense segment into a hairball.
+     The strongest measured relations stay visible; hover and ego focus reveal
+     every relation touching the inspected device, including weaker ones. */
+  const defaultObserved = useMemo(() => new Set(
+    graph.edges
+      .map((edge, index) => ({ edge, index }))
+      .filter(({ edge }) => edge.observed && edge.outcome !== undefined)
+      .sort((a, b) => Number(b.edge.outcome === 'blocked') - Number(a.edge.outcome === 'blocked') || b.edge.hits - a.edge.hits)
+      .slice(0, 48)
+      .map(({ index }) => index),
+  ), [graph])
+  const trafficStats = useMemo(() => {
+    const measured = graph.edges.filter((edge) => edge.observed && edge.outcome !== undefined)
+    return {
+      measured: measured.length,
+      allowed: measured.filter((edge) => edge.outcome === 'allowed').length,
+      blocked: measured.filter((edge) => edge.outcome === 'blocked').length,
+      unknown: measured.filter((edge) => edge.outcome === 'unknown').length,
+    }
+  }, [graph])
+  const markerKey = `sg-${graph.cidr.replace(/[^a-z0-9]/gi, '-')}`
+
   const size = (d: GraphDevice) => {
     const mass = Math.log10(d.deny + d.flows + 1)
     return Math.max(3.2, Math.min(11, 3.2 + mass * 1.9 + (degree[d.ip] ?? 0) * 0.22))
@@ -271,19 +299,32 @@ export function SubnetGraphLayer({
 
   return (
     <g className={`sg ${ego ? 'is-ego' : ''}`}>
+      <defs>
+        <marker id={`${markerKey}-allowed`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M 0 0 L 8 4 L 0 8 z" className="sg-arrow allowed" />
+        </marker>
+        <marker id={`${markerKey}-blocked`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M 0 0 L 8 4 L 0 8 z" className="sg-arrow blocked" />
+        </marker>
+        <marker id={`${markerKey}-unknown`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M 0 0 L 8 4 L 0 8 z" className="sg-arrow unknown" />
+        </marker>
+      </defs>
       {/* ── community territories ──
           Device-class bands (id `class-*`) read as console panels: hull around
           the aligned grid, header top-left with the counts that rank the band
           (risk hits · active · denied). Other clusters keep the centred label. */}
       {graph.clusters.map((c) => {
         const pts = c.members.map((m) => pos[m]).filter(Boolean)
-        const isBand = c.id.startsWith('class-') || c.id === 'boundary-peers' || c.id === 'internet-endpoints'
+        const isBand = c.id.startsWith('class-') || c.id === 'boundary-peers' || c.id === 'internet-endpoints' || c.id === 'gateway-services'
         // captions work from a single member; only hulls need three points
         if (pts.length < (isBand ? 1 : 2)) return null
         const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length
         const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length
         const label = c.id === 'boundary-peers'
           ? `${zh ? '边界对端' : 'BOUNDARY PEERS'} ×${c.size}`
+          : c.id === 'gateway-services'
+            ? `${zh ? '网关服务' : 'GATEWAY SERVICES'} ×${c.size}`
           : c.id === 'internet-endpoints'
             ? `${zh ? '互联网去向' : 'INTERNET EGRESS'} ×${c.size}`
             : labelOf[c.id] ?? `${c.vendor || (zh ? ROLE_ZH[c.role] ?? c.role : c.role)} ×${c.size}`
@@ -306,6 +347,8 @@ export function SubnetGraphLayer({
           ]
           const name = c.id === 'boundary-peers'
             ? (zh ? '边界对端' : 'BOUNDARY PEERS')
+            : c.id === 'gateway-services'
+              ? (zh ? '网关服务' : 'GATEWAY SERVICES')
             : c.id === 'internet-endpoints'
               ? (zh ? '互联网去向' : 'INTERNET EGRESS')
               : (zh ? ROLE_ZH[c.role] ?? c.role : c.role)
@@ -328,11 +371,9 @@ export function SubnetGraphLayer({
         )
       })}
 
-      {/* ── capillaries ──
-          The resting map is a clustered census, not a wiring diagram: no edge
-          draws until the reader asks — hover lights a host's relations, click
-          promotes them to the ego net. Evidence text lives in the ego panel,
-          not on the lines (forty on-line labels was the mess this replaces). */}
+      {/* ── observed traffic relations ──
+          Resting state shows the strongest measured flows. Hover and click
+          expand the inspected host to all of its measured and inferred links. */}
       <g className="sg-edges" pointerEvents="none">
         {graph.edges.map((e, i) => {
           const a = pos[e.src]
@@ -340,16 +381,22 @@ export function SubnetGraphLayer({
           if (!a || !b) return null
           const touchesFocus = !!focusIp && (e.src === focusIp || e.dst === focusIp)
           const touchesHover = !!hoverIp && (e.src === hoverIp || e.dst === hoverIp)
-          if (ego ? !touchesFocus : !touchesHover) return null
+          if (ego ? !touchesFocus : hoverIp ? !touchesHover : !defaultObserved.has(i)) return null
+          if (touchesFocus && profile && !profile.loading && e.outcome !== undefined) return null
           const w = Math.max(0.5, Math.min(2.6, e.weight * 0.7)) * (touchesFocus ? 1.8 : 1)
           const mx = (a.x + b.x) / 2 + (b.y - a.y) * 0.09
           const my = (a.y + b.y) / 2 - (b.x - a.x) * 0.09
           const d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
           return (
             <g key={i}>
-              <path d={d} className={`sg-edge k-${e.kind} ${e.observed ? 'obs' : 'inf'} ${touchesFocus ? 'ego-edge' : ''}`} style={{ strokeWidth: w }} />
+              <path
+                d={d}
+                className={`sg-edge k-${e.kind} ${e.observed ? 'obs' : 'inf'} ${e.outcome ? `outcome-${e.outcome}` : ''} ${touchesFocus ? 'ego-edge' : ''}`}
+                markerEnd={e.observed && e.outcome ? `url(#${markerKey}-${e.outcome})` : undefined}
+                style={{ strokeWidth: w }}
+              />
               {e.observed ? (
-                <circle r={touchesFocus ? 2.4 : 1.7} className={`sg-drip k-${e.kind} ${touchesFocus ? 'ego-edge' : ''}`}>
+                <circle r={touchesFocus ? 2.4 : 1.7} className={`sg-drip k-${e.kind} ${e.outcome ? `outcome-${e.outcome}` : ''} ${touchesFocus ? 'ego-edge' : ''}`}>
                   <animateMotion dur={`${Math.max(1.6, 5 - e.weight)}s`} repeatCount="indefinite" path={d} />
                 </circle>
               ) : null}
@@ -589,7 +636,7 @@ export function SubnetGraphLayer({
 
       {/* ── segment read-out + agent trigger (yields to the ego panel) ── */}
       {!ego ? (
-      <foreignObject x={center.x - rx + 4} y={Math.max(6, center.y - ry - 74)} width={430} height={92} className="sg-tip-fo">
+      <foreignObject x={center.x - rx + 4} y={Math.max(6, center.y - ry - 74)} width={540} height={126} className="sg-tip-fo">
         <div className="sg-head">
           <div className="sg-head-t">{graph.cidr}</div>
           <div className="sg-head-s">
@@ -600,6 +647,18 @@ export function SubnetGraphLayer({
             <b>{st.edges}</b> {zh ? '条关联' : 'relations'} · {st.observedEdges} {zh ? '实测' : 'observed'} ·{' '}
             {st.edges - st.observedEdges} {zh ? '推断' : 'inferred'} · <b>{graph.clusters.length}</b> {zh ? '社区' : 'communities'}
           </div>
+          {trafficStats.measured ? <div className="sg-head-s traffic">
+            <b>{Math.min(defaultObserved.size, trafficStats.measured)}</b>/{trafficStats.measured} {zh ? '条实测关系已绘制' : 'measured relations drawn'} ·{' '}
+            <span className="allowed">{trafficStats.allowed} {zh ? '成功' : 'allowed'}</span> ·{' '}
+            <span className="blocked">{trafficStats.blocked} {zh ? '拦截尝试' : 'blocked attempts'}</span>
+            {trafficStats.unknown ? <> · {trafficStats.unknown} {zh ? '结果待分类' : 'unclassified'}</> : null}
+          </div> : null}
+          {graph.coverage && !graph.coverage.sameSegment ? (
+            <div className="sg-head-s coverage">
+              {zh ? '采集边界：当前连线覆盖经网关的跨网段流量；同网段通信需要' : 'Coverage: links show traffic crossing the gateway; same-segment traffic requires'}{' '}
+              {graph.coverage.sameSegmentRequires}
+            </div>
+          ) : null}
           {!analysis && graph.cidr !== 'mem://autopoiesis' ? (
             <button className="sg-cta" onClick={() => onAnalyze(false)}>
               ⚡ {zh ? 'Agent 关联分析' : 'AGENT · CORRELATE'}
@@ -659,6 +718,7 @@ export function SubnetGraphLayer({
             if (roles.has('camera')) rows.push(['◠', zh ? '摄像头' : 'camera'])
             if (roles.has('server')) rows.push(['≡', zh ? '服务器' : 'server'])
             if (roles.has('internet-endpoint')) rows.push(['⊕', zh ? '互联网端点' : 'internet endpoint'])
+            if (roles.has('gateway-service')) rows.push(['◆', zh ? '网关服务' : 'gateway service'])
             if (roles.has('unknown')) rows.push(['●', zh ? '未识别' : 'untyped'])
             if (roles.has('cross-segment peer')) rows.push(['○', zh ? '跨段对端' : 'cross-segment peer'])
             if (rows.length < 2) return null
@@ -676,8 +736,11 @@ export function SubnetGraphLayer({
             <>
               <div className="sg-lg-r">
                 <span className="sg-lg-line obs" />
-                {zh ? '实测' : 'observed'}
+                {trafficStats.measured
+                  ? (zh ? '成功通信 · 箭头为发起方向' : 'allowed · arrow shows initiator')
+                  : (zh ? '实测' : 'observed')}
               </div>
+              {trafficStats.blocked ? <div className="sg-lg-r"><span className="sg-lg-line blocked" />{zh ? '拦截尝试' : 'blocked attempt'}</div> : null}
               <div className="sg-lg-k">{kindsPresent.obs.map((k) => kindLabel[k] ?? k).join(' · ')}</div>
             </>
           ) : null}

@@ -268,7 +268,7 @@ def _alert(
     excerpt_fields = (
         "event_id", "event_ts", "type", "subtype", "action", "policyid", "policytype",
         "sessionid", "proto", "srcip", "srcport", "srcintf", "srcintfrole", "dstip",
-        "dstport", "dstintf", "dstintfrole", "service", "src_device_key", "srcmac",
+        "dstport", "dstintf", "dstintfrole", "service", "src_device_key", "srcmac", "dstmac", "vlan",
         "mastersrcmac", "devname", "srcname", "devtype", "srchwvendor", "srcfamily",
         "srchwversion", "appcat", "bytes_total", "pkts_total",
         "device_key", "user", "method", "event_status", "reason", "logdesc", "msg",
