@@ -16,10 +16,7 @@ import type {
   Topology,
 } from '../types'
 import { LiveAlerts } from './LiveAlerts'
-import { ManagedNetworkGraph } from './ManagedNetworkGraph'
-import { NetworkWorkspace } from './NetworkWorkspace'
-import { addressOwner } from './network-model'
-import type { ManagedDevice, ManagedInterface } from './network-model'
+import { GatewayInterfaces, type GatewayDevice } from './GatewayInterfaces'
 import { TopologyCanvas, type ProductionTopologyContext } from './TopologyCanvas'
 import { readAnalysis, type AnalysisMode } from './analysis-read'
 import { ThreatCard, type Threat, type WanThreat } from './ThreatCard'
@@ -112,7 +109,7 @@ interface ProductionOverview {
   mode: 'production_observed'
   observedAt: string
   freshness: { lagSeconds?: number | null }
-  inventory: { managedDevices?: ManagedDevice[]; knownAssets: number; active24h: number; segments: Segment[]; assets: Asset[] }
+  inventory: { managedDevices?: GatewayDevice[]; knownAssets: number; active24h: number; segments: Segment[]; assets: Asset[] }
   changes: { id: string; asset: string; severity: string; title: string }[]
   crossSegment: { records: BoundaryRecord[] }
   internetOutbound?: { records: EgressRecord[] }
@@ -425,7 +422,7 @@ export function projectProductionOverview(data: ProductionOverview): ProductionP
     intf: interfaces[index].name,
   }))
   const topology: Topology = {
-    core: { name: data.inventory.managedDevices?.[0]?.name ?? 'FortiGate', ip: data.inventory.managedDevices?.[0]?.interfaces.flatMap(i => i.addresses).find(a => !a.public)?.ip ?? '', model: data.inventory.managedDevices?.[0]?.model ?? '' },
+    core: { name: 'FortiGate', ip: '192.168.1.1', model: 'production observation' },
     interfaces,
     subnets,
     anchors: data.inventory.assets.map((asset) => ({ ip: asset.ip, name: asset.name, role: 'asset', intf: asset.segment })),
@@ -692,10 +689,7 @@ function ProductionSearch({ data, onPick, lang }: { data: ProductionOverview; on
   const hits = useMemo(() => {
     const value = query.trim().toLowerCase()
     if (!value) return []
-    const ports: Asset[] = (data.inventory.managedDevices ?? []).flatMap(device => device.interfaces
-      .filter(intf => `${device.name} ${device.serial} ${intf.name} ${intf.addresses.map(a => `${a.ip} ${a.network}`).join(' ')}`.toLowerCase().includes(value))
-      .map(intf => ({ ip: intf.addresses[0]?.ip ?? `@${intf.id}`, name: `${device.name} / ${intf.name}`, segment: intf.addresses[0]?.network ?? intf.name, active24h: false })))
-    return [...ports, ...data.inventory.assets.filter((asset) => `${asset.ip} ${asset.name} ${asset.mac ?? ''} ${asset.segment}`.toLowerCase().includes(value))]
+    return data.inventory.assets.filter((asset) => `${asset.ip} ${asset.name} ${asset.mac ?? ''} ${asset.segment}`.toLowerCase().includes(value)).slice(0, 12)
   }, [data, query])
   return (
     <div className="topo-search">
@@ -769,7 +763,6 @@ export function ProductionTopologyPage({
   const [usingCache, setUsingCache] = useState(
     () => readProductionOverviewCache<ProductionOverview>() !== null,
   )
-  const [detail, setDetail] = useState<{ deviceId: string; interfaceId?: string; ip?: string } | null>(null)
   const [drillSub, setDrillSub] = useState<string | null>(null)
   const [drillDev, setDrillDev] = useState<string | null>(null)
   const [hoverDev, setHoverDev] = useState<string | null>(null)
@@ -964,32 +957,11 @@ export function ProductionTopologyPage({
   }
   const openSubnet = (subnet: Subnet | null) => {
     setDrillSub(subnet?.cidr ?? null); setDrillDev(null); setThreat(null); setWan(null); setAnalysis(null)
-    setDetail(null)
+
   }
   const analyzeHost = (ip: string, force = false) => {
     const device = Object.values(projection.graphs).flatMap(current => current.devices).find(row => row.ip === ip)
     if (device) void inspectRisk(device, undefined, 'analyze', force)
-  }
-
-  const managed = data.inventory.managedDevices ?? []
-  const selectedInterface = managed.flatMap(device => device.interfaces.map(intf => ({ device, intf })))
-    .find(({ intf }) => intf.addresses.some(a => a.network === drillSub))
-  const openInterface = (device: ManagedDevice, intf: ManagedInterface) => {
-    const subnet = intf.addresses.find(a => !a.public && projection.graphs[a.network]?.devices.some(d => d.intf === a.network))
-    setThreat(null); setAnalysis(null); setWan(null); setDrillDev(null)
-    if (subnet) { setDrillSub(subnet.network); setDetail(null) }
-    else { setDrillSub(null); setDetail({ deviceId: device.id, interfaceId: intf.id }) }
-  }
-  const pickEndpoint = (ip: string, cidr: string) => {
-    if (ip.startsWith('@')) {
-      for (const device of managed) {
-        const intf = device.interfaces.find(i => i.id === ip.slice(1))
-        if (intf) { openInterface(device, intf); return }
-      }
-    }
-    const owner = addressOwner(ip, managed)
-    if (owner) { openInterface(owner.device, owner.intf); return }
-    setDetail(null); setThreat(null); setAnalysis(null); setDrillSub(cidr); setDrillDev(ip)
   }
 
   return (
@@ -1019,16 +991,9 @@ export function ProductionTopologyPage({
       ) : null}
       {theater && theater.kind !== 'browse' ? <ProductionImpactStrip theater={theater} data={data} lang={lang} /> : null}
       <section className={`canvas-wrap ${theater ? 'theater-mode ' : ''}${showConstellation ? 'full3d' : threat || wan ? 'tall' : drillSub ? 'mid' : ''}`}>
-        {!showConstellation ? <ProductionSearch data={data} lang={lang} onPick={pickEndpoint} /> : null}
-        {!showConstellation && managed.length > 0 && <div className="network-graph-tools">
-          {drillSub && <button onClick={() => openSubnet(null)}>{lang === 'zh' ? '返回全网' : 'All devices'}</button>}
-          <button onClick={() => setDetail({ deviceId: selectedInterface?.device.id ?? managed[0].id })}>{lang === 'zh' ? '设备详情' : 'Device details'}</button>
-          {selectedInterface && <button onClick={() => setDetail({ deviceId: selectedInterface.device.id, interfaceId: selectedInterface.intf.id })}>{lang === 'zh' ? '接口详情' : 'Interface details'} · {selectedInterface.intf.name}</button>}
-        </div>}
-
-        {!showConstellation ? (!drillSub && !theater && managed.length > 0 ? <ManagedNetworkGraph devices={managed} assets={data.inventory.assets} lang={lang}
-          onDevice={device => setDetail({ deviceId: device.id })} onInterface={openInterface} onEndpoint={pickEndpoint}
-        /> : <TopologyCanvas
+        {!showConstellation && <GatewayInterfaces devices={data.inventory.managedDevices ?? []} lang={lang} />}
+        {!showConstellation ? <ProductionSearch data={data} lang={lang} onPick={(ip, cidr) => { setDrillSub(cidr); setDrillDev(ip); setThreat(null) }} /> : null}
+        {!showConstellation ? <TopologyCanvas
           topo={projection.topology}
           stats={projection.stats}
           activeKey="production_observed"
@@ -1057,7 +1022,7 @@ export function ProductionTopologyPage({
           onOpen3D={() => onShowConstellation?.(true)}
           onCloseThreat={() => setThreat(null)}
           onSub={openSubnet}
-          onDev={(device, cidr) => { setThreat(null); if (device) pickEndpoint(device.ip, cidr ?? drillSub ?? '') }}
+          onDev={(device) => { setThreat(null); setDrillDev(device?.ip ?? null) }}
           onBatch={(cidr) => {
             const next = { ...marks }
             for (const device of projection.graphs[cidr]?.devices ?? []) {
@@ -1092,7 +1057,7 @@ export function ProductionTopologyPage({
           allGraphs={projection.graphs}
           onCloseTheater={() => setTheater(null)}
           production={projection.context}
-        />) : (
+        /> : (
           <>
             <Suspense fallback={<div className="c3d-inline c3d-booting">3D…</div>}>
               <Constellation3D
@@ -1126,10 +1091,6 @@ export function ProductionTopologyPage({
             {threat ? <div className="c3d-threat"><ThreatCard th={threat} lang={lang} onAnalyze={force => analyzeHost(threat.ip, force)} onClose={() => setThreat(null)} /></div> : null}
           </>
         )}
-        {detail && !showConstellation && <aside className="network-graph-drawer" aria-label={lang === 'zh' ? '节点详情' : 'Node details'}>
-          <div className="network-graph-drawer-head"><strong>{lang === 'zh' ? '节点详情' : 'Node details'}</strong><button aria-label={lang === 'zh' ? '关闭节点详情' : 'Close node details'} onClick={() => setDetail(null)}>✕</button></div>
-          <NetworkWorkspace key={JSON.stringify(detail)} initialSelection={detail} detailOnly data={data} lang={lang} rate={rate} onInvestigate={ip => onOpenCase(ip)} />
-        </aside>}
         {rate !== null ? <div className="live-rate"><span className="rate-dot" />{rate}/s · {lang === 'zh' ? '生产事实流' : 'PRODUCTION FACTS'}</div> : null}
         {showConstellation && hover3D ? <div className="production-cache-state">{lang === 'zh' ? `当前资产 · ${hover3D}` : `ASSET · ${hover3D}`}</div> : null}
       </section>

@@ -1,0 +1,9 @@
+.gateway-interfaces { position: absolute; right: 24px; top: 20px; z-index: 15; font: 11px var(--font-mono, monospace); color: #242823; }
+.gateway-interfaces > summary { cursor: pointer; padding: 8px 12px; border: 1px solid #727c70; background: #efeee9; width: max-content; margin-left: auto; }
+.gateway-interfaces-body { width: min(560px, calc(100vw - 64px)); max-height: 65vh; overflow: auto; padding: 18px; border: 1px solid #388d85; background: #efeee9; margin-top: 6px; box-shadow: 3px 3px 0 #0002; }
+.gateway-interfaces-body p { color: #565e54; line-height: 1.7; margin: 8px 0 14px; }
+.gateway-interfaces table { width: 100%; border-collapse: collapse; text-align: left; font: inherit; }
+.gateway-interfaces th, .gateway-interfaces td { padding: 10px 6px; border-bottom: 1px solid #c7ccc2; vertical-align: top; line-height: 1.6; }
+.gateway-interfaces small { display: block; color: #565e54; }
+.gateway-interfaces summary:focus-visible { outline: 2px solid #222; outline-offset: 2px; }
+@media (max-width: 800px) { .gateway-interfaces { top: 68px; right: 15px; } }
