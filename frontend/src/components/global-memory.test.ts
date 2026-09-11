@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { filterGlobalMemory, loadGlobalMemory } from './global-memory'
-import type { LiveMemoryDetailRecord } from '../types'
-const record = (id: string, quarantined = false) => ({memory_id:id,text:`Knowledge ${id}`,tier:'semantic',asset_ids:['10.0.0.1'],tags:[],quarantined,source_trace_ids:[],evidence_ids:[],links:[],relations:[],evidence_snapshot:{count:0,evidence_ids:[]},quarantine_reason:null,superseded_by:null,confidence:1,importance:1,strength:1,access_count:0,first_observed_at:null,last_observed_at:null,valid_from:null,valid_to:null}) satisfies LiveMemoryDetailRecord
+import type { LiveMemoryListRecord } from '../types'
+const record = (id: string, quarantined = false) => ({memory_id:id,text:`Knowledge ${id}`,tier:'semantic',asset_ids:['10.0.0.1'],tags:[],quarantined,source_trace_ids:0,confidence:1,importance:1,strength:1,access_count:0,first_observed_at:null,last_observed_at:null,valid_from:null,valid_to:null}) satisfies LiveMemoryListRecord
 const inventory = {ok:true,durable:true,counts:{semantic:2,asset_profile:0,procedural:0,episodic:0,quarantined:0},budget:{active:2,configured:null},retention:{decay_wired:false,eviction_wired:false,last_decay_at:null}}
 afterEach(() => vi.unstubAllGlobals())
 describe('global memory reads', () => {

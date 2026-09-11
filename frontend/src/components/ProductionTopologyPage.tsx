@@ -21,6 +21,7 @@ import { TopologyCanvas, type ProductionTopologyContext } from './TopologyCanvas
 import { readAnalysis, type AnalysisMode } from './analysis-read'
 import { ThreatCard, type Threat, type WanThreat } from './ThreatCard'
 import type { InvestigationSourceEventInput } from './investigation-context'
+import { display } from './display-lexicon'
 
 const Constellation3D = lazy(() => import('./Constellation3D').then((module) => ({ default: module.Constellation3D })))
 
@@ -111,6 +112,8 @@ interface RiskAsset {
 }
 
 interface ProductionOverview {
+  /** Address of the host this console runs on; anchors systemd-unit subjects. */
+  hostAddress?: string | null
   ok: boolean
   mode: 'production_observed'
   observedAt: string
@@ -811,7 +814,7 @@ function ProductionImpactStrip({
       <dl>
         <div><dt>{zh ? '故障对象' : 'FAULT OBJECT'}</dt><dd>{theater.deviceLabel || theater.device}</dd></div>
         <div><dt>{zh ? '承载资产' : 'HOST ASSET'}</dt><dd>{asset ? `${asset.name} · ${asset.ip}` : theater.anchorIp || (zh ? '尚无资产坐标' : 'NO ASSET COORDINATE')}</dd></div>
-        <div><dt>{zh ? '所在网段' : 'SEGMENT'}</dt><dd>{segment ? `${segment.name} · ${segment.cidr}` : asset?.segment || 'N/A'}</dd></div>
+        <div><dt>{zh ? '所在网段' : 'SEGMENT'}</dt><dd>{segment ? `${display(segment.name, lang)} · ${segment.cidr}` : asset?.segment || 'N/A'}</dd></div>
         <div className="production-impact-result"><dt>{zh ? '实测边界' : 'MEASURED BOUNDARY'}</dt><dd>{boundary}</dd></div>
       </dl>
     </section>
@@ -824,6 +827,9 @@ export function ProductionTopologyPage({
   onTrackIncident,
   onOpenExposure,
   focusSubject,
+  focusCaseId,
+  focusSummary,
+  focusSeverity,
   showConstellation = false,
   onShowConstellation,
 }: {
@@ -832,6 +838,10 @@ export function ProductionTopologyPage({
   onOpenExposure?: () => void
   onTrackIncident?: (subject: string, event: TheaterEvent, caseId?: string) => void
   focusSubject?: string
+  /** The investigation's case, so a case with no live sentinel chain still opens the theater on its record. */
+  focusCaseId?: string
+  focusSummary?: string
+  focusSeverity?: string
   showConstellation?: boolean
   onShowConstellation?: (show: boolean) => void
 }) {
@@ -853,6 +863,45 @@ export function ProductionTopologyPage({
   const [rate, setRate] = useState<number | null>(null)
   const [theater, setTheater] = useState<TheaterEvent | null>(null)
   const [hover3D, setHover3D] = useState<string | null>(null)
+
+  /* A focused case whose subject has no sentinel row (a production case that
+   * came in through the case store, not the sentinel loop) never triggers the
+   * alert list's auto-open. Give the sentinel rows a moment; if nothing opened,
+   * put the case itself on the stage: the drilldown then plays its recorded
+   * timeline, and the topology anchors it by its address when it has one. */
+  useEffect(() => {
+    if (!focusSubject || !focusCaseId || showConstellation) return
+    const timer = window.setTimeout(() => {
+      setTheater(current => {
+        if (current && current.device === focusSubject) return current
+        const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(focusSubject)
+        const byMac = data?.inventory.assets.find(asset => asset.mac?.toLowerCase() === focusSubject.toLowerCase())
+        // Addresses named by the case's own summary ("a -> b · …") are the
+        // record's facts, not a guess: the last is where it landed.
+        const named = (focusSummary?.match(/(?:\d{1,3}\.){3}\d{1,3}/g) ?? []).filter(ip => data?.inventory.assets.some(asset => asset.ip === ip))
+        const anchorIp = isIp ? focusSubject : byMac?.ip ?? named.at(-1) ?? (/\.service$/.test(focusSubject) ? data?.hostAddress ?? undefined : undefined)
+        const originIp = named.length > 1 && named[0] !== anchorIp ? named[0] : undefined
+        return {
+          kind: 'alert',
+          id: focusCaseId,
+          ts: new Date().toISOString(),
+          device: focusSubject,
+          deviceLabel: byMac?.name ?? focusSubject,
+          severity: focusSeverity ?? 'high',
+          summary: focusSummary,
+          // The sentinel rail (detect → confirm → preflight → act → watch →
+          // verify) is the one the case's recorded events map onto.
+          scope: 'sentinel',
+          caseId: focusCaseId,
+          anchorIp,
+          originIp,
+          stageIds: [],
+          dataClassification: focusSubject.startsWith('autopoiesis-acceptance-') ? 'controlled_test' : 'production_observed',
+        }
+      })
+    }, 3500)
+    return () => window.clearTimeout(timer)
+  }, [focusSubject, focusCaseId, focusSummary, focusSeverity, showConstellation, data])
   const savedAnalyses = useRef(new Map<string, Threat | WanThreat | GraphAnalysis>())
   const analysisSequence = useRef({ host: 0, wan: 0, subnet: 0 })
   useEffect(() => {
@@ -1048,12 +1097,16 @@ export function ProductionTopologyPage({
     <>
       <LiveAlerts
         lang={lang}
+        mode="toast"
         theaterActive={Boolean(theater)}
         activeSubject={theater?.device}
         autoOpenSubject={focusSubject}
         onArchived={subject => { if (theater?.device === subject) setTheater(null) }}
         onOpen={(subject, event, caseId, origin) => {
-          setTheater({ ...event, caseId: caseId ?? event.caseId })
+          // A unit runs on this host; once its live suggestion has expired the
+          // event arrives without an address, and the host's is the honest one.
+          const anchorIp = event.anchorIp ?? (/\.service$/.test(subject) ? data?.hostAddress ?? undefined : undefined)
+          setTheater({ ...event, caseId: caseId ?? event.caseId, anchorIp })
           if (origin !== 'focus') onTrackIncident?.(subject, event, caseId)
           setDrillSub(null)
           setDrillDev(null)

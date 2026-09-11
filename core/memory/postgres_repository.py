@@ -449,6 +449,83 @@ class PostgresMemoryRepository:
             )
         ]
 
+    def read_record_page(
+        self,
+        *,
+        include_quarantined: bool = True,
+        tier: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[MemoryRecord], int, dict[str, int]]:
+        """Read one sorted inventory page without decoding the whole memory table.
+
+        The console calls this path repeatedly. Keeping filtering, counting and
+        pagination in PostgreSQL bounds both gateway memory use and response
+        size as the durable inventory grows.
+        """
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        if tier is not None and tier not in {
+            "episodic", "semantic", "procedural", "asset_profile"
+        }:
+            raise ValueError(f"unknown memory tier: {tier}")
+
+        visible = "NOT ((record -> 'tags') ? 'memory_retention_checkpoint')"
+        selected = [visible]
+        parameters: list[Any] = []
+        if not include_quarantined:
+            selected.append("NOT (record ->> 'quarantined')::boolean")
+        if tier is not None:
+            selected.append("record ->> 'tier' = %s")
+            parameters.append(tier)
+        where = " AND ".join(selected)
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT
+                        record ->> 'tier' AS tier,
+                        (record ->> 'quarantined')::boolean AS quarantined,
+                        COUNT(*)
+                    FROM memory_records
+                    WHERE {visible}
+                    GROUP BY tier, quarantined
+                    """
+                )
+                counts = {
+                    "episodic": 0,
+                    "semantic": 0,
+                    "procedural": 0,
+                    "asset_profile": 0,
+                    "quarantined": 0,
+                }
+                for row_tier, quarantined, count in cursor.fetchall():
+                    if quarantined:
+                        counts["quarantined"] += int(count)
+                    elif row_tier in counts:
+                        counts[str(row_tier)] += int(count)
+
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM memory_records WHERE {where}",
+                    tuple(parameters),
+                )
+                total = int(cursor.fetchone()[0])
+                cursor.execute(
+                    f"""
+                    SELECT record
+                    FROM memory_records
+                    WHERE {where}
+                    ORDER BY (record ->> 'importance')::double precision DESC, memory_id
+                    LIMIT %s OFFSET %s
+                    """,
+                    (*parameters, limit, offset),
+                )
+                records = [_decode_record(row[0]) for row in cursor.fetchall()]
+        return records, total, counts
+
     def load_versioned_records(
         self,
         *,

@@ -178,8 +178,8 @@ def test_read_only_api_supports_summary_session_and_case_queries(monkeypatch, tm
     assert summary.json()["eventCount"] == 4
     assert summary.json()["trainedAt"]
     assert summary.json()["limits"] == {
-        "maxSessions": 1000,
-        "maxEventsPerSession": 500,
+        "maxSessions": 100,
+        "maxEventsPerSession": 128,
         "truncatedSessions": 0,
     }
     assert session.status_code == 200
@@ -191,6 +191,20 @@ def test_read_only_api_supports_summary_session_and_case_queries(monkeypatch, tm
 
     cached = client.get("/api/rca/investigate/trajectory-fsm")
     assert cached.json()["trainedAt"] == summary.json()["trainedAt"]
+
+
+def test_trajectory_store_projection_drops_large_evidence_bodies(tmp_path):
+    store = InvestigationSessionStore(tmp_path)
+    snapshot = _session("session-lean", ["probe_selected", "tool_called"])
+    snapshot["evidence"] = [{"raw": "x" * 100_000}]
+    snapshot["trace_events"][0]["payload"] = {"raw": "y" * 100_000}
+    store.save(snapshot)
+
+    projected = store.recent_trajectory(10, max_events_per_session=1)
+
+    assert projected[0]["trace_events"] == ["tool_called"]
+    assert "evidence" not in projected[0]
+    assert "raw" not in str(projected[0])
 
 
 def test_event_limit_preserves_the_trailing_current_state():

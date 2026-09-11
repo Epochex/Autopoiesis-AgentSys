@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import threading
+from pathlib import Path
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -312,6 +314,22 @@ async def _lifespan(app: FastAPI):
     global _diagnosis_cases, _evolving_service, _runtime_error, _operational_memory, _operational_stop
     _start_prewarm()
     _configure_production_memory_budget()
+
+    # The memory receipt, the change assessment and the retrieval page read
+    # sessions through the store's field index, and influence events through
+    # the ledger tail. Both are incremental after their first pass; pay that
+    # pass here, off the request path, so the first console after a restart
+    # is not the one that builds them.
+    def warm_memory_hot_paths() -> None:
+        try:
+            from .investigate import _session_store
+            _session_store().summaries(5_000)
+            _memory_trace_events()
+        except Exception:
+            # Best-effort: a cold index only means the first receipt is slower.
+            pass
+
+    threading.Thread(target=warm_memory_hot_paths, name="memory-hot-path-warm", daemon=True).start()
     from .operational_memory import OperationalMemoryService, build_operational_memory_service
 
     # Restoring thousands of historical dossiers and their derived feature
@@ -462,6 +480,38 @@ async def _lifespan(app: FastAPI):
 
     threading.Thread(target=refresh_operational_memory, daemon=True).start()
     threading.Thread(target=sync_live_investigation_cases, daemon=True).start()
+
+    def precompute_bounded_operator_views() -> None:
+        """Warm the bounded summaries used by click-through views."""
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return
+        if stop_event.wait(2.0):
+            return
+        try:
+            from .situational_awareness import build_situational_overview
+
+            build_situational_overview(
+                _case_repository(), _load_environment_report(), refresh=True,
+            )
+        except Exception:
+            pass
+        try:
+            _cached_trajectory_fsm_report(
+                session_id=None,
+                case_id=None,
+                context_window=2,
+                top_k=3,
+                limit=100,
+                max_events_per_session=128,
+            )
+        except Exception:
+            pass
+
+    threading.Thread(
+        target=precompute_bounded_operator_views,
+        name="bounded-operator-view-precompute",
+        daemon=True,
+    ).start()
     if os.getenv("AUTOPOIESIS_KNOWLEDGE_AUTO_SYNC", "0") == "1":
         from core.memory.knowledge_sync import run_knowledge_sync_loop
 
@@ -880,6 +930,49 @@ def _memory_records() -> tuple[bool, list[Any], int | None, str | None]:
     return repository is not None, visible_records, budget, last_decay_at
 
 
+def _memory_retention_metadata(service: Any, repository: Any) -> tuple[int | None, str | None]:
+    """Read retention metadata without materialising the memory inventory."""
+    retention_health: dict[str, Any] = {}
+    health = getattr(service, "health", None)
+    if callable(health):
+        payload = health()
+        if isinstance(payload, dict):
+            retention_health = dict(payload.get("memory_retention") or {})
+    budget = retention_health.get("budget")
+    if isinstance(budget, bool) or not isinstance(budget, int):
+        budget = None
+    last_decay_at = retention_health.get("last_decay_at")
+    if hasattr(last_decay_at, "isoformat"):
+        last_decay_at = last_decay_at.isoformat()
+    if last_decay_at is None:
+        get_record = getattr(repository, "get", None)
+        if callable(get_record):
+            checkpoint = get_record("autopoiesis:memory-retention:decay-checkpoint")
+            if checkpoint is not None:
+                last_decay_at = _memory_time(checkpoint[0].last_observed_at)
+    return budget, last_decay_at
+
+
+def _memory_record(memory_id: str) -> tuple[bool, Any | None]:
+    """Read one durable record directly, falling back to the local store."""
+    service = _evolving_service
+    memory = getattr(service, "memory", None) if service is not None else None
+    if memory is None:
+        return False, None
+    repository = getattr(memory, "repository", None)
+    get_record = getattr(repository, "get", None)
+    if callable(get_record):
+        found = get_record(memory_id)
+        record = found[0] if found is not None else None
+        if record is not None and _MEMORY_RETENTION_CHECKPOINT_TAG in record.tags:
+            record = None
+        return True, record
+    records = memory.records()
+    return False, next(
+        (record for record in records if record.memory_id == memory_id), None
+    )
+
+
 def _memory_time(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -984,20 +1077,76 @@ def _trace_memory_ids(event: Any) -> set[str]:
     return memory_ids
 
 
+# ── memory influence events, read incrementally ─────────────────────────────
+#
+# Every consumer of this list filters it down to _MEMORY_INFLUENCE_KINDS, and
+# those are a few dozen lines in a ledger of hundreds of thousands: on 10 Sep
+# the file was 952 MB / 220,561 lines with 36 influence events. Replaying the
+# whole file into pydantic objects on every receipt poll (every 5 s, and twice
+# concurrently) took the gateway from 260 MB to 1.7 GB in three minutes and
+# stalled it — that was the "502" on the memory page. The ledger is append-only
+# with an inter-process lock on writes, so the tail since the last read is the
+# only new data: keep the byte offset, parse only new lines, and keep only the
+# kinds anyone asks for. A shrunken or replaced file (rotation) starts over.
+_TRACE_INFLUENCE_LOCK = threading.Lock()
+_TRACE_INFLUENCE_STATE: dict[str, Any] = {"path": None, "inode": None, "offset": 0, "events": []}
+_TRACE_KIND_RE = re.compile(r'"kind"\s*:\s*"([A-Za-z_]+)"')
+
+
+def _read_influence_tail(path: Path) -> list[Any]:
+    """Influence-kind events from ``path``, parsing only bytes not yet seen."""
+    from core.trace.events import TraceEvent
+
+    state = _TRACE_INFLUENCE_STATE
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        state.update(path=None, inode=None, offset=0, events=[])
+        return []
+    same_file = state["path"] == path and state["inode"] == stat.st_ino
+    if not same_file or stat.st_size < state["offset"]:
+        state.update(path=path, inode=stat.st_ino, offset=0, events=[])
+    if stat.st_size == state["offset"]:
+        return list(state["events"])
+    events: list[Any] = list(state["events"])
+    with path.open("rb") as handle:
+        handle.seek(state["offset"])
+        consumed = state["offset"]
+        for raw in handle:
+            if not raw.endswith(b"\n"):
+                break  # a writer holds a partial line; read it next time
+            consumed += len(raw)
+            line = raw.strip()
+            if not line:
+                continue
+            kind = _TRACE_KIND_RE.search(line.decode("utf-8", errors="replace"))
+            if kind is None or kind.group(1) not in _MEMORY_INFLUENCE_KINDS:
+                continue
+            try:
+                events.append(TraceEvent.model_validate_json(line))
+            except ValueError:
+                # Mirror replay(): a corrupt line is a fault, not something to skip.
+                raise ValueError(f"corrupt trace event at {path} near byte {consumed}")
+    state.update(offset=consumed, events=events)
+    return list(events)
+
+
 def _memory_trace_events() -> list[Any]:
-    """Replay the decision ledger without treating retrieval events as influence."""
+    """Influence-kind decision events, in append order.
+
+    Only ``_MEMORY_INFLUENCE_KINDS`` are returned: that is all any caller reads,
+    and it is what makes the incremental read cheap enough to poll.
+    """
     service = _evolving_service
     orchestrator = getattr(service, "orchestrator", None) if service is not None else None
     ledger = getattr(orchestrator, "ledger", None)
-    replay = getattr(ledger, "replay", None)
-    if callable(replay):
-        return list(replay())
-
-    if not settings.trace_ledger_path.exists():
-        return []
-    from core.trace.ledger import JSONLTraceLedger
-
-    return JSONLTraceLedger(settings.trace_ledger_path).replay()
+    ledger_path = getattr(ledger, "path", None)
+    path = Path(ledger_path) if ledger_path else settings.trace_ledger_path
+    if ledger is not None and ledger_path is None and callable(getattr(ledger, "replay", None)):
+        # A ledger that is not a file (tests, evaluation streams): full replay, same filter.
+        return [event for event in ledger.replay() if event.kind in _MEMORY_INFLUENCE_KINDS]
+    with _TRACE_INFLUENCE_LOCK:
+        return _read_influence_tail(path)
 
 
 def _memory_influence_timeline() -> list[dict[str, Any]]:
@@ -1267,25 +1416,48 @@ async def rca_memory(
     """Current online memory, separate from the deterministic benchmark replay."""
     from core.evolve.observatory import CAPABILITIES
 
-    durable, records, configured_budget, last_decay_at = await asyncio.to_thread(
-        _memory_records
-    )
-    active = [record for record in records if not record.quarantined]
-    counts = {memory_tier: 0 for memory_tier in _MEMORY_TIERS}
-    for record in active:
-        counts[record.tier] += 1
-    counts["quarantined"] = sum(1 for record in records if record.quarantined)
-
-    selected = records if include_quarantined else active
-    if tier is not None:
-        selected = [record for record in selected if record.tier == tier]
-    selected.sort(key=lambda record: (-record.importance, record.memory_id))
+    service = _evolving_service
+    memory = getattr(service, "memory", None) if service is not None else None
+    repository = getattr(memory, "repository", None)
+    read_page = getattr(repository, "read_record_page", None)
+    # Detailed records carry provenance and relations, so one response is
+    # capped more tightly. The cursor reports the effective page size.
+    effective_limit = min(limit, 100 if details else 250)
+    if callable(read_page):
+        selected, total, counts = await asyncio.to_thread(
+            read_page,
+            include_quarantined=include_quarantined,
+            tier=tier,
+            limit=effective_limit,
+            offset=offset,
+        )
+        configured_budget, last_decay_at = await asyncio.to_thread(
+            _memory_retention_metadata, service, repository
+        )
+        durable = True
+        active_count = sum(counts[memory_tier] for memory_tier in _MEMORY_TIERS)
+    else:
+        durable, records, configured_budget, last_decay_at = await asyncio.to_thread(
+            _memory_records
+        )
+        active = [record for record in records if not record.quarantined]
+        counts = {memory_tier: 0 for memory_tier in _MEMORY_TIERS}
+        for record in active:
+            counts[record.tier] += 1
+        counts["quarantined"] = sum(1 for record in records if record.quarantined)
+        selected_all = records if include_quarantined else active
+        if tier is not None:
+            selected_all = [record for record in selected_all if record.tier == tier]
+        selected_all.sort(key=lambda record: (-record.importance, record.memory_id))
+        total = len(selected_all)
+        selected = selected_all[offset:offset + effective_limit]
+        active_count = len(active)
 
     return {
         "ok": True,
         "durable": durable,
         "counts": counts,
-        "budget": {"configured": configured_budget, "active": len(active)},
+        "budget": {"configured": configured_budget, "active": active_count},
         "retention": {
             "decay_wired": CAPABILITIES["decay_wired"],
             "eviction_wired": CAPABILITIES["eviction_wired"],
@@ -1296,10 +1468,10 @@ async def rca_memory(
                 "evaluatedAt": "module_import",
             },
         },
-        "records": [(_memory_detail_record if details else _memory_list_record)(record) for record in selected[offset:offset + limit]],
-        "total": len(selected),
+        "records": [(_memory_detail_record if details else _memory_list_record)(record) for record in selected],
+        "total": total,
         "offset": offset,
-        "next_offset": offset + limit if offset + limit < len(selected) else None,
+        "next_offset": offset + len(selected) if offset + len(selected) < total else None,
     }
 
 
@@ -1351,10 +1523,7 @@ async def rca_memory_events(
 @app.get("/api/rca/memory/{memory_id}")
 async def rca_memory_detail(memory_id: str) -> dict[str, Any]:
     """Full provenance for one online memory record, with evidence bodies withheld."""
-    durable, records, _configured_budget, _last_decay_at = await asyncio.to_thread(
-        _memory_records
-    )
-    record = next((item for item in records if item.memory_id == memory_id), None)
+    durable, record = await asyncio.to_thread(_memory_record, memory_id)
     if record is None:
         raise HTTPException(status_code=404, detail="memory record not found")
     return {"ok": True, "durable": durable, "record": _memory_detail_record(record)}
@@ -1363,10 +1532,7 @@ async def rca_memory_detail(memory_id: str) -> dict[str, Any]:
 @app.get("/api/rca/memory/{memory_id}/influence")
 async def rca_memory_influence(memory_id: str) -> dict[str, Any]:
     """Decisions that explicitly recorded this memory as changing their path."""
-    _durable, records, _configured_budget, _last_decay_at = await asyncio.to_thread(
-        _memory_records
-    )
-    record = next((item for item in records if item.memory_id == memory_id), None)
+    _durable, record = await asyncio.to_thread(_memory_record, memory_id)
     if record is None:
         raise HTTPException(status_code=404, detail="memory record not found")
 
@@ -1387,6 +1553,7 @@ async def rca_memory_influence(memory_id: str) -> dict[str, Any]:
 async def rca_event_memory_receipt(
     subject: str = Query(min_length=1, max_length=128),
     incident_ref: str | None = Query(default=None, min_length=1, max_length=128),
+    session_id: str | None = Query(default=None, min_length=1, max_length=64),
 ) -> dict[str, Any]:
     """Join one selected live incident to its durable memory consequences.
 
@@ -1405,7 +1572,10 @@ async def rca_event_memory_receipt(
     source_trace_id = _incident_memory_trace_id(chain)
     current_records = [
         record for record in records
-        if source_trace_id and source_trace_id in record.source_trace_ids
+        # A chain names its cycle; a reflection on a completed case names the
+        # case. Either is exact provenance for "written by this incident".
+        if (source_trace_id and source_trace_id in record.source_trace_ids)
+        or (incident_ref and incident_ref in record.source_trace_ids)
     ]
     # The receipt is incident-scoped. Subject-wide history stays on the online
     # memory surface, where it cannot be mistaken for output of this cycle.
@@ -1455,25 +1625,25 @@ async def rca_event_memory_receipt(
     # chain without opening the investigation service.
     from .investigate import _session_store
 
-    snapshots = await asyncio.to_thread(_session_store().recent, 1_000)
-    snapshots = [snapshot for snapshot in snapshots if not snapshot.get("evaluation_source_case_id") and not snapshot.get("evaluation_only")]
-    subject_sessions = [
-        snapshot for snapshot in snapshots
-        if str(snapshot.get("subject") or "") == subject
-    ]
-    if incident_ref:
-        exact_sessions = [
-            snapshot for snapshot in snapshots
-            if str(snapshot.get("case_id") or "") == incident_ref
-            or any(
-                incident_ref == str(source.get("source_id") or "")
-                for source in snapshot.get("source_refs") or ()
-                if isinstance(source, Mapping)
-            )
-        ]
-        investigation_snapshot = exact_sessions[0] if exact_sessions else None
-    else:
-        investigation_snapshot = subject_sessions[0] if subject_sessions else None
+    # One snapshot is loaded: the store indexes the matching fields of the
+    # newest thousand and only reads the chosen file (see find_latest).
+    investigation_snapshot = None
+    # Handlers are also called directly (tests); only a real string pins a session.
+    if isinstance(session_id, str) and session_id:
+        # The case record may name the session that decided it (a memory
+        # comparison's second round runs under its own internal case); when it
+        # does, that session is the one to show, not the newest for the case.
+        def pinned() -> dict[str, Any] | None:
+            try:
+                snapshot = _session_store().load(session_id)
+            except (OSError, ValueError):
+                return None
+            return snapshot if snapshot and str(snapshot.get("subject") or "") == subject else None
+        investigation_snapshot = await asyncio.to_thread(pinned)
+    if investigation_snapshot is None:
+        investigation_snapshot = await asyncio.to_thread(
+            _session_store().find_latest, subject=subject, incident_ref=incident_ref, limit=1_000,
+        )
 
     investigation: dict[str, Any] | None = None
     if investigation_snapshot is not None:
@@ -2628,7 +2798,10 @@ def _cached_trajectory_fsm_report(
             raise KeyError("unknown session") from None
         if target is None:
             raise KeyError("unknown session")
-    snapshots = store.recent(limit)
+    snapshots = store.recent_trajectory(
+        limit,
+        max_events_per_session=max_events_per_session,
+    )
     report = trajectory_fsm_report(
         snapshots,
         session_id=session_id,
@@ -2664,8 +2837,8 @@ async def investigate_trajectory_fsm(
     case_id: str | None = Query(default=None, min_length=1, max_length=128),
     context_window: int = Query(default=2, ge=1, le=4),
     top_k: int = Query(default=3, ge=1, le=10),
-    limit: int = Query(default=1_000, ge=1, le=1_000),
-    max_events_per_session: int = Query(default=500, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=250),
+    max_events_per_session: int = Query(default=128, ge=1, le=256),
 ) -> dict[str, Any]:
     """Read-only shadow FSM learned from durable investigation traces."""
     try:
@@ -2679,6 +2852,11 @@ async def investigate_trajectory_fsm(
             max_events_per_session=max_events_per_session,
         )
     except KeyError:
+        if case_id and not session_id:
+            # A case handled entirely by the sentinel chain never opened an
+            # investigation session; that is a normal state, not a missing
+            # resource, and the console shows it as "awaiting trajectory".
+            return {"ok": True, "analysis": None, "sessionCount": 0, "eventCount": 0, "caseId": case_id}
         raise HTTPException(
             status_code=404, detail="unknown investigation session or case"
         ) from None
@@ -2767,7 +2945,12 @@ async def rca_cost(hours: int = Query(default=24, ge=1, le=720)) -> dict[str, An
     """
     from core.llm.cost import summary
 
-    return {"ok": True, **await asyncio.to_thread(summary, hours)}
+    from . import model_access
+
+    payload = await asyncio.to_thread(summary, hours)
+    budget = await asyncio.to_thread(model_access.budget_status)
+    balance = await asyncio.to_thread(model_access.provider_balance)
+    return {"ok": True, **payload, "budget": budget, "provider_balance": balance}
 
 
 @app.get("/api/rca/sentinel/timeline")

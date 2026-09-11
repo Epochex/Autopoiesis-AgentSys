@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { Lang } from '../i18n'
+import { display } from './display-lexicon'
 
 export interface ProbePriorReceipt {
   preferred?: string[]
@@ -105,10 +106,10 @@ export function InvestigationContextReceipt({
           <details className={`dx-cr-hit${item.selected_for_context ? ' is-selected' : ' is-dropped'}`} key={`${item.kind}:${item.item_id}`}>
             <summary>
               <span>{item.selected_for_context ? String(item.context_rank ?? '✓') : '×'}</span>
-              <b>{item.title || item.item_id}</b>
+              <b>{display(item.title || item.item_id, lang)}</b>
               <em>{item.kind}</em>
             </summary>
-            <p>{item.summary}</p>
+            <p>{display(item.summary, lang)}</p>
             <dl>
               <div><dt>{tx.source}</dt><dd>{item.source} · {item.locator}</dd></div>
               <div><dt>{tx.match}</dt><dd>{(item.matched_on ?? []).join(' · ') || 'none'}</dd></div>

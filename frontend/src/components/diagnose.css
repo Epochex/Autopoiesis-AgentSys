@@ -675,3 +675,25 @@
   .dx-action-rail { grid-template-columns:1fr 1fr; }
   .dx-action-rail > button { min-height:38px; }
 }
+
+/* ── the case's own decision, ahead of any workbench ───────────────────── */
+.dx-decision { border: 1.5px solid var(--ink); padding: 14px 16px 12px; margin-bottom: 14px; background: var(--paper); }
+.dx-decision .dx-sec-k em { font-style: normal; padding: 1px 6px; border: 1px solid var(--ink); }
+.dx-decision .dx-sec-k em.is-escalated { background: #8d1d30; color: #fff; border-color: #8d1d30; }
+.dx-decision .dx-sec-k em.is-resolved { background: var(--acid); }
+.dx-decision h3 { margin: 8px 0 4px; font: 600 22px/1.2 var(--font-display); }
+.dx-decision-summary { margin: 0 0 10px; font-size: 13px; line-height: 1.55; color: var(--ink-soft); }
+.dx-decision-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 18px; margin: 0; border-top: 1px solid var(--rule); }
+.dx-decision-grid div { padding: 10px 0 8px; border-bottom: 1px solid var(--rule); }
+.dx-decision-grid dt { font: 9px var(--font-mono); letter-spacing: .12em; color: var(--gray); }
+.dx-decision-grid dd { margin: 4px 0 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.dx-decision-missing { margin-top: 10px; padding-left: 10px; border-left: 3px solid #8d1d30; }
+.dx-decision-missing b { display: block; font: 9px var(--font-mono); letter-spacing: .12em; color: #8d1d30; margin-bottom: 4px; }
+.dx-decision-missing p { margin: 2px 0; font-size: 13px; }
+.dx-decision-missing code { margin-left: 8px; font: 11px var(--font-mono); }
+.dx-decision-evidence { margin-top: 10px; }
+.dx-decision-evidence summary { cursor: pointer; font: 10px var(--font-mono); letter-spacing: .1em; }
+.dx-decision-evidence > div { margin-top: 8px; }
+.dx-decision-evidence b { font: 11px var(--font-mono); }
+.dx-decision-evidence pre { margin: 3px 0 0; padding: 8px; max-height: 160px; overflow: auto; font: 11px/1.45 var(--font-mono); background: var(--paper-2); border: 1px solid var(--rule); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .dx-decision-grid { grid-template-columns: 1fr 1fr; } }

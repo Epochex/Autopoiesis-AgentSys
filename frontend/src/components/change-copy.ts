@@ -138,6 +138,8 @@ const english: Record<string, string> = {
   "查看恢复 Diff": "View restoration diff",
   "执行与观察记录": "Execution and observation history",
   "第": "Observation ",
-  "次 ·": " · "
+  "次 ·": " · ",
+  "启用后仍只执行已经审批且通过前置检查的方案。": "Even once enabled, only plans that are already approved and have passed their preflight checks are executed.",
+  "暂停后，待执行方案继续保留，设备写入立即停止。": "While paused, pending plans are kept and device writes stop immediately."
 }
 export const changeCopy = (value: string, lang: Lang) => lang === 'en' ? english[value.trim()] ?? value : value

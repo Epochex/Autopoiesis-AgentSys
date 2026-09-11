@@ -9,6 +9,7 @@ import { TheaterStage } from './TheaterStage'
 import { type Threat, type WanThreat } from './ThreatCard'
 import type { Lang } from '../i18n'
 import { GatewayInterfaces, type GatewayDevice } from './GatewayInterfaces'
+import { display } from './display-lexicon'
 
 type Pt = { x: number; y: number }
 export interface ProductionTopologyContext {
@@ -465,7 +466,7 @@ function Thesis({ stats, lang, production }: { stats: DataStats; lang: Lang; pro
         </text>
         <rect x={90} y={784} width={zh ? 372 : 620} height={44} className="th-acid" />
         <text x={102} y={817} className="th-title">{zh ? '生产观测图谱' : 'OBSERVATION MAP'}</text>
-        <text x={96} y={856} className="th-meta"><tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{stats.source}</text>
+        <text x={96} y={856} className="th-meta"><tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{display(stats.source, lang)}</text>
         <g className="th-barcode">
           {bars.map((w, i) => {
             const r = <rect key={i} x={bx} y={868} width={w} height={16} />
@@ -485,7 +486,7 @@ function Thesis({ stats, lang, production }: { stats: DataStats; lang: Lang; pro
       <line x1={96} y1={772} x2={780} y2={772} className="th-rule" />
       <text x={96} y={808} className="th-kicker">{zh ? '态势 · 证据面' : 'CONSOLE · THE EVIDENCE SURFACE'}</text>
       <text x={96} y={852} className="th-meta">
-        <tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{stats.source}
+        <tspan className="th-k">{zh ? '来源 ' : 'SOURCE '}</tspan>{display(stats.source, lang)}
         <tspan className="th-k">{zh ? '  窗口 ' : '   WINDOW '}</tspan>{window}
       </text>
       <text x={96} y={888} className="th-read">
@@ -1048,9 +1049,9 @@ export function TopologyCanvas({
           const highThreat = f.sub?.devices?.some((dv) => dv.threat === 'high')
           return (
             <g key={`ifn${i}`} className={`node appear ${dimIf ? 'node-dim' : ''}`} style={{ animationDelay: `${0.5 + i * 0.06}s` }}>
-              <g role={gateway ? 'button' : undefined} tabIndex={gateway ? 0 : undefined} aria-label={gateway ? `${gateway.name} / ${f.it.name}` : undefined} style={{ cursor: gateway ? 'pointer' : undefined }} onClick={() => { const intf = gateway?.interfaces.find(it => it.name === f.it.name); if (gateway && intf) onGatewayFocus?.({ deviceId: gateway.id, interfaceId: intf.id }) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const intf = gateway?.interfaces.find(it => it.name === f.it.name); if (gateway && intf) onGatewayFocus?.({ deviceId: gateway.id, interfaceId: intf.id }) } }}>
+              <g role={gateway ? 'button' : undefined} tabIndex={gateway ? 0 : undefined} aria-label={gateway ? `${gateway.name} / ${display(f.it.name, lang)}` : undefined} style={{ cursor: gateway ? 'pointer' : undefined }} onClick={() => { const intf = gateway?.interfaces.find(it => it.name === f.it.name); if (gateway && intf) onGatewayFocus?.({ deviceId: gateway.id, interfaceId: intf.id }) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const intf = gateway?.interfaces.find(it => it.name === f.it.name); if (gateway && intf) onGatewayFocus?.({ deviceId: gateway.id, interfaceId: intf.id }) } }}>
               <rect x={f.p.x - 52} y={f.p.y - 16} width="104" height="32" className="m-intf" />
-              <text x={f.p.x} y={f.p.y - 1} className="n-intf">{f.it.name}</text>
+              <text x={f.p.x} y={f.p.y - 1} className="n-intf">{display(f.it.name, lang)}</text>
               <text x={f.p.x} y={f.p.y + 12} className="n-sub">{short(f.it.flows)} {lang === 'zh' ? '连接' : 'conns'}</text>
               </g>
               {f.sub ? (

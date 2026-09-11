@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the recon surface every 30 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=30min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

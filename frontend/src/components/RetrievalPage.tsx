@@ -21,8 +21,8 @@ const T = (zh: boolean) => ({
   kicker: zh ? '调查依据 · 按案件查看命中原因' : 'INVESTIGATION SOURCES · WHY EACH ITEM MATCHED',
   loading: zh ? '正在读取查找记录…' : 'FETCHING LOOKUP RECORD…',
   offline: zh ? '查找接口不可达' : 'LOOKUP ENDPOINT UNREACHABLE',
-  empty: zh ? '还没有真实调查检索回执。请从实时事件打开调查，完成首次检索后再查看。' : 'No live investigation retrieval receipt yet. Open an investigation from a live event first.',
-  refetch: zh ? '重取' : 'REFETCH', play: zh ? '播放' : 'PLAY', pause: zh ? '暂停' : 'PAUSE', replay: zh ? '重放' : 'REPLAY',
+  empty: zh ? '还没有真实调查检索回执。请从实时事件打开调查，完成首次检索后再查看。' : 'No live investigation retrieval receipt yet. Open an investigation from a live event and complete its first retrieval.',
+  emptyChain: zh ? '本案由巡检处置链完成，没有开启调查会话，因此没有检索回执；只有调查会话会检索记忆与资料。' : 'This case was handled by the sentinel chain without an investigation session, so there is no retrieval receipt; only an investigation session retrieves memory and sources.',  refetch: zh ? '重取' : 'REFETCH', play: zh ? '播放' : 'PLAY', pause: zh ? '暂停' : 'PAUSE', replay: zh ? '重放' : 'REPLAY',
   hint: zh ? '先看本次实际采用的资料，再展开命中原因和原始内容。' : 'Start with the sources used in this investigation, then inspect match reasons and raw content.',
 })
 
@@ -43,7 +43,10 @@ export function RetrievalPage({ lang, scenario = 'live', focusCaseId, focusSubje
   const timer = useRef<number | null>(null)
 
   const d = st.s === 'ok' ? st.d : null
-  const cases = (d?.cases ?? []).filter(item => scenario !== 'live' || (focusCaseId ? item.case_id === focusCaseId : !focusSubject || item.subject === focusSubject))
+  // With a case in focus the gateway already scoped the receipts to that case
+  // and the sessions its record names (a comparison's second round runs under
+  // an internal case id), so nothing is filtered away here a second time.
+  const cases = (d?.cases ?? []).filter(item => scenario !== 'live' || focusCaseId || !focusSubject || item.subject === focusSubject)
   const c: Case | null = cases[Math.min(ci, Math.max(0, cases.length - 1))] ?? null
   const steps = c ? stepsOf(c) : []
   const last = steps.length - 1
@@ -134,7 +137,7 @@ export function RetrievalPage({ lang, scenario = 'live', focusCaseId, focusSubje
             <div className="rt-hint">{tx.hint}</div>
             {c.raw && <details><summary>{zh ? '原始检索证据' : 'Original retrieval evidence'}</summary><pre>{JSON.stringify(c.raw, null, 2)}</pre></details>}
           </>
-        ) : st.s === 'ok' ? <div className="rt-state">{tx.empty}</div> : null}
+        ) : st.s === 'ok' ? <div className="rt-state">{(focusCaseId ? tx.emptyChain : tx.empty)}</div> : null}
     </div>
   )
 }

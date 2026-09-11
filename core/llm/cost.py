@@ -209,10 +209,54 @@ def _rows(since: datetime | None = None) -> list[dict[str, Any]]:
     return out
 
 
+def record_failure(model: str, purpose: str, status: int | str, detail: str = "", session_id: str = "") -> None:
+    """File a call the provider refused, at zero cost.
+
+    A refused call spends nothing but is still an attempt the operator paid
+    attention to: a day of 402s must show up on the ledger as a day of failed
+    attempts, not as a day with no calls.
+    """
+    row = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "model": model,
+        "purpose": purpose,
+        "session_id": session_id,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost_cny": 0.0,
+        "usage_reported": False,
+        "failed": True,
+        "error": f"HTTP {status}: {detail[:200]}" if detail else f"HTTP {status}",
+    }
+    path = _ledger_path()
+    try:
+        with _LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
+
+def spent_cny(hours: int, purposes: set[str] | None = None) -> float:
+    """What a set of purposes (or everything) cost over the trailing window."""
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    return round(sum(
+        float(row.get("cost_cny") or 0) for row in _rows(since)
+        if not row.get("failed") and (purposes is None or str(row.get("purpose") or "") in purposes)
+    ), 6)
+
+
 def summary(hours: int = 24) -> dict[str, Any]:
     """Spend over a window, broken down by what asked for it."""
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    rows = _rows(since)
+    all_rows = _rows(since)
+    failed_rows = [row for row in all_rows if row.get("failed")]
+    rows = [row for row in all_rows if not row.get("failed")]
+    failures_by_purpose: dict[str, int] = defaultdict(int)
+    for row in failed_rows:
+        failures_by_purpose[str(row.get("purpose") or "?")] += 1
 
     by_purpose: dict[str, dict[str, float]] = defaultdict(
         lambda: {"calls": 0, "tokens": 0, "cost_cny": 0.0}
@@ -245,6 +289,8 @@ def summary(hours: int = 24) -> dict[str, Any]:
         "by_model": {k: dict(v) for k, v in by_model.items()},
         "by_hour": dict(sorted(by_hour.items())),
         "largest_call": largest,
-        "recent": list(reversed(rows))[:30],
+        "failed_calls": len(failed_rows),
+        "failures_by_purpose": dict(failures_by_purpose),
+        "recent": list(reversed(all_rows))[:40],
         "rates_note": "成本按本地费率表估算，权威数字以服务商账单为准；token 数来自 API 返回。",
     }

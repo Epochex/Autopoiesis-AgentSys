@@ -88,6 +88,19 @@ def test_failed_unit_detector_ignores_foreign_host_services():
     ]
 
 
+def test_failed_unit_detector_isolates_controlled_acceptance_units():
+    class Command:
+        def run(self, _argv):
+            return type("Result", (), {
+                "stdout": "autopoiesis-acceptance-run.service loaded failed failed\n"
+            })()
+
+    assert failed_units(Command()) == []
+    assert [row.subject for row in failed_units(Command(), include_controlled=True)] == [
+        "autopoiesis-acceptance-run.service"
+    ]
+
+
 def test_admin_auth_probe_reads_newest_journal_rows_first():
     class Command:
         argv = None

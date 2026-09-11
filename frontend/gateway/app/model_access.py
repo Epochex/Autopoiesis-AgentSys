@@ -47,6 +47,92 @@ DISABLED = {
 }
 
 
+# Which purposes a person is waiting on. Everything else runs unattended —
+# an escalated case's automatic investigation, a per-device subnet sweep — and
+# unattended spend is what empties an account without anyone noticing:
+# 401 root-cause calls cost ¥53.6 in the week to 10 Sep, ¥0.7 of it interactive.
+INTERACTIVE_PURPOSES = {
+    item.strip() for item in os.getenv(
+        "AUTOPOIESIS_LLM_INTERACTIVE_PURPOSES",
+        "wan,production_wan_threat,production_analysis,threat,display_translation,diag,rca_followup",
+    ).split(",") if item.strip()
+}
+BUDGET_WINDOW_HOURS = 24
+
+
+def budget_caps() -> dict[str, float]:
+    return {
+        "background": float(os.getenv("AUTOPOIESIS_LLM_BUDGET_BACKGROUND_CNY", "3")),
+        "interactive": float(os.getenv("AUTOPOIESIS_LLM_BUDGET_INTERACTIVE_CNY", "10")),
+    }
+
+
+def purpose_class(purpose: str) -> str:
+    return "interactive" if purpose in INTERACTIVE_PURPOSES else "background"
+
+
+def budget_status() -> dict[str, Any]:
+    """Trailing-24h spend per class against its cap, for the switch and the page."""
+    from core.llm.cost import spent_cny
+    caps = budget_caps()
+    interactive_spent = spent_cny(BUDGET_WINDOW_HOURS, INTERACTIVE_PURPOSES)
+    background_spent = round(spent_cny(BUDGET_WINDOW_HOURS) - interactive_spent, 6)
+    classes = {
+        "background": {"spent_cny": background_spent, "cap_cny": caps["background"]},
+        "interactive": {"spent_cny": interactive_spent, "cap_cny": caps["interactive"]},
+    }
+    for entry in classes.values():
+        entry["remaining_cny"] = round(max(0.0, entry["cap_cny"] - entry["spent_cny"]), 6)
+        entry["exhausted"] = entry["spent_cny"] >= entry["cap_cny"]
+    return {
+        "window_hours": BUDGET_WINDOW_HOURS,
+        "classes": classes,
+        "interactive_purposes": sorted(INTERACTIVE_PURPOSES),
+    }
+
+
+def budget_allows(purpose: str) -> bool:
+    try:
+        return not budget_status()["classes"][purpose_class(purpose)]["exhausted"]
+    except Exception:
+        return True
+
+
+_BALANCE_CACHE: dict[str, Any] = {"at": 0.0, "value": None}
+
+
+def provider_balance(max_age_sec: float = 300.0) -> dict[str, Any] | None:
+    """The provider's own view of the account, so the page shows money left, not just money spent."""
+    import urllib.request
+    from . import providers
+    now = time.time()
+    if now - float(_BALANCE_CACHE["at"]) < max_age_sec:
+        return _BALANCE_CACHE["value"]
+    cfg = providers._deepseek_cfg()
+    value: dict[str, Any] | None = None
+    if cfg.get("api_key"):
+        base = str(cfg["base_url"]).rstrip("/")
+        base = base[:-3] if base.endswith("/v1") else base
+        try:
+            request = urllib.request.Request(f"{base}/user/balance", headers={"Authorization": f"Bearer {cfg['api_key']}"})
+            with urllib.request.urlopen(request, timeout=8) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+            infos = raw.get("balance_infos") or []
+            cny = next((item for item in infos if item.get("currency") == "CNY"), infos[0] if infos else {})
+            value = {
+                "available": bool(raw.get("is_available")),
+                "currency": cny.get("currency"),
+                "total": float(cny.get("total_balance") or 0),
+                "topped_up": float(cny.get("topped_up_balance") or 0),
+                "granted": float(cny.get("granted_balance") or 0),
+                "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+            }
+        except Exception:
+            value = None
+    _BALANCE_CACHE.update(at=now, value=value)
+    return value
+
+
 def calls_enabled(purpose: str = "") -> bool:
     """Whether a paid call may be made at all.
 
@@ -60,6 +146,8 @@ def calls_enabled(purpose: str = "") -> bool:
     if purpose:
         flag = os.getenv(f"AUTOPOIESIS_LLM_{purpose.upper()}", "")
         if flag == "0":
+            return False
+        if not budget_allows(purpose):
             return False
     return True
 
@@ -101,6 +189,16 @@ def model_name() -> str:
 
 def unavailable(purpose: str) -> dict[str, Any]:
     """The stub a caller returns when no call may be made, saying which case."""
+    if purpose and not budget_allows(purpose):
+        kind = purpose_class(purpose)
+        cap = budget_caps()[kind]
+        label = "后台" if kind == "background" else "交互"
+        return {
+            "ok": False,
+            "disabled": True,
+            "budget_exhausted": True,
+            "text": f"今日{label}模型预算已用尽（{cap:.2f} 元 / 24 小时），到期自动恢复；要提高上限改 AUTOPOIESIS_LLM_BUDGET_{kind.upper()}_CNY。",
+        }
     return dict(DISABLED) if not calls_enabled(purpose) else dict(NOT_CONFIGURED)
 
 

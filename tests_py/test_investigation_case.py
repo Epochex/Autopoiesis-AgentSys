@@ -433,7 +433,9 @@ def test_cluster_suggestion_merges_provisional_alert_cases(tmp_path) -> None:
         )).case_id
         for index, alert_id in enumerate(alert_ids, start=1)
     }
-    assert len(provisional_ids) == 3
+    # Alerts about one object and rule share a case from the first sweep; the
+    # suggestion adopts that case rather than stitching three provisional ones.
+    assert len(provisional_ids) == 1
 
     merged = repository.ingest(CaseObservation(
         source=SourceReference("suggestion", "suggestion-1"),
@@ -839,3 +841,43 @@ def test_large_source_index_is_summarised_in_case_projection(tmp_path) -> None:
     assert projected["sourcesTruncated"] is True
     assert len(projected["sources"]) == 40
     assert projected["sourceCounts"] == {"incident": 50, "suggestion": 1}
+
+
+def test_new_alert_joins_the_active_case_for_its_subject_and_rule(tmp_path) -> None:
+    repository = _repository(tmp_path)
+    first = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "alert-1"), occurred_at="2026-09-10T22:00:00+00:00",
+        subject="e0:23:ff:3b:12:e6", rule_id="byte_spike_v2", summary="spike",
+    ))
+    # The next sweep lands a new alert id about the same object and rule.
+    second = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "alert-2"), occurred_at="2026-09-10T22:01:00+00:00",
+        subject="e0:23:ff:3b:12:e6", rule_id="byte_spike_v2", summary="spike again",
+    ))
+    assert second.case_id == first.case_id
+    assert set(second.sources) == {SourceReference("alert", "alert-1"), SourceReference("alert", "alert-2")}
+    assert second.occurrence_count == 2
+    assert repository.count() == 1
+
+    # A different rule on the same object is its own case.
+    other = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "alert-3"), occurred_at="2026-09-10T22:02:00+00:00",
+        subject="e0:23:ff:3b:12:e6", rule_id="admin_bruteforce", summary="logins",
+    ))
+    assert other.case_id != first.case_id
+
+    # A closed case does not absorb new alerts: a recurrence is a new case.
+    repository.append_event(first.case_id, kind="business_decision_recorded", status="resolved",
+                            payload={"decision": {"state": "resolved"}}, event_id="close-1")
+    reopened = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "alert-4"), occurred_at="2026-09-10T22:03:00+00:00",
+        subject="e0:23:ff:3b:12:e6", rule_id="byte_spike_v2", summary="spike later",
+    ))
+    assert reopened.case_id != first.case_id
+
+    # Nor does a case last seen too long ago.
+    stale = repository.ingest(CaseObservation(
+        source=SourceReference("alert", "alert-5"), occurred_at="2026-09-11T09:00:00+00:00",
+        subject="e0:23:ff:3b:12:e6", rule_id="byte_spike_v2", summary="next morning",
+    ))
+    assert stale.case_id != reopened.case_id

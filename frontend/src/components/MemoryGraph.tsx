@@ -52,6 +52,7 @@ import { useMemo, useCallback } from 'react'
 import type { JSX, KeyboardEvent } from 'react'
 import type { MemRecord, MemEvent, MemRecall, MemTier, MemOp } from '../types'
 import './memory-graph.css'
+import { display } from './display-lexicon'
 
 /* ── canvas geometry (all static; layout depends on `records` only) ────────── */
 const VB_W = 1240
@@ -808,9 +809,9 @@ export function MemoryGraph(props: {
           <text x={RAIL_X + 7} y={HEAD_H + 16} className="mg-rail-t">
             {onlineMode ? (zh ? '上下文' : 'CONTEXT') : zh ? '本次采用' : 'USED THIS TIME'}
           </text>
-          {online ? <><text x={RAIL_X + 7} y={HEAD_H + 38} className="mg-rail-s">{online.phase}</text>{online.entries.map((entry, i) => {
+          {online ? <><text x={RAIL_X + 7} y={HEAD_H + 38} className="mg-rail-s">{display(online.phase, zh ? 'zh' : 'en')}</text>{online.entries.map((entry, i) => {
             const sy = HEAD_H + 65 + i * Math.min(52, (railBottom - HEAD_H - 70) / Math.max(1, online.entries.length))
-            return <g key={entry.id} className="mg-slot" role="button" tabIndex={0} aria-label={entry.label} onClick={() => pick(entry.id)} onKeyDown={e => onKey(e, entry.id)}><rect x={RAIL_X + 2} y={sy - 19} width={RAIL_W - 4} height={46} fill={entry.changed ? 'var(--acid)' : 'transparent'}/><text x={RAIL_X + 8} y={sy - 5} className="mg-slot-n">{String(i + 1).padStart(2,'0')}{entry.dropped ? ' · 已过滤' : ''}</text><text x={RAIL_X + 8} y={sy + 8} className="mg-slot-id">{wrapLines(entry.label, 12, 2).map((line,j) => <tspan key={j} x={RAIL_X + 8} dy={j ? 12 : 0}>{line}</tspan>)}</text><line x1={RAIL_X + 6} x2={RAIL_X + RAIL_W - 6} y1={sy + 26} y2={sy + 26} className="mg-slot-rule"/></g>
+            return <g key={entry.id} className="mg-slot" role="button" tabIndex={0} aria-label={display(entry.label, zh ? 'zh' : 'en')} onClick={() => pick(entry.id)} onKeyDown={e => onKey(e, entry.id)}><rect x={RAIL_X + 2} y={sy - 19} width={RAIL_W - 4} height={46} fill={entry.changed ? 'var(--acid)' : 'transparent'}/><text x={RAIL_X + 8} y={sy - 5} className="mg-slot-n">{String(i + 1).padStart(2,'0')}{entry.dropped ? (zh ? ' · 已过滤' : ' · FILTERED') : ''}</text><text x={RAIL_X + 8} y={sy + 8} className="mg-slot-id">{wrapLines(display(entry.label, zh ? 'zh' : 'en'), 12, 2).map((line,j) => <tspan key={j} x={RAIL_X + 8} dy={j ? 12 : 0}>{line}</tspan>)}</text><line x1={RAIL_X + 6} x2={RAIL_X + RAIL_W - 6} y1={sy + 26} y2={sy + 26} className="mg-slot-rule"/></g>
           })}</> : rail && recall ? (
             <>
               <text x={RAIL_X + 7} y={HEAD_H + 38} className="mg-rail-s">

@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Lang } from '../i18n'
+import { englishFor } from './display-lexicon'
 const cache = new Map<string, string>()
 const chinese = /[\u3400-\u9fff]/
-/** Batch display prose only. Keep commands and original evidence outside texts. */
+/** Batch display prose only. Keep commands and original evidence outside texts.
+ *
+ * The lexicon answers first and answers offline, so the product's own
+ * vocabulary never reaches the model: no key needed, no per-deploy spend, and
+ * a failed call can no longer turn the English UI back to Chinese. Only prose
+ * the lexicon does not recognise is sent. */
 export function useDisplayTranslation(texts: string[], lang: Lang) {
-  const key = JSON.stringify([...new Set(texts.filter(text => chinese.test(text)))].sort())
+  const key = JSON.stringify([...new Set(
+    texts.filter(text => chinese.test(text) && englishFor(text) === null),
+  )].sort())
   const requested = useMemo(() => JSON.parse(key) as string[], [key])
   const [revision, setRevision] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -27,6 +35,10 @@ export function useDisplayTranslation(texts: string[], lang: Lang) {
     })().catch(error => {if (!controller.signal.aborted) setError(String(error.message ?? error))}).finally(() => {if (!controller.signal.aborted) setLoading(false)})
     return () => controller.abort()
   }, [requested, lang, retryCount])
-  const translate = useCallback((text: string) => { void revision; return lang === 'en' ? cache.get(text) ?? text : text }, [lang, revision])
+  const translate = useCallback((text: string) => {
+    void revision
+    if (lang !== 'en') return text
+    return englishFor(text) ?? cache.get(text) ?? text
+  }, [lang, revision])
   return {translate, loading: lang === 'en' && loading, error: lang === 'en' ? error : null, retry: () => setRetryCount(value => value + 1)}
 }

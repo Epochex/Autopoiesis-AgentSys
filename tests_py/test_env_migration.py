@@ -41,7 +41,7 @@ def test_llm_client_prefers_autopoiesis_configuration(monkeypatch):
 def test_llm_client_accepts_shared_deepseek_key(monkeypatch):
     monkeypatch.setenv("AUTOPOIESIS_LLM_BASE_URL", "https://api.deepseek.com/v1")
     monkeypatch.delenv("AUTOPOIESIS_LLM_API_KEY", raising=False)
-    monkeypatch.setenv("AUTOPOIESIS_LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("AUTOPOIESIS_LLM_MODEL", "deepseek-flash")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "shared-key")
 
     client = OpenAICompatibleClient()
@@ -59,7 +59,7 @@ def test_llm_client_does_not_send_shared_deepseek_key_to_other_endpoints(monkeyp
         OpenAICompatibleClient()
 
 
-def test_gateway_deepseek_defaults_to_v4_flash(monkeypatch):
+def test_gateway_deepseek_defaults_to_flash(monkeypatch):
     monkeypatch.delenv("DS_V4_BASE_URL", raising=False)
     monkeypatch.delenv("DS_V4_MODEL", raising=False)
     monkeypatch.delenv("DS_V4_API_KEY", raising=False)
@@ -69,7 +69,7 @@ def test_gateway_deepseek_defaults_to_v4_flash(monkeypatch):
 
     assert config == {
         "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "api_key": "",
     }
 

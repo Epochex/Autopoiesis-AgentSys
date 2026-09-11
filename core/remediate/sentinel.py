@@ -23,6 +23,7 @@ detection. An audit trail with only successes in it is a sales brochure.
 from __future__ import annotations
 
 import json
+from collections import deque
 import os
 import tempfile
 import threading
@@ -92,13 +93,16 @@ class Detection:
     # the sentinel may explain the withheld write, but cannot execute it.
     candidate_action: str | None = None
     safety_reason: str | None = None
+    case_id: str | None = None
+    demo_run_id: str | None = None
+    data_classification: str | None = None
 
     @property
     def key(self) -> str:
         return f"{self.detector}:{self.subject}"
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "detector": self.detector,
             "family": self.family,
             "subject": self.subject,
@@ -110,6 +114,13 @@ class Detection:
             "candidate_action": self.candidate_action,
             "safety_reason": self.safety_reason,
         }
+        if self.case_id:
+            result["caseId"] = self.case_id
+        if self.demo_run_id:
+            result["demoRunId"] = self.demo_run_id
+        if self.data_classification:
+            result["dataClassification"] = self.data_classification
+        return result
 
 
 def _now() -> str:
@@ -134,7 +145,7 @@ def timeline(limit: int | None = 200) -> list[dict[str, Any]]:
     path = _default_timeline()
     if not path.exists():
         return []
-    rows: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] | deque[dict[str, Any]] = [] if limit is None else deque(maxlen=max(0, limit))
     with path.open(encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
@@ -144,7 +155,7 @@ def timeline(limit: int | None = 200) -> list[dict[str, Any]]:
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    return rows if limit is None else rows[-limit:]
+    return list(rows)
 
 
 @dataclass

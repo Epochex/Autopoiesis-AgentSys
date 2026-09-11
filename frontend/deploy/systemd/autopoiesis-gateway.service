@@ -18,8 +18,13 @@ Restart=always
 RestartSec=3
 TimeoutStopSec=8
 KillMode=mixed
-MemoryHigh=768M
-MemoryMax=1024M
+# Memory records, investigation sessions and every mined subnet graph live
+# in-process; a console session settles the gateway around 700M. A cap below
+# that turns every peak into a kill and a burst of 502s on the console, which
+# is what a 640M override did 237 times between Sep 07 and Sep 10. Throttle at
+# 1.5G, kill only a runaway above 2G.
+MemoryHigh=1536M
+MemoryMax=2048M
 TasksMax=256
 
 [Install]

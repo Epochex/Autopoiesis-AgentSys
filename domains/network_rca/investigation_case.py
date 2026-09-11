@@ -13,7 +13,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -494,6 +494,18 @@ class InvestigationCaseRepository:
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing_ids = self._case_ids_for(conn, refs)
+            if not existing_ids and observation.source.kind == "alert":
+                # A landed alert names an immutable event, but the object it is
+                # about may already have an open investigation for the same
+                # rule. Without this, every sweep of a noisy subject opened a
+                # fresh case (23 for one MAC in ten minutes on 10 Sep), each
+                # auto-started and escalated, crowding every other case out of
+                # the event centre. The alert joins that case as one more source.
+                # Measured against the alert's own time, so replaying an old feed
+                # never folds an event into a case that came long after it.
+                active = self._active_case_for(conn, observation.subject, observation.rule_id, observation.occurred_at)
+                if active:
+                    existing_ids = {active}
             if existing_ids:
                 canonical = self._select_canonical(conn, existing_ids)
                 self._merge_cases(conn, canonical, existing_ids - {canonical})
@@ -608,6 +620,37 @@ class InvestigationCaseRepository:
         case = self.get(canonical)
         assert case is not None
         return case
+
+    _ACTIVE_STATUSES = ("open", "investigating", "waiting", "escalated", "action_ready", "observing")
+    _ACTIVE_WINDOW = timedelta(hours=6)
+
+    def _active_case_for(
+        self, conn: sqlite3.Connection, subject: str, rule_id: str, now: str
+    ) -> str | None:
+        """The newest still-active case about this subject and rule, if recent."""
+        if not subject or not rule_id:
+            return None
+        placeholders = ",".join("?" for _ in self._ACTIVE_STATUSES)
+        row = conn.execute(
+            f"SELECT case_id, last_seen_at FROM investigation_cases "
+            f"WHERE subject=? AND rule_id=? AND status IN ({placeholders}) "
+            f"ORDER BY last_seen_at DESC LIMIT 1",
+            (subject, rule_id, *self._ACTIVE_STATUSES),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            seen = datetime.fromisoformat(str(row["last_seen_at"]).replace("Z", "+00:00"))
+            current = datetime.fromisoformat(str(now).replace("Z", "+00:00"))
+            if seen.tzinfo is None:
+                seen = seen.replace(tzinfo=timezone.utc)
+            if current.tzinfo is None:
+                current = current.replace(tzinfo=timezone.utc)
+            if current - seen > self._ACTIVE_WINDOW:
+                return None
+        except ValueError:
+            return None
+        return str(row["case_id"])
 
     def _case_ids_for(
         self, conn: sqlite3.Connection, refs: Iterable[SourceReference]

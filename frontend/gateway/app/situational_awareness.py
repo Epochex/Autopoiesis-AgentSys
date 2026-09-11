@@ -52,6 +52,14 @@ _FAULT_TITLES = {
 }
 
 
+def _host_address() -> str | None:
+    try:
+        from .sentinel_projection import host_address
+        return host_address() or None
+    except Exception:
+        return None
+
+
 def _utc(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -412,7 +420,16 @@ def _case_projection(repository: Any, now: datetime) -> tuple[list[Any], list[di
     projected: list[dict[str, Any]] = []
     for case in repository.list(limit=500):
         last_seen = _utc(case.last_seen_at)
-        if last_seen is None or last_seen < cutoff or not is_observed_case(case):
+        payload = dict(case.source_payload or {})
+        facts = dict(payload.get("incidentFacts") or {})
+        classification = str(
+            payload.get("dataClassification")
+            or facts.get("dataClassification")
+            or "observed"
+        ).casefold()
+        controlled = classification == "controlled_test"
+        observed = is_observed_case(case)
+        if last_seen is None or (last_seen < cutoff and not controlled) or not (observed or controlled):
             continue
         decision_event = case.latest_event("business_decision_recorded") or {}
         decision = dict(decision_event.get("decision") or {})
@@ -420,7 +437,8 @@ def _case_projection(repository: Any, now: datetime) -> tuple[list[Any], list[di
             continue
         if case.severity.casefold() not in {"high", "critical", "error"} and not decision:
             continue
-        cases.append(case)
+        if observed:
+            cases.append(case)
         evidence = [item for item in case.timeline if item.get("kind") == "evidence_collected"]
         readback = decision.get("readback") or (
             case.latest_event("remediation_completed") or {}
@@ -433,15 +451,35 @@ def _case_projection(repository: Any, now: datetime) -> tuple[list[Any], list[di
             "service": case.service,
             "title": str(decision.get("headline") or case.summary),
             "summary": str(decision.get("summary") or case.summary),
-            "lastSeenAt": case.last_seen_at,
+            "lastSeenAt": getattr(case, "updated_at", case.last_seen_at),
             "occurrences": case.occurrence_count,
             "evidenceCount": len(evidence) + len(list(decision.get("evidence") or ())),
             "action": str(decision.get("action") or ""),
             "readback": readback,
             "classification": str(decision.get("classification") or "investigating"),
+            "ruleId": case.rule_id,
+            "controlled": controlled,
         })
     projected.sort(key=lambda item: str(item["lastSeenAt"]), reverse=True)
-    return cases, projected
+    # One active row per object and rule. A subject whose investigation keeps
+    # escalating opens a case per sweep; unfolded, 23 such rows filled the
+    # 30-row window on 10 Sep and pushed every other case, including the
+    # controlled demonstrations, off the page. Closed rows keep their history;
+    # controlled rows are never dropped by the cap.
+    active = {"open", "investigating", "waiting", "escalated", "action_ready", "observing"}
+    seen: set[tuple[str, str]] = set()
+    collapsed: list[dict[str, Any]] = []
+    for item in projected:
+        key = (str(item["subject"]), str(item["ruleId"] or ""))
+        # A controlled demonstration also runs an internal second round under
+        # its own case; the operator sees the primary case, updated last.
+        if item["status"] in active or item["controlled"]:
+            if key in seen:
+                continue
+            seen.add(key)
+        collapsed.append(item)
+    window = collapsed[:30] + [item for item in collapsed[30:] if item["controlled"]]
+    return cases, window
 
 
 def _effect_measurement(cases: list[Any]) -> dict[str, Any]:
@@ -949,12 +987,16 @@ def _build(
         "internetOutbound": {"records": internet_outbound},
         "riskFusion": risk_assets[:30],
         "candidatePaths": paths,
+        # The address of the host this console runs on: a systemd unit subject
+        # lives here, so a case about one can be anchored on the map after the
+        # live suggestion that carried the address has expired.
+        "hostAddress": _host_address(),
         "externalSources": external_sources,
         "intelFeed": {
             "configured": bool(intel_path),
             "matches": sum(1 for item in external_sources if item["intelMatch"]),
         },
-        "cases": case_rows[:30],
+        "cases": case_rows,
         "funnel": funnel,
         "effectMeasurement": _effect_measurement(cases),
         "coverage": coverage,

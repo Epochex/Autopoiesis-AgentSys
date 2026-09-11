@@ -8,13 +8,16 @@ import {
 import './investigation-flow.css'
 import { InvestigationTrajectorySignal } from './InvestigationTrajectorySignal'
 
+/* The five steps are the incident's own story, in the order it happened:
+ * what landed, the chain playing on the topology, what the investigation
+ * read, what was done and read back, and what memory it drew on and wrote. */
 const LABELS: Record<InvestigationIntent, [string, string]> = {
-  event_facts: ['案件调查', 'CASE INVESTIGATION'],
-  retrieval_evidence: ['调查依据', 'INVESTIGATION SOURCES'],
-  impact_scope: ['影响谁', 'WHO IS AFFECTED'],
+  event_facts: ['案件事实', 'CASE FACTS'],
+  impact_scope: ['全链路剧场', 'FULL-CHAIN THEATER'],
+  retrieval_evidence: ['调查依据', 'SOURCES USED'],
   evidence_hypotheses: ['证据与假设', 'EVIDENCE & HYPOTHESES'],
   remediation_readback: ['处置与回读', 'ACTION & READBACK'],
-  related_memory: ['相关记忆', 'RELATED MEMORY'],
+  related_memory: ['记忆观测舱', 'MEMORY OBSERVATORY'],
 }
 
 const clock = (value: string | null, lang: Lang): string => {

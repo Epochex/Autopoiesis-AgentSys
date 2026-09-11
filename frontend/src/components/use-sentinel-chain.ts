@@ -106,7 +106,7 @@ export function useSentinelChain(subject: string | null | undefined, intervalMs 
       inFlight = true
       try {
         // Read the full retained tail, including command start and return rows.
-        const response = await fetch('/api/rca/sentinel/timeline?limit=2000', { signal: abort.signal })
+        const response = await fetch('/api/rca/sentinel/timeline?limit=600', { signal: abort.signal })
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         const body = (await response.json()) as { events?: (ChainStep & CommandLine)[] }
         if (!alive) return

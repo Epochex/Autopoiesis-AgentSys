@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TheaterEvent } from '../types'
 import './live-situation.css'
 import { actionLabel, humanizeIncidentSummary } from './incident-copy'
+import { display } from './display-lexicon'
 
 interface IncidentFacts {
   dataClassification?: string
@@ -165,6 +166,8 @@ export function LiveSituation({
   scenario?: 'disk' | 'bench'
   focusSubject?: string
 }) {
+  // Case decisions are written in the source language; the lexicon renders them.
+  const en = (value: string) => display(value, zh ? 'zh' : 'en')
   const [snapshot, setSnapshot] = useState<SituationSnapshot | null>(null)
   const [state, setState] = useState<'load' | 'ok' | 'empty' | 'err'>('load')
   const [pickedId, setPickedId] = useState<string | null>(null)
@@ -332,8 +335,8 @@ export function LiveSituation({
               {decision ? (
                 <>
                   <section className="ls-outcome-line">
-                    <div><span>{zh ? '处置决定' : 'DISPOSITION'}</span><p>{decision.disposition}</p></div>
-                    <div><span>{zh ? '执行动作' : 'ACTION'}</span><p>{decision.action}</p></div>
+                    <div><span>{zh ? '处置决定' : 'DISPOSITION'}</span><p>{en(decision.disposition)}</p></div>
+                    <div><span>{zh ? '执行动作' : 'ACTION'}</span><p>{en(decision.action)}</p></div>
                     <div><span>{zh ? '影响对象' : 'AFFECTED ASSETS'}</span><p>{decision.impactedAssets.join(' · ') || (zh ? '未发现受影响业务资产' : 'NO AFFECTED BUSINESS ASSET FOUND')}</p></div>
                   </section>
 
@@ -341,7 +344,7 @@ export function LiveSituation({
                     <h4>{zh ? '关键证据' : 'DECISIVE EVIDENCE'}</h4>
                     {decision.evidence.slice(0, 3).map((item) => (
                       <div key={`${item.evidenceId}-${item.label}`}>
-                        <code>{item.evidenceId}</code><b>{item.label}</b><span>{item.value}</span>
+                        <code>{item.evidenceId}</code><b>{en(item.label)}</b><span>{en(item.value)}</span>
                       </div>
                     ))}
                   </section>
@@ -350,7 +353,7 @@ export function LiveSituation({
                     <section className="ls-missing-lines">
                       <h4>{zh ? '阻止结案的缺失观察' : 'MISSING OBSERVATIONS BLOCKING CLOSURE'}</h4>
                       {decision.missingObservations.map((item) => (
-                        <div key={item.code}><b>{item.question}</b>{item.probe ? <code>{item.probe}</code> : null}</div>
+                        <div key={item.code}><b>{en(item.question)}</b>{item.probe ? <code>{item.probe}</code> : null}</div>
                       ))}
                     </section>
                   ) : null}

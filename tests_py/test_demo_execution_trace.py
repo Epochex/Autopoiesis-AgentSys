@@ -52,6 +52,7 @@ def test_actual_self_healing_script_streams_mock_host_commands_and_samples(tmp_p
     from scripts import demo_self_healing as script
     from frontend.gateway.app.host_changes import HostAdapter
     from domains.network_rca import detectors
+    from domains.network_rca import remediation as network_remediation
     from core.remediate.sentinel import Detection, timeline
     from pathlib import Path
     import socket
@@ -66,10 +67,14 @@ def test_actual_self_healing_script_streams_mock_host_commands_and_samples(tmp_p
     monkeypatch.setattr(script, 'run_command', lambda *args, **kwargs: None)
     monkeypatch.setattr(script, 'wait_unit_state', lambda *args: None)
     monkeypatch.setattr(script, 'remove_demo_unit', lambda *args: None)
-    monkeypatch.setattr(script, 'stage', lambda *args: None)
+    monkeypatch.setattr(script, 'stage', lambda *args, **kwargs: None)
     monkeypatch.setattr(script, 'print_receipt', lambda *args: None)
     monkeypatch.setattr(socket, 'create_connection', lambda *args, **kwargs: nullcontext())
-    monkeypatch.setattr(detectors, 'failed_units', lambda: [Detection(detector='failed_units', family='test', subject=host['unit'], target=host['unit'], severity='high', summary='mock failed service', action='restart_unit')] if host['state'] == 'failed' else [])
+    monkeypatch.setattr(detectors, 'failed_units', lambda **_: [Detection(detector='failed_units', family='test', subject=host['unit'], target=host['unit'], severity='high', summary='mock failed service', action='restart_unit')] if host['state'] == 'failed' else [])
+    monkeypatch.setattr(network_remediation, 'read_unit', lambda _command, unit: {
+        'unit': unit, 'active': host['state'], 'running': host['state'] == 'active',
+        'failed': host['state'] == 'failed', 'restarts': 0,
+    })
     def fake_run(self, argv):
         if argv[:2] == ['systemctl', 'restart']:
             host['state'] = 'active'

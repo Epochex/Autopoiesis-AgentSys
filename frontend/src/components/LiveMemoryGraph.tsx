@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Lang } from '../i18n'
-import type { LiveMemoryDetailRecord, LiveMemoryEvent, LiveMemoryEventsResponse, LiveMemoryListResponse } from '../types'
+import type { LiveMemoryDetailRecord, LiveMemoryDetailResponse, LiveMemoryEvent, LiveMemoryEventsResponse, LiveMemoryListResponse } from '../types'
 import { humanizeMemoryRecord } from './incident-copy'
 import { memoryIdsForEvent } from './event-memory-links'
+import type { ContextRow } from './live-context'
 import { contextAt } from './live-context'
 import { MemoryGraph } from './MemoryGraph'
 import { ContextPacket } from './ContextPacket'
@@ -34,6 +35,13 @@ export function LiveMemoryGraph({ lang, subject, receipt, session, onOpenSource 
   const [selected, setSelected] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [showQuarantined, setShowQuarantined] = useState(false)
+  const requiredMemoryIds = [...new Set([
+    ...(receipt?.investigation?.memory_ids ?? []),
+    ...(receipt?.current_memories.map(item => item.memory_id) ?? []),
+    // Retrieval also ranks knowledge documents; only indexed memories have a
+    // record to fetch, and asking for the rest is a 404 per document.
+    ...(session?.retrieval_results ?? []).filter(item => item.kind === 'indexed_memory').map(item => String(item.item_id ?? '')).filter(Boolean),
+  ])].sort().join(',')
   const { translate, error: translationError, retry: retryTranslation } = useDisplayTranslation([...records.map(r => r.text), ...events.map(e => e.text_head ?? ''), ...(session?.retrieval_results ?? []).map(r => String(r.summary ?? r.title ?? ''))], lang)
   const t = (value: string) => zh ? value : EN[value] ?? translate(value)
   const label = (kind: string) => t(labels[kind] ?? kind.replaceAll('_', ' '))
@@ -41,12 +49,25 @@ export function LiveMemoryGraph({ lang, subject, receipt, session, onOpenSource 
     const t = (value: string) => lang === 'zh' ? value : EN[value] ?? value
     const abort = new AbortController(); let timer: number | undefined; let after = memoryCache?.after ?? 0
     const read = async () => {
+      if (document.hidden) {
+        timer = window.setTimeout(read, 30000)
+        return
+      }
       try {
-        const listResponse = await fetch('/api/rca/memory?limit=1000&include_quarantined=true&details=true', { signal: abort.signal })
+        const listResponse = await fetch('/api/rca/memory?limit=100&include_quarantined=true&details=true', { signal: abort.signal })
         if (!listResponse.ok) throw new Error(t('记忆目录读取失败'))
         const list = await listResponse.json() as LiveMemoryListResponse
         if (!list.durable) throw new Error(t('持久化记忆未连接'))
         const loaded = list.records as unknown as LiveMemoryDetailRecord[]
+        const loadedIds = new Set(loaded.map(item => item.memory_id))
+        const required = requiredMemoryIds.split(',').filter(id => id && !loadedIds.has(id))
+        const requested = await Promise.all(required.map(async id => {
+          const response = await fetch(`/api/rca/memory/${encodeURIComponent(id)}`, { signal: abort.signal })
+          if (response.status === 404) return null
+          if (!response.ok) throw new Error(t('记忆目录读取失败'))
+          return (await response.json() as LiveMemoryDetailResponse).record
+        }))
+        requested.forEach(item => { if (item) loaded.push(item) })
         const incoming: LiveMemoryEvent[] = []; let next = after
         for (;;) {
           const r = await fetch(`/api/rca/memory/events?after=${next}&limit=2000`, { signal: abort.signal })
@@ -65,10 +86,10 @@ export function LiveMemoryGraph({ lang, subject, receipt, session, onOpenSource 
         memoryCache = { records: loaded, events: merged, after }
         setRecords(loaded); setEvents(merged); setReady(true); setError('')
       } catch (e) { if (!abort.signal.aborted) setError(String(e)) }
-      finally { if (!abort.signal.aborted) timer = window.setTimeout(read, 5000) }
+      finally { if (!abort.signal.aborted) timer = window.setTimeout(read, 30000) }
     }
     void read(); return () => { abort.abort(); if (timer !== undefined) window.clearTimeout(timer) }
-  }, [lang])
+  }, [lang, requiredMemoryIds])
   const ticks = useMemo(() => {
     const ids = new Set(records.map(r => r.memory_id))
     const related = new Set([...(receipt?.investigation?.memory_ids ?? []), ...(receipt?.current_memories.map(m => m.memory_id) ?? [])])
@@ -89,7 +110,7 @@ export function LiveMemoryGraph({ lang, subject, receipt, session, onOpenSource 
   }, [playing, index, ticks])
 
   const visibleSteps = useMemo(() => ticks.slice(0, index + 1).flatMap(t => t.step ? [t.step] : []), [ticks, index])
-  const context = useMemo(() => contextAt(visibleSteps), [visibleSteps])
+  const context = useMemo(() => contextAt(visibleSteps, (session?.retrieval_results ?? []) as ContextRow[]), [visibleSteps, session])
   const versions = useMemo(() => {
     const map = new Map<string, LiveMemoryEvent>()
     events.filter(e => cursor === null || (tick && Date.parse(e.occurred_at) <= Date.parse(tick.at))).sort((a,b) => a.offset - b.offset).forEach(e => map.set(e.memory_id, e))
@@ -115,7 +136,7 @@ export function LiveMemoryGraph({ lang, subject, receipt, session, onOpenSource 
   const lastWrite = [...visibleSteps].reverse().find(s => s.kind === 'verified_procedure_indexed')
   const writes = lastWrite ? memoryIdsForEvent(lastWrite.payload, records.map(r => r.memory_id)) : []
   const phase = context.current?.step.kind === 'retrieval_candidates_filtered' ? t('检索候选') : context.current?.step.kind === 'context_compiled' ? t('模型输入') : context.current ? t('已完成选材') : t('等待检索')
-  const entries = inRail.map(r => ({ id: 'context:' + r.item_id, label: available.find(m => m.memory_id === r.item_id) ? title(available.find(m => m.memory_id === r.item_id)!) : translate(String(r.title ?? r.item_id)), memoryId: available.some(m => m.memory_id === r.item_id) ? r.item_id : undefined, write: false, dropped: !r.selected_for_context && !r.candidate, changed: context.current?.step === tick?.step && Boolean(r.candidate || context.added.has(r.item_id)) }))
+  const entries = inRail.map(r => ({ id: 'context:' + r.item_id, label: available.find(m => m.memory_id === r.item_id) ? title(available.find(m => m.memory_id === r.item_id)!) : translate(String(r.title ? (r.summary ? `${r.title} · ${r.summary}` : r.title) : r.summary ?? r.item_id)), memoryId: available.some(m => m.memory_id === r.item_id) ? r.item_id : undefined, write: false, dropped: !r.selected_for_context && !r.candidate, changed: context.current?.step === tick?.step && Boolean(r.candidate || context.added.has(r.item_id)) }))
   writes.forEach(id => entries.push({ id: 'write:' + id, label: t('写回 · ') + (available.find(r => r.memory_id === id) ? title(available.find(r => r.memory_id === id)!) : id), memoryId: id, write: true, dropped: false, changed: lastWrite === tick?.step }))
   const selectedId = selected ?? tick?.memory?.memory_id ?? entries[0]?.id ?? null
   const memoryId = selectedId?.replace(/^(context:|write:)/, '')
@@ -131,7 +152,10 @@ export function LiveMemoryGraph({ lang, subject, receipt, session, onOpenSource 
     workingSet: checkpoint ? { at: checkpoint.at, value: (checkpoint.payload as Record<string, unknown>).working_set } : cursor === null && session?.working_set ? { at: t('当前会话快照'), value: session.working_set } : undefined,
     onSelect: id => { openNode('context:' + id) } }
   return <section className="lmg" aria-label={t('实时记忆观测舱')}>
-    <header><div><h2>{t('记忆观测舱')}</h2><span className="lmg-subject">{subject ?? t('全部在线记忆')} · {zh ? '每 5 秒同步' : 'Syncs every 5 seconds'}</span></div><div className="lmg-tools"><span>{available.length} {zh ? '条记忆' : 'memories'} · {ticks.length} {zh ? '个更新与调查动作' : 'updates and investigation actions'}</span><button aria-pressed={showQuarantined} onClick={() => setShowQuarantined(v => !v)}>{showQuarantined ? t('隐藏隔离记录') : t('显示隔离记录')}</button></div></header>
+    <header><div><h2>{t('记忆观测舱')}</h2><span className="lmg-subject">{subject ?? t('全部在线记忆')} · {zh ? '每 30 秒同步，隐藏时暂停' : 'Syncs every 30 seconds; pauses while hidden'}</span></div><div className="lmg-tools"><span>{available.length} {zh ? '条记忆' : 'memories'} · {ticks.length} {zh ? '个更新与调查动作' : 'updates and investigation actions'}</span><button aria-pressed={showQuarantined} onClick={() => setShowQuarantined(v => !v)}>{showQuarantined ? t('隐藏隔离记录') : t('显示隔离记录')}</button></div></header>
+    {subject && receipt && !receipt.investigation ? <p className="lmg-outcome">{receipt.current_memories.length
+      ? (zh ? `本次处置链写入 ${receipt.current_memories.length} 条记忆；未开启调查会话，无检索选材。` : `The response chain wrote ${receipt.current_memories.length} memories; no investigation session was opened, so nothing was retrieved.`)
+      : (zh ? '本次由巡检处置链完成，未开启调查会话，也未写入记忆；在事件列表对已完成事件点击「反思并记忆」即可写入。' : 'Handled by the sentinel chain without an investigation session; nothing was written to memory. Use "Reflect & remember" on the completed event to write it.')}</p> : null}
     {subject && receipt?.investigation ? <p className="lmg-outcome">{zh ? '本次引用' : 'Referenced'} {receipt.investigation.memory_ids.length} {zh ? '条记忆，执行' : 'memories; executed'} {receipt.investigation.executed_probe_count} {zh ? '项检查，关联' : 'checks; linked'} {receipt.current_memories.length} {zh ? '条写入记录。' : 'memory writes.'}</p> : null}
     {error && <p role="alert">{error} {zh ? '保留上次成功读取的图。' : 'Keeping the last successfully loaded graph.'}</p>}
     {translationError && <p role="alert">{translationError} <button onClick={retryTranslation}>Retry translation</button></p>}

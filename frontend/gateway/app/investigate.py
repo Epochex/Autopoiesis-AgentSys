@@ -2657,6 +2657,47 @@ def start(
     )
     _constrain_retrieval_results(session)
 
+    # Record retrieval before any probe can consume it. This keeps the durable
+    # trace causal and lets an operator read the sequence as selected memory,
+    # evidence collection, hypothesis transition, then decision.
+    if not terminal_case and not case_driven_policy:
+        kinds: dict[str, int] = {}
+        for item in session.retrieval_results:
+            kind = str(item.get("kind") or "unknown")
+            kinds[kind] = kinds.get(kind, 0) + 1
+        trace_results = [dict(item) for item in session.retrieval_results]
+        _persist_session_trace(session, "memory_candidates_ranked", {
+            "scope": "interactive_investigation",
+            "investigation_id": session.session_id,
+            "question": session.question,
+            "subject": session.subject,
+            "family": session.family,
+            "query_terms": query_terms,
+            "returned_count": len(session.retrieval_results),
+            "counts_by_kind": kinds,
+            "results": trace_results,
+            "investigation_context": {
+                "question": session.question,
+                "subject": session.subject,
+                "family": session.family,
+                "retrieval_results": trace_results,
+                "working_set": session.working_set.as_dict() if session.working_set else {},
+                "evidence": list(session.evidence),
+            },
+        })
+        _append_case_event(
+            session,
+            "retrieval_completed",
+            {
+                "sessionId": session.session_id,
+                "returnedCount": len(session.retrieval_results),
+                "countsByKind": kinds,
+                "evidenceCount": len(session.evidence),
+            },
+            event_id=f"{session.session_id}:retrieval",
+            status="investigating",
+        )
+
     subject_probes: list[str] = []
     unit_subject = bool(
         subject and subject.endswith((".service", ".target", ".socket", ".timer"))
@@ -2853,51 +2894,6 @@ def start(
     session.probe_prior["early_stop_candidates"] = list(skipped) if early_stopped else []
     _evaluate_memory_intervention(session, phase="opening_probes")
 
-    if not terminal_case and not case_driven_policy:
-        kinds: dict[str, int] = {}
-        for item in session.retrieval_results:
-            kind = str(item.get("kind") or "unknown")
-            kinds[kind] = kinds.get(kind, 0) + 1
-        # Persist retrieval only when it can affect the decision. A deterministic
-        # local-in deny needs no empty memory receipt or zero-result case event.
-        trace_results = [
-            {
-                key: value
-                for key, value in item.items()
-            }
-            for item in session.retrieval_results
-        ]
-        _persist_session_trace(session, "memory_candidates_ranked", {
-            "scope": "interactive_investigation",
-            "investigation_id": session.session_id,
-            "question": session.question,
-            "subject": session.subject,
-            "family": session.family,
-            "query_terms": query_terms,
-            "returned_count": len(session.retrieval_results),
-            "counts_by_kind": kinds,
-            "results": trace_results,
-            "investigation_context": {
-                "question": session.question,
-                "subject": session.subject,
-                "family": session.family,
-                "retrieval_results": trace_results,
-                "working_set": session.working_set.as_dict() if session.working_set else {},
-                "evidence": list(session.evidence),
-            },
-        })
-        _append_case_event(
-            session,
-            "retrieval_completed",
-            {
-                "sessionId": session.session_id,
-                "returnedCount": len(session.retrieval_results),
-                "countsByKind": kinds,
-                "evidenceCount": len(session.evidence),
-            },
-            event_id=f"{session.session_id}:retrieval",
-            status="investigating",
-        )
     _persist_session(session)
 
     return _session_open_response(session)
@@ -3157,7 +3153,52 @@ def get(session_id: str) -> Session:
 
 def live_retrieval_trace(query: str | None = None, limit: int = 12, case_id: str | None = None, subject: str | None = None, lang: str = "zh") -> dict[str, Any]:
     """Project actual investigation retrieval receipts into the retrieval-page contract."""
-    snapshots = _session_store().recent(limit=5_000 if case_id or subject else max(limit * 2, 20))
+    store = _session_store()
+    # A case's receipts include the sessions its own record names: a memory
+    # comparison runs its second round under an internal case, and the
+    # operator's primary case records that round's session and case id.
+    linked_cases: set[str] = {case_id} if case_id else set()
+    linked_sessions: set[str] = set()
+    if case_id:
+        try:
+            from .main import _case_repository  # local import: main imports this module
+            record = _case_repository().get(case_id)
+        except Exception:
+            record = None
+        if record is not None:
+            decision = record.latest_event("business_decision_recorded") or {}
+            session = str((decision.get("decision") or {}).get("sessionId") or "")
+            if session:
+                linked_sessions.add(session)
+            for event in record.timeline:
+                if event.get("kind") != "memory_comparison_recorded":
+                    continue
+                payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
+                for key in ("comparisonCaseId", "baselineCaseId"):
+                    if payload.get(key):
+                        linked_cases.add(str(payload[key]))
+                for key in ("sessionId", "baselineSessionId"):
+                    if payload.get(key):
+                        linked_sessions.add(str(payload[key]))
+    if case_id or subject:
+        # Every snapshot on disk used to be parsed here to find a case's few
+        # sessions (1.5 GB of JSON by 10 Sep). The index knows case and subject
+        # per file; only the sessions that match are read.
+        wanted = [
+            item for item in store.summaries(5_000)
+            if (case_id and (str(item.get("case_id") or "") in linked_cases or str(item.get("session_id") or "") in linked_sessions))
+            or (not case_id and subject and str(item.get("subject") or "") == subject)
+        ]
+        snapshots = []
+        for item in wanted:
+            try:
+                loaded = store.load(str(item.get("session_id") or ""))
+            except (OSError, ValueError):
+                loaded = None
+            if loaded is not None:
+                snapshots.append(loaded)
+    else:
+        snapshots = store.recent(limit=max(limit * 2, 20))
     seen = {str(item.get("session_id")) for item in snapshots}
     snapshots = [
         *[session.as_dict() for session in reversed(list(_SESSIONS.values())) if session.session_id not in seen],
@@ -3166,7 +3207,7 @@ def live_retrieval_trace(query: str | None = None, limit: int = 12, case_id: str
     needle = (query or "").strip().lower()
     cases: list[dict[str, Any]] = []
     for snapshot in snapshots:
-        if case_id and str(snapshot.get("case_id") or "") != case_id:
+        if case_id and str(snapshot.get("case_id") or "") not in linked_cases and str(snapshot.get("session_id") or "") not in linked_sessions:
             continue
         if not case_id and subject and str(snapshot.get("subject") or "") != subject:
             continue
@@ -3532,8 +3573,14 @@ def _client(provider_id: str = "deepseek-v4"):
     """
     from core.llm.provider import LLMConfigurationError, OpenAICompatibleClient
 
+    from . import model_access
     from .providers import resolve_reasoner
 
+    # Unattended: every escalated case used to open one of these, and 401 of
+    # them cost ¥53.6 in a week. The global switch, the per-purpose switch and
+    # the background budget all apply here.
+    if not model_access.calls_enabled("rca_analysis"):
+        return None
     mode, env = resolve_reasoner(provider_id)
     if mode != "llm" or not env:
         return None
@@ -3546,6 +3593,7 @@ def _client(provider_id: str = "deepseek-v4"):
             # answer is a whole runbook. The 30s default is a chat timeout and
             # cuts these off mid-generation — which still bills for the tokens.
             timeout_sec=LLM_TIMEOUT_SEC,
+            usage_tag="rca_analysis",
         )
     except LLMConfigurationError:
         return None

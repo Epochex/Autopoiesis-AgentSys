@@ -12,6 +12,18 @@ from frontend.gateway.app import main as gateway
 from tests_py.test_incident_memory import _passed_chain, _safety_gated_chain
 
 
+def _fake_store(snapshots):
+    """A store stub with the real selection contract of find_latest."""
+    def find_latest(*, subject, incident_ref=None, limit=1_000, by_source_refs=True):
+        live = [s for s in snapshots if not s.get("evaluation_source_case_id") and not s.get("evaluation_only")]
+        if incident_ref:
+            return next((s for s in live if str(s.get("case_id") or "") == incident_ref
+                         or (by_source_refs and any(incident_ref == str(r.get("source_id") or "")
+                                                    for r in s.get("source_refs") or ()))), None)
+        return next((s for s in live if str(s.get("subject") or "") == subject), None)
+    return SimpleNamespace(recent=lambda _limit=20: list(snapshots), find_latest=find_latest)
+
+
 @pytest.fixture
 def inline_thread(monkeypatch):
     async def run_inline(function, *args, **kwargs):
@@ -48,7 +60,7 @@ def test_investigation_receipt_joins_exact_write_provenance(monkeypatch, inline_
     monkeypatch.setattr(gateway, "_memory_trace_events", lambda: [])
     monkeypatch.setattr(gateway, "_memory_influence_timeline", lambda: [])
     monkeypatch.setattr(gateway, "_operational_memory", None)
-    monkeypatch.setattr(investigate, "_session_store", lambda: SimpleNamespace(recent=lambda _: [{
+    monkeypatch.setattr(investigate, "_session_store", lambda: _fake_store([{
         "session_id": "session-exact", "case_id": "case-exact", "subject": "device",
         "memory_intervention": {"memory_ids": ["retrieved-only"]},
     }]))
@@ -143,7 +155,7 @@ def test_case_receipt_accepts_managed_ip_session_for_serial_and_skips_evaluation
         {'session_id': 'other-case', 'case_id': 'case-other', 'subject': '192.168.1.1'},
         {'session_id': 'session-live', 'case_id': 'case-firewall', 'subject': '192.168.1.1'},
     ]
-    monkeypatch.setattr(investigate, '_session_store', lambda: SimpleNamespace(recent=lambda _: snapshots))
+    monkeypatch.setattr(investigate, '_session_store', lambda: _fake_store(snapshots))
     result = asyncio.run(gateway.rca_event_memory_receipt(subject='FG100ETK20014183', incident_ref='case-firewall'))
     assert result['investigation']['session_id'] == 'session-live'
     assert result['investigation']['subject'] == '192.168.1.1'

@@ -28,7 +28,14 @@ def test_rejects_translation_that_changes_identifier(monkeypatch):
 
 def test_retrieval_scoped_to_exact_case_with_subject_alias(monkeypatch):
     snapshots = [dict(session_id='one', case_id='case-a', subject='192.168.1.1', question='A', retrieval_results=[{'item_id': 'doc-a', 'summary': 'A'}]), dict(session_id='two', case_id='case-b', subject='192.168.1.110', question='B', retrieval_results=[{'item_id': 'doc-b', 'summary': 'B'}])]
-    monkeypatch.setattr(investigate, '_session_store', lambda: SimpleNamespace(recent=lambda **kwargs: snapshots))
+    # live_retrieval_trace selects sessions through the store's field index and
+    # loads only the matches; the stub exposes that contract over the same list.
+    by_id = {snapshot['session_id']: snapshot for snapshot in snapshots}
+    monkeypatch.setattr(investigate, '_session_store', lambda: SimpleNamespace(
+        recent=lambda **kwargs: snapshots,
+        summaries=lambda limit=1_000: [{'session_id': s['session_id'], 'case_id': s.get('case_id'), 'subject': s.get('subject'), 'source_ids': []} for s in snapshots],
+        load=lambda session_id: by_id.get(session_id),
+    ))
     monkeypatch.setattr(investigate, '_SESSIONS', {})
     payload = investigate.live_retrieval_trace(case_id='case-a', subject='FG100ETK20014183')
     assert [item['case_id'] for item in payload['cases']] == ['case-a']

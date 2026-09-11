@@ -15,7 +15,7 @@ beforeAll(async () => {
   server = await createServer({ cacheDir, server: {host:'127.0.0.1', port:0, watch: { ignored: ['**/*'] }}, plugins:[{
     name:'completed-event-test',
     resolveId(id) { if (id === 'virtual:completed-test') return '\0completed-test' },
-    load(id) { if (id === '\0completed-test') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {LiveAlerts} from '/src/components/LiveAlerts.tsx'; window.opened=[]; createRoot(document.getElementById('root')).render(React.createElement(LiveAlerts,{lang:'en',onOpen:(...args)=>window.opened.push(args)}));` },
+    load(id) { if (id === '\0completed-test') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {LiveAlerts} from '/src/components/LiveAlerts.tsx'; window.opened=[]; const mode=new URLSearchParams(location.search).get('mode') || 'panel'; createRoot(document.getElementById('root')).render(React.createElement(LiveAlerts,{lang:'en',mode,onOpen:(...args)=>window.opened.push(args)}));` },
     configureServer(vite) { vite.middlewares.use('/completed-test',async (_req,res)=>{res.setHeader('Content-Type','text/html');res.end(await vite.transformIndexHtml('/completed-test','<div id="root"></div><script type="module" src="/@id/virtual:completed-test"></script>'))}) },
   }]})
   await server.listen(); base=server.resolvedUrls!.local[0]; browser=await chromium.launch({headless:true})
@@ -54,8 +54,8 @@ describe('completed event actions',()=>{
     await page.locator('.la-row').click()
     expect(await page.evaluate(() => (window as unknown as {opened: [string, {blastSummary: string}][]}).opened[0][1].blastSummary)).toBe('single-service')
     await page.getByRole('button',{name:'Reflect & remember',exact:true}).click()
-    await page.getByRole('button',{name:'✓ Saved to long-term memory',exact:true}).waitFor()
-    expect(await page.getByRole('button',{name:'✓ Saved to long-term memory',exact:true}).isDisabled()).toBe(true)
+    await page.getByRole('button',{name:'✓ Saved to memory module',exact:true}).waitFor()
+    expect(await page.getByRole('button',{name:'✓ Saved to memory module',exact:true}).isDisabled()).toBe(true)
     await page.getByRole('button',{name:'Delete',exact:true}).click()
     await page.getByRole('status').filter({hasText:'Removed from this list'}).waitFor()
     expect(await page.locator('.la-row').count()).toBe(0)
@@ -67,4 +67,29 @@ describe('completed event actions',()=>{
     expect(errors).toEqual([])
     await page.close()
   },30000)
+
+  it('shows a recent controlled incident as a compact clickable toast', async () => {
+    const page = await browser.newPage(); page.setDefaultTimeout(7000)
+    const now = new Date().toISOString()
+    await page.route('**/api/rca/**', async route => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith('/completed-events')) return route.fulfill({ json: { records: [] } })
+      if (url.pathname.endsWith('/timeline')) return route.fulfill({ json: { events: [{
+        subject: 'autopoiesis-acceptance-selfheal-one.service', kind: 'detected', at: now,
+        cycle_opened_at: now, severity: 'high', summary: 'Dedicated service failed twice',
+        caseId: 'case-demo', dataClassification: 'controlled_test',
+      }] } })
+      return route.fulfill({ json: { suggestions: [{
+        deviceKey: 'autopoiesis-acceptance-selfheal-one.service', caseId: 'case-demo',
+        dataClassification: 'controlled_test', stageTelemetry: [],
+      }] } })
+    })
+
+    await page.goto(base + 'completed-test?mode=toast')
+    await page.locator('.la-toast').waitFor()
+    expect(await page.locator('.la-rows').count()).toBe(0)
+    await page.locator('.la-toast').click()
+    expect(await page.evaluate(() => (window as unknown as { opened: unknown[] }).opened.length)).toBe(1)
+    await page.close()
+  })
 })

@@ -6,6 +6,7 @@ import { sentinelStageIds } from './autopoiesis-pipeline'
 import { latestIncidentCycle } from './sentinel-cycle'
 import { completedEventAction, matchCompletedEvent, type CompletedEvent } from './completed-events'
 import { useDisplayTranslation } from './useDisplayTranslation'
+import { display } from './display-lexicon'
 
 /* Real-time incident queue for events emitted by the sentinel.
  *
@@ -43,6 +44,7 @@ interface SituationSuggestion {
   timeline?: { kind?: string }[]
   stageTelemetry?: { stageId?: string; detail?: string }[]
   caseId?: string
+  dataClassification?: string
   incidentFacts?: { dataClassification?: string }
 }
 
@@ -136,7 +138,7 @@ function theaterEvent(
     priority: suggestion?.priority,
     summary: row.summary,
     scope: String(suggestion?.scope ?? 'sentinel'),
-    caseId: suggestion?.caseId,
+    caseId: suggestion?.caseId ?? (chain.find(step => step.kind === 'detected')?.caseId as string | undefined),
     anchorIp: suggestion?.anchorIp ?? undefined,
     originIp: suggestion?.originIp ?? undefined,
     blastScope: suggestion?.impactLevel,
@@ -199,7 +201,9 @@ function summarise(
     const detection = [...chain].reverse().find((e) => e.kind === 'detected')
     const resolved = [...chain].reverse().find((e) => e.kind === 'resolved')
     const suggestion = suggestions.find((item) => item.deviceKey === subject || item.device === subject)
-    const controlled = suggestion?.incidentFacts?.dataClassification === 'controlled_test'
+    const controlled = suggestion?.dataClassification === 'controlled_test'
+      || suggestion?.incidentFacts?.dataClassification === 'controlled_test'
+      || detection?.dataClassification === 'controlled_test'
       || subject.startsWith('autopoiesis-acceptance-')
       || chain.some((event) => Boolean(event.demoRunId))
     const base: Omit<Row, 'theater'> = {
@@ -220,7 +224,7 @@ function summarise(
     }
     rows.push({
       ...base,
-      caseId: suggestion?.caseId,
+      caseId: suggestion?.caseId ?? (detection?.caseId ? String(detection.caseId) : undefined),
       theater: theaterEvent(subject, base, chain, suggestion),
     })
   }
@@ -239,6 +243,7 @@ function summarise(
 export function LiveAlerts({
   lang,
   onOpen,
+  mode = 'panel',
   theaterActive = false,
   activeSubject,
   autoOpenSubject,
@@ -246,6 +251,7 @@ export function LiveAlerts({
 }: {
   lang: Lang
   onOpen: (subject: string, theater: TheaterEvent, caseId?: string, origin?: 'operator' | 'focus') => void
+  mode?: 'panel' | 'toast'
   theaterActive?: boolean
   activeSubject?: string
   autoOpenSubject?: string
@@ -257,9 +263,11 @@ export function LiveAlerts({
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
   const [actionError, setActionError] = useState('')
+  const [toast, setToast] = useState<Row | null>(null)
   const { translate } = useDisplayTranslation([actionError], lang)
   const inFlight = useRef(false)
   const autoOpened = useRef<string | null>(null)
+  const shownToasts = useRef(new Set<string>())
 
   const load = useCallback(async () => {
     if (inFlight.current) return
@@ -277,19 +285,34 @@ export function LiveAlerts({
         // The append-only timeline still provides a complete switch target while
         // the richer projection is briefly unavailable.
       }
-      setRows(summarise(body.events ?? [], suggestions, zh, autoOpenSubject))
+      const nextRows = summarise(body.events ?? [], suggestions, zh, autoOpenSubject)
+      setRows(nextRows)
+      if (mode === 'toast') {
+        const candidate = nextRows.find(row => row.controlled && Date.now() - Date.parse(row.at) < 12_000)
+        const key = candidate ? `${candidate.subject}:${candidate.cycleOpenedAt}` : ''
+        if (candidate && !shownToasts.current.has(key)) {
+          shownToasts.current.add(key)
+          setToast(candidate)
+        }
+      }
     } catch {
       // A dead endpoint must not blank the page underneath; keep the last view.
     } finally {
       inFlight.current = false
     }
-  }, [autoOpenSubject, zh])
+  }, [autoOpenSubject, mode, zh])
 
   useEffect(() => {
     void load()
-    const timer = window.setInterval(() => void load(), 5000)
+    const timer = window.setInterval(() => void load(), mode === 'toast' ? 2000 : 5000)
     return () => window.clearInterval(timer)
-  }, [load])
+  }, [load, mode])
+
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(null), 10_000)
+    return () => window.clearTimeout(timer)
+  }, [toast])
 
   useEffect(() => {
     if (!autoOpenSubject || activeSubject === autoOpenSubject) return
@@ -310,12 +333,24 @@ export function LiveAlerts({
     }
     return [row]
   })
+
+  if (mode === 'toast') {
+    if (!toast) return null
+    return <button className={`la-toast p-${toast.phase}`} type="button" onClick={() => {
+      onOpen(toast.subject, toast.theater, toast.caseId, 'operator')
+      setToast(null)
+    }}>
+      <span className="la-toast-mark">!</span>
+      <span><small>{zh ? '网络态势发现新事件 · 受控演示' : 'NEW NETWORK INCIDENT · CONTROLLED DEMO'}</small><b>{toast.summary}</b><code>{toast.subject}</code></span>
+      <em>{zh ? '查看完整链路 →' : 'OPEN INCIDENT →'}</em>
+    </button>
+  }
   const act = async (action: 'archive' | 'reflect', row: Row, record: CompletedEvent) => {
     setBusy(record.recordId); setActionError(''); setNotice('')
     try {
       const result = await completedEventAction(action, record.recordId)
       setCompleted(current => current.map(item => item.recordId === record.recordId ? {...item, ...(result.record ?? {}), ...(action === 'archive' ? {archived: true} : {memoryId: result.memoryId ?? result.record?.memoryId})} : item))
-      setNotice(action === 'archive' ? (zh ? '已从当前列表删除，历史审计保留。' : 'Removed from this list; historical audit records are retained.') : (result.retrievalReady === false ? (zh ? '已将受控演示写入长期记忆隔离记录，可在长期记忆页查看；生产调查不会自动召回这条演示经验。' : 'Saved this controlled demonstration to quarantined long-term memory. It is visible on the memory page and excluded from automatic production recall.') : (zh ? '已将处置、验证证据与适用条件写入长期记忆，可在长期记忆页查看并供后续调查检索。' : 'Saved the action, verification evidence and applicability to long-term memory for future investigation recall.')))
+      setNotice(action === 'archive' ? (zh ? '已从当前列表删除，历史审计保留。' : 'Removed from this list; historical audit records are retained.') : (result.retrievalReady === false ? (zh ? '已将受控演示写入记忆模块隔离记录，可在记忆模块页查看；生产调查不会自动召回这条演示经验。' : 'Saved this controlled demonstration to quarantined memory module. It is visible on the memory page and excluded from automatic production recall.') : (zh ? '已将处置、验证证据与适用条件写入记忆模块，可在记忆模块页查看并供后续调查检索。' : 'Saved the action, verification evidence and applicability to memory module for future investigation recall.')))
       if (action === 'archive') onArchived?.(row.subject)
       await load()
     } catch (error) { setActionError(error instanceof Error ? error.message : String(error)) }
@@ -367,14 +402,14 @@ export function LiveAlerts({
               <span className="la-phase">{PHASE_LABEL[row.phase][zh ? 0 : 1]}</span>
               <span className={`la-origin ${row.controlled ? 'is-demo' : ''}`}>{row.controlled ? (zh ? '受控演示' : 'DEMO') : (zh ? '生产观测' : 'PRODUCTION')}</span>
               <span className="la-subject">{row.subject}</span>
-              <span className="la-summary">{row.summary}</span>
+              <span className="la-summary">{display(row.summary, zh ? 'zh' : 'en')}</span>
               <span className="la-at">{row.at.slice(11, 19)}</span>
             </button>
             {(() => {
               const record = matchCompletedEvent(completed, row.subject, row.cycleOpenedAt)
               if (!record?.canArchive && !record?.canReflect) return null
               return <div className="la-actions">
-                {record.canReflect ? <button disabled={Boolean(busy) || Boolean(record.memoryId)} onClick={() => void act('reflect', row, record)}>{busy === record.recordId ? (zh ? '处理中…' : 'Working…') : record.memoryId ? (zh ? '✓ 已写入长期记忆' : '✓ Saved to long-term memory') : (zh ? '反思并记忆' : 'Reflect & remember')}</button> : null}
+                {record.canReflect ? <button disabled={Boolean(busy) || Boolean(record.memoryId)} onClick={() => void act('reflect', row, record)}>{busy === record.recordId ? (zh ? '处理中…' : 'Working…') : record.memoryId ? (zh ? '✓ 已写入记忆模块' : '✓ Saved to memory module') : (zh ? '反思并记忆' : 'Reflect & remember')}</button> : null}
                 {record.canArchive ? <button disabled={Boolean(busy)} title={zh ? '从当前列表删除，保留历史证据与已保存记忆' : 'Remove from this list; retain historical evidence and saved memory'} onClick={() => void act('archive', row, record)}>{zh ? '删除' : 'Delete'}</button> : null}
                 {record.memoryId ? <small>{zh ? '记忆' : 'Memory'} · {record.memoryId}</small> : null}
               </div>

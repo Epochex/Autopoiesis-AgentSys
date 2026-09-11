@@ -7,8 +7,8 @@ import { Analyzing, ThreatCard, type Threat, type WanThreat } from './components
 import { LiveAlerts } from './components/LiveAlerts'
 import { TopoSearch } from './components/TopoSearch'
 import { ProductionTopologyPage } from './components/ProductionTopologyPage'
-import { lazy, Suspense } from 'react'
 import { InvestigationFlowBar } from './components/InvestigationFlowBar'
+import { lazy, Suspense } from 'react'
 import {
   createInvestigationContext,
   investigationView,
@@ -117,6 +117,9 @@ function App() {
     if (navigate) setView(investigationView(intent))
   }, [view])
 
+  /* One step of the investigation chain: the bar above every view walks
+   * 01 facts → 02 theater → 03 sources → 04 action → 05 memory, and each step
+   * is a view the case already has data for. */
   const navigateInvestigation = useCallback((intent: InvestigationIntent) => {
     setInvestigationActive(true)
     setInvestigationContext((current) => current ? visitInvestigationContext(current, intent) : current)
@@ -381,8 +384,8 @@ function App() {
             <nav className="pager" aria-label={lang === 'zh' ? '常态工作区' : 'Global workspaces'}>
               <button className={view === 'console' ? 'on' : ''} onClick={() => openGlobalView('console')}>{lang === 'zh' ? '网络态势' : 'NETWORK MAP'}</button>
               {scenario === 'live' ? <button className={view === 'constellation' ? 'on' : ''} onClick={() => openGlobalView('constellation')}>{lang === 'zh' ? '3D 星图' : '3D MAP'}</button> : null}
-              {scenario === 'live' ? <button className={view === 'overview' ? 'on' : ''} onClick={() => openGlobalView('overview')}>{lang === 'zh' ? '待处理事件' : 'INCIDENTS'}</button> : null}
-              {scenario === 'live' ? <button className={view === 'memory' ? 'on' : ''} onClick={() => openGlobalView('memory')}>{lang === 'zh' ? '长期记忆' : 'LONG-TERM MEMORY'}</button> : <button className={view === 'trajectory' ? 'on' : ''} onClick={() => openGlobalView('trajectory')}>{lang === 'zh' ? '案例与记忆' : 'CASES & MEMORY'}</button>}
+              {scenario === 'live' ? <button className={view === 'overview' ? 'on' : ''} onClick={() => openGlobalView('overview')}>{lang === 'zh' ? '事件中心' : 'INCIDENT CENTRE'}</button> : null}
+              {scenario === 'live' ? <button className={view === 'memory' ? 'on' : ''} onClick={() => openGlobalView('memory')}>{lang === 'zh' ? '记忆模块' : 'MEMORY MODULE'}</button> : <button className={view === 'trajectory' ? 'on' : ''} onClick={() => openGlobalView('trajectory')}>{lang === 'zh' ? '案例与记忆' : 'CASES & MEMORY'}</button>}
               <button className={view === 'network' ? 'on' : ''} onClick={() => openGlobalView('network')}>{lang === 'zh' ? '网络背景' : 'NETWORK CONTEXT'}</button>
               <button className={view === 'diagnose' ? 'on' : ''} onClick={() => openGlobalView('diagnose')}>{lang === 'zh' ? '配置与处置' : 'CHANGES & ACTIONS'}</button>
               <button className={view === 'retrieval' ? 'on' : ''} onClick={() => openGlobalView('retrieval')}>{lang === 'zh' ? '调查依据' : 'SOURCES USED'}</button>
@@ -446,15 +449,22 @@ function App() {
         <span>{lang === 'zh' ? '保留的调查' : 'SAVED INVESTIGATION'} · {investigationContext.subject}</span>
         <button onClick={() => navigateInvestigation(investigationContext.currentIntent)}>{lang === 'zh' ? '继续调查' : 'RESUME INVESTIGATION'} →</button>
       </div> : null}
+
       <Suspense fallback={<div className="boot"><span className="orbit" /></div>}>
       {(view === 'console' || view === 'constellation') && scenario === 'live' ? (
         <ProductionTopologyPage
           lang={lang}
           focusSubject={focusedContext?.subject ?? (investigationActive ? traceSubject ?? undefined : undefined)}
+          focusCaseId={focusedContext?.caseId ?? (investigationActive ? traceCaseId ?? undefined : undefined)}
+          focusSummary={focusedContext?.sourceEvent.summary ?? undefined}
+          focusSeverity={focusedContext?.sourceEvent.severity ?? undefined}
           showConstellation={view === 'constellation'}
           onShowConstellation={(show) => setView(show ? 'constellation' : 'console')}
           onOpenExposure={() => openGlobalView('network')}
           onTrackIncident={(subject, event, caseId) => beginInvestigation(
+            // The console has just opened the theater for this event; the chain
+            // starts there, so the investigation is created at step 02 without
+            // navigating away from the stage that is playing it.
             subject, caseId, sourceFromTheater(event), view === 'constellation' ? 'constellation' : 'console', 'impact_scope', false,
           )}
           onOpenCase={(subject, caseId, sourceEvent) => beginInvestigation(
@@ -465,22 +475,27 @@ function App() {
         <SituationalOverview
           lang={lang}
           onOpenCase={(subject, caseId, sourceEvent) => beginInvestigation(
-            subject, caseId, sourceEvent, 'overview', sourceEvent?.kind === 'controlled_demo' ? 'related_memory' : 'evidence_hypotheses', true,
+            // A controlled demo has a live sentinel chain to watch; open it on
+            // the theater. Production cases open on their recorded facts.
+            // Every case opens on the theater: a live sentinel chain plays on it,
+            // and a case without one still shows its record on the topology.
+            subject, caseId, sourceEvent, 'overview', 'impact_scope', true,
           )}
-          onOpenTrace={(subject, caseId) => {
-            beginInvestigation(subject, caseId, {}, 'overview', 'impact_scope')
-          }}
         />
       ) : view === 'memory' && scenario === 'live' ? (
-        <GlobalMemoryPage lang={lang} onOpenSource={({ caseId, subject }) => beginInvestigation(subject, caseId, {}, 'trajectory', 'event_facts')} />
+        <GlobalMemoryPage lang={lang} onOpenSource={({ caseId, subject }) => beginInvestigation(subject, caseId, {}, 'trajectory', 'related_memory')} />
       ) : view === 'investigation' && scenario === 'live' ? (
         <CaseInvestigationPage
           lang={lang}
           caseId={focusedContext?.caseId ?? traceCaseId ?? undefined}
           subject={focusedContext?.subject ?? traceSubject ?? undefined}
-          onOpenSources={() => navigateInvestigation('retrieval_evidence')}
-          onOpenMemory={() => navigateInvestigation('related_memory')}
-          onOpenActions={() => navigateInvestigation('remediation_readback')}
+          onBack={() => {
+            setInvestigationActive(false)
+            setInvestigationContext(null)
+            setTraceSubject(null)
+            setTraceCaseId(null)
+            setView('overview')
+          }}
         />
       ) : view === 'network' ? (
         <DiagnosePage key={`network:${scenario}`} lang={lang} scenario={scenario} workspace="network" />

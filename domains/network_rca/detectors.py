@@ -23,6 +23,7 @@ from domains.network_rca.remediation import Command, PHYSICAL_NIC
 # "anything that is failed", because a failed unit somebody is mid-way through
 # debugging should not be restarted underneath them.
 WATCHED_UNIT_PREFIXES = ("autopoiesis-", "demo-")
+CONTROLLED_ACCEPTANCE_PREFIX = "autopoiesis-acceptance-"
 
 def _bruteforce_safety_reason(address: str) -> str:
     """State the unmet controls that keep a source block from auto-commit."""
@@ -33,7 +34,11 @@ def _bruteforce_safety_reason(address: str) -> str:
     )
 
 
-def failed_units(command: Command | None = None) -> list[Detection]:
+def failed_units(
+    command: Command | None = None,
+    *,
+    include_controlled: bool = False,
+) -> list[Detection]:
     """Units that systemd reports as failed, restricted to the watched set."""
     command = command or Command.local()
     result = command.run(["systemctl", "--failed", "--no-legend", "--plain"])
@@ -44,6 +49,11 @@ def failed_units(command: Command | None = None) -> list[Detection]:
             continue
         unit = fields[0]
         if is_tailscale_target(unit):
+            continue
+        # Acceptance scripts own their disposable unit and its one-time
+        # authority. The background sentinel must not race that controlled
+        # experiment; the script opts in explicitly when it samples evidence.
+        if unit.startswith(CONTROLLED_ACCEPTANCE_PREFIX) and not include_controlled:
             continue
         if not unit.startswith(WATCHED_UNIT_PREFIXES):
             continue

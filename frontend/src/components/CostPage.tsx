@@ -1,6 +1,7 @@
 import './cost.css'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
+import { display } from './display-lexicon'
 
 /* ── 模型花销 · what the system spent on model calls, and which feature spent it
  * ────────────────────────────────────────────────────────────────────────────
@@ -30,6 +31,8 @@ interface CostCall {
   total_tokens: number
   cost_cny: number
   usage_reported: boolean
+  failed?: boolean
+  error?: string
   prompt_cache_hit_tokens?: number | null
   prompt_cache_miss_tokens?: number | null
 }
@@ -57,6 +60,14 @@ interface CostResp {
   largest_call: LargestCall | null
   recent: CostCall[]
   rates_note: string
+  failed_calls?: number
+  failures_by_purpose?: Record<string, number>
+  budget?: {
+    window_hours: number
+    classes: Record<'background' | 'interactive', { spent_cny: number; cap_cny: number; remaining_cny: number; exhausted: boolean }>
+    interactive_purposes: string[]
+  }
+  provider_balance?: { available: boolean; currency: string; total: number; topped_up: number; granted: number; checked_at: string } | null
   provider_cache?: {
     hit_tokens: number | null
     miss_tokens: number | null
@@ -116,6 +127,11 @@ const PURPOSE: Record<string, [string, string]> = {
   posture: ['安全状态判断', 'SECURITY POSTURE'],
   JudgeResponse_v1: ['结果评审', 'JUDGE'],
   diag: ['测试调用', 'TEST CALL'],
+  production_wan_threat: ['外网来源深度研判', 'WAN SOURCE ASSESSMENT'],
+  production_analysis: ['内网对象深度研判', 'INTERNAL ASSESSMENT'],
+  display_translation: ['英文界面翻译', 'ENGLISH UI TRANSLATION'],
+  'evidence-analysis-v1': ['证据分析', 'EVIDENCE ANALYSIS'],
+  wan: ['外网来源深度研判', 'WAN SOURCE ASSESSMENT'],
 }
 
 const purposeLabel = (key: string, zh: boolean) => {
@@ -192,6 +208,25 @@ const T = (zh: boolean) => ({
   cacheNone: zh ? '现在一条都没缓存' : 'NOTHING CACHED YET',
   cacheOff: zh ? '读不到缓存状态' : 'CACHE STATUS UNAVAILABLE',
   noteK: zh ? '说明' : 'NOTE',
+  ledger: zh ? '账本' : 'LEDGER',
+  windowSpend: zh ? '本窗口花费' : 'SPENT IN WINDOW',
+  budgetK: zh ? '24 小时预算' : '24H BUDGET',
+  background: zh ? '后台自动' : 'UNATTENDED',
+  interactive: zh ? '人在等的' : 'INTERACTIVE',
+  budgetNote: zh ? '后台调用（自动调查、批量研判）到线即停，明天自动恢复；人在等的研判另有一档。' : 'Unattended calls stop at the line and resume the next day; interactive assessments have their own line.',
+  balance: zh ? '服务商余额' : 'PROVIDER BALANCE',
+  balanceOff: zh ? '余额读不到' : 'BALANCE UNAVAILABLE',
+  balanceUnavailable: zh ? '账户不可用' : 'ACCOUNT UNAVAILABLE',
+  failed: zh ? '被拒绝的调用' : 'REFUSED CALLS',
+  failedNote: zh ? '被拒绝的调用不花钱，但说明有人在等一个没来的答案。' : 'A refused call costs nothing, but someone was waiting for an answer that never came.',
+  klass: zh ? '类型' : 'CLASS',
+  cacheLine: zh ? '结果缓存' : 'RESULT CACHE',
+  entries: zh ? '条' : 'ENTRIES',
+  hitFree: zh ? '命中免费' : 'HITS ARE FREE',
+  callsOff: zh ? '模型调用已关闭' : 'MODEL CALLS OFF',
+  status: zh ? '状态' : 'STATUS',
+  refused: zh ? '被拒' : 'REFUSED',
+  ok: zh ? '成功' : 'OK',
 })
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -211,18 +246,7 @@ const stamp = (iso: string) => {
   return `${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`
 }
 
-const bytes = (n: number) => {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`
-}
 
-const ago = (sec: number | null, zh: boolean) => {
-  if (sec === null) return '—'
-  if (sec < 60) return zh ? `${Math.round(sec)} 秒前` : `${Math.round(sec)}s ago`
-  if (sec < 3600) return zh ? `${Math.round(sec / 60)} 分钟前` : `${Math.round(sec / 60)}m ago`
-  return zh ? `${Math.round(sec / 3600)} 小时前` : `${Math.round(sec / 3600)}h ago`
-}
 
 interface Bar {
   key: string
@@ -308,7 +332,6 @@ export function CostPage({ lang }: { lang: Lang }) {
       }
       setCacheSt(cache.status === 'fulfilled' && cache.value.ok ? { s: 'ok', d: cache.value } : { s: 'err' })
     } finally {
-      // A superseded request leaves the flags to whoever replaced it.
       if (inflight.current === ctl) {
         inflight.current = null
         setPending(false)
@@ -330,33 +353,24 @@ export function CostPage({ lang }: { lang: Lang }) {
   const refresh = useCallback(() => { void load(hours, 'now') }, [hours, load])
 
   const d = st.s === 'ok' ? st.d : null
-
-  const chart = useMemo(
-    () => (d ? buildBars(d.by_hour, d.window_hours) : { bars: [] as Bar[], daily: false }),
-    [d],
-  )
-  const peakCost = useMemo(
-    () => chart.bars.reduce((top, b) => (b.cost > top ? b.cost : top), 0),
-    [chart],
-  )
-  // Printed on the chart so the strip can be checked against the headline
-  // total: if the axis ever failed to cover the whole window, the two figures
-  // would stop agreeing.
+  const chart = useMemo(() => (d ? buildBars(d.by_hour, d.window_hours) : { bars: [] as Bar[], daily: false }), [d])
+  const peakCost = useMemo(() => chart.bars.reduce((top, b) => (b.cost > top ? b.cost : top), 0), [chart])
   const barsSum = useMemo(() => chart.bars.reduce((sum, b) => sum + b.cost, 0), [chart])
-  // Named in text as well as drawn, so no figure on this page exists only as a
-  // bar height.
-  const topBars = useMemo(
-    () => chart.bars.filter((b) => b.cost > 0).sort((a, b) => b.cost - a.cost).slice(0, 3),
-    [chart],
-  )
-
+  const topBars = useMemo(() => chart.bars.filter((b) => b.cost > 0).sort((a, b) => b.cost - a.cost).slice(0, 3), [chart])
   const purposes = useMemo(() => Object.entries(d?.by_purpose ?? {}), [d])
-  const models = useMemo(() => Object.entries(d?.by_model ?? {}), [d])
-  const unreported = useMemo(() => (d?.recent ?? []).filter((r) => !r.usage_reported).length, [d])
-  const namespaces = useMemo(
-    () => (cacheSt.s === 'ok' ? Object.entries(cacheSt.d.namespaces) : []),
-    [cacheSt],
+  const interactive = useMemo(() => new Set(d?.budget?.interactive_purposes ?? []), [d])
+  const failures = useMemo(() => d?.failures_by_purpose ?? {}, [d])
+  const failedPurposesOnly = useMemo(
+    () => Object.keys(failures).filter((key) => !(d?.by_purpose ?? {})[key]),
+    [failures, d],
   )
+  const unreported = useMemo(() => (d?.recent ?? []).filter((r) => !r.usage_reported && !r.failed).length, [d])
+  const cache = cacheSt.s === 'ok' ? cacheSt.d : null
+  const budget = d?.budget ?? null
+  const balance = d?.provider_balance ?? null
+  const hasRows = Boolean(d && (d.calls > 0 || (d.failed_calls ?? 0) > 0))
+
+  const gauge = (spent: number, cap: number) => `${Math.min(100, cap > 0 ? (spent / cap) * 100 : 0).toFixed(1)}%`
 
   return (
     <div className="cx">
@@ -370,287 +384,144 @@ export function CostPage({ lang }: { lang: Lang }) {
           <div className="cx-win" role="group" aria-label={tx.windowK}>
             <span className="cx-win-k">{tx.windowK}</span>
             {WINDOWS.map((w) => (
-              <button
-                key={w.hours}
-                type="button"
-                className={`cx-win-b${w.hours === hours ? ' is-on' : ''}`}
-                aria-pressed={w.hours === hours}
-                onClick={() => setHours(w.hours)}
-              >
-                {zh ? w.zh : w.en}
-              </button>
+              <button key={w.hours} type="button" className={`cx-win-b${hours === w.hours ? ' is-on' : ''}`}
+                aria-pressed={hours === w.hours} onClick={() => setHours(w.hours)}>{zh ? w.zh : w.en}</button>
             ))}
           </div>
           <div className="cx-fresh">
             <span className="cx-fresh-k">{tx.lastAt}</span>
             <b>{refreshedAt === null ? '—' : clock(refreshedAt)}</b>
             <span className="cx-fresh-a">{tx.auto}</span>
-            <button type="button" className="cx-fresh-b" onClick={refresh} disabled={pending}>
-              {pending ? tx.refreshing : tx.refresh}
-            </button>
+            <button type="button" className="cx-fresh-b" onClick={refresh} disabled={pending}>{pending ? tx.refreshing : tx.refresh}</button>
           </div>
         </div>
       </header>
 
-      {/* Independent of the spend window: it says whether calls are even
-          switched on, which is the first thing a zero total needs explained. */}
-      <section className="cx-cache">
-        <div className="cx-cache-k">{tx.switches}</div>
-        {cacheSt.s !== 'ok' ? (
-          <div className="cx-cache-r">
-            <span className="cx-state is-inline">{cacheSt.s === 'load' ? tx.loading : tx.cacheOff}</span>
-          </div>
-        ) : (
-          <>
-            <div className="cx-cache-r">
-              <span className={`cx-sw ${cacheSt.d.calls_enabled ? 'is-on' : 'is-off'}`}>
-                <em>{tx.callsSw}</em><b>{cacheSt.d.calls_enabled ? tx.on : tx.off}</b>
-              </span>
-              <span className={`cx-sw ${cacheSt.d.prewarm_enabled ? 'is-on' : 'is-off'}`}>
-                <em>{tx.prewarmSw}</em><b>{cacheSt.d.prewarm_enabled ? tx.on : tx.off}</b>
-              </span>
-              <span className="cx-sw">
-                <em>{tx.cached}</em><b className="n">{num(cacheSt.d.entries)}</b>
-              </span>
-              <span className="cx-cache-dir"><em>{tx.cacheDir}</em><code>{cacheSt.d.dir}</code></span>
-            </div>
-            <div className="cx-ns">
-              {namespaces.length === 0 ? (
-                <span className="cx-ns-none">{tx.cacheNone}</span>
-              ) : (
-                namespaces.map(([name, ns]) => (
-                  <span className="cx-ns-i" key={name}>
-                    <b>{name}</b>
-                    <i>{num(ns.entries)}</i>
-                    <i>{bytes(ns.bytes)}</i>
-                    <i>{ago(ns.newest_age_sec, zh)}</i>
-                  </span>
-                ))
-              )}
-            </div>
-            <p className="cx-cache-p">{tx.cacheWhy}</p>
-          </>
-        )}
+      {/* ── the ledger line: what this window cost, where the day's lines are,
+             and what the provider says is left. One band of rules and type. */}
+      <section className="cx-band" aria-label={tx.ledger}>
+        <div className="cx-band-c is-spend">
+          <span className="cx-k">{tx.totalCost(hours)}</span>
+          <b className="cx-money n"><i>¥</i>{d ? money(d.total_cost_cny, 4) : '—'}</b>
+          <span className="cx-sub n">{d ? `${num(d.calls)} ${tx.callsUnit} · ${num(d.total_tokens)} tokens` : tx.loading}{d && (d.failed_calls ?? 0) > 0 ? <em className="is-hi"> · {num(d.failed_calls ?? 0)} {tx.refused}</em> : null}</span>
+        </div>
+        <div className="cx-band-c is-budget">
+          <span className="cx-k">{tx.budgetK}</span>
+          {budget ? (['background', 'interactive'] as const).map((key) => {
+            const line = budget.classes[key]
+            return (
+              <div className={`cx-gauge${line.exhausted ? ' is-out' : ''}`} key={key}>
+                <span className="cx-gauge-k">{key === 'background' ? tx.background : tx.interactive}</span>
+                <span className="cx-gauge-t" aria-hidden="true"><i style={{ width: gauge(line.spent_cny, line.cap_cny) }} /></span>
+                <span className="cx-gauge-v n"><b>¥{money(line.spent_cny, 2)}</b> / ¥{money(line.cap_cny, 2)}</span>
+              </div>
+            )
+          }) : <span className="cx-sub">{tx.loading}</span>}
+          <span className="cx-sub">{tx.budgetNote}</span>
+        </div>
+        <div className={`cx-band-c is-balance${balance && !balance.available ? ' is-out' : ''}`}>
+          <span className="cx-k">{tx.balance}</span>
+          <b className="cx-money is-small n">{balance ? <><i>¥</i>{money(balance.total, 2)}</> : '—'}</b>
+          <span className="cx-sub">{balance ? (balance.available ? `DeepSeek · ${balance.checked_at.slice(11, 16)} UTC` : tx.balanceUnavailable) : tx.balanceOff}</span>
+        </div>
+        <div className="cx-band-c is-cache">
+          <span className="cx-k">{tx.cacheLine}</span>
+          <b className="cx-money is-small n">{cache ? num(cache.entries) : '—'}<i className="is-after"> {tx.entries}</i></b>
+          <span className="cx-sub">{cache ? (cache.calls_enabled ? tx.hitFree : tx.callsOff) : tx.cacheOff}{cache ? <code> {cache.dir}</code> : null}</span>
+        </div>
       </section>
 
       {st.s === 'load' ? <div className="cx-state">{tx.loading}</div>
         : st.s === 'err' ? <div className="cx-state is-err">{tx.offline} · {st.m}</div>
-        : !d ? null
-        : d.calls === 0 ? (
+        : !d || !hasRows ? (
           <>
             <div className="cx-state">{tx.empty}</div>
-            <div className="cx-note"><span className="cx-note-k">{tx.noteK}</span><p>{d.rates_note}</p></div>
+            <div className="cx-note"><span className="cx-note-k">{tx.noteK}</span><p>{display(d?.rates_note ?? '', lang)}</p></div>
           </>
         ) : (
           <>
-            <section className="cx-figs">
-              <div className="cx-fig is-money">
-                <b><i>¥</i>{money(d.total_cost_cny, d.total_cost_cny >= 10 ? 2 : 4)}</b>
-                <span>{tx.totalCost(d.window_hours)}</span>
-              </div>
-              <div className="cx-fig"><b>{num(d.calls)}</b><span>{tx.calls}</span></div>
-              <div className="cx-fig"><b>{num(d.total_tokens)}</b><span>{tx.tokens}</span></div>
-              <div className="cx-fig"><b>{num(d.average_tokens_per_call)}</b><span>{tx.avg}</span></div>
-            </section>
-
-            <section className="cx-sec" aria-label={tx.providerCache}>
-              <div className="cx-sec-k">{tx.providerCache}</div>
-              <div className="cx-cache-r">
-                <span className="cx-sw">
-                  <em>{tx.cacheHit}</em>
-                  <b>{d.provider_cache?.hit_tokens == null ? tx.cacheUnknown : num(d.provider_cache.hit_tokens)}</b>
-                  <small>{num(d.provider_cache?.hit_reported_calls ?? 0)} / {num(d.calls)} {tx.callsUnit}</small>
-                </span>
-                <span className="cx-sw">
-                  <em>{tx.cacheMiss}</em>
-                  <b>{d.provider_cache?.miss_tokens == null ? tx.cacheUnknown : num(d.provider_cache.miss_tokens)}</b>
-                  <small>{num(d.provider_cache?.miss_reported_calls ?? 0)} / {num(d.calls)} {tx.callsUnit}</small>
-                </span>
-                <span className="cx-sw">
-                  <em>{tx.cacheCoverage}</em><b>{num(d.provider_cache?.reported_calls ?? 0)} / {num(d.calls)}</b>
-                </span>
-              </div>
-              <p className="cx-cache-p">{tx.providerCacheNote}</p>
-            </section>
-
             <section className="cx-sec">
-              <div className="cx-sec-k">{tx.spent} <em>{tx.spentK}</em></div>
-              <div className="cx-scroll">
-                <table className="cx-t cx-t-spend">
-                  <thead>
-                    <tr>
-                      <th scope="col">{tx.feature}</th>
-                      <th scope="col" className="n">{tx.calls}</th>
-                      <th scope="col" className="n">{tx.tokens}</th>
-                      <th scope="col" className="n">{tx.cost}</th>
-                      <th scope="col">{tx.shareK}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {purposes.map(([key, b], i) => {
-                      const share = d.total_cost_cny > 0 ? b.cost_cny / d.total_cost_cny : 0
-                      return (
-                        <tr key={key} className={i === 0 ? 'is-top' : undefined}>
-                          <th scope="row">
-                            {purposeLabel(key, zh)}
-                            <code>{key}</code>
-                          </th>
-                          <td className="n">{num(b.calls)}</td>
-                          <td className="n">{num(b.tokens)}</td>
-                          <td className="n strong">{money(b.cost_cny, 4)}</td>
-                          <td className="cx-share-c">
-                            <span className="cx-share" aria-hidden="true">
-                              <i style={{ width: `${share > 0 ? Math.max(share * 100, 1) : 0}%` }} />
-                            </span>
-                            <em>{(share * 100).toFixed(1)}%</em>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="cx-sec">
-              <div className="cx-sec-k">{tx.models}</div>
-              <div className="cx-models">
-                {models.map(([key, b]) => (
-                  <div className="cx-model" key={key}>
-                    <b>{key}</b>
-                    <span>{num(b.calls)} {tx.callsUnit}</span>
-                    <span>{num(b.tokens)} tokens</span>
-                    <span className="cx-model-c">¥{money(b.cost_cny, 4)}</span>
+              <div className="cx-sec-k">{chart.daily ? tx.chartDay : tx.chart}<em>{chart.daily ? tx.cellsDay(chart.bars.length) : tx.cellsHour(chart.bars.length)} · {tx.barsSum} ¥{money(barsSum, 4)}</em></div>
+              {peakCost <= 0 ? <div className="cx-state is-inline">{tx.chartEmpty}</div> : (
+                <div className="cx-chart">
+                  <div className="cx-plot">
+                    <div className="cx-plot-ax" aria-hidden="true"><span>¥{money(peakCost, 3)}</span><span>¥{money(peakCost / 2, 3)}</span><span>¥0</span></div>
+                    <div className="cx-plot-in">
+                      <div className="cx-plot-mid" aria-hidden="true" />
+                      <ul className="cx-bars">
+                        {chart.bars.map((b) => {
+                          const text = `${b.label} · ¥${money(b.cost, 4)}`
+                          return <li key={b.key} className={`cx-bar${b.cost > 0 && b.cost === peakCost ? ' is-peak' : ''}`} title={text}>
+                            <span className="cx-bar-f" aria-hidden="true" style={{ height: b.cost > 0 ? `${Math.max((b.cost / peakCost) * 100, 2)}%` : '0' }} />
+                            <span className="cx-sr">{text}</span>
+                          </li>
+                        })}
+                      </ul>
+                    </div>
                   </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="cx-sec">
-              <div className="cx-sec-k">{chart.daily ? tx.chartDay : tx.chart}</div>
-              <div className="cx-chart">
-                {peakCost <= 0 ? (
-                  <div className="cx-state is-inline">{tx.chartEmpty}</div>
-                ) : (
-                  <>
-                    <div className="cx-chart-h">
-                      <span className="cx-chart-k">{tx.barsSum}</span>
-                      <b>¥{money(barsSum, 4)}</b>
-                      <span className="cx-chart-n">
-                        {chart.daily ? tx.cellsDay(chart.bars.length) : tx.cellsHour(chart.bars.length)}
-                      </span>
-                    </div>
-                    <div className="cx-plot">
-                      <div className="cx-plot-ax" aria-hidden="true">
-                        <span>¥{money(peakCost, 4)}</span>
-                        <span>¥{money(peakCost / 2, 4)}</span>
-                        <span>¥0</span>
-                      </div>
-                      <div className="cx-plot-in">
-                        <div className="cx-plot-mid" aria-hidden="true" />
-                        <ul className="cx-bars">
-                          {chart.bars.map((b) => {
-                            const text = `${b.label} · ¥${money(b.cost, 4)}`
-                            return (
-                              <li
-                                key={b.key}
-                                className={`cx-bar${b.cost > 0 && b.cost === peakCost ? ' is-peak' : ''}`}
-                                title={text}
-                              >
-                                <span
-                                  className="cx-bar-f"
-                                  aria-hidden="true"
-                                  style={{ height: b.cost > 0 ? `${Math.max((b.cost / peakCost) * 100, 2)}%` : '0' }}
-                                />
-                                <span className="cx-sr">{text}</span>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      </div>
-                    </div>
-                    <div className="cx-chart-f">
-                      <span>{chart.bars[0]?.label ?? '—'}</span>
-                      <span>{chart.bars[chart.bars.length - 1]?.label ?? '—'}</span>
-                    </div>
-                    <p className="cx-chart-top">
-                      <span className="cx-chart-k">{chart.daily ? tx.topDays : tx.topHours}</span>
-                      {topBars.map((b) => (
-                        <span className="cx-chart-t" key={b.key}><b>{b.label}</b> ¥{money(b.cost, 4)}</span>
-                      ))}
-                    </p>
-                  </>
-                )}
-              </div>
-            </section>
-
-            <section className="cx-sec">
-              <div className="cx-sec-k">{tx.biggest}</div>
-              {d.largest_call === null ? (
-                <div className="cx-state is-inline">{tx.biggestNone}</div>
-              ) : (
-                <div className="cx-big">
-                  <div className="cx-big-c">
-                    <b><i>¥</i>{money(d.largest_call.cost_cny, 4)}</b>
-                    <span>{num(d.largest_call.total_tokens)} tokens</span>
-                  </div>
-                  <dl className="cx-big-d">
-                    <div><dt>{tx.when}</dt><dd>{stamp(d.largest_call.at)}</dd></div>
-                    <div>
-                      <dt>{tx.feature}</dt>
-                      <dd>{purposeLabel(d.largest_call.purpose, zh)} <code>{d.largest_call.purpose}</code></dd>
-                    </div>
-                    <div><dt>{tx.model}</dt><dd>{d.largest_call.model}</dd></div>
-                  </dl>
+                  <div className="cx-chart-f"><span>{chart.bars[0]?.label ?? '—'}</span><span>{chart.bars[chart.bars.length - 1]?.label ?? '—'}</span></div>
+                  <p className="cx-chart-top"><span className="cx-chart-k">{chart.daily ? tx.topDays : tx.topHours}</span>{topBars.map((b) => <span className="cx-chart-t" key={b.key}><b>{b.label}</b> ¥{money(b.cost, 4)}</span>)}</p>
                 </div>
               )}
             </section>
 
             <section className="cx-sec">
-              <div className="cx-sec-k">{tx.recent}</div>
+              <div className="cx-sec-k">{tx.spent}<em>{tx.spentK}</em></div>
               <div className="cx-scroll">
-                <table className="cx-t cx-t-recent">
-                  <thead>
-                    <tr>
-                      <th scope="col">{tx.when}</th>
-                      <th scope="col">{tx.feature}</th>
-                      <th scope="col">{tx.model}</th>
-                      <th scope="col" className="n">{tx.inTok}</th>
-                      <th scope="col" className="n">{tx.outTok}</th>
-                      <th scope="col" className="n">{tx.cacheHit}</th>
-                      <th scope="col" className="n">{tx.cacheMiss}</th>
-                      <th scope="col" className="n">{tx.cost}</th>
-                    </tr>
-                  </thead>
+                <table className="cx-t cx-t-spend">
+                  <thead><tr><th>{tx.feature}</th><th>{tx.klass}</th><th className="n">{tx.calls}</th><th className="n">{tx.failed}</th><th className="n">TOKENS</th><th className="n">{tx.cost}</th><th>{tx.shareK}</th></tr></thead>
                   <tbody>
-                    {d.recent.map((r, i) => (
-                      <tr key={`${r.at}-${i}`} className={r.usage_reported ? undefined : 'is-nousage'}>
-                        <td>{stamp(r.at)}</td>
-                        <td>{purposeLabel(r.purpose, zh)}</td>
-                        <td>{r.model}</td>
-                        <td className="n">{num(r.prompt_tokens)}</td>
-                        <td className="n">{num(r.completion_tokens)}</td>
-                        <td className="n">{r.prompt_cache_hit_tokens == null ? tx.cacheUnknown : num(r.prompt_cache_hit_tokens)}</td>
-                        <td className="n">{r.prompt_cache_miss_tokens == null ? tx.cacheUnknown : num(r.prompt_cache_miss_tokens)}</td>
-                        <td className="n strong">
-                          {money(r.cost_cny, 4)}
-                          {r.usage_reported ? null : <em className="cx-flag">{tx.noUsage}</em>}
-                        </td>
+                    {purposes.map(([key, b], i) => {
+                      const share = d.total_cost_cny > 0 ? (b.cost_cny / d.total_cost_cny) * 100 : 0
+                      const klass = interactive.has(key) ? 'interactive' : 'background'
+                      return <tr key={key} className={i === 0 ? 'is-top' : ''}>
+                        <th>{purposeLabel(key, zh)}<code>{key}</code></th>
+                        <td><span className={`cx-class is-${klass}`}>{klass === 'interactive' ? tx.interactive : tx.background}</span></td>
+                        <td className="n">{num(b.calls)}</td>
+                        <td className={`n${failures[key] ? ' is-hi' : ''}`}>{failures[key] ? num(failures[key]) : '—'}</td>
+                        <td className="n">{num(b.tokens)}</td>
+                        <td className="n strong">¥{money(b.cost_cny, 4)}</td>
+                        <td className="cx-share-c"><span className="cx-share" aria-hidden="true"><i style={{ width: `${share}%` }} /></span><em>{share.toFixed(1)}%</em></td>
+                      </tr>
+                    })}
+                    {failedPurposesOnly.map((key) => (
+                      <tr key={`f-${key}`} className="is-refused">
+                        <th>{purposeLabel(key, zh)}<code>{key}</code></th>
+                        <td><span className={`cx-class is-${interactive.has(key) ? 'interactive' : 'background'}`}>{interactive.has(key) ? tx.interactive : tx.background}</span></td>
+                        <td className="n">0</td><td className="n is-hi">{num(failures[key])}</td><td className="n">0</td><td className="n">¥0.0000</td><td className="cx-share-c"><em>—</em></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              {unreported > 0 ? (
-                <div className="cx-warn"><span className="cx-warn-k">{tx.noUsage}</span><p>{tx.noUsageNote}</p></div>
-              ) : null}
+              {(d.failed_calls ?? 0) > 0 ? <p className="cx-line is-hi">{tx.failedNote}</p> : null}
+              <p className="cx-line">{Object.entries(d.by_model).map(([key, b]) => <span key={key}><b>{key}</b> {num(b.calls)} {tx.callsUnit} · {num(b.tokens)} tokens · ¥{money(b.cost_cny, 4)}</span>)}{d.largest_call ? <span><b>{tx.biggest}</b> ¥{money(d.largest_call.cost_cny, 4)} · {num(d.largest_call.total_tokens)} tokens · {purposeLabel(d.largest_call.purpose, zh)} · {stamp(d.largest_call.at)}</span> : null}</p>
             </section>
 
-            {/* The ledger's own caveat, printed as written. */}
-            <div className="cx-note">
-              <span className="cx-note-k">{tx.noteK}</span>
-              <p>{d.rates_note}</p>
-            </div>
+            <section className="cx-sec">
+              <div className="cx-sec-k">{tx.recent}<em>{num(d.recent.length)}</em></div>
+              <div className="cx-scroll">
+                <table className="cx-t cx-t-recent">
+                  <thead><tr><th>{tx.when}</th><th>{tx.feature}</th><th>{tx.model}</th><th>{tx.status}</th><th className="n">{tx.inTok}</th><th className="n">{tx.outTok}</th><th className="n">{tx.cost}</th></tr></thead>
+                  <tbody>
+                    {d.recent.map((r, i) => (
+                      <tr key={`${r.at}-${i}`} className={r.failed ? 'is-refused' : !r.usage_reported ? 'is-nousage' : ''}>
+                        <td className="n">{stamp(r.at)}</td>
+                        <th>{purposeLabel(r.purpose, zh)}{r.session_id ? <code>{r.session_id}</code> : null}</th>
+                        <td>{r.model}</td>
+                        <td>{r.failed ? <span className="cx-flag">{tx.refused} · {(r.error ?? '').slice(0, 40)}</span> : !r.usage_reported ? <span className="cx-flag">{tx.noUsage}</span> : tx.ok}</td>
+                        <td className="n">{r.failed ? '—' : num(r.prompt_tokens)}</td>
+                        <td className="n">{r.failed ? '—' : num(r.completion_tokens)}</td>
+                        <td className="n strong">{r.failed ? '—' : `¥${money(r.cost_cny, 4)}`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {unreported > 0 ? <div className="cx-warn"><span className="cx-warn-k">{tx.noUsage}</span><p>{tx.noUsageNote}</p></div> : null}
+            </section>
+
+            <div className="cx-note"><span className="cx-note-k">{tx.noteK}</span><p>{display(d.rates_note, lang)}</p></div>
           </>
         )}
     </div>

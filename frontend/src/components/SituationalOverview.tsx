@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Lang } from '../i18n'
 import './situational-overview.css'
 import { readProductionOverviewCache, writeProductionOverviewCache } from '../production-overview-cache'
-import { DemoScenarioPanel } from './DemoScenarioPanel'
 import type { InvestigationSourceEventInput } from './investigation-context'
+import { display } from './display-lexicon'
+import { prepareIncidentList } from './incident-list'
 
 type Severity = 'critical' | 'high' | 'medium' | 'low' | string
 
@@ -94,6 +95,8 @@ interface ProductionCase {
   evidenceCount: number
   action: string
   readback?: Record<string, unknown> | null
+  ruleId?: string
+  controlled?: boolean
 }
 
 interface ExternalSource {
@@ -189,11 +192,9 @@ const caseStatus = (status: string, zh: boolean): string => {
 export function SituationalOverview({
   lang,
   onOpenCase,
-  onOpenTrace,
 }: {
   lang: Lang
   onOpenCase: (subject: string, caseId: string, sourceEvent?: InvestigationSourceEventInput) => void
-  onOpenTrace: (subject: string, caseId?: string) => void
 }) {
   const zh = lang === 'zh'
   const [data, setData] = useState<Overview | null>(() => readProductionOverviewCache<Overview>())
@@ -204,20 +205,20 @@ export function SituationalOverview({
     () => readProductionOverviewCache<Overview>() !== null,
   )
   const [selection, setSelection] = useState<Selection>(null)
-  const [view, setView] = useState<'cases' | 'assets' | 'activity' | 'demo'>('cases')
+  const [view, setView] = useState<'cases' | 'assets' | 'activity'>('cases')
   const [caseFilter, setCaseFilter] = useState<'active' | 'resolved'>('active')
   const [query, setQuery] = useState('')
   const [segment, setSegment] = useState<string>('all')
   const hasData = useRef(data !== null)
   const request = useRef<AbortController | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (request.current) return
     const controller = new AbortController()
     request.current = controller
     const timeout = window.setTimeout(() => controller.abort(), 12_000)
     try {
-      const response = await fetch('/api/rca/situational-overview', {
+      const response = await fetch(`/api/rca/situational-overview${force ? '?refresh=true' : ''}`, {
         headers: { Accept: 'application/json' },
         signal: controller.signal,
       })
@@ -240,7 +241,7 @@ export function SituationalOverview({
 
   useEffect(() => {
     void load()
-    const timer = window.setInterval(() => void load(), 15_000)
+    const timer = window.setInterval(() => void load(), 5_000)
     return () => {
       window.clearInterval(timer)
       request.current?.abort()
@@ -256,6 +257,9 @@ export function SituationalOverview({
     return data.externalSources.find((item) => item.ip === selection.id) ?? null
   }, [data, selection])
 
+  // Payload prose arrives in the source language; the lexicon renders it.
+  const en = (value: string) => display(value, lang)
+
   if (state === 'loading') return <main className="sa sa-message"><span className="orbit" />{zh ? '正在读取生产事实…' : 'READING PRODUCTION FACTS…'}</main>
   if (state === 'error' || !data) return <main className="sa sa-message is-error">{zh ? '生产态势接口暂时不可达' : 'PRODUCTION SITUATION ENDPOINT UNREACHABLE'}</main>
 
@@ -263,12 +267,11 @@ export function SituationalOverview({
   const visibleRisks = data.riskFusion.filter((item) => segment === 'all' || item.segment === segment)
   const visibleAssets = data.inventory.assets.filter((item) => segment === 'all' || item.segment === segment)
   const blind = data.coverage.filter((item) => item.state === 'blind')
-  const activeCases = data.cases.filter((item) => ['open', 'investigating', 'escalated'].includes(item.status))
-  const resolvedCases = data.cases.filter((item) => item.status === 'resolved').length
-  const priority: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
-  const listedCases = (caseFilter === 'active' ? activeCases : data.cases.filter((item) => item.status === 'resolved'))
+  const deduplicatedCases = prepareIncidentList(data.cases)
+  const activeCases = deduplicatedCases.filter((item) => ['open', 'investigating', 'waiting', 'escalated', 'action_ready', 'observing'].includes(item.status))
+  const resolvedCases = deduplicatedCases.filter((item) => item.status === 'resolved').length
+  const listedCases = (caseFilter === 'active' ? activeCases : deduplicatedCases.filter((item) => item.status === 'resolved'))
     .filter((item) => `${item.title} ${item.subject}`.toLowerCase().includes(query.trim().toLowerCase()))
-    .sort((a, b) => (priority[a.severity] ?? 4) - (priority[b.severity] ?? 4) || b.lastSeenAt.localeCompare(a.lastSeenAt))
   const selectedCases = selection?.type === 'change'
     ? data.cases.filter((item) => (selected as Change | null)?.caseIds?.includes(item.caseId))
     : selection?.type === 'risk'
@@ -294,13 +297,10 @@ export function SituationalOverview({
         <button onClick={() => { setView('cases'); setCaseFilter('active'); setSelection(null) }}><b>{activeCases.length}</b><span>{zh ? '待处理' : 'Active'}</span></button>
         <button onClick={() => { setView('cases'); setCaseFilter('resolved'); setSelection(null) }}><b>{resolvedCases}</b><span>{zh ? '已关闭' : 'Closed'}</span></button>
         <span><b>{data.funnel.actionsVerified}</b>{zh ? '已验证回读' : 'Verified readbacks'}</span>
-        <button className="sa-demo-entry" aria-pressed={view === 'demo'} onClick={() => { setView('demo'); setSelection(null) }}>{zh ? '演示与验收 ↗' : 'Demos & acceptance ↗'}</button>
       </div>
       <nav className="sa-view-tabs" aria-label={zh ? '事件中心视图' : 'Incident centre views'}>
         {(['cases', 'assets', 'activity'] as const).map((id) => <button key={id} aria-pressed={view === id} onClick={() => { setView(id); setSelection(null) }}>{({cases: zh ? '案件' : 'Cases', assets: zh ? '资产' : 'Assets', activity: zh ? '网络活动' : 'Network activity'})[id]}</button>)}
       </nav>
-
-      {view === 'demo' ? <DemoScenarioPanel lang={lang} onOpenCase={onOpenCase} onOpenTrace={onOpenTrace} /> : null}
 
       {view === 'cases' ? <section className="sa-case-queue">
         <div className="sa-section-title">
@@ -319,13 +319,13 @@ export function SituationalOverview({
           {listedCases.map((item) => (
             <button key={item.caseId} type="button" onClick={() => onOpenCase(item.subject, item.caseId, {
               id: item.caseId,
-              kind: 'production_case',
+              kind: item.controlled ? 'controlled_demo' : 'production_case',
               observedAt: item.lastSeenAt,
               summary: item.title,
               severity: item.severity,
             })}>
               <span className="sa-case-state"><em className={`sev-${item.severity}`} /><b>{caseStatus(item.status, zh)}</b></span>
-              <span className="sa-case-main"><b>{item.title}</b><code>{item.subject}</code></span>
+              <span className="sa-case-main"><b>{en(item.title)} {item.controlled ? <em className="sa-case-demo">{zh ? '受控演示' : 'DEMO'}</em> : null}</b><code>{item.subject}</code></span>
               <span className="sa-case-service">{zh ? ({critical: '紧急', high: '高', medium: '中', low: '低'}[item.severity] ?? '待评估') : item.severity}</span>
               <span className="sa-case-evidence"><b>{item.evidenceCount}</b><small>{zh ? '项' : 'ITEMS'}</small></span>
               <time>{clock(item.lastSeenAt)}</time>
@@ -334,7 +334,7 @@ export function SituationalOverview({
           ))}
           {!listedCases.length ? <p className="sa-empty">{zh ? '当前筛选没有匹配案件。' : 'No cases match these filters.'}</p> : null}
         </div>
-        <footer className="sa-list-caption">{zh ? `共 ${listedCases.length} 起 · 按优先级与最近观测排序` : `${listedCases.length} cases · ordered by priority and latest observation`}</footer>
+        <footer className="sa-list-caption">{zh ? `共 ${listedCases.length} 起 · 同一对象同一轮仅显示一次 · 按最近观测排序` : `${listedCases.length} cases · one row per subject cycle · latest first`}</footer>
       </section> : null}
 
       {view === 'assets' || view === 'activity' ? <section className="sa-field">
@@ -354,7 +354,7 @@ export function SituationalOverview({
                   className={`sa-segment ${segment === item.cidr ? 'is-on' : ''}`}
                   onClick={() => setSegment(item.cidr)}
                 >
-                  <span className="sa-segment-name">{item.name}</span>
+                  <span className="sa-segment-name">{en(item.name)}</span>
                   <code>{item.cidr}</code>
                   <div className="sa-asset-dots" aria-hidden="true">
                     {assets.slice(0, 28).map((asset) => (
@@ -382,7 +382,7 @@ export function SituationalOverview({
                 <button onClick={() => setSelection({ type: 'change', id: item.id })} aria-current={selection?.type === 'change' && selection.id === item.id}>
                   <time>{clock(item.at)}</time>
                   <i />
-                  <span><b>{item.asset}</b><small>{item.title}</small></span>
+                  <span><b>{item.asset}</b><small>{en(item.title)}</small></span>
                 </button>
               </li>
             ))}
@@ -399,11 +399,11 @@ export function SituationalOverview({
           <div className="sa-paths">
             {data.candidatePaths.slice(0, 6).map((path) => (
               <button key={path.id} onClick={() => setSelection({ type: 'path', id: path.id })} aria-current={selection?.type === 'path' && selection.id === path.id}>
-                <span className="sa-path-node"><b>{path.steps[0]?.label}</b><small>{path.steps[0]?.segment}</small></span>
+                <span className="sa-path-node"><b>{en(path.steps[0]?.label ?? '')}</b><small>{path.steps[0]?.segment}</small></span>
                 <i className="sa-path-wire"><em>{compact(path.flows)}</em></i>
-                <span className="sa-path-gate">{path.steps[1]?.label}</span>
+                <span className="sa-path-gate">{en(path.steps[1]?.label ?? '')}</span>
                 <i className="sa-path-wire is-short" />
-                <span className="sa-path-node is-target"><b>{path.steps[2]?.label}</b><small>{path.steps[2]?.segment}</small></span>
+                <span className="sa-path-node is-target"><b>{en(path.steps[2]?.label ?? '')}</b><small>{path.steps[2]?.segment}</small></span>
               </button>
             ))}
           </div>
@@ -417,7 +417,7 @@ export function SituationalOverview({
           {visibleRisks.map((item) => (
             <button key={item.asset} className={`sa-risk-row sev-${item.severity}`} onClick={() => setSelection({ type: 'risk', id: item.asset })} aria-current={selection?.type === 'risk' && selection.id === item.asset}>
               <span><b>{item.name}</b><code>{item.asset}</code></span>
-              <span>{item.reasons[0]}</span>
+              <span>{en(item.reasons[0] ?? '')}</span>
               <span>{item.caseIds.length ? (zh ? '已开案' : 'CASE OPEN') : (zh ? '持续观察' : 'UNDER WATCH')}</span>
             </button>
           ))}
@@ -430,7 +430,7 @@ export function SituationalOverview({
           {selection?.type === 'change' && selected ? (
             <>
               <span className={`sa-severity sev-${(selected as Change).severity}`}>{(selected as Change).severity}</span>
-              <h2>{(selected as Change).title}</h2>
+              <h2>{en((selected as Change).title)}</h2>
               <dl><div><dt>{zh ? '对象' : 'OBJECT'}</dt><dd>{(selected as Change).asset}</dd></div><div><dt>{zh ? '证据源' : 'SOURCE'}</dt><dd>{(selected as Change).evidenceSource}</dd></div><div><dt>{zh ? '时间' : 'TIME'}</dt><dd>{clock((selected as Change).at)}</dd></div></dl>
             </>
           ) : null}
@@ -440,7 +440,7 @@ export function SituationalOverview({
               <span className={`sa-severity sev-${(selected as RiskAsset).severity}`}>{(selected as RiskAsset).severity}</span>
               <h2>{(selected as RiskAsset).name}</h2>
               <code>{(selected as RiskAsset).asset} · {(selected as RiskAsset).segment}</code>
-              <ul>{(selected as RiskAsset).reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+              <ul>{(selected as RiskAsset).reasons.map((reason) => <li key={reason}>{en(reason)}</li>)}</ul>
               {(selected as RiskAsset).activity ? <p className="sa-measure">{compact((selected as RiskAsset).activity?.flows24h ?? 0)} {zh ? '条记录' : 'records'} · {compact((selected as RiskAsset).activity?.denied24h ?? 0)} {zh ? '条被拒绝' : 'denied'} · {(selected as RiskAsset).activity?.peers24h} {zh ? '个目标' : 'peers'}</p> : null}
             </>
           ) : null}
@@ -474,7 +474,7 @@ export function SituationalOverview({
               summary: item.title,
               severity: item.severity,
             })}>
-              <span>{caseStatus(item.status, zh)}</span><b>{item.title}</b><small>{item.evidenceCount} {zh ? '项证据' : 'evidence items'} · {zh ? '打开调查' : 'open investigation'} ▸</small>
+              <span>{caseStatus(item.status, zh)}</span><b>{en(item.title)}</b><small>{item.evidenceCount} {zh ? '项证据' : 'evidence items'} · {zh ? '打开调查' : 'open investigation'} ▸</small>
             </button>
           ))}
         </aside> : null}
@@ -506,7 +506,7 @@ export function SituationalOverview({
         <summary>{zh ? `数据状态 · ${blind.length} 项采集待完善` : `Data status · ${blind.length} observation gaps`}</summary>
         <p>{zh ? '网络记录' : 'Network records'} {compact(data.funnel.facts)} · {zh ? '安全事件' : 'Security events'} {compact(data.funnel.security_events)} · {zh ? '规则告警' : 'Rule alerts'} {data.funnel.alerts}</p>
         <div>
-          {blind.map((item) => <p key={item.capability}><b>{item.label}</b><span>{item.requires}</span></p>)}
+          {blind.map((item) => <p key={item.capability}><b>{en(item.label)}</b><span>{en(item.requires ?? '')}</span></p>)}
         </div>
       </details>
     </main>

@@ -20,6 +20,7 @@ import {
   type FaultFamily,
 } from './fault-catalog'
 import type { InvestigationIntent } from './investigation-context'
+import { display } from './display-lexicon'
 
 /* ── 诊断处置 · the one page that answers "what is wrong on this network, and
  * who is allowed to fix it" ───────────────────────────────────────────────────
@@ -329,6 +330,38 @@ export function DiagnosePage({ lang, scenario = 'live', focusSubject, focusCaseI
         ) : null}
       </header>
 
+      {scenario === 'live' && section === 'response' && responseCase?.businessDecision ? (() => {
+        // What this case decided, before any workbench: an escalated case has
+        // no plan to approve and no automatic recovery to read back, and the
+        // page must say what was decided instead of standing empty.
+        const decision = responseCase.businessDecision
+        const readback = decision.readback && typeof decision.readback === 'object' ? decision.readback as Record<string, unknown> : null
+        const stateLabel: Record<string, [string, string]> = {
+          investigating: ['调查中', 'INVESTIGATING'], action_ready: ['动作就绪', 'ACTION READY'], observing: ['观察中', 'OBSERVING'],
+          resolved: ['已解决', 'RESOLVED'], escalated: ['已转人工', 'ESCALATED'],
+        }
+        return <section className="dx-sec dx-decision" aria-label={zh ? '本案处置结论' : 'Case decision'}>
+          <div className="dx-sec-k">{zh ? '本案处置结论' : 'CASE DECISION'} · <em className={`is-${decision.state}`}>{stateLabel[decision.state]?.[zh ? 0 : 1] ?? decision.state}</em>{decision.generatedAt ? <span> · {decision.generatedAt.replace('T', ' ').replace(/\.\d+.*$/, '')}</span> : null}</div>
+          <h3>{display(decision.headline, lang)}</h3>
+          {decision.summary ? <p className="dx-decision-summary">{display(decision.summary, lang)}</p> : null}
+          <dl className="dx-decision-grid">
+            <div><dt>{zh ? '处置决定' : 'DISPOSITION'}</dt><dd>{display(decision.disposition, lang)}</dd></div>
+            <div><dt>{zh ? '执行动作' : 'ACTION'}</dt><dd>{display(decision.action, lang)}</dd></div>
+            <div><dt>{zh ? '影响对象' : 'IMPACTED'}</dt><dd>{decision.impactedAssets.length ? decision.impactedAssets.join(' · ') : (zh ? '未列出受影响业务资产' : 'No impacted business asset listed')}</dd></div>
+            <div><dt>{zh ? '回读' : 'READBACK'}</dt><dd>{readback
+              ? `${String(readback.outcome ?? '')} · ${String(readback.samples ?? 0)} ${zh ? '次采样' : 'samples'}${readback.targetRecovered ? (zh ? ' · 目标已恢复' : ' · target recovered') : ''}`
+              : (zh ? '无回读：本案未执行自动动作' : 'No readback: no automatic action was taken')}</dd></div>
+          </dl>
+          {decision.missingObservations.length ? <div className="dx-decision-missing">
+            <b>{zh ? '阻止结案的缺失观察' : 'MISSING OBSERVATIONS BLOCKING CLOSURE'}</b>
+            {decision.missingObservations.map((item) => <p key={item.code}>{display(item.question, lang)}{item.probe ? <code>{item.probe}</code> : null}</p>)}
+          </div> : null}
+          {decision.evidence.length ? <details className="dx-decision-evidence">
+            <summary>{zh ? '判定证据' : 'DECISIVE EVIDENCE'} · {decision.evidence.length}</summary>
+            {decision.evidence.map((item, index) => <div key={`${item.evidenceId ?? index}`}><b>{display(String(item.label ?? ''), lang)}</b><pre>{String(item.value ?? '').slice(0, 600)}</pre></div>)}
+          </details> : null}
+        </section>
+      })() : null}
       {scenario === 'live' && section === 'response' ? <section id="incident-response-readback" className="dx-sec"><nav aria-label={zh ? '处置类型' : 'Action type'}><button aria-pressed={responseView === 'changes'} onClick={() => setResponseView('changes')}>{zh ? '配置变更与审批' : 'Configuration changes & approval'}</button><button aria-pressed={responseView === 'automatic'} onClick={() => setResponseView('automatic')}>{zh ? '自动恢复记录' : 'Automatic recovery history'}</button></nav>{responseView === 'changes' ? <>{isIpConflict && focusIp ? <IpConflictResolution key={focusCaseId ?? focusIp} ip={focusIp} caseId={focusCaseId} lang={lang} onPrepared={setPreparedChangeId} /> : null}<ChangeWorkbench key={focusCaseId ?? 'global'} ip={focusIp ?? ''} caseId={focusCaseId ?? ''} selectedChangeId={preparedChangeId} lang={lang} guided={Boolean(isIpConflict && focusIp)} /></> : <SentinelTimeline lang={lang} focus={focusSubject ?? focusIp ?? undefined} />}</section> : null}
 
       {section === 'network' ? (st.s === 'load' ? <div className="dx-state">{tx.loading}</div>

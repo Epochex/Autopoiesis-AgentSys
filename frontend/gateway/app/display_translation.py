@@ -110,7 +110,13 @@ def translate_display_payload(payload: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(value, str) and key in DISPLAY_FIELDS and _CJK.search(value):
             texts.append(value)
     collect(payload)
-    mapping = translate_texts(texts)
+    # A page must render without the model: the console's lexicon covers the
+    # product's own vocabulary, and anything left is shown in its source
+    # language rather than as a 500 on the whole endpoint.
+    try:
+        mapping = translate_texts(texts) if texts else {}
+    except Exception:
+        mapping = {}
     def project(value: Any, key: str = '') -> Any:
         if isinstance(value, dict): return {k: v if k == 'raw' else project(v, k) for k, v in value.items()}
         if isinstance(value, list): return [project(v, key) for v in value]

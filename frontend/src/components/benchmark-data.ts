@@ -45,7 +45,7 @@ export const BENCHMARK_FIXTURE: BenchmarkResp = {
     ks: [1, 3, 5, 10],
     abilities: ['knowledge-update', 'multi-session', 'single-session-assistant', 'single-session-preference', 'single-session-user', 'temporal-reasoning'],
     systems: [
-      { id: 'tiered', label: 'tiered · 本仓库', self: true, recall: { '1': 0.722, '3': 0.838, '5': 0.906, '10': 0.954 }, ans_hit5: 0.432,
+      { id: 'tiered', label: 'tiered', self: true, recall: { '1': 0.722, '3': 0.838, '5': 0.906, '10': 0.954 }, ans_hit5: 0.432,
         by_ability5: { 'knowledge-update': 0.9487, 'multi-session': 0.9549, 'single-session-assistant': 0.9821, 'single-session-preference': 0.5667, 'single-session-user': 0.7857, 'temporal-reasoning': 0.9398 } },
       { id: 'mem0', label: 'Mem0 (mem0ai)', self: false, recall: { '1': 0.756, '3': 0.876, '5': 0.916, '10': 0.966 }, ans_hit5: 0.436,
         by_ability5: { 'knowledge-update': 0.9744, 'multi-session': 0.9474, 'single-session-assistant': 0.9821, 'single-session-preference': 0.8333, 'single-session-user': 0.7857, 'temporal-reasoning': 0.9098 } },

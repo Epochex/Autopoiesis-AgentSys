@@ -21,7 +21,7 @@ import { useMemo, useState } from 'react'
 import type { DataStats, SubnetGraph, TheaterEvent, Topology } from '../types'
 import type { Lang } from '../i18n'
 import { useReducedMotion } from '../reduced-motion'
-import { currentRound, railFor, sentinelStageIds } from './autopoiesis-pipeline'
+import { currentRound, railFor, sentinelStageIds, stageIdForEvent } from './autopoiesis-pipeline'
 import { type ChainStep, useSentinelChain } from './use-sentinel-chain'
 import { executionProgress } from './execution-progress'
 import { CaseTrajectoryDrilldown } from './CaseTrajectoryDrilldown'
@@ -454,7 +454,14 @@ export function TheaterStage({
     timeline: railTimeline,
     fallbackReached: isSentinel && chain?.steps.length
       ? sentinelStageIds(chain.steps)
-      : theater.stageIds,
+      : theater.stageIds.length
+        ? theater.stageIds
+        // A case with no live chain and no stage list from its source event:
+        // its own recorded timeline says how far it got.
+        : [...new Set((caseRecord?.timeline ?? []).map((event) => {
+            const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, unknown> : {}
+            return stageIdForEvent(String(event.kind ?? ''), { ...payload, decision: payload.decision ?? event.decision })
+          }).filter((id): id is string => Boolean(id)))],
     reportClosed,
     sentinel: isSentinel,
   })
@@ -628,9 +635,13 @@ export function TheaterStage({
         // there the card goes to whichever side has room.
         const onHostBox = scene.selfNode?.ip === anchor?.ip
         const fitsBeforeDrilldown = anchorP.x + 26 + INCIDENT_W <= 1320
-        const tx = onHostBox
-          ? anchorP.x - INCIDENT_W / 2
-          : fitsBeforeDrilldown ? anchorP.x + 26 : anchorP.x - 26 - INCIDENT_W
+        // With no room to the right, the card used to swing left across the
+        // cluster and sit on its neighbours' labels. It now hangs below the
+        // dot instead, centred and clear of the label band.
+        const hangsBelow = onHostBox || !fitsBeforeDrilldown
+        const tx = hangsBelow
+          ? clamp(anchorP.x - INCIDENT_W / 2, 20, 1320 - INCIDENT_W)
+          : anchorP.x + 26
         const phase = nowStage
         // The card's own fallback carries the same stale radius, so a refused
         // round falls through to no extent line at all rather than to a figure
@@ -651,8 +662,16 @@ export function TheaterStage({
         const cardH = escalated ? 154 + 22 * cycles.length + (hasOpenCitation ? 126 : 0) : 176
         // The ordinary card keeps the clamp it has always had; the taller one is
         // held clear of the bottom of the plate instead.
+        // A card that hangs below a dot still lands inside the cluster the dot
+        // belongs to, on top of its neighbours. Find that cluster and hang the
+        // card just under its edge instead; 64px is the fallback outside one.
+        const home = hangsBelow ? REGIONS.find((region) => {
+          const dx = (anchorP.x - region.c.x) / region.rx
+          const dy = (anchorP.y - region.c.y) / region.ry
+          return dx * dx + dy * dy <= 1
+        }) : undefined
         const ty = Math.min(
-          Math.max(anchorP.y + (onHostBox ? 34 : 18), RAIL_Y + 60),
+          Math.max(home ? home.c.y + home.ry + 14 : anchorP.y + (hangsBelow ? 64 : 18), RAIL_Y + 60),
           escalated ? 992 - cardH : 880,
         )
         return (
@@ -666,8 +685,8 @@ export function TheaterStage({
                 <circle cx={anchorP.x} cy={anchorP.y} r={4} className="th-inc-core" />
               </>
             )}
-            <line x1={anchorP.x} y1={anchorP.y + (onHostBox ? 16 : 0)}
-              x2={onHostBox ? anchorP.x : (tx < anchorP.x ? tx + INCIDENT_W : tx)} y2={ty}
+            <line x1={anchorP.x} y1={anchorP.y + (hangsBelow ? 16 : 0)}
+              x2={hangsBelow ? anchorP.x : tx} y2={ty}
               className="th-inc-leader" />
             <foreignObject x={tx} y={ty} width={INCIDENT_W} height={cardH}>
               <div className="th-inc-card">

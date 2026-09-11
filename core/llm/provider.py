@@ -29,6 +29,26 @@ class LLMResponseError(RuntimeError):
     """The provider replied, but not with a usable JSON completion."""
 
 
+def _explain_http_failure(code: int, detail: str) -> str:
+    """One plain sentence an operator can act on, ahead of the raw response.
+
+    The card that shows this error is read by the person deciding whether to
+    retry; "HTTP 402" tells them nothing, "余额不足" tells them what to do.
+    """
+    lowered = (detail or "").lower()
+    if code == 402 or "insufficient balance" in lowered:
+        return "模型服务账户余额不足，充值后点「重试深度研判」"
+    if code == 401 or "authentication" in lowered or "invalid api key" in lowered:
+        return "模型服务 API key 无效或已过期，请更新密钥"
+    if code == 429:
+        return "模型服务请求被限流，稍后重试"
+    if "model not exist" in lowered or (code == 404 and "model" in lowered):
+        return "配置的模型名在服务商已不存在，请更新模型名"
+    if code >= 500:
+        return "模型服务端暂时故障，稍后重试"
+    return "模型服务拒绝了本次请求"
+
+
 class OpenAICompatibleClient:
     """Minimal stdlib client for any OpenAI-compatible /chat/completions endpoint.
 
@@ -112,7 +132,13 @@ class OpenAICompatibleClient:
                 raw = response.read().decode("utf-8")
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:500]
-            raise LLMResponseError(f"LLM request failed: HTTP {exc.code} for schema {schema_name}: {detail}") from exc
+            try:
+                from core.llm.cost import record_failure
+
+                record_failure(self.model, schema_name, exc.code, detail, self.usage_tag)
+            except Exception:  # noqa: BLE001 - accounting must not mask the refusal
+                pass
+            raise LLMResponseError(f"{_explain_http_failure(exc.code, detail)}（HTTP {exc.code}，schema {schema_name}）。原始响应：{detail}") from exc
         except error.URLError as exc:
             raise LLMResponseError(f"LLM endpoint unreachable: {exc.reason}") from exc
 

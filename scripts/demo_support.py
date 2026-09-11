@@ -18,6 +18,48 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GATEWAY = "http://127.0.0.1:8026"
 
 
+def create_demo_case(
+    repository: Any,
+    *,
+    run_id: str,
+    scenario: str,
+    subject: str,
+    summary: str,
+    source_suffix: str = "incident",
+    extra_payload: Mapping[str, Any] | None = None,
+) -> str:
+    """Create one real, queryable case for a controlled demonstration."""
+    from domains.network_rca.investigation_case import CaseObservation, SourceReference
+
+    observed_at = utc_now()
+    payload = {
+        "dataClassification": "controlled_test",
+        "demoRunId": run_id,
+        "demoScenario": scenario,
+        "incidentFacts": {
+            "dataClassification": "controlled_test",
+            "observedAt": observed_at,
+            "detector": "failed_units",
+            "faultClass": "service_failed",
+            "subjectKind": "systemd_unit",
+            "managedDevice": subject,
+        },
+        **dict(extra_payload or {}),
+    }
+    case = repository.ingest(CaseObservation(
+        source=SourceReference("controlled_demo", f"{run_id}:{source_suffix}"),
+        occurred_at=observed_at,
+        severity="high",
+        subject=subject,
+        service="service_health",
+        rule_id="failed_units",
+        scope="controlled_demo",
+        summary=summary,
+        payload=payload,
+    ))
+    return case.case_id
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -105,21 +147,64 @@ def http_json(
 
 
 def print_receipt(record: Mapping[str, Any], next_page: str) -> None:
-    print(json.dumps(dict(record), ensure_ascii=False, indent=2))
-    print(f"\n演示已完成。打开 {GATEWAY}{next_page} 查看结果。")
+    metrics = dict(record.get("metrics") or {})
+    en = LANG == "en"
+    summary = {
+        ("result" if en else "结果"): record.get("status"),
+        ("scenario" if en else "场景"): record.get("scenario"),
+        ("case" if en else "案件"): record.get("caseId"),
+        ("subject" if en else "对象"): record.get("subject"),
+    }
+    if record.get("scenario") == "self_healing":
+        summary["readback" if en else "回读"] = (
+            f"{metrics.get('readbackSamples', 0)} samples; target and guard checks all passed" if en
+            else f"{metrics.get('readbackSamples', 0)} 次，目标与保护检查均通过")
+    elif record.get("scenario") == "memory_trajectory":
+        summary["memory benefit" if en else "记忆收益"] = (
+            f"checks {metrics.get('baselineExecutedProbes', 0)}→{metrics.get('executedProbes', 0)}, "
+            f"{metrics.get('actualSavedProbes', 0)} avoided" if en
+            else f"检查 {metrics.get('baselineExecutedProbes', 0)}→{metrics.get('executedProbes', 0)}，"
+                 f"减少 {metrics.get('actualSavedProbes', 0)} 项"
+        )
+        summary["request time" if en else "本次耗时"] = (
+            f"{float(metrics.get('baselineRequestSeconds', 0)):.1f}s→"
+            f"{float(metrics.get('memoryRequestSeconds', 0)):.1f}s"
+        )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if en:
+        print(f"\nDemonstration complete. The result is in the incident centre: {GATEWAY}{next_page}")
+    else:
+        print(f"\n演示已完成。结果已留在事件中心：{GATEWAY}{next_page}")
+
+
+LANG = os.getenv("AUTOPOIESIS_DEMO_LANG", "en").strip().lower() or "en"
 
 
 def demo_options(description: str):
+    global LANG
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument('--test', action='store_true', help='缩短观看等待，执行相同真实验收')
+    parser.add_argument('--test', action='store_true', help='缩短观看等待，执行相同真实验收 / shorten the pauses, same real acceptance')
+    parser.add_argument('--lang', choices=('en', 'zh'), default=LANG,
+                        help='terminal narration language (default en; AUTOPOIESIS_DEMO_LANG overrides)')
     args = parser.parse_args()
+    LANG = args.lang
     if os.geteuid() != 0:
-        parser.error('需要 root 权限，仅创建和操作 autopoiesis-acceptance-* 测试服务')
+        parser.error('需要 root 权限，仅创建和操作 autopoiesis-acceptance-* 测试服务 / root is required; only autopoiesis-acceptance-* test units are created or touched')
     http_json('GET', '/api/healthz')
     return args
 
 
-def stage(message: str, seconds: float = 0):
-    print(message, flush=True)
+def stage(message: str, seconds: float = 0, en: str | None = None):
+    """A headline step. `message` is Chinese; `en` is the English the terminal
+    prints when narration is English. Either language alone is complete."""
+    print(en if (LANG == "en" and en) else message, flush=True)
     if seconds:
         time.sleep(seconds)
+
+
+def say(en: str, zh: str | None = None) -> None:
+    """A detail line under the current step: what was actually done, on what,
+    with which command. The terminal is the audit trail the audience reads."""
+    text = en if (LANG == "en" or not zh) else zh
+    for line in text.splitlines():
+        print("   " + line if line else "", flush=True)

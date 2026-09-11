@@ -117,7 +117,8 @@ def assessment(request: Request, case_id: str = ''):
     from .investigate import _session_store
     plans = [p for p in service().store.list() if not case_id or p.get('case_id') == case_id]
     pending = [p for p in plans if p['status'] in ('awaiting_approval', 'approved', 'executing', 'observing', 'restoring')]
-    session = next((s for s in _session_store().recent(1000) if case_id and s.get('case_id') == case_id), None)
+    # One indexed lookup instead of parsing the thousand newest snapshots per poll.
+    session = _session_store().find_latest(subject='', incident_ref=case_id, by_source_refs=False) if case_id else None
     return {'pending_count': len(pending), 'paused': writes_paused(),
             'decision': (session or {}).get('decision', {}),
             'session_id': (session or {}).get('session_id'),
