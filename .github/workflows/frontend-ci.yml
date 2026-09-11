@@ -42,5 +42,10 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
+      # Two component tests drive a real Chromium through Playwright; the
+      # hosted runner ships without the browser binary.
+      - name: Install Chromium for browser tests
+        run: npx playwright install --with-deps chromium
+
       - name: Unit tests (vitest)
         run: npx vitest run --passWithNoTests
