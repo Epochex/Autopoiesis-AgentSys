@@ -93,3 +93,26 @@
 .change-events li:last-child { border-left-color: #171916; }
 @media (prefers-reduced-motion: reduce) { .change-workbench button { transition: none; } }
 @media (max-width: 900px) { .change-layout { grid-template-columns: 1fr; } .change-layout aside { display: flex; overflow: auto; border-right: 0; max-height: 150px; } .change-layout aside button { min-width: 180px; } .change-fields { grid-template-columns: 1fr; } }
+
+/* execution log by phase */
+.change-phases { list-style: none; margin: 0; padding: 0; }
+.change-phase { border-bottom: 1px solid #c7c9bf; }
+.change-phase > details > summary { display: grid; grid-template-columns: 85px minmax(0, 1fr) auto; gap: 16px; align-items: baseline; padding: 10px 0; cursor: pointer; list-style: none; font-size: 13px; }
+.change-phase > details > summary::-webkit-details-marker { display: none; }
+.change-phase > details > summary time { font-family: var(--font-mono, monospace); font-size: 11px; color: #605f5a; }
+.change-phase > details > summary b { font-weight: 600; }
+.change-phase-meta { font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .04em; color: #605f5a; white-space: nowrap; }
+.change-phase.is-failed > details > summary b { color: #9e2937; }
+.change-commands { list-style: none; margin: 0 0 8px 85px; padding: 0 0 0 16px; border-left: 2px solid #b8bdb1; }
+.change-commands li { padding: 3px 0; }
+.change-commands li > details > summary { display: flex; gap: 12px; align-items: baseline; cursor: pointer; list-style: none; }
+.change-commands li > details > summary::-webkit-details-marker { display: none; }
+.change-commands code { font-size: 11px; color: #171916; overflow-wrap: anywhere; }
+.change-rc { font-family: var(--font-mono, monospace); font-size: 10px; color: #605f5a; white-space: nowrap; margin-left: auto; }
+.change-commands li.is-failed code, .change-commands li.is-failed .change-rc { color: #9e2937; }
+.change-cmd-why { margin: 4px 0 2px; font-size: 11px; color: #605f5a; }
+.change-commands pre { margin: 4px 0 6px; padding: 6px 8px; max-height: 200px; overflow: auto; font-size: 11px; line-height: 1.45; background: #efeee9; border: 1px solid #c7c9bf; white-space: pre-wrap; }
+.change-commands pre.is-stderr { border-left: 3px solid #9e2937; }
+.change-phase-raw { margin: 0 0 8px 101px; font-size: 11px; }
+.change-phase-raw pre { max-height: 240px; overflow: auto; font-size: 11px; }
+.change-commands li.is-nonzero .change-rc { color: #80500e; }

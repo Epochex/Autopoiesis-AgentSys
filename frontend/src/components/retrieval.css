@@ -153,3 +153,6 @@
   .rt-step,.rt-passage { opacity:1 !important; transform:none !important; transition:none !important; }
   .rt-ctx-fill { transition:none !important; }
 }
+
+/* a passage is quoted, not pasted: three lines until the reader points at it */
+.rt-passage:not(.on) .rt-passage-txt { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

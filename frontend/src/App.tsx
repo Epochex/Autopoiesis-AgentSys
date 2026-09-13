@@ -379,15 +379,15 @@ function App() {
         <div className="top-right">
           <div className="scen" role="group" aria-label={lang === 'zh' ? '场景切换' : 'scenario'}>
             <button className={scenario === 'live' ? 'on' : ''} onClick={() => setScenario('live')}>{lang === 'zh' ? '生产环境' : 'PRODUCTION'}</button>
-            <button className={scenario === 'bench' ? 'on' : ''} onClick={() => { setScenario('bench'); setInvestigationActive(false); if (['overview', 'constellation', 'memory', 'investigation'].includes(view)) setView('console') }}>{lang === 'zh' ? '基准 · ITBench+LME' : 'BENCHMARK'}</button>
+            <button className={scenario === 'bench' ? 'on' : ''} onClick={() => { setScenario('bench'); setInvestigationActive(false); if (['overview', 'constellation', 'memory', 'investigation', 'network', 'diagnose'].includes(view)) setView('console') }}>{lang === 'zh' ? '基准 · ITBench+LME' : 'BENCHMARK'}</button>
           </div>
             <nav className="pager" aria-label={lang === 'zh' ? '常态工作区' : 'Global workspaces'}>
               <button className={view === 'console' ? 'on' : ''} onClick={() => openGlobalView('console')}>{lang === 'zh' ? '网络态势' : 'NETWORK MAP'}</button>
               {scenario === 'live' ? <button className={view === 'constellation' ? 'on' : ''} onClick={() => openGlobalView('constellation')}>{lang === 'zh' ? '3D 星图' : '3D MAP'}</button> : null}
               {scenario === 'live' ? <button className={view === 'overview' ? 'on' : ''} onClick={() => openGlobalView('overview')}>{lang === 'zh' ? '事件中心' : 'INCIDENT CENTRE'}</button> : null}
               {scenario === 'live' ? <button className={view === 'memory' ? 'on' : ''} onClick={() => openGlobalView('memory')}>{lang === 'zh' ? '记忆模块' : 'MEMORY MODULE'}</button> : <button className={view === 'trajectory' ? 'on' : ''} onClick={() => openGlobalView('trajectory')}>{lang === 'zh' ? '案例与记忆' : 'CASES & MEMORY'}</button>}
-              <button className={view === 'network' ? 'on' : ''} onClick={() => openGlobalView('network')}>{lang === 'zh' ? '网络背景' : 'NETWORK CONTEXT'}</button>
-              <button className={view === 'diagnose' ? 'on' : ''} onClick={() => openGlobalView('diagnose')}>{lang === 'zh' ? '配置与处置' : 'CHANGES & ACTIONS'}</button>
+              {scenario === 'live' ? <button className={view === 'network' ? 'on' : ''} onClick={() => openGlobalView('network')}>{lang === 'zh' ? '网络背景' : 'NETWORK CONTEXT'}</button> : null}
+              {scenario === 'live' ? <button className={view === 'diagnose' ? 'on' : ''} onClick={() => openGlobalView('diagnose')}>{lang === 'zh' ? '配置与处置' : 'CHANGES & ACTIONS'}</button> : null}
               <button className={view === 'retrieval' ? 'on' : ''} onClick={() => openGlobalView('retrieval')}>{lang === 'zh' ? '调查依据' : 'SOURCES USED'}</button>
               <button className={view === 'cost' ? 'on' : ''} onClick={() => openGlobalView('cost')}>{lang === 'zh' ? '成本' : 'COST'}</button>
             </nav>

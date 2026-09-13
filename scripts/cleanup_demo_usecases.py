@@ -379,7 +379,15 @@ def _load_service_environment() -> None:
             os.environ[key] = value.strip().strip('"').strip("'")
 
 
-def cleanup_memories(memory_ids: set[str], *, apply: bool) -> int:
+def cleanup_memories(memory_ids: set[str], identifiers: set[str], *, apply: bool) -> int:
+    """Remove what the demos wrote to memory, without taking production's with it.
+
+    A verified procedure is shared: the demo may have been the first to confirm
+    it, but every later incident of the same kind attaches to the same record.
+    If anything but the demo still stands behind a record, the demo's own
+    provenance is stripped from it and the record stays; only a record nobody
+    else vouches for is purged.
+    """
     dsn = os.getenv("AUTOPOIESIS_MEMORY_DSN", "").strip()
     if not dsn or not memory_ids:
         return 0
@@ -389,16 +397,30 @@ def cleanup_memories(memory_ids: set[str], *, apply: bool) -> int:
         dsn,
         schema=os.getenv("AUTOPOIESIS_MEMORY_SCHEMA", "autopoiesis_production"),
     )
-    existing = [memory_id for memory_id in sorted(memory_ids) if repository.get(memory_id)]
-    if apply:
-        for memory_id in existing:
+    touched = 0
+    for memory_id in sorted(memory_ids):
+        found = repository.get(memory_id)
+        if not found:
+            continue
+        record, version = found
+        demo_traces = [value for value in record.source_trace_ids if value in identifiers]
+        other_traces = [value for value in record.source_trace_ids if value not in identifiers]
+        touched += 1
+        if not apply:
+            continue
+        if other_traces:
+            record.source_trace_ids = other_traces
+            record.asset_ids = [value for value in record.asset_ids if not UNIT_PATTERN.fullmatch(str(value))]
+            record.evidence_ids = [value for value in record.evidence_ids if not any(trace in str(value) for trace in demo_traces)]
+            repository.upsert(record, expected_version=version)
+        else:
             repository.purge(
                 memory_id,
                 "controlled acceptance use case cleanup",
                 actor="controlled-demo-cleanup",
                 allow_purge=True,
             )
-    return len(existing)
+    return touched
 
 
 def cleanup_units(units: set[str], *, apply: bool) -> int:
@@ -479,7 +501,7 @@ def main() -> int:
             artifacts.case_ids,
             apply=apply,
         ))
-        counts["memories"] = cleanup_memories(artifacts.memory_ids, apply=apply)
+        counts["memories"] = cleanup_memories(artifacts.memory_ids, identifiers, apply=apply)
 
         trace_paths = {
             "sentinel_rows": Path(os.getenv("AUTOPOIESIS_SENTINEL_TIMELINE", str(DEFAULT_SENTINEL))),

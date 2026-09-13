@@ -1,7 +1,7 @@
 import type { Lang } from '../i18n'
 import { changeCopy } from './change-copy'
 import { useDisplayTranslation } from './useDisplayTranslation'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './change-workbench.css'
 
 type Action = { id: string; label: string; target_fields: string[]; parameter_fields: string[]; category: string; reversible: boolean; kind: string }
@@ -10,7 +10,6 @@ type Operation = { key: string; before: unknown; after: unknown; irreversible?: 
 type Change = { id: string; status: string; digest: string; device_id: string; action: string; reason: string; case_id: string; created_at: number; expires_at: number; identity: Record<string, unknown>; target: Record<string, string>; approval?: { actor: string; reason: string }; plan: { playbook?: {precheck_commands: string[]; apply_commands: string[]; rollback_commands: string[]; verify_commands: string[]}; title: string; operations: Operation[]; verification_scope: string; manual_restore: boolean; rollback?: string; observation_interval: number; observation_samples: number; restore_after?: number }; events?: { at: number; kind: string; payload: unknown }[] }
 const labels: Record<string, string> = { ip: 'IP 地址', mac: '指定设备 MAC', description: '设备说明', expected_mac: '重新学习后应出现的 MAC', interface: '设备接口', switch: '交换机序列号', port: '接入口', vlan: '目标 VLAN 名称', policy_id: '策略编号', name: '策略名称', src_interface: '来源接口', dst_interface: '目标接口', src_address: '来源地址对象', dst_address: '目标地址对象', service: '服务对象', decision: '策略动作', enabled: '策略状态', duration_seconds: '有效时长（秒）', admin: '设备管理员', trusted_networks: '允许来源 CIDR（逗号分隔）', device: '主机', unit: '服务单元', address: 'IP / 前缀长度', gateway: '网关', dns: 'DNS 地址（逗号分隔）' }
 const states: Record<string, string> = { awaiting_approval: '待审批', approved: '已审批，待执行', executing: '执行中', observing: '持续观察中', succeeded: '变更验证通过', needs_human: '需要人工处理', rolled_back: '已恢复变更前配置', restoring: '正在恢复', restored: '已恢复原配置', expired: '预览已过期', cancelled: '已取消' }
-const eventLabels: Record<string, string> = { prepared: '保存变更前配置与方案', approved: '审批通过', executing: '开始执行', operation_started: '提交配置', operation_receipt: '设备回执', observing: '开始观察', business_readback: '业务与管理连接检查', execution_failed: '发现异常', restore_started: '开始恢复', restore_receipt: '恢复命令回执', recovery_health: '恢复后健康检查', succeeded: '验证通过', needs_human: '升级人工', rolled_back: '回退完成', final_commit_receipt: '确认限时配置', restore_approved: '批准恢复原配置', worker_error: '执行未完成' }
 const text = (v: unknown) => v === undefined || v === null ? '无' : typeof v === 'string' ? v : JSON.stringify(v, null, 2)
 const fieldNames: Record<string, string> = { ...labels, active: '服务状态', state: '接口状态', 'reserved-address': '地址保留', 'mac-address': '设备 MAC', id: '条目编号', type: '分配方式', action: '处理方式', status: '启用状态', 'poe-status': '端口供电', before_policy: '插入到此策略之前', hostname: '设备名称' }
 const displayValue = (key: string, value: unknown) => key === 'active' && typeof value === 'string' ? ({ failed: '故障（failed）', active: '运行（active）', inactive: '停止（inactive）' }[value] ?? value) : text(value)
@@ -54,6 +53,108 @@ function Playbook({ change, lang }: { change: Change; lang: Lang }) {
   </section>
 }
 
+/* ── the execution log, read by phase ─────────────────────────────────────
+ * A change's event stream is milestones (prepared, approved, executing,
+ * receipt, observing, verified) with the commands each phase ran in between.
+ * Dumped flat it was eighty rows reading "command"; grouped, each phase is one
+ * line with its outcome, and a command shows what it ran and what came back.
+ * Phases that passed are folded; a failed command opens by default. */
+type LogEvent = { kind: string; at: number; payload?: unknown }
+type Phase = { key: string; label: string; at: number; commands: LogEvent[]; failed: boolean; milestone?: LogEvent; readback?: number }
+const MILESTONE_LABEL: Record<string, [string, string]> = {
+  prepared: ['前置：保存变更前配置与方案', 'Prepared: before-state and plan saved'], controlled_demo_scope: ['受控演示范围', 'Controlled demo scope'],
+  approved: ['审批通过', 'Approved'], executing: ['开始执行', 'Execution started'], operation_started: ['提交配置', 'Configuration submitted'],
+  operation_receipt: ['设备回执', 'Device receipt'], observing: ['开始观察', 'Observation started'], business_readback: ['回读', 'Readback'],
+  succeeded: ['验证通过', 'Verified'], execution_failed: ['发现异常', 'Issue detected'], needs_human: ['升级人工', 'Escalated to operator'],
+  rolled_back: ['回退完成', 'Rollback completed'], restore_started: ['开始恢复', 'Restoration started'], restore_receipt: ['恢复命令回执', 'Restoration receipt'],
+  recovery_health: ['恢复后健康检查', 'Post-restoration health check'], final_commit_receipt: ['确认限时配置', 'Confirmed temporary configuration'],
+  worker_error: ['执行未完成', 'Execution incomplete'],
+}
+const FAILURE_KINDS = new Set(['execution_failed', 'needs_human', 'worker_error', 'rolled_back'])
+/* A preflight or verification command is a reading: `systemctl is-active` on
+ * a failed unit exits 3 and prints "failed", which is the fact the change is
+ * there to fix, not a failure of the change. Only an action that could not
+ * run, or an execution-stage command that exited non-zero, is a failure. */
+const READ_VERBS = new Set(['is-active', 'show', 'status', 'cat', 'hostname', 'journalctl', 'ip', 'ss', 'df', 'free', 'uptime', 'systemctl-is-active'])
+const isReading = (c: { purpose?: string; argv?: string[] }) => {
+  if (typeof c.purpose === 'string' && /^(read|inspect|check|list|query)/i.test(c.purpose)) return true
+  const argv = Array.isArray(c.argv) ? c.argv : []
+  return READ_VERBS.has(String(argv[0] ?? '')) || (argv[0] === 'systemctl' && READ_VERBS.has(String(argv[1] ?? '')))
+}
+const commandFailed = (c: { phase?: string; rc?: number | null; error?: unknown; stage?: string; purpose?: string; argv?: string[] }) =>
+  Boolean(c.error) || (!isReading(c) && typeof c.rc === 'number' && c.rc !== 0)
+function phasesOf(events: LogEvent[], zh: boolean): Phase[] {
+  const phases: Phase[] = []
+  let readbacks = 0
+  let current: Phase | null = null
+  for (const event of events) {
+    if (event.kind === 'command') {
+      const c = (event.payload ?? {}) as { phase?: string; rc?: number | null; error?: unknown; stage?: string; purpose?: string; argv?: string[] }
+      // The log files a command twice: once when it starts, once with its
+      // result. Only the result is worth a row.
+      if (c.phase === 'started') continue
+      if (!current) { current = { key: 'start', label: zh ? '前置检查' : 'Preflight', at: event.at, commands: [], failed: false }; phases.push(current) }
+      current.commands.push(event)
+      if (commandFailed(c)) current.failed = true
+      continue
+    }
+    const label = MILESTONE_LABEL[event.kind]
+    if (event.kind === 'business_readback') {
+      readbacks += 1
+      const ok = Boolean((event.payload as { target_ok?: boolean; guard_ok?: boolean } | undefined)?.target_ok) && (event.payload as { guard_ok?: boolean } | undefined)?.guard_ok !== false
+      current = { key: `${event.kind}-${readbacks}`, label: zh ? `回读 #${readbacks}` : `Readback #${readbacks}`, at: event.at, commands: [], failed: !ok, milestone: event, readback: readbacks }
+    } else {
+      current = { key: `${event.kind}-${event.at}`, label: label ? label[zh ? 0 : 1] : event.kind, at: event.at, commands: [], failed: FAILURE_KINDS.has(event.kind), milestone: event }
+    }
+    phases.push(current)
+  }
+  return phases
+}
+function ExecutionLog({ events, lang, copy }: { events: LogEvent[]; lang: Lang; copy: (value: string) => string }) {
+  const zh = lang === 'zh'
+  const phases = useMemo(() => phasesOf(events, zh), [events, zh])
+  const clock = (at: number) => new Date(at * 1000).toLocaleTimeString(zh ? 'zh-CN' : 'en-GB')
+  const commandCount = phases.reduce((n, p) => n + p.commands.length, 0)
+  return <>
+    <h4>{copy("执行与观察记录")} <small>{phases.length} {zh ? '个阶段' : 'phases'} · {commandCount} {zh ? '条命令' : 'commands'}</small></h4>
+    <ol className="change-phases">
+      {phases.map((phase, index) => {
+        const last = index === phases.length - 1
+        const payload = (phase.milestone?.payload ?? {}) as Record<string, unknown>
+        const readbackSummary = phase.readback ? [['target_ok', zh ? '目标' : 'target'], ['guard_ok', zh ? '网关守卫' : 'gateway guard'], ['management_ok', zh ? '管理连接' : 'management']]
+          .filter(([key]) => key in payload).map(([key, name]) => `${name} ${payload[key] ? '✓' : '✕'}`).join(' · ') : ''
+        return <li key={phase.key} className={`change-phase${phase.failed ? ' is-failed' : ''}`}>
+          <details open={phase.failed || (last && phase.commands.length > 0)}>
+            <summary>
+              <time>{clock(phase.at)}</time>
+              <b>{phase.label}</b>
+              <span className="change-phase-meta">{readbackSummary || (phase.commands.length ? `${phase.commands.length} ${zh ? '条命令' : 'commands'}${phase.failed ? (zh ? ' · 有失败' : ' · failures') : (zh ? ' · 全部成功' : ' · all ok')}` : '')}</span>
+            </summary>
+            {phase.commands.length ? <ul className="change-commands">
+              {phase.commands.map((command, n) => {
+                const c = (command.payload ?? {}) as { argv?: string[]; rc?: number | null; duration_ms?: number; purpose?: string; stdout?: string; stderr?: string; error?: string; stage?: string }
+                const argv = Array.isArray(c.argv) ? c.argv.join(' ') : String(c.argv ?? '')
+                const bad = commandFailed(c)
+                const nonzero = typeof c.rc === 'number' && c.rc !== 0
+                return <li key={n} className={bad ? 'is-failed' : nonzero ? 'is-nonzero' : ''}>
+                  <details open={bad}>
+                    <summary><code>$ {argv.length > 110 ? argv.slice(0, 110) + '…' : argv}</code><span className="change-rc">{typeof c.rc === 'number' ? `exit ${c.rc}` : (zh ? '无返回码' : 'no exit code')}{typeof c.duration_ms === 'number' ? ` · ${c.duration_ms} ms` : ''}</span></summary>
+                    {c.purpose ? <p className="change-cmd-why">{c.purpose}</p> : null}
+                    {c.stdout ? <pre>{c.stdout}</pre> : null}
+                    {c.stderr ? <pre className="is-stderr">{c.stderr}</pre> : null}
+                    {c.error ? <pre className="is-stderr">{String(c.error)}</pre> : null}
+                  </details>
+                </li>
+              })}
+            </ul> : null}
+            {!phase.commands.length && phase.milestone && !phase.readback ? <details className="change-phase-raw"><summary>{zh ? '原始记录' : 'raw record'}</summary><pre>{JSON.stringify(payload, null, 2)}</pre></details> : null}
+          </details>
+        </li>
+      })}
+    </ol>
+  </>
+}
+
 export function ChangeWorkbench({ ip = '', mac = '', caseId = '', selectedChangeId = '', lang = 'zh', guided = false }: { ip?: string; mac?: string; caseId?: string; selectedChangeId?: string; lang?: Lang; guided?: boolean }) {
   const copy = (value: string) => changeCopy(value, lang)
   const [catalog, setCatalog] = useState<{ devices: Device[]; actions: Action[] } | null>(null)
@@ -83,7 +184,6 @@ export function ChangeWorkbench({ ip = '', mac = '', caseId = '', selectedChange
   const readbacks = selected?.events?.filter(e => e.kind === 'business_readback') ?? []
   const controlledDemo = selected?.events?.some(e => e.kind === 'controlled_demo_scope') ?? false
   const lastHealth = readbacks.at(-1)?.payload as Record<string, unknown> | undefined
-  const timeline = selected?.events?.filter((e, i, events) => (e.kind !== 'business_readback' || i === events.findIndex(x => x.kind === 'business_readback')) && !(e.kind === 'final_commit_receipt' && (e.payload as Record<string, unknown>)?.operation === 'no_pending_trial')) ?? []
   const run = async (fn: () => Promise<void>) => { setBusy(true); setError(''); try { await fn() } catch (e) { setError(String(e)) } finally { setBusy(false) } }
   const loadHistory = useCallback(async () => { const r = await api(caseId ? `?case_id=${encodeURIComponent(caseId)}` : ''); setHistory(r.changes) }, [caseId])
   useEffect(() => {
@@ -151,7 +251,7 @@ export function ChangeWorkbench({ ip = '', mac = '', caseId = '', selectedChange
           {restore ? <button disabled={busy} onClick={() => void run(async () => { await api('/' + selected.id + (['executing', 'observing'].includes(selected.status) ? '/abort' : '/restore'), 'POST', { digest: selected.digest, reason: 'operator_requested_restore' }); setRestore(false); setSelected(await api('/' + selected.id)) })}>{copy("确认停止后续动作并恢复")}</button> : <button disabled={busy} onClick={() => void run(async () => { setSelected(await api('/' + selected.id + '/cancel', 'POST', { digest: selected.digest, reason: 'operator_cancelled_from_change_workbench' })) })}>{copy("取消变更")}</button>}
         </div> : null}
         {['succeeded', 'executing', 'observing'].includes(selected.status) && selected.plan.manual_restore && !restore ? <button onClick={() => { setRestore(true); setPanel('diff') }}>{copy("查看恢复 Diff")}</button> : null}
-        {panel === 'observe' ? <><h4>{copy("执行与观察记录")}</h4><ol className="change-events">{timeline.map((e, i) => <li key={i}><time>{new Date(e.at * 1000).toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-GB')}</time><details open={['execution_failed', 'needs_human', 'worker_error'].includes(e.kind)}><summary>{e.kind === 'business_readback' ? (lang === 'zh' ? `连续观察 · ${readbacks.length} 次记录` : `Continuous observation · ${readbacks.length} records`) : copy(eventLabels[e.kind] ?? states[e.kind] ?? e.kind)}</summary>{e.kind === 'business_readback' ? readbacks.map((r, n) => <details key={n}><summary>{copy("第")}{n + 1} {copy("次 ·")}{new Date(r.at * 1000).toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-GB')}</summary><pre>{text(r.payload)}</pre></details>) : <pre>{text(e.payload)}</pre>}</details></li>)}</ol></> : null}
+        {panel === 'observe' ? <ExecutionLog events={selected.events ?? []} lang={lang} copy={copy} /> : null}
       </>}</main>
     </div>
   </section>

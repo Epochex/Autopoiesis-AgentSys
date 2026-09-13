@@ -4,6 +4,8 @@ import type { Lang } from '../i18n'
 import { stageIdForEvent } from './autopoiesis-pipeline'
 import type { InvestigationCaseRecord } from './investigation-case'
 import type { Chain, CommandLine } from './use-sentinel-chain'
+import { display } from './display-lexicon'
+import type { CaseBusinessDecision } from './investigation-case'
 
 export interface DrillStage {
   id: string
@@ -182,6 +184,36 @@ function recordPreview(row: DrillRecord, zh: boolean): string {
   return String(row.raw.summary ?? row.raw.reason ?? row.raw.note ?? labelOf(row.kind, zh))
 }
 
+/* Why a case that never ran the chain is where it is. A case the automatic
+ * investigation escalated used to get the execution panel's "waiting for
+ * commands" placeholder, which reads as if something were about to happen. */
+const STOP_REASONS: [RegExp, [string, string]][] = [
+  [/model_call:/i, ['模型调用失败（账户余额或预算不足），自动调查在此停止', 'The model call failed (balance or budget); the automatic investigation stopped here']],
+  [/budget/i, ['自动调查预算已用尽', 'The automatic investigation budget is exhausted']],
+  [/probe_(failed|error)|data_source/i, ['只读探针失败，数据源不可用', 'A read-only probe failed; the data source was unavailable']],
+]
+function CaseStatePanel({ decision, lang }: { decision: CaseBusinessDecision; lang: Lang }) {
+  const zh = lang === 'zh'
+  const state: Record<string, [string, string]> = {
+    escalated: ['已转人工', 'ESCALATED TO AN OPERATOR'], investigating: ['调查中', 'INVESTIGATING'], action_ready: ['动作就绪', 'ACTION READY'],
+    observing: ['观察中', 'OBSERVING'], resolved: ['已解决', 'RESOLVED'],
+  }
+  const stopToken = (decision.summary.match(/结束原因[：:]\s*(\S+)/) ?? decision.summary.match(/stop reason[：:]\s*(\S+)/i))?.[1] ?? ''
+  const why = STOP_REASONS.find(([pattern]) => pattern.test(stopToken))?.[1]
+  return (
+    <section className={`th-case-state is-${decision.state}`} aria-label={zh ? '本案状态' : 'Case state'}>
+      <div className="th-case-state-k"><em>{(state[decision.state] ?? [decision.state, decision.state])[zh ? 0 : 1]}</em>{zh ? '本案未执行自动处置链' : 'No automatic chain ran for this case'}</div>
+      <b>{display(decision.headline, lang)}</b>
+      {why ? <p className="th-case-state-why">{zh ? '原因' : 'WHY'} · {why[zh ? 0 : 1]}{stopToken ? <code>{stopToken}</code> : null}</p> : decision.summary ? <p className="th-case-state-why">{display(decision.summary, lang)}</p> : null}
+      <dl>
+        <div><dt>{zh ? '处置决定' : 'DISPOSITION'}</dt><dd>{display(decision.disposition, lang)}</dd></div>
+        <div><dt>{zh ? '执行动作' : 'ACTION'}</dt><dd>{display(decision.action, lang)}</dd></div>
+        {decision.missingObservations.length ? <div><dt>{zh ? '缺失观察' : 'MISSING OBSERVATIONS'}</dt><dd>{decision.missingObservations.map((item) => <span key={item.code}>{display(item.question, lang)}</span>)}</dd></div> : null}
+      </dl>
+    </section>
+  )
+}
+
 export function CaseTrajectoryDrilldown({
   lang,
   caseId,
@@ -208,7 +240,9 @@ export function CaseTrajectoryDrilldown({
   controlled?: boolean
 }) {
   const [panel, setPanel] = useState<'execution' | 'records'>('execution')
-  const executionEnabled = controlled || chain !== null
+  // A chain object with no steps is a subject the sentinel never acted on;
+  // the execution panel would only have placeholders to show for it.
+  const executionEnabled = controlled || Boolean(chain?.steps?.length)
   const zh = lang === 'zh'
   const allRecords = useMemo(() => recordsFrom(record, chain), [record, chain])
   const visible = useMemo(() => allRecords.filter((item) => item.stageId === selectedStage), [allRecords, selectedStage])
@@ -231,6 +265,7 @@ export function CaseTrajectoryDrilldown({
         <span>{record ? `${clock(record.firstSeenAt)} → ${clock(record.lastSeenAt)}` : (error ?? (executionEnabled ? (zh ? '持续同步当前周期执行账本' : 'Continuously syncing the current execution cycle') : (zh ? '案件记录加载中' : 'LOADING CASE RECORD')))}</span>
       </div>
 
+      {!executionEnabled && record?.businessDecision ? <CaseStatePanel decision={record.businessDecision} lang={lang} /> : null}
       {executionEnabled && <nav className="execution-tabs"><button aria-pressed={panel==='execution'} onClick={()=>setPanel('execution')}>{zh ? '执行进度与结果' : 'Execution progress and results'}</button><button aria-pressed={panel==='records'} onClick={()=>setPanel('records')}>{zh ? '逐层查看原始记录' : 'Inspect raw records'}</button></nav>}
       {executionEnabled && panel === 'execution' ? <ExecutionProgress chain={chain} lang={lang}/> : <>
       <nav className="th-drill-crumb" aria-label={zh ? '下钻层级' : 'Drilldown levels'}>

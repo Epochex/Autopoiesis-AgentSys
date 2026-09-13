@@ -96,6 +96,19 @@ FAMILY_PROBES: dict[str, list[str]] = {
     ],
 }
 
+# Fault families whose subject is a host, not a network appliance. A vendor
+# appliance passage cannot bear on them however well its words match.
+HOST_SIDE_FAMILIES = {"fam-perception-selfheal", "fam-host-config-drift"}
+_APPLIANCE_PRODUCT = re.compile(r"forti", re.IGNORECASE)
+
+
+def _knowledge_document_applies(item: dict[str, Any], subject: str | None, family: str | None) -> bool:
+    """Whether a retrieved passage is about the kind of thing under investigation."""
+    product = " ".join(str(item.get(key) or "") for key in ("product", "document_type", "title", "source"))
+    appliance_passage = bool(_APPLIANCE_PRODUCT.search(product))
+    host_side = family in HOST_SIDE_FAMILIES or bool(subject and str(subject).endswith(".service"))
+    return not (appliance_passage and host_side)
+
 # Run for every session regardless of family: the shape of the box.
 BASELINE_PROBES = ["hostname", "uptime", "ip -br addr show"]
 
@@ -885,6 +898,19 @@ def _query_terms(question: str, family: str | None, subject: str | None) -> list
         if marker in question:
             terms.extend(additions)
     return list(dict.fromkeys(terms))
+
+
+def _existing_procedure(memory: TieredMemoryStore, root_key: str, family: str | None) -> MemoryRecord | None:
+    """The active procedural record for this root cause and family, whatever its id."""
+    for record in memory.records():
+        if record.tier != "procedural" or record.quarantined:
+            continue
+        if f"root:{root_key}" not in record.tags:
+            continue
+        if family and family not in record.tags:
+            continue
+        return record
+    return None
 
 
 def _root_keys(record: MemoryRecord) -> list[str]:
@@ -2528,12 +2554,32 @@ def start(
         })
 
     query_terms = _query_terms(question, family, subject)
-    session.knowledge_context = (
-        retrieve_ops_knowledge(question, query_terms=query_terms, limit=4)
-        if memory_enabled and not terminal_case and "official_knowledge" in session.source_plan
-        else []
+    # A passage has to be about the thing under investigation, not merely
+    # share a word with the question: the FortiOS guide's "SSL VPN with
+    # multiple RADIUS servers" ranked for a failed systemd unit because both
+    # say "failed". Vendor-appliance passages are kept for appliance and
+    # network faults and dropped for host-side ones; the host-side manual
+    # pages stay for everything.
+    wants_knowledge = memory_enabled and not terminal_case and "official_knowledge" in session.source_plan
+    retrieved_knowledge = (
+        retrieve_ops_knowledge(question, query_terms=query_terms, limit=4) if wants_knowledge else []
     )
-    if memory_enabled and not terminal_case and "official_knowledge" in session.source_plan:
+    session.knowledge_context = [
+        item for item in retrieved_knowledge if _knowledge_document_applies(item, subject, family)
+    ]
+    dropped_knowledge = len(retrieved_knowledge) - len(session.knowledge_context)
+    if dropped_knowledge:
+        session.trace_events.append({
+            "kind": "knowledge_documents_filtered",
+            "at": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "dropped": dropped_knowledge,
+                "kept": len(session.knowledge_context),
+                "reason": "vendor appliance passages do not apply to a host-side fault",
+                "family": family,
+            },
+        })
+    if wants_knowledge:
         session.trace_events.append({
             "kind": "knowledge_retrieval_attempted",
             "at": datetime.now(timezone.utc).isoformat(),
@@ -3227,6 +3273,12 @@ def live_retrieval_trace(query: str | None = None, limit: int = 12, case_id: str
             if not item_id:
                 continue
             kind = str(result.get("kind") or "")
+            summary_text = str(result.get("summary") or result.get("text") or "").strip()
+            # A risk-pattern or feature key ("byte_spike_v2") scored 1.000 is a
+            # join key, not something a person can read as evidence. It stays in
+            # the raw receipt and out of the ranked tiers.
+            if summary_text and " " not in summary_text and len(summary_text) <= 48:
+                continue
             raw_tier = str(result.get("tier") or "")
             tier = raw_tier if raw_tier in grouped else (
                 "asset_profile" if kind == "network_feature"
@@ -3511,10 +3563,20 @@ def _remember_confirmed_procedure(
     if not commands:
         return None
     root_key = str(hypothesis.get("hypothesis_id") or "")
-    identity = "\0".join((root_key, session.family or "", *(session.asset_ids or [])))
+    # One procedure per root cause and fault family. The asset it was first
+    # confirmed on is recorded on the record, not folded into its identity:
+    # keyed by asset, every throw-away demo unit and every conflicting address
+    # minted its own copy of the same procedure (28 copies of one by 11 Sep),
+    # and retrieval then returned the same sentence seven times.
+    identity = "\0".join((root_key, session.family or ""))
     memory_id = f"proc-live-{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:16]}"
+    learned_assets = list(session.asset_ids or ([session.subject] if session.subject else []))
     observed_at = datetime.now(timezone.utc)
-    existing = memory.get(memory_id)
+    # The record for this root cause and family may carry an id minted under
+    # the older asset-keyed scheme; it is the same procedure and is reused.
+    existing = memory.get(memory_id) or _existing_procedure(memory, root_key, session.family)
+    if existing is not None:
+        memory_id = existing.memory_id
     tags = [
         f"root:{root_key}",
         *(f"probe:{command}" for command in commands),
@@ -3526,7 +3588,7 @@ def _remember_confirmed_procedure(
             tier="procedural",
             text=f"verified {root_key}; successful checks: {', '.join(commands)}",
             tags=tags,
-            asset_ids=list(session.asset_ids or ([session.subject] if session.subject else [])),
+            asset_ids=learned_assets,
             evidence_ids=sorted(evidence_ids),
             confidence=1.5,
             source_trace_ids=[session.session_id],
@@ -3545,7 +3607,7 @@ def _remember_confirmed_procedure(
         for value in tags:
             if value not in existing.tags:
                 existing.tags.append(value)
-        for value in session.asset_ids:
+        for value in learned_assets:
             if value not in existing.asset_ids:
                 existing.asset_ids.append(value)
         existing.source_trace_ids.append(session.session_id)
