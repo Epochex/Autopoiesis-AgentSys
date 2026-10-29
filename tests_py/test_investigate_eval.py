@@ -13,7 +13,7 @@ import pytest
 
 from core.investigate.eval import load_cases, run, run_case
 
-from hostgate import requires_host_interfaces
+from hostgate import requires_real_dataset, requires_host_interfaces
 
 
 def test_the_fixture_set_loads():
@@ -23,6 +23,7 @@ def test_the_fixture_set_loads():
 
 
 @requires_host_interfaces("eth1", "eth2")
+@requires_real_dataset
 def test_opening_probes_surface_what_each_question_turns_on():
     """A question whose answer is not in the evidence cannot be answered right."""
     report = run()
@@ -47,6 +48,7 @@ def test_the_invented_citation_case_is_caught_not_passed():
     assert result.citation_validity < 1.0
 
 
+@requires_real_dataset
 def test_context_stays_well_under_sending_everything():
     report = run()
     assert report["context_ratio"] < 0.85, "the budget is not buying anything"

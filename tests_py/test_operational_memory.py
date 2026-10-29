@@ -42,7 +42,9 @@ def _dossier(index: int) -> dict:
     }
 
 
-def test_verified_independent_dossiers_promote_and_persist_a_feature():
+def test_verified_independent_dossiers_promote_and_persist_a_feature(monkeypatch):
+    # Keep this promotion/persistence test fresh without disabling production decay.
+    monkeypatch.setattr("frontend.gateway.app.operational_memory._now", lambda: NOW + timedelta(days=1))
     repository = InMemoryOperationalRepository()
     service = OperationalMemoryService(repository, durable=False)
 

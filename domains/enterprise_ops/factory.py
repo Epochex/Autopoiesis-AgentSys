@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from core.context.compiler import ContextCompiler
 from core.memory.store import TieredMemoryStore
@@ -9,6 +9,8 @@ from core.orchestrator.intent_router import CascadingIntentRouter
 from core.orchestrator.orchestrator import SingleAgentRCAOrchestrator
 from core.skills.controller import SkillAttentionController
 from core.skills.registry import SkillRegistry
+from core.skills.induction import SkillImplementation
+from core.skills.spec import SkillSpec
 from core.verifier.contracts import ContractVerifier
 from core.verifier.verifier import Verifier
 from domains.enterprise_ops.adapters.mock_system import MockEnterpriseSystem
@@ -69,6 +71,7 @@ def build_enterprise_intent_router(
     *,
     deep_agent: Any | None = None,
     induction_store: str | Path | None = None,
+    implementation_provider: Callable[[SkillSpec, dict], SkillImplementation | None] | None = None,
 ) -> CascadingIntentRouter:
     """Cascading intent router over the enterprise ops library.
 
@@ -83,6 +86,7 @@ def build_enterprise_intent_router(
         deep_agent=deep_agent,
         golden_cases=enterprise_golden_cases(),
         induction_store=Path(induction_store) if induction_store is not None else None,
+        implementation_provider=implementation_provider,
     )
 
 

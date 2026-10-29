@@ -81,7 +81,7 @@ def test_an_authoring_request_routes_and_executes_on_the_unmodified_kernel(tmp_p
     assert result["completed"] is True
 
 
-def test_every_seed_request_resolves_and_the_unmatched_one_induces():
+def test_every_seed_request_resolves_and_the_unmatched_one_stays_unresolved():
     """Five requests, five specs, all five skills — plus one nothing covers.
 
     The miss tier is what stops the domain quietly answering an off-topic
@@ -95,7 +95,7 @@ def test_every_seed_request_resolves_and_the_unmatched_one_induces():
     assert not any(row["violations"] for row in resolved)
 
     miss = next(row for row in rows if row["case_id"] == "authoring_unmatched_load_profile")
-    assert miss["tier"] == "skill_induction"
+    assert miss["tier"] == "unresolved"
     assert miss["executed"] is False
 
 

@@ -294,6 +294,9 @@ def run(command: str, timeout: float = DEFAULT_TIMEOUT) -> Execution:
     except subprocess.TimeoutExpired:
         return Execution(command=command, argv=argv, ran=False, output="", exit_code=None,
                          refused_reason=f"timed out after {timeout:g}s")
+    except OSError as error:
+        return Execution(command=command, argv=argv, ran=False, output="", exit_code=None,
+                         refused_reason=f"{argv[0]} cannot be executed ({type(error).__name__})")
 
     output = (completed.stdout or "") + (completed.stderr or "")
     return Execution(

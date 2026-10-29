@@ -8,6 +8,8 @@ the one path that must stay untouched.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from core.investigate.safe_exec import Refused, check, is_safe, parse, run
@@ -162,10 +164,23 @@ def test_allowed_command_actually_runs_and_captures_output():
     assert execution.output
 
 
-def test_missing_program_is_reported_rather_than_crashing():
-    # `nslookup` is allowlisted but is not installed everywhere.
+def test_missing_program_is_reported_rather_than_crashing(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))
     execution = run("nslookup example.com")
-    assert execution.ran or "not installed" in (execution.refused_reason or "")
+    assert execution.ran is False
+    assert "not installed" in (execution.refused_reason or "")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX executable permissions")
+def test_unexecutable_program_is_reported_rather_than_crashing(monkeypatch, tmp_path):
+    program = tmp_path / "nslookup"
+    program.write_text("#!/bin/sh\necho should-not-run\n")
+    program.chmod(0o600)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    execution = run("nslookup example.com")
+    assert execution.ran is False
+    assert execution.exit_code is None
+    assert "cannot be executed" in (execution.refused_reason or "")
 
 
 def test_nonzero_exit_is_still_a_real_run():

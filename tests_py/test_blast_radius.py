@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from frontend.gateway.app.blast_radius import estimate
 
-from hostgate import requires_active_unit, requires_host_interfaces, requires_idle_interface
+from hostgate import requires_real_dataset, requires_active_unit, requires_host_interfaces, requires_idle_interface
 
 
 def test_the_protected_path_is_refused_before_anything_is_measured():
@@ -21,6 +21,7 @@ def test_the_protected_path_is_refused_before_anything_is_measured():
 
 
 @requires_host_interfaces("eth2")
+@requires_real_dataset
 def test_a_carrying_interface_reports_what_rides_on_it():
     """eth2 holds this host's address and default route."""
     result = estimate("bounce_interface", "eth2")
@@ -31,6 +32,7 @@ def test_a_carrying_interface_reports_what_rides_on_it():
 
 
 @requires_idle_interface("eth0")
+@requires_real_dataset
 def test_an_idle_interface_reports_a_measured_zero():
     result = estimate("bounce_interface", "eth0")
     assert result["scope"] == "single-nic"
