@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +33,19 @@ _RISKY_TERMS = {"approve", "approval", "submit", "update", "write", "审批", "�
 # tag-overlap ratios above which a candidate is considered a duplicate capability
 _DUPLICATE_JACCARD = 0.8
 _NEAR_DUPLICATE_NAME_JACCARD = 0.85
+
+
+@dataclass(frozen=True)
+class SkillImplementation:
+    """Trusted application code and an independent, deterministic replay oracle.
+
+    This is not a model-produced score or an instruction to execute generated
+    code. The integration owns read-only execution and the verifier's ground
+    truth. A metadata candidate alone is deliberately insufficient.
+    """
+
+    handler: Callable[..., SkillResult]
+    verify_result: Callable[[dict, SkillResult], bool]
 
 
 def capture_unmatched(request: str, trace_events: list[Any], *, store: Path | None = None) -> dict:
@@ -139,7 +155,13 @@ def _trace_signals(trace_events: list[Any]) -> tuple[list[str], set[str]]:
     return list(dict.fromkeys(failed)), unmet
 
 
-def promote_skill(candidate: SkillSpec, registry: SkillRegistry, replay_cases: list[dict]) -> bool:
+def promote_skill(
+    candidate: SkillSpec,
+    registry: SkillRegistry,
+    replay_cases: list[dict],
+    *,
+    implementation: SkillImplementation | None = None,
+) -> bool:
     """Replay-gated promotion — this IS the deterministic review step.
 
     The review contract: (a) the candidate must handle the originally-failed
@@ -153,12 +175,19 @@ def promote_skill(candidate: SkillSpec, registry: SkillRegistry, replay_cases: l
       2. structurally sound (non-empty tags and description);
       3. replayed captured cases: the candidate makes ALL of them routable and
          strictly improves coverage vs. the current library;
-      4. its handler actually executes against every captured request and
-         yields evidence;
-      5. golden replay cases keep routing to their expected skill (no regression).
+      4. golden replay cases keep routing to their expected skill;
+      5. a trusted read-only handler executes every captured request and an
+         independent verifier checks actual results, not matching descriptions.
 
     Returns True iff the candidate was registered.
     """
+    if not isinstance(implementation, SkillImplementation):
+        return False
+    if not callable(implementation.handler) or not callable(implementation.verify_result):
+        return False
+    if candidate.risk != "read_only" or candidate.frozen:
+        return False
+    candidate = candidate.model_copy(deep=True)
     existing_specs = [skill.spec for skill in registry.all()]
     if _is_duplicate(candidate, existing_specs):
         return False
@@ -167,17 +196,13 @@ def promote_skill(candidate: SkillSpec, registry: SkillRegistry, replay_cases: l
 
     captured = [case for case in replay_cases if not case.get("golden")]
     golden = [case for case in replay_cases if case.get("golden")]
-    if not captured:
+    if not captured or any(not str(case.get("request", "")).strip() for case in captured):
         return False
 
     with_candidate = [*existing_specs, candidate]
     before_hits = sum(_case_handled(case, existing_specs) for case in captured)
     after_hits = sum(_case_handled(case, with_candidate) for case in captured)
     if not (after_hits > before_hits and after_hits == len(captured)):
-        return False
-
-    handler = _induced_handler(candidate)
-    if not all(_handler_replays(handler, case) for case in captured):
         return False
 
     for case in golden:
@@ -188,40 +213,46 @@ def promote_skill(candidate: SkillSpec, registry: SkillRegistry, replay_cases: l
         after = _best_spec_name(case, with_candidate)
         if before == expected and after != expected:
             return False
+        # The rule planner also scores names/descriptions and compound goals.
+        # Tag overlap alone cannot protect the routes used by real execution.
+        from core.orchestrator.planner import plan_skill_chain_detailed
 
-    registry.register(candidate, handler)
+        proposed = SkillRegistry()
+        for existing in registry.all():
+            proposed.register(existing.spec, existing.handler)
+        proposed.register(candidate, implementation.handler)
+        previous_plan = plan_skill_chain_detailed(str(case.get("request", "")), registry)
+        next_plan = plan_skill_chain_detailed(str(case.get("request", "")), proposed)
+        if previous_plan.chain != next_plan.chain or previous_plan.full_coverage != next_plan.full_coverage:
+            return False
+
+    if not all(_handler_replays(implementation, candidate, case) for case in captured):
+        return False
+
+    def execute(request: str | None = None, *, case: Any = None, **kwargs: Any) -> SkillResult:
+        # execute_chain passes case/state; replay and direct callers pass request.
+        query = request if request is not None else getattr(case, "query", None)
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("a nonempty skill request is required")
+        return implementation.handler(request=query)
+
+    registry.register(candidate, execute)
     return True
 
 
-def _handler_replays(handler: Any, case: dict) -> bool:
-    """True iff the candidate handler runs on the captured request and produces evidence."""
+def _handler_replays(implementation: SkillImplementation, spec: SkillSpec, case: dict) -> bool:
+    """Execute trusted read-only code, then judge against independent expectations."""
     try:
-        result = handler(request=str(case.get("request", "")))
+        result = implementation.handler(request=str(case.get("request", "")))
+        if not isinstance(result, SkillResult) or result.skill_name != spec.name or not result.readonly:
+            return False
+        if not result.evidence or not result.evidence_ids():
+            return False
+        if any(item.get("kind") == "induced_skill_match" for item in result.evidence):
+            return False
+        return implementation.verify_result(deepcopy(case), result) is True
     except Exception:
         return False
-    return isinstance(result, SkillResult) and bool(result.evidence)
-
-
-def _induced_handler(spec: SkillSpec):
-    def run(**kwargs) -> SkillResult:
-        request = str(kwargs.get("request") or getattr(kwargs.get("case"), "query", ""))
-        return SkillResult(
-            skill_name=spec.name,
-            evidence=[
-                {
-                    "evidence_id": f"ev-{spec.name}",
-                    "source": f"skill:{spec.name}",
-                    "summary": f"Induced skill {spec.name} matched request: {request[:80]}",
-                    "kind": "induced_skill_match",
-                    "request": request,
-                    "tags": list(spec.tags),
-                }
-            ],
-            readonly=spec.risk == "read_only",
-            cost=spec.cost,
-        )
-
-    return run
 
 
 def _case_handled(case: dict, specs: list[SkillSpec]) -> bool:

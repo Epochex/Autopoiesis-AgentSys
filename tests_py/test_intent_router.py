@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import json
 
 import pytest
 
 from core.orchestrator.planner import execute_chain
 from core.trace.ledger import JSONLTraceLedger
+from core.skills.induction import SkillImplementation
+from core.skills.spec import SkillResult
 from domains.enterprise_ops.eval import run_routed_eval
 from domains.enterprise_ops.factory import (
     build_enterprise_intent_router,
@@ -106,12 +109,24 @@ def test_ambiguous_compound_high_impact_request_escalates_to_deep_agent(tmp_path
     assert not (tmp_path / "induction_captures.jsonl").exists()
 
 
-def test_total_miss_triggers_capture_induction_and_reroutes_at_induction_tier(tmp_path):
-    orchestrator, router = _build(tmp_path)
+def test_total_miss_uses_trusted_file_backed_implementation(tmp_path):
+    source = tmp_path / "warehouse.json"
+    source.write_text('{"available":12}')
+
+    def provider(candidate, captured):
+        def read_inventory(**kwargs):
+            value = json.loads(source.read_text())["available"]
+            return SkillResult(skill_name=candidate.name, evidence=[{"evidence_id": "warehouse", "available": value}])
+        return SkillImplementation(
+            handler=read_inventory,
+            verify_result=lambda case, result: case["request"] == "read warehouse inventory" and result.evidence[0]["available"] == 12,
+        )
+
+    orchestrator, router = _build(tmp_path, implementation_provider=provider)
     case = SimpleNamespace(
         id="ops_new_capability",
-        query="inventory restock plan for overseas warehouse",
-        query_terms=["inventory", "restock", "warehouse"],
+        query="read warehouse inventory",
+        query_terms=["read", "inventory", "warehouse"],
         assets=["warehouse-88"],
         relevant_skills=[],
     )
@@ -124,6 +139,7 @@ def test_total_miss_triggers_capture_induction_and_reroutes_at_induction_tier(tm
     assert outcome.chain, "re-route through the expanded registry must yield a chain"
     induced_name = outcome.chain[0]
     assert orchestrator.skills.get(induced_name).spec.name == induced_name
+    assert orchestrator.skills.execute(induced_name, request=case.query).evidence[0]["available"] == 12
     # capture_unmatched persisted the miss (the self-expand trigger is wired)
     assert (tmp_path / "induction_captures.jsonl").read_text(encoding="utf-8").count("\n") == 1
 
@@ -138,6 +154,22 @@ def test_total_miss_triggers_capture_induction_and_reroutes_at_induction_tier(tm
     assert any(attempt["tier"] == "rule_fast_path" and attempt["hit"] for attempt in attempts[3:])
     routed = [event for event in events if event.kind == "intent_routed"][-1]
     assert routed.payload["tier"] == "skill_induction" and routed.payload["induced"] is True
+
+
+@pytest.mark.parametrize("provider_fails", [False, True])
+def test_missing_or_failed_implementation_keeps_unknown_request_unresolved(tmp_path, provider_fails):
+    def broken_provider(candidate, captured):
+        raise RuntimeError("provider unavailable")
+
+    orchestrator, router = _build(tmp_path, implementation_provider=broken_provider if provider_fails else None)
+    before = {s.spec.name for s in orchestrator.skills.all()}
+    case = SimpleNamespace(id="unknown", query="read warehouse inventory", query_terms=["inventory"], assets=[], relevant_skills=[])
+    result = router.route(case)
+    assert result.tier == "unresolved" and not result.resolved and not result.induced
+    assert {s.spec.name for s in orchestrator.skills.all()} == before
+    review = [event for event in _events(tmp_path) if event.kind == "skill_promoted"][-1]
+    assert review.payload["promoted"] is False
+    assert review.payload["reason"] == ("implementation_provider_failed:RuntimeError" if provider_fails else "implementation_not_available")
 
 
 def test_escalation_shaped_request_without_deep_agent_is_unresolved_not_induced(tmp_path):
@@ -177,8 +209,9 @@ def test_enterprise_routed_eval_flows_every_case_through_the_router(tmp_path):
     assert by_id["ops_quote_then_approval"]["chain"] == ["pricing_apply_policy", "approval_submit"]
     # contract verification still catches the bad-price case on the routed path
     assert any("price out of range" in violation for violation in by_id["ops_bad_price"]["violations"])
-    # the unmatched capability case self-expands the library live
+    # A description without a reviewed implementation is not a solved task.
     induced = by_id["ops_unmatched_inventory"]
-    assert induced["tier"] == "skill_induction"
-    assert induced["induced"] is True and induced["resolved"] is True
+    assert induced["tier"] == "unresolved"
+    assert induced["induced"] is False and induced["resolved"] is False
+    assert induced["executed"] is False
     assert (tmp_path / "captures.jsonl").exists()

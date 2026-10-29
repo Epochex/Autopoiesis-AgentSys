@@ -167,7 +167,7 @@ def test_sentinel_root_change_supersedes_old_incident_without_merged_roots():
     )
 
 
-def test_gateway_startup_wires_conflict_resolution_and_budget(monkeypatch):
+def test_gateway_startup_wires_conflict_resolution_and_budget(monkeypatch, tmp_path):
     from domains.network_rca import factory, real_dataset
     from frontend.gateway.app import main
 
@@ -186,6 +186,7 @@ def test_gateway_startup_wires_conflict_resolution_and_budget(monkeypatch):
         return call(*args, **kwargs)
 
     monkeypatch.delenv("AUTOPOIESIS_MEMORY_BUDGET", raising=False)
+    monkeypatch.setenv("AUTOPOIESIS_CHANGE_DB", str(tmp_path / "changes.sqlite3"))
     monkeypatch.setattr(main, "_evolving_service", None)
     monkeypatch.setattr(main, "_start_prewarm", lambda: None)
     monkeypatch.setattr(main.asyncio, "to_thread", inline)

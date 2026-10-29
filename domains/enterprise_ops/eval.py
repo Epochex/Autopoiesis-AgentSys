@@ -34,8 +34,8 @@ def run_routed_eval(induction_store: str | Path | None = None) -> list[dict]:
     """Route every case through the CascadingIntentRouter, then execute resolved chains.
 
     The seed workflows resolve at the rule fast path; `unmatched_capability_case`
-    matches nothing and exercises the miss -> capture -> induce -> promote ->
-    re-route tier live. The cascade per case is replayable from the trace ledger.
+    matches nothing and is captured as a candidate, but remains unresolved until
+    a trusted implementation is supplied. It must not count as a solved task.
     """
     rows = []
     with TemporaryDirectory() as tmp_dir:

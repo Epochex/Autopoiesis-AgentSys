@@ -404,7 +404,23 @@ def test_stream_stops_ssh_child_when_insert_fails(monkeypatch):
     assert proc.stdout.closed is True
 
 
-def test_live_disconnect_records_reconnect_and_keeps_running(monkeypatch, capsys):
+def _isolate_live_alert_setup(monkeypatch, tmp_path):
+    # Stream lifecycle tests keep the real detector; ClickHouse DDL and remote
+    # warm-up belong to the separately tested alert-pipeline integration.
+    from frontend.gateway.ingest.standalone_alerts import AlertStoreConfig, StandaloneAlertPipeline
+    from domains.network_rca.event_detection import DetectionPolicy
+
+    pipeline = StandaloneAlertPipeline(AlertStoreConfig(
+        clickhouse_url="http://clickhouse.invalid:8123", clickhouse_user="test",
+        clickhouse_password="test", clickhouse_database="autopoiesis",
+        alert_directory=tmp_path, detection_policy=DetectionPolicy(),
+    ))
+    monkeypatch.setattr(facts_ingest, "_build_alert_pipeline", lambda: pipeline)
+    monkeypatch.setattr(facts_ingest, "_warm_alert_pipeline", lambda *_args: 0)
+
+
+def test_live_disconnect_records_reconnect_and_keeps_running(monkeypatch, capsys, tmp_path):
+    _isolate_live_alert_setup(monkeypatch, tmp_path)
     statuses: list[dict] = []
 
     def stream_once(
@@ -460,7 +476,8 @@ def test_live_disconnect_records_reconnect_and_keeps_running(monkeypatch, capsys
     assert "SSH source interrupted (SSH stream exited with status 255)" in capsys.readouterr().err
 
 
-def test_live_fatal_error_is_logged_and_propagated(monkeypatch, capsys):
+def test_live_fatal_error_is_logged_and_propagated(monkeypatch, capsys, tmp_path):
+    _isolate_live_alert_setup(monkeypatch, tmp_path)
     statuses: list[dict] = []
 
     checkpoint = {"source_file_id": "1:2", "source_offset_bytes": 100, "source_path": facts_ingest.R230_LOG}

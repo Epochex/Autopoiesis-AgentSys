@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -11,7 +11,7 @@ from core.orchestrator.planner import plan_skill_chain_detailed
 from core.skills import induction
 from core.skills.controller import SkillAttentionController
 from core.skills.registry import SkillRegistry
-from core.skills.spec import RegisteredSkill
+from core.skills.spec import RegisteredSkill, SkillSpec
 from core.trace.events import TraceEvent
 
 
@@ -74,8 +74,8 @@ class CascadingIntentRouter:
        requests are handed to the planner-executor-critic topology;
     4. self-expand on miss — a request NOTHING in the library speaks to is
        captured (`capture_unmatched`), a candidate skill is induced from the
-       request + failure trace, replay-review gates promotion, and the request
-       is re-routed through the expanded registry.
+       request + failure trace. A trusted implementation provider and independent
+       replay verification are required before re-routing; otherwise unresolved.
 
     Every tier attempt emits an `intent_tier_attempted` trace event and the
     winner an `intent_routed` event, so the cascade is replayable from the ledger.
@@ -93,6 +93,7 @@ class CascadingIntentRouter:
         recall_min_tag_hits: int = 1,
         enable_induction: bool = True,
         induction_store: Path | None = None,
+        implementation_provider: Callable[[SkillSpec, dict], induction.SkillImplementation | None] | None = None,
     ):
         if rule_min_term_hits < 1:
             raise ValueError(f"rule_min_term_hits must be >= 1, got {rule_min_term_hits}")
@@ -109,6 +110,7 @@ class CascadingIntentRouter:
         self.recall_min_tag_hits = recall_min_tag_hits
         self.enable_induction = enable_induction
         self.induction_store = induction_store
+        self.implementation_provider = implementation_provider
 
     def route(self, case: RoutedCase) -> RoutingOutcome:
         """Resolve `case` to a tier + chain/handler; raises ValueError on an empty query."""
@@ -277,8 +279,22 @@ class CascadingIntentRouter:
             {"name": candidate.name, "tags": candidate.tags, "risk": candidate.risk},
             attempts,
         )
-        promoted = induction.promote_skill(candidate, self.registry, [captured, *self.golden_cases])
-        self._record(run_id, case.id, "skill_promoted", {"name": candidate.name, "promoted": promoted}, attempts)
+        implementation = None
+        reason = "implementation_not_available"
+        if self.implementation_provider is not None:
+            try:
+                implementation = self.implementation_provider(candidate.model_copy(deep=True), captured)
+                reason = "review_rejected"
+            except Exception as exc:
+                # A provider failure is not evidence that the request was solved.
+                reason = f"implementation_provider_failed:{type(exc).__name__}"
+        promoted = induction.promote_skill(
+            candidate, self.registry, [captured, *self.golden_cases], implementation=implementation,
+        )
+        self._record(run_id, case.id, "skill_promoted", {
+            "name": candidate.name, "promoted": promoted,
+            "reason": "verified_replay_passed" if promoted else reason,
+        }, attempts)
         if not promoted:
             return RoutingOutcome(
                 tier="unresolved",

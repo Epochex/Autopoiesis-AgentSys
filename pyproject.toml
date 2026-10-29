@@ -32,6 +32,7 @@ observability = [
 ingestor = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
+  "PyYAML>=6",
 ]
 # OPTIONAL. The deterministic core stays zero-dependency; this extra powers the
 # production HybridKBRetriever dense/HNSW stage and the dense evaluation drivers.

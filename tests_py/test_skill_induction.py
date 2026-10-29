@@ -8,7 +8,14 @@ from core.skills.registry import SkillRegistry
 from core.skills.spec import SkillResult, SkillSpec
 
 
-def test_induced_candidate_that_handles_captured_case_is_promoted(tmp_path, monkeypatch):
+def _reviewed(candidate):
+    return induction.SkillImplementation(
+        handler=lambda **kwargs: SkillResult(skill_name=candidate.name, evidence=[{"evidence_id": "fixture-reading", "value": 42}]),
+        verify_result=lambda case, result: result.evidence[0]["value"] == 42,
+    )
+
+
+def test_induced_description_does_not_promote_without_an_implementation(tmp_path, monkeypatch):
     monkeypatch.setattr(induction, "INDUCTION_STORE", tmp_path / "induction_cases.jsonl")
     registry = SkillRegistry()
     registry.register(
@@ -20,8 +27,9 @@ def test_induced_candidate_that_handles_captured_case_is_promoted(tmp_path, monk
     candidate = induce_skill(case, [skill.spec for skill in registry.all()])
     promoted = promote_skill(candidate, registry, [case])
 
-    assert promoted is True
-    assert registry.get(candidate.name).spec.name == candidate.name
+    assert promoted is False
+    with pytest.raises(KeyError):
+        registry.get(candidate.name)
     assert {"enterprise", "pricing", "quote"}.issubset(set(candidate.tags))
 
 
@@ -45,7 +53,7 @@ def test_candidate_that_breaks_golden_routing_is_rejected(tmp_path, monkeypatch)
         cost=0.1,
     )
 
-    assert promote_skill(hijacker, registry, [captured, golden]) is False
+    assert promote_skill(hijacker, registry, [captured, golden], implementation=_reviewed(hijacker)) is False
     with pytest.raises(KeyError):
         registry.get("greedy_candidate")
 
@@ -59,7 +67,7 @@ def test_candidate_that_leaves_a_captured_case_unhandled_is_rejected(tmp_path, m
 
     candidate = induce_skill(covered, [])
 
-    assert promote_skill(candidate, registry, [covered, uncovered]) is False
+    assert promote_skill(candidate, registry, [covered, uncovered], implementation=_reviewed(candidate)) is False
     assert registry.all() == []
 
 
@@ -68,18 +76,14 @@ def test_candidate_whose_handler_cannot_replay_the_capture_is_rejected(tmp_path,
     # handler raises on the original failing request must not enter the library.
     monkeypatch.setattr(induction, "INDUCTION_STORE", tmp_path / "induction_cases.jsonl")
 
-    def broken_handler(spec):
-        def run(**kwargs):
-            raise RuntimeError("induced handler cannot serve the request")
-
-        return run
-
-    monkeypatch.setattr(induction, "_induced_handler", broken_handler)
+    def broken_handler(**kwargs):
+        raise RuntimeError("reviewed handler cannot serve the request")
     registry = SkillRegistry()
-    case = capture_unmatched("enterprise pricing quote for new policy", [])
+    case = capture_unmatched("read warehouse inventory", [])
     candidate = induce_skill(case, [])
 
-    assert promote_skill(candidate, registry, [case]) is False
+    implementation = induction.SkillImplementation(handler=broken_handler, verify_result=lambda case, result: True)
+    assert promote_skill(candidate, registry, [case], implementation=implementation) is False
     assert registry.all() == []
 
 
@@ -120,13 +124,13 @@ def test_review_gate_still_rejects_duplicate_of_a_trace_fed_candidate(tmp_path, 
     case = capture_unmatched("handle overseas order backlog", trace)
 
     first = induce_skill(case, [skill.spec for skill in registry.all()])
-    assert promote_skill(first, registry, [case]) is True
+    assert promote_skill(first, registry, [case], implementation=_reviewed(first)) is True
 
     # a second candidate induced from the same failure is a duplicate capability:
     # the review must reject it and leave the library unchanged.
     second = induce_skill(case, [skill.spec for skill in registry.all()])
     assert second.name != first.name
-    assert promote_skill(second, registry, [case]) is False
+    assert promote_skill(second, registry, [case], implementation=_reviewed(second)) is False
     assert {skill.spec.name for skill in registry.all()} == {first.name}
 
 
@@ -157,8 +161,8 @@ def test_garbage_or_duplicate_candidate_is_rejected_by_gate(tmp_path, monkeypatc
     garbage = SkillSpec(name="empty_candidate", description="", tags=[])
 
     before = {skill.spec.name for skill in registry.all()}
-    assert promote_skill(duplicate, registry, [case]) is False
-    assert promote_skill(garbage, registry, [case]) is False
+    assert promote_skill(duplicate, registry, [case], implementation=_reviewed(duplicate)) is False
+    assert promote_skill(garbage, registry, [case], implementation=_reviewed(garbage)) is False
     assert {skill.spec.name for skill in registry.all()} == before
     with pytest.raises(KeyError):
         registry.get("empty_candidate")
