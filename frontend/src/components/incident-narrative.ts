@@ -49,7 +49,8 @@ export function buildIncidentNarrative({ caseRecord, session, chain, lang }: Arg
   const memoryDemo = source.demoScenario === 'memory_trajectory'
   const comparison = object(lastEvent(caseRecord, 'memory_comparison_recorded')?.payload ?? lastEvent(caseRecord, 'memory_comparison_recorded'))
   const intervention = object(session?.memory_intervention ?? session?.memory_value)
-  const retrieval = (Array.isArray(session?.retrieval_results) ? session?.retrieval_results : [])
+  const retrievalResults = session?.retrieval_results
+  const retrieval = (Array.isArray(retrievalResults) ? retrievalResults : [])
     .map(object).find(item => item.kind === 'indexed_memory' && item.selected_for_context !== false)
   const memoryId = String(retrieval?.item_id ?? strings(intervention.memory_ids)[0] ?? comparison.memoryId ?? '') || undefined
   const rawMemorySummary = retrieval?.summary ? String(retrieval.summary) : undefined

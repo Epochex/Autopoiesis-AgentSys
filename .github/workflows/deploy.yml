@@ -29,10 +29,19 @@ jobs:
     # Register the r450 runner with labels: self-hosted, r450
     runs-on: [self-hosted, r450]
     steps:
+      # Load the rollout script from this reviewed commit, not the old live
+      # checkout. A script already running cannot reliably replace itself when
+      # its git fast-forward updates deploy.sh on disk.
+      - name: Check out rollout source
+        uses: actions/checkout@v4
+        with:
+          path: rollout-source
+
       - name: Roll out to live
         env:
           APP_DIR: /data/Autopoiesis-AgentSys
           SERVICE: autopoiesis-gateway
           HEALTH_URL: http://127.0.0.1:8026/api/healthz
+          HEALTH_TIMEOUT_SECONDS: "90"
           ALLOW_DIRTY: ${{ inputs.allow_dirty && '1' || '0' }}
-        run: bash "$APP_DIR/frontend/script/deploy.sh"
+        run: bash "$GITHUB_WORKSPACE/rollout-source/frontend/script/deploy.sh"

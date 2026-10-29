@@ -11,6 +11,7 @@
 #
 #   ./frontend/script/deploy.sh
 #   ALLOW_DIRTY=1 ./frontend/script/deploy.sh     # deploy working tree, no pull
+#   HEALTH_TIMEOUT_SECONDS=120 ./frontend/script/deploy.sh  # slower cold start
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/data/Autopoiesis-AgentSys}"
@@ -18,6 +19,7 @@ SERVICE="${SERVICE:-autopoiesis-gateway}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8026/api/healthz}"
 VENV="${VENV:-$APP_DIR/frontend/.venv}"
 ALLOW_DIRTY="${ALLOW_DIRTY:-0}"
+HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-90}"
 
 log() { printf '\n\033[1m▸ %s\033[0m\n' "$*"; }
 
@@ -58,21 +60,13 @@ fi
 log "Restart service: $SERVICE"
 systemctl restart "$SERVICE"
 
-log "Health check: $HEALTH_URL"
-ok=0
-for i in $(seq 1 20); do
-  if curl -fsS --max-time 3 "$HEALTH_URL" >/tmp/healthz.json 2>/dev/null; then
-    ok=1
-    break
-  fi
-  sleep 1
-done
-if [ "$ok" != "1" ]; then
+log "Health check: $HEALTH_URL (deadline ${HEALTH_TIMEOUT_SECONDS}s)"
+if ! "$VENV/bin/python" "$APP_DIR/frontend/script/wait_for_health.py" \
+    "$HEALTH_URL" --timeout "$HEALTH_TIMEOUT_SECONDS" >/dev/null; then
   echo "ERROR: service did not become healthy after restart." >&2
   systemctl status "$SERVICE" --no-pager -l | tail -20 >&2 || true
   exit 1
 fi
 
-status=$(sed -n 's/.*"status":"\([^"]*\)".*/\1/p' /tmp/healthz.json | head -1)
-log "Live · /api/healthz status=${status:-unknown}"
+log "Live · /api/healthz status=ok"
 echo "Deploy complete: $(git rev-parse --short HEAD)"
