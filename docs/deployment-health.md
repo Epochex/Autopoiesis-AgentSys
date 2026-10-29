@@ -25,3 +25,9 @@ against local HTTP servers: delayed readiness, persistent 503, degraded or
 invalid 200 bodies, slow HTTP timeouts and invalid deadline configuration.
 Real deployment success must also be checked in GitHub Actions after merging;
 the historical failed run is retained and is not relabeled as successful.
+
+The frontend workflow also had an advisory lint step whose failed outcome was
+masked by `continue-on-error`. Its one existing optional-chain warning in
+`incident-narrative.ts` is fixed by capturing retrieval results before the array
+check. Lint is now a required step; its future failures cannot yield a green
+workflow. Local lint, TypeScript/build and the existing narrative test pass.
